@@ -285,7 +285,7 @@ def _cpu_ticks(pid: int) -> int:
     return total
 
 
-def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
+def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0, prepare=None):
     """Open a document, wait for startup to finish, then watch an idle editor.
 
     Reports CPU percentage over `window` and how many times the editor wrote to
@@ -294,6 +294,7 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
     """
     pid, fd = _spawn(argv, env, cwd)
     complete = True
+    initial_output = bytearray() if prepare is not None else None
     start = time.perf_counter()
     while time.perf_counter() - start < settle:
         readable, _, _ = select.select([fd], [], [], 0.05)
@@ -306,6 +307,9 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
             if not data:
                 complete = False
                 break
+            if initial_output is not None:
+                initial_output.extend(data)
+                del initial_output[:-131072]
             reply = terminal_replies(data)
             if reply:
                 try:
@@ -313,6 +317,9 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
                 except OSError:
                     complete = False
                     break
+
+    if complete and prepare is not None:
+        complete = prepare(pid, fd, bytes(initial_output))
 
     cpu_supported = os.path.exists(f"/proc/{pid}/stat")
     before = _cpu_ticks(pid) if cpu_supported else 0
@@ -364,10 +371,10 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0):
     }
 
 
-def median_idle(argv, env, cwd=None, runs=5, settle=2.5, window=10.0):
+def median_idle(argv, env, cwd=None, runs=5, settle=2.5, window=10.0, prepare=None):
     """Median of complete idle windows, refusing partial result sets."""
     samples = [
-        measure_idle(argv, env, cwd, settle=settle, window=window)
+        measure_idle(argv, env, cwd, settle=settle, window=window, prepare=prepare)
         for _ in range(runs)
     ]
     complete = sum(1 for sample in samples if sample["complete"])

@@ -17,6 +17,75 @@ use crate::{
 };
 
 impl App {
+    pub(crate) fn plugin_activity_count(&self) -> usize {
+        self.plugins
+            .instances
+            .values()
+            .map(|instance| instance.application.activities.len())
+            .sum()
+    }
+
+    pub(crate) fn plugin_active_job_count(&self) -> usize {
+        self.plugins
+            .instances
+            .values()
+            .map(|instance| {
+                instance
+                    .application
+                    .jobs
+                    .values()
+                    .filter(|job| job.state.active())
+                    .count()
+                    + usize::from(instance.application.state_pending)
+            })
+            .sum::<usize>()
+            + self.plugins.state_orphans
+            + self.plugins.provider_reload_cleanup
+            + self
+                .plugins
+                .manager_entries
+                .iter()
+                .filter(|entry| {
+                    matches!(
+                        entry.phase,
+                        crate::plugin::manager::Phase::Stopping
+                            | crate::plugin::manager::Phase::RestartPending
+                    ) || entry.cleanup > 0
+                        || self
+                            .plugins
+                            .manager_intents
+                            .iter()
+                            .any(|intent| intent.config_index == entry.config_index)
+                })
+                .count()
+    }
+
+    pub fn plugin_activity_health(&self) -> Vec<crate::service_health::ActivityLeaseHealth> {
+        use crate::{
+            plugin::activity::State,
+            service_health::{ActivityLeaseHealth, ActivityLeaseState},
+        };
+        self.plugins
+            .instances
+            .values()
+            .flat_map(|instance| {
+                instance
+                    .application
+                    .activities
+                    .values()
+                    .map(move |lease| ActivityLeaseHealth {
+                        owner: instance.config.id.clone(),
+                        title: lease.info.title.clone(),
+                        state: match lease.info.state {
+                            State::Active => ActivityLeaseState::Active,
+                            State::Cancelling => ActivityLeaseState::Cancelling,
+                        },
+                    })
+            })
+            .take(16)
+            .collect()
+    }
+
     /// Returns a complete optional-service report without starting a provider
     /// or requiring any of the reported services to be present.
     pub fn service_health_snapshot(&self) -> ServiceHealthSnapshot {
@@ -125,6 +194,22 @@ impl App {
                 .unwrap_or("repository discovery succeeded"),
         ));
 
+        for lease in self.plugin_activity_health() {
+            entries.push(ServiceHealthEntry::new(
+                "plugin activity",
+                if lease.state == crate::service_health::ActivityLeaseState::Active {
+                    ServiceState::Ready
+                } else {
+                    ServiceState::Degraded
+                },
+                format!(
+                    "{} · {} · {}",
+                    lease.owner,
+                    lease.title,
+                    lease.state.label()
+                ),
+            ));
+        }
         entries.push(self.logging_health());
         ServiceHealthSnapshot { entries }
     }
@@ -269,6 +354,7 @@ impl App {
 
     pub(super) fn open_notifications_buffer(&mut self) {
         self.notifications.acknowledge();
+        self.notifications_refresh_pending = false;
         let rendered = Buffer::notifications(self.notifications.render());
         let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_notifications()).then_some(index)
@@ -296,6 +382,7 @@ impl App {
     }
 
     fn refresh_notification_buffers(&mut self) {
+        self.notifications_refresh_pending = false;
         let open = self
             .buffers
             .iter()
@@ -326,6 +413,17 @@ impl App {
     pub fn push_notification(&mut self, notification: NotificationDraft) {
         self.notifications.push(notification);
         self.refresh_notification_buffers();
+    }
+
+    pub(crate) fn push_background_notification(&mut self, notification: NotificationDraft) {
+        self.notifications.push(notification);
+        self.notifications_refresh_pending = true;
+    }
+
+    pub(super) fn settle_background_notifications(&mut self) {
+        if self.notifications_refresh_pending {
+            self.refresh_notification_buffers();
+        }
     }
 
     pub(super) fn refresh_settings_buffers(&mut self) {
@@ -822,6 +920,27 @@ impl App {
     }
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
+        let detach_hint = if self.persistent_session {
+            "; use :detach to leave the work running"
+        } else {
+            ""
+        };
+        if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
+            self.action_warning(
+                "Quit refused",
+                format!("Filesystem writes are still pending; wait for completion{detach_hint}"),
+            );
+            return false;
+        }
+        let leases = self.plugin_activity_count();
+        let jobs = self.plugin_active_job_count();
+        if leases > 0 || jobs > 0 {
+            self.action_warning(
+                "Quit refused",
+                format!("{leases} activity leases and {jobs} plugin jobs; cancel work or stop its owner in :plugins{detach_hint}"),
+            );
+            return false;
+        }
         if !force && self.buffers.iter().any(|buffer| buffer.dirty) {
             self.action_warning(
                 "Quit refused",
@@ -914,7 +1033,8 @@ impl App {
         description: &str,
         outcome: CommandOutcome,
     ) {
-        if self.fs_confirmation.is_some()
+        if self.plugins.provider_overwrite.is_some()
+            || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()

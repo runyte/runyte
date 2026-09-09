@@ -261,6 +261,21 @@ their existing cancellation paths. Exact-text confirmations keep the space bar
 as literal input, because the durable path they ask for may contain one.
 Interaction-line prompts are not overlays and retain ordinary space entry.
 
+The `:plugins` surface is a manager for configured owners. Its filtered rows
+retain disabled and failed entries; the selected row's preview reports lifecycle,
+grants, work and diagnostics. Enter or Tab opens a finite lifecycle action list,
+whose Back action returns to the manager's prior filter and selection. Refreshes
+retain configured identity, while actions retain the generation they were opened
+for and cannot silently target a replacement process.
+
+Provider `:reload` uses the **Reload remote document** choice overlay when local
+edits or an uncertain save need a decision. Its three rows are **Reload remote
+text**, **Keep local edits and use remote baseline**, and **Cancel**, initially
+selected. The overlay contains only decision metadata; the host retains the
+prepared remote text. Physical Enter accepts the selected row. Dismissal or a
+changed document, provider, pane, or attachment cancels without adopting it.
+Clean provider documents accept a fresh reload without opening this overlay.
+
 ## Row selection
 
 Every surface that draws a list of rows — picker overlay, pane-backed
@@ -455,3 +470,27 @@ warning notifications, process/protocol failures produce errors, and explicit
 plugin stop is informational. Captured buffer targets never change focus when
 results arrive. Generated help remains a snapshot of the view where it was
 opened; reopening it uses the current registered bindings.
+
+## Experimental application views
+
+Epoch 2 native application models materialize as retained read-only special
+buffers. Their stable row identities are separate from text offsets; publication
+preserves each pane's selection endpoints and viewport by identity. Application
+views retain ordinary buffer navigation and management. Filtering is an explicit
+registered action, while Tab opens a transient action picker from runtime command
+metadata. Clean hidden views share normal special-buffer eviction; visible views
+remain retained. Plugin stop preserves readable content labelled unavailable.
+
+Application filesystem plans use the existing native filesystem confirmation.
+Showing a plan requires a current foreground invocation and no competing input
+surface. Detach, owner stop and source-buffer closure cancel the confirmation.
+Acceptance applies the reviewed plan through ordinary filesystem reconciliation;
+application plans preserve unsaved directory projections, including the active
+explorer. Cancellation is delivered to the owner as a lifecycle event.
+
+Application input reuses native input overlays. A form shows labelled fields and
+a current editing line, with Tab/Shift-Tab or arrows moving between fields.
+Secret fields are masked before snapshot production. Application pickers display
+filterable candidate rows using the shared matcher. Opening competing native
+input cancels the application surface, as do detach and owner/source closure.
+Cancelled callbacks cannot reopen presentation without another foreground command.

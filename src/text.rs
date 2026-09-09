@@ -74,10 +74,6 @@ impl Change {
     fn removed_len(&self) -> usize {
         self.to - self.from
     }
-
-    fn delta(&self) -> isize {
-        self.inserted_len() as isize - self.removed_len() as isize
-    }
 }
 
 /// An ordered set of non-overlapping changes applied as a single unit.
@@ -88,6 +84,9 @@ impl Change {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Transaction {
     changes: Vec<Change>,
+    // Changes are immutable once normalized. Large prepared replacements must
+    // not rescan their text for every selection, jump or search endpoint.
+    inserted_chars: Vec<usize>,
 }
 
 /// The inverse of an applied [`Transaction`].
@@ -98,9 +97,7 @@ pub struct Revert {
 
 impl Revert {
     pub fn into_transaction(self) -> Transaction {
-        Transaction {
-            changes: self.changes,
-        }
+        Transaction::from_ordered(self.changes)
     }
 }
 
@@ -124,7 +121,15 @@ impl Transaction {
                 _ => ordered.push(change),
             }
         }
-        Self { changes: ordered }
+        Self::from_ordered(ordered)
+    }
+
+    fn from_ordered(changes: Vec<Change>) -> Self {
+        let inserted_chars = changes.iter().map(Change::inserted_len).collect();
+        Self {
+            changes,
+            inserted_chars,
+        }
     }
 
     pub fn change(from: Offset, to: Offset, text: impl Into<String>) -> Self {
@@ -153,10 +158,7 @@ impl Transaction {
     /// cost is the sum of this across retained entries, which is what makes it
     /// proportional to edit size rather than document size.
     pub fn footprint(&self) -> usize {
-        self.changes
-            .iter()
-            .map(|change| change.text.chars().count())
-            .sum()
+        self.inserted_chars.iter().sum()
     }
 
     /// Applies the transaction, returning its inverse.
@@ -167,15 +169,15 @@ impl Transaction {
     pub fn apply(&self, rope: &mut Rope) -> Revert {
         let mut inverse = Vec::with_capacity(self.changes.len());
         let mut delta: isize = 0;
-        for change in &self.changes {
+        for (change, &inserted) in self.changes.iter().zip(&self.inserted_chars) {
             let removed = rope
                 .get_slice(change.from..change.to)
                 .map(|slice| slice.to_string())
                 .unwrap_or_default();
             let new_from = (change.from as isize + delta) as usize;
-            let new_to = new_from + change.inserted_len();
+            let new_to = new_from + inserted;
             inverse.push(Change::new(new_from, new_to, removed));
-            delta += change.delta();
+            delta += inserted as isize - change.removed_len() as isize;
         }
 
         for change in self.changes.iter().rev() {
@@ -194,17 +196,18 @@ impl Transaction {
     /// document.
     pub fn map_offset(&self, offset: Offset, assoc: Assoc) -> Offset {
         let mut delta: isize = 0;
-        for change in &self.changes {
+        for (change, &inserted) in self.changes.iter().zip(&self.inserted_chars) {
+            let change_delta = inserted as isize - change.removed_len() as isize;
             if change.from == change.to && change.from == offset {
                 // A pure insertion exactly at the offset: only an `After`
                 // association moves past the inserted text.
                 if assoc == Assoc::After {
-                    delta += change.delta();
+                    delta += change_delta;
                 }
                 continue;
             }
             if change.to <= offset {
-                delta += change.delta();
+                delta += change_delta;
                 continue;
             }
             if change.from >= offset {
@@ -214,7 +217,7 @@ impl Transaction {
             let start = (change.from as isize + delta) as usize;
             return match assoc {
                 Assoc::Before => start,
-                Assoc::After => start + change.inserted_len(),
+                Assoc::After => start + inserted,
             };
         }
         (offset as isize + delta).max(0) as usize

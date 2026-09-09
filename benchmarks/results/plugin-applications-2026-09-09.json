@@ -1,0 +1,5033 @@
+{
+  "complete": true,
+  "binaries": {
+    "before": {
+      "path": "retained-base/runyte-c7c18bd",
+      "bytes": 45335520,
+      "sha256": "724984cd14f457584ec0162926dfa0ea74f60bbce10ab7c9f1ef31dedbdbc2ec"
+    },
+    "after": {
+      "path": "target/release/runyte",
+      "bytes": 48735392,
+      "sha256": "4951842e178fc1d591e8e270a7fd258162f6fde1506a7014b85beae28b96e3a1"
+    }
+  },
+  "parameters": {
+    "startup_runs": 10,
+    "idle_runs": 3,
+    "idle_seconds": 10,
+    "latency_samples": 40
+  },
+  "contracts": {
+    "startup": "Process start to completed document frame and demonstrated first edit; registration receipt is separate. Epoch1 command/undo proof runs after captured startup times and before idle settlement.",
+    "screen_activity": "screen_bytes counts observed PTY output bytes; pty_read_chunks counts harness reads, not editor write syscalls.",
+    "first_usable_view": "Separate fresh process; start to first completed native plugin view frame after explicit command and acknowledged presentation; no Escape delay in known Normal mode.",
+    "input_latency": "Each key write to exact edited marker in a completed synchronized frame; deterministic 60\u201381 ms spacing excluded from timing; >=2 workload progress points inside the >=1 second phase."
+  },
+  "startup": {
+    "base-disabled": {
+      "short.txt": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.8604939840734005,
+            "first_document_ms": 8.11391498427838,
+            "ready_to_edit_ms": 11.617543990723789,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.1460690156091005,
+            "first_document_ms": 7.8636429971084,
+            "ready_to_edit_ms": 12.200260011013597,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.522613016888499,
+            "first_document_ms": 6.886481016408652,
+            "ready_to_edit_ms": 10.851247003301978,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.103845993289724,
+            "first_document_ms": 7.556016993476078,
+            "ready_to_edit_ms": 11.39593799598515,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.292953999945894,
+            "first_document_ms": 10.64145498094149,
+            "ready_to_edit_ms": 13.981111987959594,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.862560977926478,
+            "first_document_ms": 7.143195980461314,
+            "ready_to_edit_ms": 10.698456986574456,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.2190429996699095,
+            "first_document_ms": 7.671534986002371,
+            "ready_to_edit_ms": 11.215222999453545,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.1484299949370325,
+            "first_document_ms": 8.29868801520206,
+            "ready_to_edit_ms": 12.327320000622422,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.530405003810301,
+            "first_document_ms": 8.255483990069479,
+            "ready_to_edit_ms": 13.735799991991371,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.3463130025193095,
+            "first_document_ms": 7.523242995375767,
+            "ready_to_edit_ms": 11.398903996450827,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.2826780010946095,
+            "min": 4.522613016888499,
+            "max": 6.292953999945894,
+            "p95": 6.292953999945894
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 7.767588991555385,
+            "min": 6.886481016408652,
+            "max": 10.64145498094149,
+            "p95": 10.64145498094149
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 11.508223993587308,
+            "min": 10.698456986574456,
+            "max": 13.981111987959594,
+            "p95": 13.981111987959594
+          }
+        }
+      },
+      "medium.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.155988998012617,
+            "first_document_ms": 8.220233983593062,
+            "ready_to_edit_ms": 11.657994007691741,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.775451001478359,
+            "first_document_ms": 7.132936007110402,
+            "ready_to_edit_ms": 11.401019000913948,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.252417991869152,
+            "first_document_ms": 8.032134006498381,
+            "ready_to_edit_ms": 11.52454101247713,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.740020987810567,
+            "first_document_ms": 7.764006993966177,
+            "ready_to_edit_ms": 13.404337980318815,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.433224025182426,
+            "first_document_ms": 9.047340019606054,
+            "ready_to_edit_ms": 13.461199006997049,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.503775999182835,
+            "first_document_ms": 8.46062699565664,
+            "ready_to_edit_ms": 14.280670991865918,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.584203998092562,
+            "first_document_ms": 7.3350429884158075,
+            "ready_to_edit_ms": 11.513148987432942,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.156827002996579,
+            "first_document_ms": 9.874487004708499,
+            "ready_to_edit_ms": 14.48653600527905,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.162308010971174,
+            "first_document_ms": 9.071769018191844,
+            "ready_to_edit_ms": 17.68561700009741,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.3933619821909815,
+            "first_document_ms": 8.810423983959481,
+            "ready_to_edit_ms": 12.592330982442945,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.204203494940884,
+            "min": 4.503775999182835,
+            "max": 6.3933619821909815,
+            "p95": 6.3933619821909815
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.34043048962485,
+            "min": 7.132936007110402,
+            "max": 9.874487004708499,
+            "p95": 9.874487004708499
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 12.99833448138088,
+            "min": 11.401019000913948,
+            "max": 17.68561700009741,
+            "p95": 17.68561700009741
+          }
+        }
+      },
+      "long.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.12426599743776,
+            "first_document_ms": 15.31226999941282,
+            "ready_to_edit_ms": 16.845053993165493,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.186288006370887,
+            "first_document_ms": 12.959001993294805,
+            "ready_to_edit_ms": 16.869841987499967,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.475169000215828,
+            "first_document_ms": 13.693636021343991,
+            "ready_to_edit_ms": 19.079527002759278,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.530644993996248,
+            "first_document_ms": 13.393506000284106,
+            "ready_to_edit_ms": 19.35034999041818,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.4660679888911545,
+            "first_document_ms": 15.053851006086916,
+            "ready_to_edit_ms": 18.508012988604605,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.350533996941522,
+            "first_document_ms": 14.914277009665966,
+            "ready_to_edit_ms": 18.523042992455885,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.0190690089948475,
+            "first_document_ms": 14.94910501060076,
+            "ready_to_edit_ms": 18.608871003380045,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.263079016003758,
+            "first_document_ms": 18.020014016656205,
+            "ready_to_edit_ms": 20.818226999836043,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.625081015750766,
+            "first_document_ms": 16.954930004430935,
+            "ready_to_edit_ms": 20.368641999084502,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.562146980082616,
+            "first_document_ms": 17.05826199031435,
+            "ready_to_edit_ms": 19.29851798922755,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.364573502447456,
+            "min": 4.475169000215828,
+            "max": 7.350533996941522,
+            "p95": 7.350533996941522
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 15.001478008343838,
+            "min": 12.959001993294805,
+            "max": 18.020014016656205,
+            "p95": 18.020014016656205
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 18.84419900306966,
+            "min": 16.845053993165493,
+            "max": 20.818226999836043,
+            "p95": 20.818226999836043
+          }
+        }
+      }
+    },
+    "branch-disabled": {
+      "short.txt": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.471589014632627,
+            "first_document_ms": 8.07959699886851,
+            "ready_to_edit_ms": 12.183357001049444,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.702177015133202,
+            "first_document_ms": 7.58552600746043,
+            "ready_to_edit_ms": 12.297041015699506,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.168242991203442,
+            "first_document_ms": 8.185546001186594,
+            "ready_to_edit_ms": 15.619012992829084,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.633638007566333,
+            "first_document_ms": 7.485059002647176,
+            "ready_to_edit_ms": 11.333084985380992,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.700669978978112,
+            "first_document_ms": 8.8885479781311,
+            "ready_to_edit_ms": 14.316591987153515,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.629971012240276,
+            "first_document_ms": 8.350771007826552,
+            "ready_to_edit_ms": 12.575869011925533,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.715616007568315,
+            "first_document_ms": 9.474780992604792,
+            "ready_to_edit_ms": 13.188203010940924,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.0700290012173355,
+            "first_document_ms": 6.998130003921688,
+            "ready_to_edit_ms": 15.725281002232805,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.541003007441759,
+            "first_document_ms": 9.025558014400303,
+            "ready_to_edit_ms": 12.501473014708608,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.568378983298317,
+            "first_document_ms": 8.277346001705155,
+            "ready_to_edit_ms": 12.57044798694551,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.599174997769296,
+            "min": 4.702177015133202,
+            "max": 6.715616007568315,
+            "p95": 6.715616007568315
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.231446001445875,
+            "min": 6.998130003921688,
+            "max": 9.474780992604792,
+            "p95": 9.474780992604792
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 12.573158499435522,
+            "min": 11.333084985380992,
+            "max": 15.725281002232805,
+            "p95": 15.725281002232805
+          }
+        }
+      },
+      "medium.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 6.6418100032024086,
+            "first_document_ms": 9.641337994253263,
+            "ready_to_edit_ms": 13.199144013924524,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.968580004060641,
+            "first_document_ms": 8.93348699901253,
+            "ready_to_edit_ms": 14.421158004552126,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.0075340152252465,
+            "first_document_ms": 9.899637021590024,
+            "ready_to_edit_ms": 18.164749024435878,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.963510000379756,
+            "first_document_ms": 7.857479999074712,
+            "ready_to_edit_ms": 11.756987980334088,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.754134996095672,
+            "first_document_ms": 8.938076003687456,
+            "ready_to_edit_ms": 12.445322994608432,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.254562012851238,
+            "first_document_ms": 7.664080010727048,
+            "ready_to_edit_ms": 11.334067006828263,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.508901987923309,
+            "first_document_ms": 8.876303996657953,
+            "ready_to_edit_ms": 12.410052004270256,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.753834004281089,
+            "first_document_ms": 8.39792299666442,
+            "ready_to_edit_ms": 25.774241017643362,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.875142989680171,
+            "first_document_ms": 9.00348401046358,
+            "ready_to_edit_ms": 12.547933991299942,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.99136101664044,
+            "first_document_ms": 8.308487012982368,
+            "ready_to_edit_ms": 11.919106997083873,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.7539845001883805,
+            "min": 4.963510000379756,
+            "max": 6.6418100032024086,
+            "p95": 6.6418100032024086
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.904895497835241,
+            "min": 7.664080010727048,
+            "max": 9.899637021590024,
+            "p95": 9.899637021590024
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 12.496628492954187,
+            "min": 11.334067006828263,
+            "max": 25.774241017643362,
+            "p95": 25.774241017643362
+          }
+        }
+      },
+      "long.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.886323982849717,
+            "first_document_ms": 17.63439498608932,
+            "ready_to_edit_ms": 21.070140996016562,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.715047009289265,
+            "first_document_ms": 14.534779998939484,
+            "ready_to_edit_ms": 18.46169200143777,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.520645994693041,
+            "first_document_ms": 14.846253005089238,
+            "ready_to_edit_ms": 21.4065829932224,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.648276011925191,
+            "first_document_ms": 16.950902005191892,
+            "ready_to_edit_ms": 21.079219004604965,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.411061021732166,
+            "first_document_ms": 15.413319022627547,
+            "ready_to_edit_ms": 19.06726401648484,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.366131983464584,
+            "first_document_ms": 13.442002004012465,
+            "ready_to_edit_ms": 17.25928799714893,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.5153860012069345,
+            "first_document_ms": 17.134132998762652,
+            "ready_to_edit_ms": 22.55486199283041,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.842879007104784,
+            "first_document_ms": 17.31198202469386,
+            "ready_to_edit_ms": 23.51426801760681,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.289648008532822,
+            "first_document_ms": 14.621420996263623,
+            "ready_to_edit_ms": 18.225156993139535,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.082651001634076,
+            "first_document_ms": 14.545812999131158,
+            "ready_to_edit_ms": 18.15772501868196,
+            "plugin_registered_ms": null,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.681661510607228,
+            "min": 5.366131983464584,
+            "max": 6.289648008532822,
+            "p95": 6.289648008532822
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 15.129786013858393,
+            "min": 13.442002004012465,
+            "max": 17.63439498608932,
+            "p95": 17.63439498608932
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 20.068702506250702,
+            "min": 17.25928799714893,
+            "max": 23.51426801760681,
+            "p95": 23.51426801760681
+          }
+        }
+      }
+    },
+    "branch-quiescent": {
+      "short.txt": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 6.433209986425936,
+            "first_document_ms": 8.979887992609292,
+            "ready_to_edit_ms": 14.034677005838603,
+            "plugin_registered_ms": 57.97519,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.705010997597128,
+            "first_document_ms": 9.326178987976164,
+            "ready_to_edit_ms": 13.16104899160564,
+            "plugin_registered_ms": 49.462371,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 8.018005988560617,
+            "first_document_ms": 9.90067797829397,
+            "ready_to_edit_ms": 13.63177498569712,
+            "plugin_registered_ms": 51.425863,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.466662005754188,
+            "first_document_ms": 9.36446400010027,
+            "ready_to_edit_ms": 13.026644999627024,
+            "plugin_registered_ms": 47.805162,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.504179997136816,
+            "first_document_ms": 9.069554012967274,
+            "ready_to_edit_ms": 12.661507003940642,
+            "plugin_registered_ms": 46.83259,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.87941100820899,
+            "first_document_ms": 8.33933800458908,
+            "ready_to_edit_ms": 12.181142985355109,
+            "plugin_registered_ms": 48.509487,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.518918002257124,
+            "first_document_ms": 8.597776002716273,
+            "ready_to_edit_ms": 17.562824999913573,
+            "plugin_registered_ms": 55.365198,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.158248987048864,
+            "first_document_ms": 8.104325999738649,
+            "ready_to_edit_ms": 11.973423999734223,
+            "plugin_registered_ms": 47.416278,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.115796015365049,
+            "first_document_ms": 8.536164998076856,
+            "ready_to_edit_ms": 12.167384993517771,
+            "plugin_registered_ms": 47.414594,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.944810021901503,
+            "first_document_ms": 8.726209023734555,
+            "ready_to_edit_ms": 14.335820014821365,
+            "plugin_registered_ms": 44.779042,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 6.468694991781376,
+            "min": 5.87941100820899,
+            "max": 8.018005988560617,
+            "p95": 8.018005988560617
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.853048508171923,
+            "min": 8.104325999738649,
+            "max": 9.90067797829397,
+            "p95": 9.90067797829397
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 13.093846995616332,
+            "min": 11.973423999734223,
+            "max": 17.562824999913573,
+            "p95": 17.562824999913573
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 48.1573245,
+            "min": 44.779042,
+            "max": 57.97519,
+            "p95": 57.97519
+          }
+        }
+      },
+      "medium.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 6.114002986578271,
+            "first_document_ms": 9.205952985212207,
+            "ready_to_edit_ms": 12.911248981254175,
+            "plugin_registered_ms": 46.267689,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.421264020493254,
+            "first_document_ms": 9.658242022851482,
+            "ready_to_edit_ms": 17.706668004393578,
+            "plugin_registered_ms": 55.390828,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.296522013144568,
+            "first_document_ms": 9.097419009776786,
+            "ready_to_edit_ms": 12.68888101913035,
+            "plugin_registered_ms": 47.034527,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.96474199462682,
+            "first_document_ms": 8.487518993206322,
+            "ready_to_edit_ms": 14.272464002715424,
+            "plugin_registered_ms": 58.609638,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.181951979873702,
+            "first_document_ms": 10.319481982151046,
+            "ready_to_edit_ms": 14.02174198301509,
+            "plugin_registered_ms": 49.448885,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.712462996598333,
+            "first_document_ms": 8.63786501577124,
+            "ready_to_edit_ms": 12.699512008111924,
+            "plugin_registered_ms": 46.670882,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 3.869980020681396,
+            "first_document_ms": 6.368403002852574,
+            "ready_to_edit_ms": 13.28834000742063,
+            "plugin_registered_ms": 49.724547,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.680589994881302,
+            "first_document_ms": 8.79294000333175,
+            "ready_to_edit_ms": 12.521272001322359,
+            "plugin_registered_ms": 58.284198,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.279231001622975,
+            "first_document_ms": 8.15365300513804,
+            "ready_to_edit_ms": 12.057380023179576,
+            "plugin_registered_ms": 47.779132,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.384598014643416,
+            "first_document_ms": 7.785098016029224,
+            "ready_to_edit_ms": 13.334300019778311,
+            "plugin_registered_ms": 46.037677,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.532594004762359,
+            "min": 3.869980020681396,
+            "max": 7.181951979873702,
+            "p95": 7.181951979873702
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.715402509551495,
+            "min": 6.368403002852574,
+            "max": 10.319481982151046,
+            "p95": 10.319481982151046
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 13.099794494337402,
+            "min": 12.057380023179576,
+            "max": 17.706668004393578,
+            "p95": 17.706668004393578
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 48.6140085,
+            "min": 46.037677,
+            "max": 58.609638,
+            "p95": 58.609638
+          }
+        }
+      },
+      "long.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 6.922270986251533,
+            "first_document_ms": 15.171201986959204,
+            "ready_to_edit_ms": 18.744297994999215,
+            "plugin_registered_ms": 65.048158,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 8.195164991775528,
+            "first_document_ms": 17.53260599798523,
+            "ready_to_edit_ms": 25.346139998873696,
+            "plugin_registered_ms": 74.507059,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.150203000288457,
+            "first_document_ms": 15.469178004423156,
+            "ready_to_edit_ms": 21.291095996275544,
+            "plugin_registered_ms": 55.755446,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.614360008621588,
+            "first_document_ms": 16.518630989594385,
+            "ready_to_edit_ms": 20.222353981807828,
+            "plugin_registered_ms": 58.753421,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.315943009918556,
+            "first_document_ms": 16.559331997996196,
+            "ready_to_edit_ms": 18.975052022142336,
+            "plugin_registered_ms": 56.500561,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.975283023668453,
+            "first_document_ms": 13.454376021400094,
+            "ready_to_edit_ms": 18.973908998304978,
+            "plugin_registered_ms": 51.850316,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.822197999805212,
+            "first_document_ms": 14.433030009968206,
+            "ready_to_edit_ms": 18.021866999333724,
+            "plugin_registered_ms": 54.497642,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.4637829889543355,
+            "first_document_ms": 14.362160989549011,
+            "ready_to_edit_ms": 18.43408797867596,
+            "plugin_registered_ms": 56.561942,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.013595004333183,
+            "first_document_ms": 17.61303300736472,
+            "ready_to_edit_ms": 23.363631014944986,
+            "plugin_registered_ms": 63.438163,
+            "epoch1_proven": false
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.267835007747635,
+            "first_document_ms": 21.54929400421679,
+            "ready_to_edit_ms": 23.049303010338917,
+            "plugin_registered_ms": 68.47682,
+            "epoch1_proven": false
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.917896502069198,
+            "min": 4.975283023668453,
+            "max": 8.195164991775528,
+            "p95": 8.195164991775528
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 15.99390449700877,
+            "min": 13.454376021400094,
+            "max": 21.54929400421679,
+            "p95": 21.54929400421679
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 19.598703001975082,
+            "min": 18.021866999333724,
+            "max": 25.346139998873696,
+            "p95": 25.346139998873696
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 57.6576815,
+            "min": 51.850316,
+            "max": 74.507059,
+            "p95": 74.507059
+          }
+        }
+      }
+    },
+    "branch-epoch1-quiescent": {
+      "short.txt": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 6.869498000014573,
+            "first_document_ms": 8.812387997750193,
+            "ready_to_edit_ms": 16.363956994609907,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.354601984843612,
+            "first_document_ms": 9.889465989544988,
+            "ready_to_edit_ms": 13.601334998384118,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.303564994595945,
+            "first_document_ms": 8.299520006403327,
+            "ready_to_edit_ms": 11.90282599418424,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.525350996525958,
+            "first_document_ms": 9.252683987142518,
+            "ready_to_edit_ms": 13.785416987957433,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.508438003947958,
+            "first_document_ms": 8.604829985415563,
+            "ready_to_edit_ms": 14.091919991187751,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.553924020612612,
+            "first_document_ms": 10.073398007079959,
+            "ready_to_edit_ms": 16.895353008294478,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.86667300760746,
+            "first_document_ms": 8.88807701994665,
+            "ready_to_edit_ms": 12.421866005752236,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.751018994487822,
+            "first_document_ms": 7.641726988367736,
+            "ready_to_edit_ms": 11.465044983197004,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.049340987578034,
+            "first_document_ms": 9.447025979170576,
+            "ready_to_edit_ms": 13.11222297954373,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.717940006637946,
+            "first_document_ms": 8.656721998704597,
+            "ready_to_edit_ms": 13.085801008855924,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 6.792306507122703,
+            "min": 5.751018994487822,
+            "max": 7.553924020612612,
+            "p95": 7.553924020612612
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.850232508848421,
+            "min": 7.641726988367736,
+            "max": 10.073398007079959,
+            "p95": 10.073398007079959
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 13.356778988963924,
+            "min": 11.465044983197004,
+            "max": 16.895353008294478,
+            "p95": 16.895353008294478
+          }
+        }
+      },
+      "medium.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 7.194367004558444,
+            "first_document_ms": 9.643341996707022,
+            "ready_to_edit_ms": 33.542888006195426,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.4835530172567815,
+            "first_document_ms": 8.232288004364818,
+            "ready_to_edit_ms": 11.964586999965832,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.31676399987191,
+            "first_document_ms": 8.459914999548346,
+            "ready_to_edit_ms": 12.707466987194493,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.794874974526465,
+            "first_document_ms": 9.753658989211544,
+            "ready_to_edit_ms": 13.620231999084353,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.415238003479317,
+            "first_document_ms": 8.611522993305698,
+            "ready_to_edit_ms": 13.146721001248807,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.344870005501434,
+            "first_document_ms": 9.158038010355085,
+            "ready_to_edit_ms": 16.569561994401738,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.234539992874488,
+            "first_document_ms": 8.88015198870562,
+            "ready_to_edit_ms": 12.878593988716602,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.067224003141746,
+            "first_document_ms": 7.889383006840944,
+            "ready_to_edit_ms": 13.349930988624692,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.866735999006778,
+            "first_document_ms": 9.052590990904719,
+            "ready_to_edit_ms": 12.956207006936893,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.8096900067757815,
+            "first_document_ms": 10.547018988290802,
+            "ready_to_edit_ms": 15.867771988268942,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.639213995891623,
+            "min": 5.067224003141746,
+            "max": 7.194367004558444,
+            "p95": 7.194367004558444
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.96637148980517,
+            "min": 7.889383006840944,
+            "max": 10.547018988290802,
+            "p95": 10.547018988290802
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 13.24832599493675,
+            "min": 11.964586999965832,
+            "max": 33.542888006195426,
+            "p95": 33.542888006195426
+          }
+        }
+      },
+      "long.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 4.50194301083684,
+            "first_document_ms": 12.865509022958577,
+            "ready_to_edit_ms": 23.60431500710547,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.452578003518283,
+            "first_document_ms": 14.619727997342125,
+            "ready_to_edit_ms": 18.135350983357057,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.285149022005498,
+            "first_document_ms": 14.991809002822265,
+            "ready_to_edit_ms": 18.946866010082886,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.576165014645085,
+            "first_document_ms": 14.560472016455606,
+            "ready_to_edit_ms": 18.17043000482954,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.924529978074133,
+            "first_document_ms": 14.420285995583981,
+            "ready_to_edit_ms": 18.13270599814132,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.847131000133231,
+            "first_document_ms": 18.333549989620224,
+            "ready_to_edit_ms": 21.946824999758974,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.422942980658263,
+            "first_document_ms": 14.364845992531627,
+            "ready_to_edit_ms": 18.813684000633657,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.948167003225535,
+            "first_document_ms": 14.312914980109781,
+            "ready_to_edit_ms": 17.92917598504573,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 7.439367996994406,
+            "first_document_ms": 14.689243980683386,
+            "ready_to_edit_ms": 19.502779003232718,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.8026600163429976,
+            "first_document_ms": 17.316300014499575,
+            "ready_to_edit_ms": 22.582636011065915,
+            "plugin_registered_ms": null,
+            "epoch1_proven": true
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.8635949972085655,
+            "min": 4.50194301083684,
+            "max": 7.439367996994406,
+            "p95": 7.439367996994406
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 14.590100006898865,
+            "min": 12.865509022958577,
+            "max": 18.333549989620224,
+            "p95": 18.333549989620224
+          },
+          "ready_to_edit_ms": {
+            "count": 10,
+            "median": 18.88027500535827,
+            "min": 17.92917598504573,
+            "max": 23.60431500710547,
+            "p95": 23.60431500710547
+          }
+        }
+      }
+    },
+    "branch-first-usable-view": {
+      "short.txt": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.6386979995295405,
+            "first_document_ms": 7.971473998622969,
+            "plugin_registered_ms": 44.503139,
+            "first_usable_view_ms": 61.921429994981736,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225727499165106,
+              "view": "v:18d37788b4e64cb4-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.3648160139564425,
+            "first_document_ms": 9.00417601224035,
+            "plugin_registered_ms": 49.720669,
+            "first_usable_view_ms": 66.6150700126309,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225727751119592,
+              "view": "v:18d37788c3b1a6cf-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.616831000428647,
+            "first_document_ms": 9.06295099412091,
+            "plugin_registered_ms": 54.746191,
+            "first_usable_view_ms": 74.56667500082403,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225728013921326,
+              "view": "v:18d37788d2f3c196-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.800566024845466,
+            "first_document_ms": 9.071237000171095,
+            "plugin_registered_ms": 46.054199,
+            "first_usable_view_ms": 65.31063502188772,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225728274262523,
+              "view": "v:18d37788e2eae015-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.224173015449196,
+            "first_document_ms": 7.130601996323094,
+            "plugin_registered_ms": 56.986557,
+            "first_usable_view_ms": 75.4124190134462,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225728540511046,
+              "view": "v:18d37788f21ce5c8-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.854832998011261,
+            "first_document_ms": 8.369638002477586,
+            "plugin_registered_ms": 49.831157,
+            "first_usable_view_ms": 71.22945401351899,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225728803448117,
+              "view": "v:18d3778902107dcc-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.540134006878361,
+            "first_document_ms": 7.42072201683186,
+            "plugin_registered_ms": 44.619339,
+            "first_usable_view_ms": 61.47900002542883,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225729050713532,
+              "view": "v:18d37789115e21c4-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 4.707476997282356,
+            "first_document_ms": 7.969861995661631,
+            "plugin_registered_ms": 44.326683,
+            "first_usable_view_ms": 63.4161289781332,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225729298636239,
+              "view": "v:18d37789201ef42d-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.669664988294244,
+            "first_document_ms": 9.091296000406146,
+            "plugin_registered_ms": 47.247496,
+            "first_usable_view_ms": 64.01079799979925,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225729557085786,
+              "view": "v:18d377892f7e47d6-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.6335040028207,
+            "first_document_ms": 8.958344988059253,
+            "plugin_registered_ms": 48.651136,
+            "first_usable_view_ms": 70.01781099825166,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225729811746542,
+              "view": "v:18d377893e4ef03c-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.827699511428364,
+            "min": 4.707476997282356,
+            "max": 6.669664988294244,
+            "p95": 6.669664988294244
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.66399149526842,
+            "min": 7.130601996323094,
+            "max": 9.091296000406146,
+            "p95": 9.091296000406146
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 47.949315999999996,
+            "min": 44.326683,
+            "max": 56.986557,
+            "p95": 56.986557
+          },
+          "first_usable_view_ms": {
+            "count": 10,
+            "median": 65.96285251725931,
+            "min": 61.47900002542883,
+            "max": 75.4124190134462,
+            "p95": 75.4124190134462
+          }
+        }
+      },
+      "medium.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.8193930017296225,
+            "first_document_ms": 8.255322987679392,
+            "plugin_registered_ms": 46.221859,
+            "first_usable_view_ms": 68.25685800868087,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225730068633978,
+              "view": "v:18d377894db4c41b-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.1525480123236775,
+            "first_document_ms": 8.856916014337912,
+            "plugin_registered_ms": 45.33699,
+            "first_usable_view_ms": 68.73231299687177,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225730334669862,
+              "view": "v:18d377895d91b592-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.3525220029987395,
+            "first_document_ms": 9.365145000629127,
+            "plugin_registered_ms": 50.905108,
+            "first_usable_view_ms": 76.40666398219764,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225730598544838,
+              "view": "v:18d377896cf69d6f-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.887626990443096,
+            "first_document_ms": 9.44194698240608,
+            "plugin_registered_ms": 52.078416,
+            "first_usable_view_ms": 79.60961200296879,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225730870464442,
+              "view": "v:18d377897ce810ad-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.763633002061397,
+            "first_document_ms": 8.235604007495567,
+            "plugin_registered_ms": 51.10911,
+            "first_usable_view_ms": 75.61350401374511,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225731141734348,
+              "view": "v:18d377898d44ed3a-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.252835999475792,
+            "first_document_ms": 9.664985002018511,
+            "plugin_registered_ms": 59.436744,
+            "first_usable_view_ms": 86.46943100029603,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225731424587872,
+              "view": "v:18d377899d82a51d-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.938447022344917,
+            "first_document_ms": 9.08905200776644,
+            "plugin_registered_ms": 49.743304,
+            "first_usable_view_ms": 74.25913101178594,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225731689068238,
+              "view": "v:18d37789ae01720a-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.371662002289668,
+            "first_document_ms": 8.698604011442512,
+            "plugin_registered_ms": 53.842344,
+            "first_usable_view_ms": 75.30886499444023,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225731953018652,
+              "view": "v:18d37789bda45fe1-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.981320980936289,
+            "first_document_ms": 8.591574005549774,
+            "plugin_registered_ms": 44.824742,
+            "first_usable_view_ms": 67.19747500028461,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225732208504952,
+              "view": "v:18d37789cd5a00d4-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.453313002362847,
+            "first_document_ms": 15.377136995084584,
+            "plugin_registered_ms": 56.976707,
+            "first_usable_view_ms": 86.94746097899042,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225732487835709,
+              "view": "v:18d37789dcc76be5-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.913037006394006,
+            "min": 5.371662002289668,
+            "max": 6.3525220029987395,
+            "p95": 6.3525220029987395
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 8.972984011052176,
+            "min": 8.235604007495567,
+            "max": 15.377136995084584,
+            "p95": 15.377136995084584
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 51.007109,
+            "min": 44.824742,
+            "max": 59.436744,
+            "p95": 59.436744
+          },
+          "first_usable_view_ms": {
+            "count": 10,
+            "median": 75.46118450409267,
+            "min": 67.19747500028461,
+            "max": 86.94746097899042,
+            "p95": 86.94746097899042
+          }
+        }
+      },
+      "long.lua": {
+        "samples": [
+          {
+            "complete": true,
+            "first_byte_ms": 5.839051998918876,
+            "first_document_ms": 14.484261977486312,
+            "plugin_registered_ms": 57.967185,
+            "first_usable_view_ms": 76.78910598042421,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225732763043739,
+              "view": "v:18d37789ee2abcef-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.7418610085733235,
+            "first_document_ms": 17.38976500928402,
+            "plugin_registered_ms": 54.132274,
+            "first_usable_view_ms": 72.26815601461567,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225733058236838,
+              "view": "v:18d3778a001da825-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.489341001724824,
+            "first_document_ms": 14.390207012183964,
+            "plugin_registered_ms": 66.048516,
+            "first_usable_view_ms": 86.66056700167246,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225733362668352,
+              "view": "v:18d3778a115607e3-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.93074198695831,
+            "first_document_ms": 16.238229989539832,
+            "plugin_registered_ms": 63.090058,
+            "first_usable_view_ms": 87.49088898184709,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225733662714764,
+              "view": "v:18d3778a23402952-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.234961008885875,
+            "first_document_ms": 17.7986390190199,
+            "plugin_registered_ms": 57.659951,
+            "first_usable_view_ms": 80.96108000609092,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225733960317741,
+              "view": "v:18d3778a359bf145-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.510415998287499,
+            "first_document_ms": 17.097741016186774,
+            "plugin_registered_ms": 69.413873,
+            "first_usable_view_ms": 92.30224101338536,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225734276454081,
+              "view": "v:18d3778a479e5c98-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 6.43216900061816,
+            "first_document_ms": 15.12708599329926,
+            "plugin_registered_ms": 55.829311,
+            "first_usable_view_ms": 72.54825701238587,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225734568886451,
+              "view": "v:18d3778a5a11f266-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.708975018933415,
+            "first_document_ms": 17.890108021674678,
+            "plugin_registered_ms": 57.612186,
+            "first_usable_view_ms": 78.35208901087753,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225734858972377,
+              "view": "v:18d3778a6b3caaf3-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.653125990647823,
+            "first_document_ms": 13.805516995489597,
+            "plugin_registered_ms": 52.254552,
+            "first_usable_view_ms": 71.00864898529835,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225735139996844,
+              "view": "v:18d3778a7c342733-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          },
+          {
+            "complete": true,
+            "first_byte_ms": 5.486929003382102,
+            "first_document_ms": 14.599827991332859,
+            "plugin_registered_ms": 51.440391,
+            "first_usable_view_ms": 69.02877599350177,
+            "view_admission": {
+              "owner": "workload",
+              "event": "view",
+              "at_ns": 225735420762964,
+              "view": "v:18d3778a8cfc4c76-1:3",
+              "revision": "m:2",
+              "rows": 1,
+              "bytes": 119
+            }
+          }
+        ],
+        "summary": {
+          "first_byte_ms": {
+            "count": 10,
+            "median": 5.7904565037461,
+            "min": 5.486929003382102,
+            "max": 6.489341001724824,
+            "p95": 6.489341001724824
+          },
+          "first_document_ms": {
+            "count": 10,
+            "median": 15.682657991419546,
+            "min": 13.805516995489597,
+            "max": 17.890108021674678,
+            "p95": 17.890108021674678
+          },
+          "plugin_registered_ms": {
+            "count": 10,
+            "median": 57.6360685,
+            "min": 51.440391,
+            "max": 69.413873,
+            "p95": 69.413873
+          },
+          "first_usable_view_ms": {
+            "count": 10,
+            "median": 77.57059749565087,
+            "min": 69.02877599350177,
+            "max": 92.30224101338536,
+            "p95": 92.30224101338536
+          }
+        }
+      }
+    }
+  },
+  "workloads": {
+    "base-disabled": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000070610025432,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 3,
+            "pids": [
+              3497179
+            ],
+            "roots": [
+              3497179
+            ],
+            "identities": {
+              "3497179": "22573563"
+            }
+          },
+          "cpu_after": {
+            "ticks": 3,
+            "pids": [
+              3497179
+            ],
+            "roots": [
+              3497179
+            ],
+            "identities": {
+              "3497179": "22573563"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.00009041899466,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 3,
+            "pids": [
+              3497447
+            ],
+            "roots": [
+              3497447
+            ],
+            "identities": {
+              "3497447": "22574824"
+            }
+          },
+          "cpu_after": {
+            "ticks": 3,
+            "pids": [
+              3497447
+            ],
+            "roots": [
+              3497447
+            ],
+            "identities": {
+              "3497447": "22574824"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000058195990277,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 4,
+            "pids": [
+              3497720
+            ],
+            "roots": [
+              3497720
+            ],
+            "identities": {
+              "3497720": "22576085"
+            }
+          },
+          "cpu_after": {
+            "ticks": 4,
+            "pids": [
+              3497720
+            ],
+            "roots": [
+              3497720
+            ],
+            "identities": {
+              "3497720": "22576085"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000070610025432,
+          "min": 10.000058195990277,
+          "max": 10.00009041899466,
+          "p95": 10.00009041899466
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "branch-disabled": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000117340998258,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 3,
+            "pids": [
+              3498067
+            ],
+            "roots": [
+              3498067
+            ],
+            "identities": {
+              "3498067": "22577346"
+            }
+          },
+          "cpu_after": {
+            "ticks": 3,
+            "pids": [
+              3498067
+            ],
+            "roots": [
+              3498067
+            ],
+            "identities": {
+              "3498067": "22577346"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000103012978798,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 4,
+            "pids": [
+              3498346
+            ],
+            "roots": [
+              3498346
+            ],
+            "identities": {
+              "3498346": "22578608"
+            }
+          },
+          "cpu_after": {
+            "ticks": 4,
+            "pids": [
+              3498346
+            ],
+            "roots": [
+              3498346
+            ],
+            "identities": {
+              "3498346": "22578608"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000081563019194,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 3,
+            "pids": [
+              3498620
+            ],
+            "roots": [
+              3498620
+            ],
+            "identities": {
+              "3498620": "22579869"
+            }
+          },
+          "cpu_after": {
+            "ticks": 3,
+            "pids": [
+              3498620
+            ],
+            "roots": [
+              3498620
+            ],
+            "identities": {
+              "3498620": "22579869"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000103012978798,
+          "min": 10.000081563019194,
+          "max": 10.000117340998258,
+          "p95": 10.000117340998258
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "branch-quiescent": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000081533013145,
+          "cpu_percent": 0.09999918467651614,
+          "cpu_before": {
+            "ticks": 9,
+            "pids": [
+              3498916,
+              3498965
+            ],
+            "roots": [
+              3498916
+            ],
+            "identities": {
+              "3498916": "22581130"
+            }
+          },
+          "cpu_after": {
+            "ticks": 10,
+            "pids": [
+              3498916,
+              3498965
+            ],
+            "roots": [
+              3498916
+            ],
+            "identities": {
+              "3498916": "22581130"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225811453833020,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225824058416021,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000063114974182,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 9,
+            "pids": [
+              3499298,
+              3499329
+            ],
+            "roots": [
+              3499298
+            ],
+            "identities": {
+              "3499298": "22582425"
+            }
+          },
+          "cpu_after": {
+            "ticks": 9,
+            "pids": [
+              3499298,
+              3499329
+            ],
+            "roots": [
+              3499298
+            ],
+            "identities": {
+              "3499298": "22582425"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225824405632376,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225837009623321,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000079096003901,
+          "cpu_percent": 0.09999920904621713,
+          "cpu_before": {
+            "ticks": 9,
+            "pids": [
+              3499613,
+              3499644
+            ],
+            "roots": [
+              3499613
+            ],
+            "identities": {
+              "3499613": "22583721"
+            }
+          },
+          "cpu_after": {
+            "ticks": 10,
+            "pids": [
+              3499613,
+              3499644
+            ],
+            "roots": [
+              3499613
+            ],
+            "identities": {
+              "3499613": "22583721"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225837372139041,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225849978411913,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.09999918467651614,
+          "min": 0.0,
+          "max": 0.09999920904621713,
+          "p95": 0.09999920904621713
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000079096003901,
+          "min": 10.000063114974182,
+          "max": 10.000081533013145,
+          "p95": 10.000081533013145
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "branch-epoch1-quiescent": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000055438023992,
+          "cpu_percent": 0.09999944562283343,
+          "cpu_before": {
+            "ticks": 6,
+            "pids": [
+              3499883,
+              3499914
+            ],
+            "roots": [
+              3499883
+            ],
+            "identities": {
+              "3499883": "22585017"
+            }
+          },
+          "cpu_after": {
+            "ticks": 7,
+            "pids": [
+              3499883,
+              3499914
+            ],
+            "roots": [
+              3499883
+            ],
+            "identities": {
+              "3499883": "22585017"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": true,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.00005790501018,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 6,
+            "pids": [
+              3500157,
+              3500189
+            ],
+            "roots": [
+              3500157
+            ],
+            "identities": {
+              "3500157": "22586299"
+            }
+          },
+          "cpu_after": {
+            "ticks": 6,
+            "pids": [
+              3500157,
+              3500189
+            ],
+            "roots": [
+              3500157
+            ],
+            "identities": {
+              "3500157": "22586299"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": true,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000061541999457,
+          "cpu_percent": 0.09999938458379282,
+          "cpu_before": {
+            "ticks": 6,
+            "pids": [
+              3500431,
+              3500463
+            ],
+            "roots": [
+              3500431
+            ],
+            "identities": {
+              "3500431": "22587580"
+            }
+          },
+          "cpu_after": {
+            "ticks": 7,
+            "pids": [
+              3500431,
+              3500463
+            ],
+            "roots": [
+              3500431
+            ],
+            "identities": {
+              "3500431": "22587580"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": true,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": null,
+          "after_checkpoint": null
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.09999938458379282,
+          "min": 0.0,
+          "max": 0.09999944562283343,
+          "p95": 0.09999944562283343
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.00005790501018,
+          "min": 10.000055438023992,
+          "max": 10.000061541999457,
+          "p95": 10.000061541999457
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "visible": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000057425000705,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 9,
+            "pids": [
+              3500702,
+              3500733
+            ],
+            "roots": [
+              3500702
+            ],
+            "identities": {
+              "3500702": "22588862"
+            }
+          },
+          "cpu_after": {
+            "ticks": 9,
+            "pids": [
+              3500702,
+              3500733
+            ],
+            "roots": [
+              3500702
+            ],
+            "identities": {
+              "3500702": "22588862"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225888860632527,
+            "publication_acks": [
+              225888764891564
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225901455625580,
+            "publication_acks": [
+              225888764891564
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000081751990365,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 8,
+            "pids": [
+              3501001,
+              3501032
+            ],
+            "roots": [
+              3501001
+            ],
+            "identities": {
+              "3501001": "22590164"
+            }
+          },
+          "cpu_after": {
+            "ticks": 8,
+            "pids": [
+              3501001,
+              3501032
+            ],
+            "roots": [
+              3501001
+            ],
+            "identities": {
+              "3501001": "22590164"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225901887456519,
+            "publication_acks": [
+              225901790728165
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225914482854007,
+            "publication_acks": [
+              225901790728165
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.0000619830098,
+          "cpu_percent": 0.09999938017374387,
+          "cpu_before": {
+            "ticks": 9,
+            "pids": [
+              3501286,
+              3501317
+            ],
+            "roots": [
+              3501286
+            ],
+            "identities": {
+              "3501286": "22591467"
+            }
+          },
+          "cpu_after": {
+            "ticks": 10,
+            "pids": [
+              3501286,
+              3501317
+            ],
+            "roots": [
+              3501286
+            ],
+            "identities": {
+              "3501286": "22591467"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225914916709807,
+            "publication_acks": [
+              225914820570752
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225927511484379,
+            "publication_acks": [
+              225914820570752
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 1,
+            "model_bytes": 119
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.09999938017374387,
+          "p95": 0.09999938017374387
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.0000619830098,
+          "min": 10.000057425000705,
+          "max": 10.000081751990365,
+          "p95": 10.000081751990365
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "large": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000067793997005,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 21,
+            "pids": [
+              3501598,
+              3501629
+            ],
+            "roots": [
+              3501598
+            ],
+            "identities": {
+              "3501598": "22592770"
+            }
+          },
+          "cpu_after": {
+            "ticks": 21,
+            "pids": [
+              3501598,
+              3501629
+            ],
+            "roots": [
+              3501598
+            ],
+            "identities": {
+              "3501598": "22592770"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225928053437018,
+            "publication_acks": [
+              225927936157703
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225940667925685,
+            "publication_acks": [
+              225927936157703
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000059027021052,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 21,
+            "pids": [
+              3501916,
+              3501947
+            ],
+            "roots": [
+              3501916
+            ],
+            "identities": {
+              "3501916": "22594087"
+            }
+          },
+          "cpu_after": {
+            "ticks": 21,
+            "pids": [
+              3501916,
+              3501947
+            ],
+            "roots": [
+              3501916
+            ],
+            "identities": {
+              "3501916": "22594087"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225941224268891,
+            "publication_acks": [
+              225941107781223
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225953835037574,
+            "publication_acks": [
+              225941107781223
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000082513986854,
+          "cpu_percent": 0.09999917486693997,
+          "cpu_before": {
+            "ticks": 21,
+            "pids": [
+              3502235,
+              3502267
+            ],
+            "roots": [
+              3502235
+            ],
+            "identities": {
+              "3502235": "22595403"
+            }
+          },
+          "cpu_after": {
+            "ticks": 22,
+            "pids": [
+              3502235,
+              3502267
+            ],
+            "roots": [
+              3502235
+            ],
+            "identities": {
+              "3502235": "22595403"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225954378831894,
+            "publication_acks": [
+              225954262325479
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225966988717911,
+            "publication_acks": [
+              225954262325479
+            ],
+            "helper_progress": [],
+            "job_state": null,
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.09999917486693997,
+          "p95": 0.09999917486693997
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000067793997005,
+          "min": 10.000059027021052,
+          "max": 10.000082513986854,
+          "p95": 10.000082513986854
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        }
+      }
+    },
+    "detached-job": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000093866023235,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 13,
+            "pids": [
+              3502804,
+              3502836
+            ],
+            "roots": [
+              3502804
+            ],
+            "identities": {
+              "3502804": "22596719"
+            }
+          },
+          "cpu_after": {
+            "ticks": 13,
+            "pids": [
+              3502804,
+              3502836
+            ],
+            "roots": [
+              3502804
+            ],
+            "identities": {
+              "3502804": "22596719"
+            }
+          },
+          "screen_bytes": null,
+          "pty_read_chunks": null,
+          "epoch1_proven": false,
+          "frontend": "detached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225967545748088,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225980288927711,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.00006765499711,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 16,
+            "pids": [
+              3503209,
+              3503241
+            ],
+            "roots": [
+              3503209
+            ],
+            "identities": {
+              "3503209": "22598031"
+            }
+          },
+          "cpu_after": {
+            "ticks": 16,
+            "pids": [
+              3503209,
+              3503241
+            ],
+            "roots": [
+              3503209
+            ],
+            "identities": {
+              "3503209": "22598031"
+            }
+          },
+          "screen_bytes": null,
+          "pty_read_chunks": null,
+          "epoch1_proven": false,
+          "frontend": "detached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225980654479680,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225993369570039,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000068776978878,
+          "cpu_percent": 0.0,
+          "cpu_before": {
+            "ticks": 12,
+            "pids": [
+              3503578,
+              3503609
+            ],
+            "roots": [
+              3503578
+            ],
+            "identities": {
+              "3503578": "22599339"
+            }
+          },
+          "cpu_after": {
+            "ticks": 12,
+            "pids": [
+              3503578,
+              3503609
+            ],
+            "roots": [
+              3503578
+            ],
+            "identities": {
+              "3503578": "22599339"
+            }
+          },
+          "screen_bytes": null,
+          "pty_read_chunks": null,
+          "epoch1_proven": false,
+          "frontend": "detached",
+          "latency_ms": [],
+          "latency_summary": null,
+          "input_phase": null,
+          "input_phase_progress": null,
+          "quiet_probe_ms": null,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 225993717385913,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226006435456042,
+            "publication_acks": [],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000068776978878,
+          "min": 10.00006765499711,
+          "max": 10.000093866023235,
+          "p95": 10.000093866023235
+        }
+      }
+    },
+    "flood": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000097201991593,
+          "cpu_percent": 6.599935847309125,
+          "cpu_before": {
+            "ticks": 39,
+            "pids": [
+              3503968,
+              3503999,
+              3504000,
+              3504032,
+              3504038
+            ],
+            "roots": [
+              3503968
+            ],
+            "identities": {
+              "3503968": "22600645"
+            }
+          },
+          "cpu_after": {
+            "ticks": 105,
+            "pids": [
+              3503968,
+              3503999,
+              3504000,
+              3504032,
+              3504038
+            ],
+            "roots": [
+              3503968
+            ],
+            "identities": {
+              "3503968": "22600645"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.9425589998718351,
+            1.2602279894053936,
+            1.4925049908924848,
+            1.8105210037901998,
+            1.634504005778581,
+            1.628903002711013,
+            2.0328079990576953,
+            1.6221999831032008,
+            1.617589994566515,
+            1.6130120202433318,
+            1.6080210043583065,
+            1.8162009946536273,
+            1.6695630038157105,
+            1.5732840111013502,
+            1.217665005242452,
+            1.5621619822923094,
+            1.6365179908461869,
+            1.5926220221444964,
+            2.013138000620529,
+            1.3516879989765584,
+            1.6356570122297853,
+            1.651547005167231,
+            1.5547170187346637,
+            1.5723310061730444,
+            2.1797660156153142,
+            1.5800569963175803,
+            1.6251849883701652,
+            2.093997987685725,
+            1.8040470022242516,
+            1.7402219818904996,
+            1.7134990193881094,
+            1.6854639980010688,
+            1.7717739974614233,
+            1.8203789950348437,
+            1.8334249907638878,
+            2.293489989824593,
+            1.6976479964796454,
+            1.5269629948306829,
+            1.5974309935700148,
+            1.6684200090821832
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.636087501537986,
+            "min": 1.217665005242452,
+            "max": 2.293489989824593,
+            "p95": 2.093997987685725
+          },
+          "input_phase": {
+            "start_ns": 226019451826186,
+            "end_ns": 226022343024637
+          },
+          "input_phase_progress": [
+            [
+              226019491591530,
+              812384256
+            ],
+            [
+              226019692102408,
+              825098240
+            ],
+            [
+              226019892580372,
+              837746688
+            ],
+            [
+              226020092994990,
+              850460672
+            ],
+            [
+              226020293630684,
+              863109120
+            ],
+            [
+              226020494202783,
+              875692032
+            ],
+            [
+              226020694815862,
+              888406016
+            ],
+            [
+              226020896085993,
+              901120000
+            ],
+            [
+              226021096473599,
+              913833984
+            ],
+            [
+              226021296947534,
+              926416896
+            ],
+            [
+              226021497372965,
+              939065344
+            ],
+            [
+              226021697860036,
+              951713792
+            ],
+            [
+              226021898345204,
+              964362240
+            ],
+            [
+              226022098739032,
+              977010688
+            ],
+            [
+              226022299170363,
+              989593600
+            ]
+          ],
+          "quiet_probe_ms": 94.7448629885912,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226006773379203,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226006662985148,
+                196608
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 5701632,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226022636966335,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226016284508555,
+                609419264
+              ],
+              [
+                226016484897052,
+                622133248
+              ],
+              [
+                226016685358744,
+                634847232
+              ],
+              [
+                226016885762822,
+                647561216
+              ],
+              [
+                226017086234613,
+                660275200
+              ],
+              [
+                226017286680162,
+                672923648
+              ],
+              [
+                226017487091324,
+                685572096
+              ],
+              [
+                226017687513889,
+                698286080
+              ],
+              [
+                226017887905533,
+                710868992
+              ],
+              [
+                226018088370851,
+                723582976
+              ],
+              [
+                226018288792965,
+                736296960
+              ],
+              [
+                226018489237573,
+                748945408
+              ],
+              [
+                226018689708703,
+                761659392
+              ],
+              [
+                226018890166367,
+                774438912
+              ],
+              [
+                226019090648328,
+                787152896
+              ],
+              [
+                226019291127103,
+                799834112
+              ],
+              [
+                226019491591530,
+                812384256
+              ],
+              [
+                226019692102408,
+                825098240
+              ],
+              [
+                226019892580372,
+                837746688
+              ],
+              [
+                226020092994990,
+                850460672
+              ],
+              [
+                226020293630684,
+                863109120
+              ],
+              [
+                226020494202783,
+                875692032
+              ],
+              [
+                226020694815862,
+                888406016
+              ],
+              [
+                226020896085993,
+                901120000
+              ],
+              [
+                226021096473599,
+                913833984
+              ],
+              [
+                226021296947534,
+                926416896
+              ],
+              [
+                226021497372965,
+                939065344
+              ],
+              [
+                226021697860036,
+                951713792
+              ],
+              [
+                226021898345204,
+                964362240
+              ],
+              [
+                226022098739032,
+                977010688
+              ],
+              [
+                226022299170363,
+                989593600
+              ],
+              [
+                226022499588640,
+                1001914368
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 1010630656,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000092774018412,
+          "cpu_percent": 7.299932275594865,
+          "cpu_before": {
+            "ticks": 43,
+            "pids": [
+              3504659,
+              3504690,
+              3504692,
+              3504710,
+              3504716
+            ],
+            "roots": [
+              3504659
+            ],
+            "identities": {
+              "3504659": "22602283"
+            }
+          },
+          "cpu_after": {
+            "ticks": 116,
+            "pids": [
+              3504659,
+              3504690,
+              3504692,
+              3504710,
+              3504716
+            ],
+            "roots": [
+              3504659
+            ],
+            "identities": {
+              "3504659": "22602283"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.472004019888118,
+            2.5973170122597367,
+            1.901308016385883,
+            1.6244440048467368,
+            1.6264579899143428,
+            1.6488620021846145,
+            1.864305988419801,
+            1.5785639989189804,
+            1.6869980026967824,
+            1.2879630085080862,
+            2.0815030147787184,
+            1.4981360000092536,
+            1.6557759954594076,
+            1.6734809905756265,
+            1.9654749776236713,
+            1.314285007538274,
+            1.6055470041465014,
+            1.6952439909800887,
+            1.7569139890838414,
+            2.156780014047399,
+            2.0370359998196363,
+            1.3127910206094384,
+            2.0528860040940344,
+            1.5367419982794672,
+            2.0427569979801774,
+            2.178633993025869,
+            2.17215099837631,
+            1.850258995546028,
+            1.7728760140016675,
+            1.5436950197909027,
+            1.7715639842208475,
+            1.7554420046508312,
+            1.8550179956946522,
+            1.9250450131949037,
+            1.326388999586925,
+            1.244486978976056,
+            1.6327300108969212,
+            1.6288229962810874,
+            2.3037409991957247,
+            1.6056470049079508
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.6911209968384355,
+            "min": 1.244486978976056,
+            "max": 2.5973170122597367,
+            "p95": 2.178633993025869
+          },
+          "input_phase": {
+            "start_ns": 226035838936779,
+            "end_ns": 226038732435583
+          },
+          "input_phase_progress": [
+            [
+              226035881415227,
+              811466752
+            ],
+            [
+              226036081896727,
+              824049664
+            ],
+            [
+              226036282529014,
+              836698112
+            ],
+            [
+              226036482888304,
+              849412096
+            ],
+            [
+              226036683489510,
+              862060544
+            ],
+            [
+              226036883884511,
+              874774528
+            ],
+            [
+              226037084314810,
+              887488512
+            ],
+            [
+              226037285295412,
+              900202496
+            ],
+            [
+              226037485828153,
+              912850944
+            ],
+            [
+              226037686649552,
+              925433856
+            ],
+            [
+              226037887344903,
+              938082304
+            ],
+            [
+              226038087935418,
+              950665216
+            ],
+            [
+              226038288441697,
+              963248128
+            ],
+            [
+              226038488922136,
+              975962112
+            ],
+            [
+              226038689470538,
+              988676096
+            ]
+          ],
+          "quiet_probe_ms": 94.02194098220207,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226023159175560,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226023047071192,
+                262144
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 6160384,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226039021330316,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226032673946943,
+                607911936
+              ],
+              [
+                226032874550384,
+                620625920
+              ],
+              [
+                226033075097754,
+                633339904
+              ],
+              [
+                226033275713859,
+                646053888
+              ],
+              [
+                226033476236961,
+                658767872
+              ],
+              [
+                226033676657572,
+                671481856
+              ],
+              [
+                226033877078192,
+                684195840
+              ],
+              [
+                226034077482912,
+                696909824
+              ],
+              [
+                226034277981215,
+                709623808
+              ],
+              [
+                226034478555368,
+                722337792
+              ],
+              [
+                226034678937383,
+                735051776
+              ],
+              [
+                226034879364466,
+                747765760
+              ],
+              [
+                226035079776099,
+                760545280
+              ],
+              [
+                226035280165619,
+                773324800
+              ],
+              [
+                226035480661167,
+                786038784
+              ],
+              [
+                226035681058482,
+                798687232
+              ],
+              [
+                226035881415227,
+                811466752
+              ],
+              [
+                226036081896727,
+                824049664
+              ],
+              [
+                226036282529014,
+                836698112
+              ],
+              [
+                226036482888304,
+                849412096
+              ],
+              [
+                226036683489510,
+                862060544
+              ],
+              [
+                226036883884511,
+                874774528
+              ],
+              [
+                226037084314810,
+                887488512
+              ],
+              [
+                226037285295412,
+                900202496
+              ],
+              [
+                226037485828153,
+                912850944
+              ],
+              [
+                226037686649552,
+                925433856
+              ],
+              [
+                226037887344903,
+                938082304
+              ],
+              [
+                226038087935418,
+                950665216
+              ],
+              [
+                226038288441697,
+                963248128
+              ],
+              [
+                226038488922136,
+                975962112
+              ],
+              [
+                226038689470538,
+                988676096
+              ],
+              [
+                226038890066393,
+                1000931328
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 1009254400,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000086982996436,
+          "cpu_percent": 6.999939112432113,
+          "cpu_before": {
+            "ticks": 39,
+            "pids": [
+              3505011,
+              3505043,
+              3505044,
+              3505061,
+              3505067
+            ],
+            "roots": [
+              3505011
+            ],
+            "identities": {
+              "3505011": "22603921"
+            }
+          },
+          "cpu_after": {
+            "ticks": 109,
+            "pids": [
+              3505011,
+              3505043,
+              3505044,
+              3505061,
+              3505067
+            ],
+            "roots": [
+              3505011
+            ],
+            "identities": {
+              "3505011": "22603921"
+            }
+          },
+          "screen_bytes": 0,
+          "pty_read_chunks": 0,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.3609460147563368,
+            1.2835239758715034,
+            1.520731020718813,
+            1.6805350023787469,
+            1.5367020096164197,
+            1.5121939941309392,
+            1.5365820145234466,
+            1.2176150048617274,
+            1.2718409998342395,
+            1.3703439908567816,
+            1.2644560192711651,
+            1.8720210064202547,
+            1.2448980123735964,
+            1.3038729957770556,
+            1.3031720009166747,
+            1.3120800140313804,
+            1.6947029798757285,
+            1.6691519995220006,
+            1.3778690190520138,
+            1.5401479904539883,
+            1.5445580065716058,
+            1.6417780134361237,
+            2.142974000889808,
+            1.564265985507518,
+            1.6288830083794892,
+            1.605366007424891,
+            1.686185976723209,
+            1.6840110183693469,
+            1.5173440042417496,
+            1.8286459962837398,
+            1.708338997559622,
+            1.7990070045925677,
+            1.2259409995749593,
+            1.5161309856921434,
+            1.9331919902469963,
+            1.669754012254998,
+            1.4895790081936866,
+            1.5852670185267925,
+            1.7891580064315349,
+            1.8359200039412826
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.542352998512797,
+            "min": 1.2176150048617274,
+            "max": 2.142974000889808,
+            "p95": 1.8720210064202547
+          },
+          "input_phase": {
+            "start_ns": 226052193178550,
+            "end_ns": 226055078577677
+          },
+          "input_phase_progress": [
+            [
+              226052248286412,
+              812056576
+            ],
+            [
+              226052448807120,
+              824770560
+            ],
+            [
+              226052649346895,
+              837419008
+            ],
+            [
+              226052849964372,
+              850132992
+            ],
+            [
+              226053050638832,
+              862846976
+            ],
+            [
+              226053251523976,
+              875560960
+            ],
+            [
+              226053452239367,
+              888340480
+            ],
+            [
+              226053652797277,
+              901120000
+            ],
+            [
+              226053853332994,
+              913768448
+            ],
+            [
+              226054053768124,
+              926482432
+            ],
+            [
+              226054254204736,
+              939196416
+            ],
+            [
+              226054454825781,
+              951844864
+            ],
+            [
+              226054655404593,
+              964558848
+            ],
+            [
+              226054855839131,
+              977207296
+            ],
+            [
+              226055056284460,
+              989855744
+            ]
+          ],
+          "quiet_probe_ms": 94.11210898542777,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226039516134333,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226039412045436,
+                131072
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 5373952,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226055367483622,
+            "publication_acks": [],
+            "helper_progress": [
+              [
+                226049039012928,
+                609091584
+              ],
+              [
+                226049239473057,
+                621805568
+              ],
+              [
+                226049439929628,
+                634519552
+              ],
+              [
+                226049640629107,
+                647233536
+              ],
+              [
+                226049841204322,
+                659947520
+              ],
+              [
+                226050041858131,
+                672661504
+              ],
+              [
+                226050242458005,
+                685309952
+              ],
+              [
+                226050443089420,
+                698023936
+              ],
+              [
+                226050643681888,
+                710737920
+              ],
+              [
+                226050844239959,
+                723320832
+              ],
+              [
+                226051044755838,
+                736034816
+              ],
+              [
+                226051245336493,
+                748748800
+              ],
+              [
+                226051445890596,
+                761462784
+              ],
+              [
+                226051646575286,
+                774111232
+              ],
+              [
+                226051847039433,
+                786825216
+              ],
+              [
+                226052047674555,
+                799473664
+              ],
+              [
+                226052248286412,
+                812056576
+              ],
+              [
+                226052448807120,
+                824770560
+              ],
+              [
+                226052649346895,
+                837419008
+              ],
+              [
+                226052849964372,
+                850132992
+              ],
+              [
+                226053050638832,
+                862846976
+              ],
+              [
+                226053251523976,
+                875560960
+              ],
+              [
+                226053452239367,
+                888340480
+              ],
+              [
+                226053652797277,
+                901120000
+              ],
+              [
+                226053853332994,
+                913768448
+              ],
+              [
+                226054053768124,
+                926482432
+              ],
+              [
+                226054254204736,
+                939196416
+              ],
+              [
+                226054454825781,
+                951844864
+              ],
+              [
+                226054655404593,
+                964558848
+              ],
+              [
+                226054855839131,
+                977207296
+              ],
+              [
+                226055056284460,
+                989855744
+              ],
+              [
+                226055256666966,
+                1002242048
+              ]
+            ],
+            "job_state": "running",
+            "process_state": "running",
+            "helper_bytes": 1009254400,
+            "publishes": 0,
+            "rows": 0,
+            "model_bytes": 0
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 6.999939112432113,
+          "min": 6.599935847309125,
+          "max": 7.299932275594865,
+          "p95": 7.299932275594865
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000092774018412,
+          "min": 10.000086982996436,
+          "max": 10.000097201991593,
+          "p95": 10.000097201991593
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "p95": 0
+        },
+        "latency_ms": {
+          "count": 120,
+          "median": 1.6350805090041831,
+          "min": 1.2176150048617274,
+          "max": 2.5973170122597367,
+          "p95": 2.156780014047399
+        },
+        "quiet_probe_ms": {
+          "count": 3,
+          "median": 94.11210898542777,
+          "min": 94.02194098220207,
+          "max": 94.7448629885912,
+          "p95": 94.7448629885912
+        }
+      }
+    },
+    "publish": {
+      "samples": [
+        {
+          "complete": true,
+          "window_seconds": 10.000070118985604,
+          "cpu_percent": 60.49957578311166,
+          "cpu_before": {
+            "ticks": 187,
+            "pids": [
+              3505379,
+              3505410,
+              3505411
+            ],
+            "roots": [
+              3505379
+            ],
+            "identities": {
+              "3505379": "22605557"
+            }
+          },
+          "cpu_after": {
+            "ticks": 792,
+            "pids": [
+              3505379,
+              3505410,
+              3505411
+            ],
+            "roots": [
+              3505379
+            ],
+            "identities": {
+              "3505379": "22605557"
+            }
+          },
+          "screen_bytes": 2542,
+          "pty_read_chunks": 82,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.6918969922699034,
+            2.08835702505894,
+            1.257532014278695,
+            1.8996849830728024,
+            1.8490460061002523,
+            1.7956410010810941,
+            1.1707720113918185,
+            1.6677599924150854,
+            1.4972040080465376,
+            1.6676590021234006,
+            1.7471550090704113,
+            1.4506620063912123,
+            1.4798899937886745,
+            1.9003369961865246,
+            1.2254000175744295,
+            1.6355070110876113,
+            1.2281250092200935,
+            1.601409021532163,
+            2.051053015748039,
+            1.1155740066897124,
+            1.5289169969037175,
+            1.358301000436768,
+            1.3163179974071681,
+            2.2852729889564216,
+            1.2183949875179678,
+            1.226933003636077,
+            1.386485993862152,
+            1.7440789961256087,
+            2.209714992204681,
+            1.385404000757262,
+            1.3309269852470607,
+            4.084882006281987,
+            1.2768710148520768,
+            1.6358669963665307,
+            1.2201500067021698,
+            1.668812008574605,
+            1.2323830160312355,
+            1.3467379903886467,
+            1.2438750127330422,
+            1.2110719981137663
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.488547000917606,
+            "min": 1.1155740066897124,
+            "max": 4.084882006281987,
+            "p95": 2.209714992204681
+          },
+          "input_phase": {
+            "start_ns": 226068718112223,
+            "end_ns": 226071605187325
+          },
+          "input_phase_progress": [
+            226068817064600,
+            226068944266415,
+            226069063275711,
+            226069187589929,
+            226069313758012,
+            226069430827664,
+            226069550581694,
+            226069669453360,
+            226069785563124,
+            226069903938203,
+            226070022357489,
+            226070138905045,
+            226070257031615,
+            226070375488405,
+            226070492423963,
+            226070609677136,
+            226070725857750,
+            226070844478532,
+            226070959822230,
+            226071079702358,
+            226071202419536,
+            226071316786984,
+            226071439249801,
+            226071556690613
+          ],
+          "quiet_probe_ms": 95.71485000196844,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226056039154384,
+            "publication_acks": [
+              226055815665633,
+              226055980793796
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 1,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226071912162852,
+            "publication_acks": [
+              226064258246655,
+              226064390303397,
+              226064516039320,
+              226064643719096,
+              226064764219674,
+              226064881792446,
+              226064995922327,
+              226065116568953,
+              226065230918406,
+              226065351891864,
+              226065470807606,
+              226065594124413,
+              226065719481130,
+              226065848903602,
+              226065978481711,
+              226066099256258,
+              226066214600447,
+              226066331291725,
+              226066447724314,
+              226066564650785,
+              226066680554234,
+              226066802355590,
+              226066920378356,
+              226067039841254,
+              226067161236342,
+              226067278979177,
+              226067396650052,
+              226067512938588,
+              226067628159925,
+              226067744744013,
+              226067859917907,
+              226067983285994,
+              226068101410360,
+              226068216828605,
+              226068333619919,
+              226068451715429,
+              226068567671852,
+              226068684538515,
+              226068817064600,
+              226068944266415,
+              226069063275711,
+              226069187589929,
+              226069313758012,
+              226069430827664,
+              226069550581694,
+              226069669453360,
+              226069785563124,
+              226069903938203,
+              226070022357489,
+              226070138905045,
+              226070257031615,
+              226070375488405,
+              226070492423963,
+              226070609677136,
+              226070725857750,
+              226070844478532,
+              226070959822230,
+              226071079702358,
+              226071202419536,
+              226071316786984,
+              226071439249801,
+              226071556690613,
+              226071673038075,
+              226071806293374
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 131,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.00008887698641,
+          "cpu_percent": 60.29946407653507,
+          "cpu_before": {
+            "ticks": 181,
+            "pids": [
+              3505706,
+              3505737,
+              3505739
+            ],
+            "roots": [
+              3505706
+            ],
+            "identities": {
+              "3505706": "22607212"
+            }
+          },
+          "cpu_after": {
+            "ticks": 784,
+            "pids": [
+              3505706,
+              3505737,
+              3505739
+            ],
+            "roots": [
+              3505706
+            ],
+            "identities": {
+              "3505706": "22607212"
+            }
+          },
+          "screen_bytes": 2542,
+          "pty_read_chunks": 82,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.5468620113097131,
+            1.6667369927745312,
+            1.8413910001982003,
+            1.7779059999156743,
+            1.7621650185901672,
+            1.7562430002726614,
+            1.6264279838651419,
+            1.750381983583793,
+            2.0247110223863274,
+            1.6030730039346963,
+            1.7067359876818955,
+            1.7769539845176041,
+            2.0106540177948773,
+            1.8630840058904141,
+            2.457512018736452,
+            1.2384260189719498,
+            2.0852299930993468,
+            2.362616010941565,
+            2.0584380254149437,
+            1.1939269897993654,
+            1.2210109853185713,
+            2.307696995558217,
+            1.9308269838802516,
+            1.5046180051285774,
+            1.637018984183669,
+            1.9361379963811487,
+            1.218335994053632,
+            2.058368001598865,
+            2.028237999184057,
+            1.5682039957027882,
+            1.1796489998232573,
+            2.475949004292488,
+            1.6656249936204404,
+            1.680665009189397,
+            2.3942080151755363,
+            1.6699039842933416,
+            2.307917980942875,
+            1.6242930141743273,
+            1.2807490129489452,
+            1.2756790092680603
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.7533124919282272,
+            "min": 1.1796489998232573,
+            "max": 2.475949004292488,
+            "p95": 2.3942080151755363
+          },
+          "input_phase": {
+            "start_ns": 226085268236189,
+            "end_ns": 226088162450980
+          },
+          "input_phase_progress": [
+            226085298184238,
+            226085436176852,
+            226085564953074,
+            226085693719857,
+            226085819912007,
+            226085944391238,
+            226086063346548,
+            226086187883594,
+            226086316142267,
+            226086446247412,
+            226086563229382,
+            226086684794173,
+            226086806575079,
+            226086928272931,
+            226087055706312,
+            226087183135325,
+            226087300006897,
+            226087414599048,
+            226087531688077,
+            226087648877425,
+            226087766825624,
+            226087888912091,
+            226088005280635,
+            226088125426566
+          ],
+          "quiet_probe_ms": 96.44712999579497,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226072583778656,
+            "publication_acks": [
+              226072355417755,
+              226072514803836
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 1,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226088491486715,
+            "publication_acks": [
+              226080619387571,
+              226080738663451,
+              226080856222486,
+              226080970318821,
+              226081088917991,
+              226081209048071,
+              226081331731251,
+              226081447860885,
+              226081562712756,
+              226081685910247,
+              226081804397016,
+              226081921974156,
+              226082040300689,
+              226082165111594,
+              226082292851036,
+              226082415839597,
+              226082545594964,
+              226082660047951,
+              226082794611963,
+              226082920319861,
+              226083046724940,
+              226083180130144,
+              226083310093700,
+              226083435278940,
+              226083553592258,
+              226083671309994,
+              226083801755789,
+              226083928671552,
+              226084069086720,
+              226084193896652,
+              226084319132272,
+              226084444018975,
+              226084568385114,
+              226084690901527,
+              226084808155411,
+              226084927771080,
+              226085046172350,
+              226085168478980,
+              226085298184238,
+              226085436176852,
+              226085564953074,
+              226085693719857,
+              226085819912007,
+              226085944391238,
+              226086063346548,
+              226086187883594,
+              226086316142267,
+              226086446247412,
+              226086563229382,
+              226086684794173,
+              226086806575079,
+              226086928272931,
+              226087055706312,
+              226087183135325,
+              226087300006897,
+              226087414599048,
+              226087531688077,
+              226087648877425,
+              226087766825624,
+              226087888912091,
+              226088005280635,
+              226088125426566,
+              226088240567946,
+              226088370302152
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 132,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        },
+        {
+          "complete": true,
+          "window_seconds": 10.000059829006204,
+          "cpu_percent": 59.599643421256395,
+          "cpu_before": {
+            "ticks": 180,
+            "pids": [
+              3506045,
+              3506106,
+              3506107
+            ],
+            "roots": [
+              3506045
+            ],
+            "identities": {
+              "3506045": "22608869"
+            }
+          },
+          "cpu_after": {
+            "ticks": 776,
+            "pids": [
+              3506045,
+              3506106,
+              3506107
+            ],
+            "roots": [
+              3506045
+            ],
+            "identities": {
+              "3506045": "22608869"
+            }
+          },
+          "screen_bytes": 2573,
+          "pty_read_chunks": 83,
+          "epoch1_proven": false,
+          "frontend": "attached",
+          "latency_ms": [
+            1.8802080012392253,
+            1.5368220047093928,
+            1.6197750228457153,
+            1.433639001334086,
+            1.2612099817488343,
+            1.669262972427532,
+            1.4370759890880436,
+            1.225059007992968,
+            1.932048995513469,
+            2.2758149716537446,
+            1.6794019902590662,
+            1.9499539921525866,
+            3.045278019271791,
+            1.2798969983123243,
+            1.2204799859318882,
+            1.3775379920843989,
+            1.5648370026610792,
+            1.6111780132632703,
+            1.5796560037415475,
+            1.4716839941684157,
+            1.4324160001706332,
+            1.2602279894053936,
+            1.735962985549122,
+            1.8033660016953945,
+            1.7756620072759688,
+            1.2630040000658482,
+            1.5713200264144689,
+            2.3976040247362107,
+            1.9246350275352597,
+            1.3487020041793585,
+            1.5901169972494245,
+            1.2409400078468025,
+            1.9215679785702378,
+            2.2020800097379833,
+            1.2711200106423348,
+            1.7517340020276606,
+            1.6273100045509636,
+            1.972849015146494,
+            1.688991003902629,
+            1.8957580032292753
+          ],
+          "latency_summary": {
+            "count": 40,
+            "median": 1.6154765180544928,
+            "min": 1.2204799859318882,
+            "max": 3.045278019271791,
+            "p95": 2.2758149716537446
+          },
+          "input_phase": {
+            "start_ns": 226101820621973,
+            "end_ns": 226104711270923
+          },
+          "input_phase_progress": [
+            226101844133184,
+            226101959087877,
+            226102077463588,
+            226102194459825,
+            226102310833799,
+            226102432087008,
+            226102549696882,
+            226102674331079,
+            226102793341187,
+            226102911364955,
+            226103026088403,
+            226103150915088,
+            226103279229983,
+            226103414635810,
+            226103545666144,
+            226103668936329,
+            226103787530819,
+            226103907507498,
+            226104026215471,
+            226104140926335,
+            226104256071914,
+            226104378297043,
+            226104495787793,
+            226104612098733
+          ],
+          "quiet_probe_ms": 93.79497601184994,
+          "before_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226089142689890,
+            "publication_acks": [
+              226088924998529,
+              226089078025576
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 1,
+            "rows": 10000,
+            "model_bytes": 4194304
+          },
+          "after_checkpoint": {
+            "owner": "workload",
+            "event": "checkpoint",
+            "at_ns": 226105017329376,
+            "publication_acks": [
+              226097485657356,
+              226097600952539,
+              226097716799206,
+              226097833813189,
+              226097948928438,
+              226098065014566,
+              226098179509635,
+              226098296849418,
+              226098414677552,
+              226098530739472,
+              226098646955756,
+              226098771913990,
+              226098894342620,
+              226099009926160,
+              226099127011973,
+              226099243134684,
+              226099361355710,
+              226099477539820,
+              226099594928920,
+              226099710811659,
+              226099826350691,
+              226099942355198,
+              226100058300449,
+              226100174504650,
+              226100290707107,
+              226100407809172,
+              226100524627951,
+              226100641941282,
+              226100771113392,
+              226100892637092,
+              226101017151995,
+              226101141655715,
+              226101263633899,
+              226101378894323,
+              226101495029488,
+              226101609742726,
+              226101725071585,
+              226101844133184,
+              226101959087877,
+              226102077463588,
+              226102194459825,
+              226102310833799,
+              226102432087008,
+              226102549696882,
+              226102674331079,
+              226102793341187,
+              226102911364955,
+              226103026088403,
+              226103150915088,
+              226103279229983,
+              226103414635810,
+              226103545666144,
+              226103668936329,
+              226103787530819,
+              226103907507498,
+              226104026215471,
+              226104140926335,
+              226104256071914,
+              226104378297043,
+              226104495787793,
+              226104612098733,
+              226104733831144,
+              226104849060898,
+              226104978229181
+            ],
+            "helper_progress": [],
+            "job_state": "running",
+            "process_state": null,
+            "helper_bytes": null,
+            "publishes": 134,
+            "rows": 10000,
+            "model_bytes": 4194304
+          }
+        }
+      ],
+      "summary": {
+        "cpu_percent": {
+          "count": 3,
+          "median": 60.29946407653507,
+          "min": 59.599643421256395,
+          "max": 60.49957578311166,
+          "p95": 60.49957578311166
+        },
+        "window_seconds": {
+          "count": 3,
+          "median": 10.000070118985604,
+          "min": 10.000059829006204,
+          "max": 10.00008887698641,
+          "p95": 10.00008887698641
+        },
+        "screen_bytes": {
+          "count": 3,
+          "median": 2542,
+          "min": 2542,
+          "max": 2573,
+          "p95": 2573
+        },
+        "pty_read_chunks": {
+          "count": 3,
+          "median": 82,
+          "min": 82,
+          "max": 83,
+          "p95": 83
+        },
+        "latency_ms": {
+          "count": 120,
+          "median": 1.6364429902750999,
+          "min": 1.1155740066897124,
+          "max": 4.084882006281987,
+          "p95": 2.362616010941565
+        },
+        "quiet_probe_ms": {
+          "count": 3,
+          "median": 95.71485000196844,
+          "min": 93.79497601184994,
+          "max": 96.44712999579497,
+          "p95": 96.44712999579497
+        }
+      }
+    }
+  },
+  "record": {
+    "date": "2026-09-09",
+    "timezone": "Europe/Warsaw",
+    "utc_date": "2026-09-08",
+    "harness_commit": "104b31f",
+    "application_commit": "f67289c",
+    "base_commit": "c7c18bd",
+    "platform": "Linux x86_64",
+    "kernel": "7.1.13-200.fc44.x86_64",
+    "cpu": "AMD Ryzen AI 9 365",
+    "logical_cpus": 20,
+    "memory_kib": 28499440,
+    "rust": "1.97.1",
+    "build": "cargo build --release --locked",
+    "python": "3.14",
+    "terminal_columns": 120,
+    "terminal_rows": 40,
+    "sanitization": "Only binary paths replaced by repository-relative labels; all measurements retained."
+  }
+}

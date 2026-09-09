@@ -64,7 +64,30 @@ features remain available without them. Use `:lsp-trust` to change permission.
 
 Runyte uses optional YAML configuration. Explicitly enabled
 [experimental process plugins](docs/plugins.md) can register commands and transform
-multiple selections in one undoable edit.
+multiple selections in one undoable edit. The opt-in
+[application API](docs/plugins/applications.md) adds native application views,
+a local file manager, background jobs, ordered metadata subscriptions, explicit text operations and provider-backed
+UTF-8 editing with conditional or explicitly confirmed remote saves, conflict
+comparison, and [native reload recovery](docs/plugins/applications.md#native-reload-and-conflict-recovery).
+Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
+and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers
+state their transport and overwrite guarantees explicitly and can download or
+upload binary files through native confirmation. Applications can also control
+[managed helpers](docs/plugins/applications.md#managed-helpers) with bounded binary
+pipes and process-group cleanup, publish retained notifications, and make explicit
+[native terminal/browser handoffs](docs/plugins/applications.md#notifications-and-native-handoffs).
+Continuing work can use bounded, renewable
+[activity leases](docs/plugins/applications.md#continuing-activity) that appear in
+session health and protect normal shutdown.
+The optional [local media controller](docs/plugins/applications.md#local-media-controller)
+uses mpv for playback, with a native playlist, progress and playback controls.
+Applications can read validated [settings and workspace state](docs/plugins/applications.md#settings-and-workspace-state),
+with conditional updates for nonsecret saved preferences.
+The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains
+failed entries and provides explicit stop/restart after cleanup.
+The [authoring kit](docs/plugins/authoring.md) includes local setup, a Python
+client, an independent Node example and a conformance matrix.
+The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation

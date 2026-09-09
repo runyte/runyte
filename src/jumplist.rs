@@ -136,6 +136,20 @@ impl JumpList {
         }
     }
 
+    /// Remap remembered selections when a generated model retains identities
+    /// across a transaction that replaces all of its projected text.
+    pub(crate) fn map_selections(
+        &mut self,
+        buffer: usize,
+        mut map: impl FnMut(&Selection) -> Selection,
+    ) {
+        for jump in &mut self.entries {
+            if jump.buffer == buffer {
+                jump.selection = map(&jump.selection);
+            }
+        }
+    }
+
     /// The most recent buffer this pane was in before `exclude`, if any.
     ///
     /// Closing a buffer has to put the pane somewhere, and "where you came

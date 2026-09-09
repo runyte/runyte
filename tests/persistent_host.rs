@@ -2602,3 +2602,6 @@ done
     assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "base\n");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[path = "persistent_host/plugin_epoch2.rs"]
+mod plugin_epoch2;

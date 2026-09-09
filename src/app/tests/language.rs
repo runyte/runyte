@@ -672,7 +672,7 @@ fn filesystem_rename_reopens_the_same_language_at_a_savable_new_path() {
         }],
     };
     assert_eq!(
-        app.reconcile_applied_filesystem(&directory, buffer_id, &report, true),
+        app.reconcile_applied_filesystem(&directory, Some(buffer_id), &report, true),
         None
     );
 
@@ -743,7 +743,7 @@ fn filesystem_rename_reinfers_language_before_future_changes() {
         }],
     };
     assert_eq!(
-        app.reconcile_applied_filesystem(&directory, buffer_id, &report, true),
+        app.reconcile_applied_filesystem(&directory, Some(buffer_id), &report, true),
         None
     );
 

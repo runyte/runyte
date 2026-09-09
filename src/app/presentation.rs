@@ -257,6 +257,26 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        self.settle_background_notifications();
+        if !self.plugins.instances.is_empty() {
+            self.plugins.presented_views.clear();
+            for (&pane_id, pane) in &self.panes {
+                if pane.terminal.is_none() {
+                    for instance in self.plugins.instances.values() {
+                        if let Some(view) = instance
+                            .application
+                            .views
+                            .values()
+                            .find(|view| view.buffer == pane.buffer)
+                        {
+                            self.plugins
+                                .presented_views
+                                .insert(pane_id, (view.buffer, view.revision));
+                        }
+                    }
+                }
+            }
+        }
         let (geometry, session_strip) = self.prepare_session_strip(geometry);
         self.pace_picker_progress();
         self.flush_lsp_replies();
@@ -595,6 +615,7 @@ impl App {
         }
 
         self.settle_diff_scroll(&mut prepared);
+        self.note_plugin_viewports(&prepared);
         PreparedView {
             session_strip,
             geometry,
@@ -634,6 +655,16 @@ impl App {
         // to, which is the one wrong answer available here.
         if self.active_terminal().is_some() {
             return BindingScope::Terminal;
+        }
+        if let Some(GeneratedViewIdentity::Plugin { owner, view }) =
+            self.active_buffer().generated_view_identity()
+            && self
+                .plugins
+                .instances
+                .get(owner)
+                .is_some_and(|instance| instance.application.views.contains_key(view))
+        {
+            return BindingScope::Plugin(*owner);
         }
         if self.active_buffer().is_directory() {
             BindingScope::Directory
@@ -892,7 +923,13 @@ impl App {
     /// The terminal event loop uses the same boundary as `handle_key` so a key
     /// that closes an overlay cannot also produce a normal-mode key hint.
     pub fn has_input_overlay(&self) -> bool {
-        self.picker.is_some()
+        self.plugins.input.is_some() || self.has_native_input_overlay()
+    }
+
+    pub(crate) fn has_native_input_overlay(&self) -> bool {
+        self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.picker.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
@@ -920,6 +957,14 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        if let Some(confirmation) = &self.plugins.provider_overwrite {
+            return Some(ConfirmationOverlay {
+                title: "Overwrite remote document",
+                accept: "overwrite remote document",
+                message: confirmation.message(),
+                input: None,
+            });
+        }
         if let Some(menu) = &self.terminal_action_menu
             && menu.close_armed
             && menu.selected_action() == Some(super::TerminalAction::ForceKill)
@@ -1269,6 +1314,43 @@ impl App {
         }
 
         let mut overlays = Vec::new();
+        if let Some(reload) = &self.plugins.provider_reload {
+            let mut overlay = bounded(
+                OverlayKind::ResultList,
+                "Reload remote document",
+                "",
+                vec![
+                    row(
+                        "reload",
+                        "Reload remote text",
+                        "Replace local text as one undoable change",
+                    ),
+                    row(
+                        "keep",
+                        "Keep local edits and use remote baseline",
+                        "Keep local text; future saves use the remote version",
+                    ),
+                    row(
+                        "cancel",
+                        "Cancel",
+                        "Keep the current text and accepted baseline",
+                    ),
+                ],
+                Some(reload.selected),
+                Some(format!(
+                    "Choose how to reload {}. No remote write is performed.",
+                    reload.label
+                )),
+            );
+            overlay.purpose = OverlayPurpose::Choice;
+            overlay.input = OverlayInput::None;
+            overlay.actions = vec![
+                OverlayAction::new("↑/↓ or Tab", "select"),
+                OverlayAction::new("Enter", "choose"),
+                OverlayAction::new("Esc", "cancel"),
+            ];
+            overlays.push(overlay);
+        }
         if let Some(confirmation) = &self.fs_confirmation {
             overlays.push(bounded(
                 OverlayKind::FilesystemConfirmation,
@@ -1748,7 +1830,28 @@ impl App {
 
         if self.mode == Mode::Command {
             if self.prompt_kind == PromptKind::Command {
-                if let Some(hints) = self.matching_path_hints() {
+                if let Some(hints) = self.matching_plugin_hints() {
+                    let command = self.command.split_once(char::is_whitespace).unwrap().0;
+                    overlays.push(bounded(
+                        OverlayKind::CommandPalette,
+                        format!("Choose plugin for :{command}"),
+                        "",
+                        hints
+                            .iter()
+                            .map(|entry| {
+                                row(
+                                    entry.configured_id.clone(),
+                                    entry.configured_id.clone(),
+                                    entry.phase.label(),
+                                )
+                            })
+                            .collect(),
+                        (!hints.is_empty()).then_some(self.command_selection),
+                        hints
+                            .is_empty()
+                            .then(|| "No matching configured plugins".to_owned()),
+                    ));
+                } else if let Some(hints) = self.matching_path_hints() {
                     // One title serves every path-argument command by naming
                     // the one being completed, rather than a title per
                     // command or a bare "Paths" that says nothing about what
@@ -1987,6 +2090,72 @@ impl App {
             } else {
                 vec![OverlayAction::new("any key", "dismiss and continue")]
             };
+            overlays.push(snapshot);
+        }
+        if let Some(surface) = &self.plugins.input {
+            let mut snapshot = bounded(
+                OverlayKind::Prompt,
+                &surface.title,
+                surface.display(surface.selected),
+                surface
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| row(i, &f.label, surface.display(i)))
+                    .collect(),
+                Some(surface.selected),
+                surface
+                    .error
+                    .then(|| "Complete the selected field within its declared limits".into())
+                    .or_else(|| surface.validation_feedback()),
+            );
+            snapshot.layout = OverlayLayout::Standard;
+            snapshot.query_cursor = Some(surface.cursor);
+            snapshot.query_placeholder = surface.fields[surface.selected].label.clone();
+            snapshot.actions = vec![
+                OverlayAction::new("Enter", "submit"),
+                OverlayAction::new("Tab/↑/↓", "field"),
+                OverlayAction::new("←/→/Space", "choice"),
+                OverlayAction::new("Esc", "cancel"),
+            ];
+            if surface.confirmation {
+                snapshot.purpose = OverlayPurpose::Confirmation;
+                snapshot.input = OverlayInput::None;
+                snapshot.message = Some(surface.fields[0].label.clone());
+                snapshot.rows.clear();
+                snapshot.total_rows = 0;
+                snapshot.selected = None;
+                snapshot.scroll_anchor = None;
+                snapshot.query.clear();
+                snapshot.query_cursor = None;
+                snapshot.query_placeholder.clear();
+                snapshot.actions = vec![
+                    OverlayAction::new("Enter", "confirm"),
+                    OverlayAction::new("Esc", "cancel"),
+                ];
+            }
+            if let Some(picker) = &surface.picker {
+                snapshot.purpose = OverlayPurpose::Picker;
+                snapshot.input = OverlayInput::Filter;
+                let indices = picker.visible_indices();
+                snapshot.rows = indices
+                    .iter()
+                    .map(|i| row(*i, &picker.items[*i].label, ""))
+                    .collect();
+                snapshot.total_rows = indices.len();
+                snapshot.omitted_rows = 0;
+                snapshot.row_offset = 0;
+                snapshot.selected = (!indices.is_empty()).then_some(picker.selected);
+                snapshot.scroll_anchor = snapshot.selected;
+                snapshot.query = picker.filter.clone();
+                snapshot.query_cursor = Some(picker.filter.chars().count());
+                snapshot.query_placeholder = "Type to filter".into();
+                snapshot.actions = vec![
+                    OverlayAction::new("Enter", "choose"),
+                    OverlayAction::new("↑/↓", "select"),
+                    OverlayAction::new("Esc", "cancel"),
+                ];
+            }
             overlays.push(snapshot);
         }
         overlays

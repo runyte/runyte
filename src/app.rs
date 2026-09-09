@@ -261,6 +261,7 @@ impl FinderContentSource {
 mod completion_support;
 mod editing;
 mod file_workflows;
+pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -269,6 +270,14 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+mod plugin_documents;
+mod plugin_filesystem;
+pub(crate) mod plugin_interaction;
+mod plugin_manager;
+pub(crate) mod plugin_provider_overwrite;
+pub(crate) mod plugin_providers;
+pub(crate) mod plugin_recovery;
+mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;
 mod prompt_editing;
@@ -457,6 +466,7 @@ pub struct Pane {
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
     /// different predecessor in each pane without coupling it to jumps.
     buffer_history: Vec<usize>,
+    plugin_view_positions: BTreeMap<usize, plugin_views::PluginViewPosition>,
     destination_history: Vec<OpenDestination>,
     /// The live terminal this pane shows instead of its buffer, if any.
     ///
@@ -526,6 +536,7 @@ impl Pane {
         Self {
             buffer,
             buffer_history: Vec::new(),
+            plugin_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
             terminal: None,
             covered_terminal: None,
@@ -555,6 +566,10 @@ impl Pane {
         self.terminal = None;
         self.covered_terminal = None;
         if self.buffer != buffer {
+            if self.plugin_view_positions.contains_key(&self.buffer) {
+                self.plugin_view_positions
+                    .insert(self.buffer, plugin_views::PluginViewPosition::capture(self));
+            }
             self.remember_buffer(self.buffer);
             self.buffer = buffer;
             self.selection_semantics = SelectionSemantics::Runyte;
@@ -2392,7 +2407,7 @@ type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 pub(crate) struct HostPorts {
     browser: BrowserOpener,
     clipboard: Box<dyn SystemClipboard>,
-    trash: Box<dyn TrashBackend>,
+    trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
     /// The Git boundary, absent when no `git` executable was found. Every Git
     /// surface is off in that case rather than reporting failures.
@@ -2414,7 +2429,7 @@ impl HostPorts {
         Self {
             clipboard,
             browser: Box::new(|_| bail!("browser opening is unavailable in an isolated editor")),
-            trash: Box::new(SystemTrash),
+            trash: std::sync::Arc::new(SystemTrash),
             lsp: None,
             git: None,
             git_service: None,
@@ -2429,7 +2444,7 @@ impl HostPorts {
     }
 
     fn replace_trash(&mut self, trash: Box<dyn TrashBackend>) {
-        self.trash = trash;
+        self.trash = trash.into();
     }
 
     fn trash(&self) -> &dyn TrashBackend {
@@ -2794,6 +2809,9 @@ pub struct App {
     /// Workspace-lifetime notifications. The persistent host owns `App`, so
     /// this history survives TUI detach/reattach but is never written to disk.
     notifications: NotificationCenter,
+    /// Background application notifications rebuild retained documents once
+    /// at the next presentation checkpoint, without an idle timer.
+    notifications_refresh_pending: bool,
     /// Presentation-only action echo for the last interactive command.
     /// Notifications never replace it; the next interaction does.
     action_feedback: Option<ActionFeedback>,
@@ -3000,7 +3018,10 @@ impl App {
     }
 
     pub(crate) fn apply_file_observation(&mut self, event: FileObservationEvent) {
-        if event.buffer >= self.buffers.len() || self.closed_buffers.contains(&event.buffer) {
+        if event.buffer >= self.buffers.len()
+            || self.closed_buffers.contains(&event.buffer)
+            || self.document_mutation_pending(event.buffer)
+        {
             return;
         }
         let result = self.buffers[event.buffer].apply_file_observation(&event);
@@ -3359,6 +3380,7 @@ impl App {
             status,
             status_error,
             notifications: NotificationCenter::new(notification_limit),
+            notifications_refresh_pending: false,
             action_feedback: None,
             active_action_id: None,
             next_action_id: 1,
@@ -3557,6 +3579,15 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    PluginEntry(usize),
+    PluginLifecycle(crate::plugin::manager::Intent),
+    PluginManagerBack,
+    PluginCommand {
+        command: u64,
+        buffer: usize,
+        revision: u64,
+        query_revision: Option<String>,
+    },
     Destination(OpenDestination),
     LspTrust {
         allowed: bool,
@@ -3681,6 +3712,8 @@ fn session_picker_preview(
     let health_available = row.unsaved_buffers.is_some()
         && row.open_buffers.is_some()
         && row.pending_wait_requests.is_some()
+        && row.plugin_jobs.is_some()
+        && row.activity_leases.is_some()
         && row.live_terminals.is_some()
         && row.terminal_sessions.is_some()
         && row.interactive_attached.is_some();
@@ -3746,6 +3779,8 @@ fn session_picker_preview(
         ("Buffers", count(row.open_buffers)),
         ("Unsaved", count(row.unsaved_buffers)),
         ("Waiting", count(row.pending_wait_requests)),
+        ("Plugin jobs", count(row.plugin_jobs)),
+        ("Activities", count(row.activity_leases)),
         ("Attached", attached),
         ("Branch", branch),
         ("Directory", directory),
@@ -3753,6 +3788,14 @@ fn session_picker_preview(
         ("Repo", remote),
     ] {
         lines.push(format!("{field:<10}  {value}"));
+    }
+    for lease in &row.activities {
+        lines.push(format!(
+            "Activity    {} · {} · {}",
+            lease.owner,
+            lease.title,
+            lease.state.label()
+        ));
     }
     if let Some(protocol) = row.incompatible_protocol {
         lines.push(String::new());
@@ -3795,13 +3838,28 @@ fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> S
 }
 
 #[cfg(unix)]
-/// Whole-session terminal-output status shown after the last-active age.
+/// Whole-session activity status shown after the last-active age.
 ///
 /// The latest live-terminal baseline is sufficient because `QUIET` requires
-/// every live terminal to have crossed the interval. Missing host health, no
-/// live terminals, stopped rows, and incompatible hosts deliberately make no
-/// claim.
+/// every live terminal to have crossed the interval. Protected application
+/// work takes precedence over terminal quietness. Missing health, stopped rows,
+/// and incompatible hosts deliberately make no claim about application work.
 fn terminal_output_status(row: &WorkspaceRow, now: u64) -> &'static str {
+    if row.running && row.incompatible_protocol.is_none() {
+        if row
+            .activities
+            .iter()
+            .any(|lease| lease.state == crate::service_health::ActivityLeaseState::Cancelling)
+        {
+            return "CANCELLING";
+        }
+        if row.activity_leases.is_some_and(|count| count > 0) {
+            return "ACTIVE";
+        }
+        if row.plugin_jobs.is_some_and(|count| count > 0) {
+            return "WORKING";
+        }
+    }
     let Some(last_line) = row.terminal_line_activity_unix_seconds else {
         return "";
     };
@@ -4582,7 +4640,11 @@ fn buffer_language(buffer: &Buffer, registry: &Registry) -> Option<LanguageId> {
     if buffer.is_read_only() || buffer.is_directory() {
         return None;
     }
-    registry.language_for_document(buffer.path.as_deref(), buffer.text())
+    buffer
+        .provider()
+        .and_then(|document| document.syntax_hint.as_deref())
+        .and_then(|hint| registry.language_for_name(hint))
+        .or_else(|| registry.language_for_document(buffer.path.as_deref(), buffer.text()))
 }
 
 /// Parses a buffer if its path or bounded first-line metadata maps to a known

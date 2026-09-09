@@ -29,7 +29,10 @@ fn host() -> (TestRuntimeRoot, WorkspaceHost) {
 }
 fn config(id: &str) -> PluginConfig {
     PluginConfig {
+        settings: Default::default(),
         id: id.into(),
+        api: Default::default(),
+        capabilities: vec![],
         enabled: true,
         executable: "/nonexistent/runyte-plugin".into(),
         args: vec![],
@@ -46,8 +49,9 @@ fn instance(
         id,
         Instance {
             config,
-            sender,
+            sender: plugin::Sender::new(sender),
             registered: false,
+            application: Default::default(),
             pending: None,
             issued: BTreeSet::new(),
             subscriptions: Default::default(),
@@ -387,7 +391,7 @@ async fn disabled_spawn_failure_and_host_attachment_do_not_duplicate_instances()
     host.handle_plugin_event(event);
     assert!(host.plugin_workers.is_empty());
     assert!(host.app.plugins.instances.is_empty());
-    assert!(host.app.status.contains("cannot start plugin"));
+    assert!(host.app.status.contains("could not start"));
 }
 
 #[cfg(unix)]
@@ -465,6 +469,133 @@ fn plugin_edit_splits_an_existing_insert_undo_group() {
 }
 
 #[test]
+fn refused_plugin_results_preserve_the_in_progress_insert_undo_group() {
+    for scenario in ["stale", "count", "readonly", "range", "noop"] {
+        let (_root, mut host) = host();
+        seed(&mut host, "abc");
+        host.app.buffers[0].begin_undo_group();
+        let revision = host.app.buffers[0].revision();
+        host.apply_expected_transaction(
+            BufferId::from_index(0),
+            BufferRevision::from_raw(revision),
+            Transaction::insert(3, "!"),
+        )
+        .unwrap();
+        let mut receiver = instance(&mut host, 0, config("case"));
+        register(&mut host, 0).unwrap();
+        receiver.try_recv().unwrap();
+        invoke(&mut host, "plugin.case.upper");
+        receiver.try_recv().unwrap();
+        let kind = host.app.buffers[0].kind.clone();
+        match scenario {
+            "stale" => {
+                let revision = host.app.buffers[0].revision();
+                host.apply_expected_transaction(
+                    BufferId::from_index(0),
+                    BufferRevision::from_raw(revision),
+                    Transaction::insert(4, "+"),
+                )
+                .unwrap();
+            }
+            "readonly" => host.app.buffers[0].kind = crate::buffer::BufferKind::Help,
+            "range" | "noop" => {
+                let pending = host
+                    .app
+                    .plugins
+                    .instances
+                    .get_mut(&0)
+                    .unwrap()
+                    .pending
+                    .as_mut()
+                    .unwrap();
+                pending.selections[0].to = if scenario == "range" { 100 } else { 0 };
+            }
+            _ => {}
+        }
+        let before = host.app.buffers[0].to_string();
+        let history = host.app.buffers[0].history_len();
+        let revision = host.app.buffers[0].revision();
+        reply(
+            &mut host,
+            match scenario {
+                "count" => &[],
+                "noop" => &[""],
+                _ => &["A"],
+            },
+        );
+        let HostMessage::Complete { status, .. } = receiver.try_recv().unwrap() else {
+            panic!("plugin completion missing");
+        };
+        assert_eq!(
+            status,
+            match scenario {
+                "stale" => "stale",
+                "readonly" => "read_only",
+                "noop" => "applied",
+                _ => "invalid_replacements",
+            },
+            "{scenario}"
+        );
+        assert_eq!(host.app.buffers[0].to_string(), before, "{scenario}");
+        assert_eq!(host.app.buffers[0].revision(), revision, "{scenario}");
+        assert_eq!(host.app.buffers[0].history_len(), history, "{scenario}");
+        host.app.buffers[0].kind = kind;
+        host.apply_expected_transaction(
+            BufferId::from_index(0),
+            BufferRevision::from_raw(revision),
+            Transaction::insert(before.chars().count(), "?"),
+        )
+        .unwrap();
+        undo(&mut host);
+        assert_eq!(host.app.buffers[0].to_string(), "abc", "{scenario}");
+    }
+}
+
+#[test]
+fn subscription_buffer_identifier_limit_is_checked_before_decimal_parsing() {
+    let (_root, mut host) = host();
+    let mut receiver = instance(&mut host, 0, config("case"));
+    register(&mut host, 0).unwrap();
+    receiver.try_recv().unwrap();
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .issued
+        .insert(0);
+    let accepted = "0".repeat(64);
+    host.plugin_message(
+        0,
+        ClientMessage::Subscribe {
+            request: "allowed".into(),
+            buffer: accepted.clone(),
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(receiver.try_recv().unwrap(), HostMessage::Subscribed { buffer, .. } if buffer == accepted)
+    );
+    let subscriptions = host.app.plugins.instances[&0].subscriptions.clone();
+    for size in [65, 1024 * 1024 - 128] {
+        let oversized = "0".repeat(size);
+        assert_eq!(oversized.parse::<usize>().unwrap(), 0);
+        let error = host
+            .plugin_message(
+                0,
+                ClientMessage::Subscribe {
+                    request: "oversized".into(),
+                    buffer: oversized,
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("buffer ID exceeds limit"));
+        assert_eq!(host.app.plugins.instances[&0].subscriptions, subscriptions);
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
+#[test]
 fn invalid_registration_tokens_and_subscription_errors_are_structured() {
     for registration in [
         ClientMessage::Register {
@@ -533,9 +664,9 @@ async fn process_malformed_output_exit_and_deadline_remove_commands() {
     for (behavior, expected) in [
         (
             "read -r hello\nprintf 'invalid-json\\n'\nwhile read -r line; do :; done\n",
-            "invalid plugin message",
+            "protocol or IO failed",
         ),
-        ("exit 7\n", "plugin"),
+        ("exit 7\n", "Plugin"),
         (
             "read -r hello\nwhile read -r line; do :; done\n",
             "timed out",
@@ -711,3 +842,11 @@ fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
         assert!(host.app.parse_command("plugin.case.upper").is_err());
     }
 }
+
+#[path = "plugin_applications.rs"]
+mod applications;
+
+#[path = "plugin_manager.rs"]
+mod manager;
+#[path = "plugin_manager_review.rs"]
+mod manager_review;

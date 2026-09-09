@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: MPL-2.0
+# Tested transport dependency; install in an isolated virtual environment.
+paramiko==4.0.0

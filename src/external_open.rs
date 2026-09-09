@@ -20,6 +20,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+pub mod system;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 

@@ -237,6 +237,25 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
+mod plugin_activity;
+mod plugin_applications;
+mod plugin_documents;
+mod plugin_editor;
+mod plugin_filesystem;
+mod plugin_filesystem_apply;
+mod plugin_handoffs;
+mod plugin_interaction;
+mod plugin_manager;
+mod plugin_models;
+mod plugin_notifications;
+mod plugin_observations;
+mod plugin_processes;
+mod plugin_provider_writes;
+mod plugin_providers;
+mod plugin_recovery;
+mod plugin_staging;
+mod plugin_state;
+mod plugin_validation;
 /// The only owner allowed to mutate one live editor/application workspace.
 ///
 /// Standalone mode uses this value directly. Persistent mode will keep the
@@ -244,7 +263,29 @@ struct CompletedGitSnapshot {
 mod plugins;
 
 pub struct WorkspaceHost {
+    provider_writes: std::collections::BTreeMap<String, plugin_provider_writes::PendingWrite>,
+    provider_uncertain: std::collections::BTreeMap<usize, (String, usize, String)>,
+    provider_reads: std::collections::BTreeMap<String, plugin_providers::PendingRead>,
+    provider_ignored: std::collections::VecDeque<(usize, String, String)>,
+    document_saves: std::collections::BTreeMap<String, plugin_documents::PendingSave>,
+    filesystem_apply: Option<plugin_filesystem_apply::PendingApply>,
     plugin_workers: std::collections::BTreeMap<usize, crate::plugin::Worker>,
+    plugin_manager: Vec<plugin_manager::Record>,
+    plugin_recoveries: std::collections::BTreeMap<String, plugin_recovery::Pending>,
+    #[cfg(test)]
+    plugin_recovery_hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    next_plugin_owner: usize,
+    plugin_processes: std::collections::BTreeMap<String, plugin_processes::Managed>,
+    observation_buffers: Option<((usize, usize), Vec<usize>)>,
+    plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
+    #[cfg(test)]
+    plugin_external_launcher: Option<std::path::PathBuf>,
+    plugin_state_requests: std::collections::BTreeMap<String, plugin_state::Pending>,
+    #[cfg(test)]
+    plugin_state_hook: Option<crate::plugin::state::Hook>,
+    plugin_handoffs: std::collections::BTreeMap<(usize, String, String), plugin_handoffs::Pending>,
+    plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    plugin_local_orphans: std::collections::BTreeMap<(usize, String, String), usize>,
     plugins_started: bool,
     identity: WorkspaceIdentity,
     app: App,
@@ -276,15 +317,27 @@ pub struct ProtectedHostState {
     pub unsaved_buffers: usize,
     pub pending_wait_requests: usize,
     pub live_terminals: usize,
+    pub plugin_jobs: usize,
+    pub activity_leases: usize,
 }
 
 impl ProtectedHostState {
     pub const fn is_empty(self) -> bool {
-        self.unsaved_buffers == 0 && self.pending_wait_requests == 0 && self.live_terminals == 0
+        self.unsaved_buffers == 0
+            && self.pending_wait_requests == 0
+            && self.live_terminals == 0
+            && self.plugin_jobs == 0
+            && self.activity_leases == 0
     }
 
     pub fn refusal(self) -> String {
         let mut parts = Vec::new();
+        if self.activity_leases > 0 {
+            parts.push(format!("{} plugin activity leases", self.activity_leases));
+        }
+        if self.plugin_jobs > 0 {
+            parts.push(format!("{} active plugin jobs", self.plugin_jobs));
+        }
         if self.unsaved_buffers > 0 {
             parts.push(format!(
                 "{} unsaved buffer{}",
@@ -319,7 +372,29 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            provider_writes: Default::default(),
+            provider_uncertain: Default::default(),
+            provider_reads: Default::default(),
+            provider_ignored: Default::default(),
+            document_saves: Default::default(),
+            filesystem_apply: None,
             plugin_workers: Default::default(),
+            plugin_manager: Vec::new(),
+            plugin_recoveries: Default::default(),
+            #[cfg(test)]
+            plugin_recovery_hook: None,
+            next_plugin_owner: 0,
+            plugin_processes: Default::default(),
+            observation_buffers: None,
+            plugin_events_sender: None,
+            #[cfg(test)]
+            plugin_external_launcher: None,
+            plugin_state_requests: Default::default(),
+            #[cfg(test)]
+            plugin_state_hook: None,
+            plugin_handoffs: Default::default(),
+            plugin_local_slots: None,
+            plugin_local_orphans: Default::default(),
             plugins_started: false,
             app,
             services: ServiceLifecycle::new(256),
@@ -546,6 +621,30 @@ impl WorkspaceHost {
     /// The single lifecycle summary used by retirement, inspection and stop.
     pub fn protected_state(&self) -> ProtectedHostState {
         ProtectedHostState {
+            activity_leases: self.app.plugin_activity_count(),
+            plugin_jobs: self.app.plugin_active_job_count()
+                + self.pending_process_requests(None)
+                + self.plugin_handoffs.len()
+                + self.plugin_recoveries.len()
+                + self.app.plugins.provider_save_intents.len()
+                + self.provider_writes.values().filter(|p| p.orphaned).count()
+                + usize::from(
+                    self.filesystem_apply
+                        .as_ref()
+                        .is_some_and(|pending| pending.orphaned),
+                )
+                + self
+                    .document_saves
+                    .values()
+                    .filter(|pending| {
+                        !self
+                            .app
+                            .plugins
+                            .instances
+                            .get(&pending.owner)
+                            .is_some_and(|i| i.application.generation == pending.generation)
+                    })
+                    .count(),
             unsaved_buffers: self.unsaved_buffers(),
             pending_wait_requests: self
                 .wait_requests
@@ -566,12 +665,16 @@ impl WorkspaceHost {
     pub fn may_retire_idle(&self) -> bool {
         self.protected_state().is_empty()
             && self.app.terminals.is_empty()
-            && self
-                .app
-                .plugins
-                .instances
-                .values()
-                .all(|instance| instance.pending.is_none())
+            && self.app.plugins.instances.values().all(|instance| {
+                instance.pending.is_none()
+                    && instance.application.local_requests.is_empty()
+                    && instance.application.requests.is_empty()
+                    && !instance
+                        .application
+                        .jobs
+                        .values()
+                        .any(|job| job.state.active())
+            })
     }
 
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {
@@ -828,7 +931,7 @@ impl WorkspaceHost {
             .live_buffer_index(buffer)
             .map_err(anyhow::Error::from)?;
         anyhow::ensure!(
-            !self.app.buffers[index].dirty,
+            !self.app.buffers[index].dirty && !self.app.document_mutation_pending(index),
             "modified wait buffers must be saved, closed with confirmation, or explicitly discarded before completion"
         );
         let request = self
@@ -857,7 +960,8 @@ impl WorkspaceHost {
                         .live_buffer_index(*buffer)
                         .map_err(anyhow::Error::from)?;
                     anyhow::ensure!(
-                        !self.app.buffers[index].dirty,
+                        !self.app.buffers[index].dirty
+                            && !self.app.document_mutation_pending(index),
                         "modified wait buffers must be saved before completing the request"
                     );
                 }
@@ -1052,7 +1156,19 @@ impl WorkspaceHost {
             .next_frame
             .checked_add(1)
             .expect("workspace frame identity exhausted");
-        let view = self.app.prepare_view(geometry);
+        let mut view = self.app.prepare_view(geometry);
+        // Prepared rows include final wrapping, folds and scroll clamping. Publish
+        // their observations now so the last viewport change needs no later input.
+        loop {
+            let owners = self.app.plugins.instances.len();
+            self.sync_application_observers();
+            if self.app.plugins.instances.len() == owners {
+                break;
+            }
+            // Cleanup can dismiss an overlay. Each retry strictly removes an
+            // owner, bounding this loop by the eight-owner admission limit.
+            view = self.app.prepare_view(geometry);
+        }
         let editor = self.app.snapshot(&view);
         let mut overlays = self.app.overlay_snapshots();
         if let Some(key_hints) = key_hints

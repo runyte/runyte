@@ -36,10 +36,543 @@ lower floor that holds on its measured target, and each platform baseline is
 recorded separately.
 
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
-summary, retains an HTML report as the `rust-coverage-html` artifact for 14
-days, and fails below 89% total line coverage. The floor is deliberately below
+summary, retains an HTML report as a `rust-coverage-html-<runner>` artifact for
+each Linux/macOS runner for 14 days, and fails below 89% total line coverage.
+Adding a platform job does not establish a new measured baseline until that job
+has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
+
+## 2026-09-09 — plugin review fixes and dev integration
+
+Measured on `x86_64-unknown-linux-gnu` at `fc2d4d3`, following review fixes in
+`e65c36e` and integration of `dev` at `3862af3`, using Rust 1.97.1 and
+cargo-llvm-cov 0.9.0. Formatting and warnings-as-errors Clippy pass. Ordinary
+and canonical instrumented suites each pass 3,581 tests with 33 existing
+ignored tests. The targeted plugin suite passes all 446 tests.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,840 | 130,636 | 91.74% |
+| Functions | 10,809 | 11,790 | 91.68% |
+| Regions | 181,532 | 199,099 | 91.18% |
+
+New regressions cover stale native-surface input, protection against redirected
+confirmation, actionable quit guidance, plugin command availability, bounded
+epoch 1 subscription handles and preserved undo grouping after rejected plugin
+results. The existing real-helper tests timed out under sandbox restrictions;
+the native rerun passed, as did both complete native suites above. The enforced
+floor remains 89%. This Linux result does not establish macOS CI completion.
+
+## 2026-09-08 — application acceptance and advertised resources
+
+Measured on `x86_64-unknown-linux-gnu` at `48a906e` plus the application acceptance
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,543 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed. The new real persistent-attachment regression and optional handshake
+resource inventory are included. Python/Node conformance is measured separately.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,648 | 130,461 | 91.71% |
+| Functions | 10,780 | 11,762 | 91.65% |
+| Regions | 181,228 | 198,797 | 91.16% |
+
+The enforced floor remains 89%. Native macOS execution of the expanded CI matrix
+is still required; this Linux run does not establish its result.
+
+## 2026-09-08 — native provider reload and recovery
+
+Measured on `x86_64-unknown-linux-gnu` at `1ab2335` plus the recovery round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,541 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 119,627 | 130,425 | 91.72% |
+| Functions | 10,778 | 11,760 | 91.65% |
+| Regions | 181,210 | 198,759 | 91.17% |
+
+Thirty-three new Rust regressions cover Unicode transaction mapping and inverse
+edits, remote-baseline adoption with preserved undo, native choice input and actual
+rendered frames, manager-ID completion rendering, stale and expired candidates,
+exact prior-write settlement, owner/global quota boundaries, and reservations
+retained through cancellation, stop and document closure until actual worker
+completion. A retained browser view does not prevent a small document reload.
+Ten application/schema checks pass. A native Linux PTY smoke verifies recovery
+after restart, all three decisions, subsequent save, undo/redo, clean reload,
+visible plugin-ID completion and zero output during two settled idle seconds.
+Native macOS and the complete release performance matrix remain outstanding.
+
+## 2026-09-08 — native plugin manager and explicit restart
+
+Measured on `x86_64-unknown-linux-gnu` at `457058b` plus the manager round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,508 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 118,764 | 129,526 | 91.69% |
+| Functions | 10,722 | 11,687 | 91.74% |
+| Regions | 180,069 | 197,529 | 91.16% |
+
+Twenty-one new Rust tests cover native manager actions/completion/refresh,
+generation fences, immediate quit protection, bounded configuration admission,
+actual worker cancellation/reaping and deferred restart after state IO. The
+independent saturation case runs eight workers across three generations with
+all 128 inbound permits held. Provider tests preserve uncertainty across restart
+and check correlated native save success/failure feedback without replacing a
+later action. Ten application/schema checks pass. A native Linux PTY smoke
+verifies failed/disabled rows, stop/restart, retained unavailable views and state,
+dirty provider rebind/save, completed save feedback and zero manager output bytes
+over two settled seconds. Native macOS and the complete performance matrix
+remain outstanding.
+
+## 2026-09-08 — plugin settings and workspace state
+
+Measured on `x86_64-unknown-linux-gnu` at `62f49c9` plus the settings/state
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,487 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 118,094 | 128,818 | 91.68% |
+| Functions | 10,662 | 11,618 | 91.77% |
+| Regions | 179,219 | 196,594 | 91.16% |
+
+Thirty-one new Rust tests cover bounded JSON traversal and integer precision,
+schema registration rollback and settings ownership, private state storage and
+content revisions, cancellation and unknown outcomes, stopped-generation gates,
+payload accounting, runtime teardown and quit protection. Sixteen Python state
+checks and ten application/schema checks pass. A native Linux PTY smoke verifies
+configured defaults, no startup storage IO, private permissions, conditional
+save/delete and persistence across editor restart, with zero settled output bytes
+over two seconds. Native macOS and the complete application performance matrix
+remain outstanding; this smoke is functional evidence.
+
+## 2026-09-08 — continuing activity leases
+
+Measured on `x86_64-unknown-linux-gnu` at `9e2d672` plus the activity round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,456 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 117,145 | 127,775 | 91.68% |
+| Functions | 10,560 | 11,484 | 91.95% |
+| Regions | 177,922 | 195,138 | 91.18% |
+
+Fourteen new Rust tests cover bounded leases, renewal/expiry races, cooperative
+and missed cleanup acknowledgement, queue failure, real worker/helper lifecycle,
+quit/detach guards and owner-labelled health. The catalog transport test now
+preserves activity metadata; the native picker regression checks shared column
+widths and avoids redundant refreshes. Five Python activity and ten application/
+schema checks passed. Native macOS and the complete application performance
+matrix remain outstanding. Real deadline and cleanup checks are functional
+evidence rather than the release workload gate.
+
+## 2026-09-08 — native handoffs and notifications
+
+Measured on `x86_64-unknown-linux-gnu` at `63d2d5e` plus the handoff round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites each
+passed 3,442 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 116,552 | 127,169 | 91.65% |
+| Functions | 10,525 | 11,452 | 91.91% |
+| Regions | 177,270 | 194,471 | 91.15% |
+
+Twenty-seven new Rust tests cover system-handler validation/admission, unpublished
+terminal reader/writer ownership and cleanup, foreground and generation fences,
+retained notifications and one-shot idle presentation. Python application/schema
+checks (10) and handoff checks (5) passed. A native PTY smoke verified terminal
+command execution, terminal survival after plugin stop, retained owner-labelled
+notifications and zero terminal output over two settled idle seconds. Browser
+launch tests use an injected checked-in stand-in. Native macOS and the complete
+application performance matrix remain outstanding; the idle smoke is functional
+evidence rather than the release workload gate.
+
+## 2026-09-08 — managed helper processes
+
+Measured on `x86_64-unknown-linux-gnu` at `b7b40c8` plus the managed-helper
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,415 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 115,625 | 126,115 | 91.68% |
+| Functions | 10,445 | 11,342 | 92.09% |
+| Regions | 176,101 | 193,090 | 91.20% |
+
+Thirty-five new Rust tests cover helper wire/byte-ring bounds, non-reaping exit
+observation, startup/write deadlines, reserved terminal delivery under pressure,
+late-spawn/runtime-shutdown cleanup, ownership, generation accounting and deferred
+close ordering. The existing admission proof now fills the complete 288-slot
+queue including helper reservations. Eleven Python checks cover binary SDK I/O,
+structural fixtures and the deterministic example. Native PTY start, echo, flood,
+EOF and owner-stop checks passed; two settled idle seconds emitted zero terminal
+bytes. Process/PTY checks run in the native environment: the ordinary sandbox's
+background-descendant lifetime differs. Native macOS and the full application
+workload matrix remain pending.
+
+## 2026-09-08 — query and view observations
+
+Measured on `x86_64-unknown-linux-gnu` at `ae90877` plus the query/observation
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,380 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 114,441 | 124,813 | 91.69% |
+| Functions | 10,346 | 11,231 | 92.12% |
+| Regions | 174,385 | 191,220 | 91.20% |
+
+Thirty-two new Rust tests cover query preconditions and A→B→A races, pending row
+actions, stale menus, reliable action admission/FIFO, output-size refusal,
+query memory, staged cancellation, viewport splits/wrapping and attachment
+lifecycle, baseline seeding, and final-frame cleanup after observer failure.
+Eleven Python checks cover SDK query propagation, ordered action callbacks,
+structural conformance and the bounded catalog example. The native PTY smoke
+passed explicit filtering, pending retention, cancellation, empty-query reset
+and viewport/action observations; two settled seconds emitted zero terminal
+bytes. Native macOS and the full application workload matrix remain pending.
+
+## 2026-09-08 — richer model publication
+
+Measured on `x86_64-unknown-linux-gnu` at `dd621e3` plus the richer-view
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,348 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 113,744 | 124,095 | 91.66% |
+| Functions | 10,297 | 11,181 | 92.09% |
+| Regions | 173,481 | 190,276 | 91.17% |
+
+Thirty-six new Rust regressions cover semantic columns and blocks, stable-row
+patches, malformed staged decoding, Unicode chunks, immutable model snapshots,
+commit-time selections, hidden/split view positions and jump history, cancellation,
+source retirement and worker memory accounting. Twelve Python checks exercise
+inline/staged publication, exact chunk progress, cleanup, rollback and dashboard
+conformance. A native PTY smoke passed row toggles, reordering, 8,000 staged rows
+and immutable large-model readback; two settled seconds emitted zero terminal
+bytes. Native macOS and the full application workload matrix remain pending.
+
+## 2026-09-08 — asynchronous form validation
+
+Measured on `x86_64-unknown-linux-gnu` at `97a45c0` plus the validation
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,312 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 112,364 | 122,601 | 91.65% |
+| Functions | 10,202 | 11,062 | 92.23% |
+| Regions | 171,554 | 188,135 | 91.19% |
+
+Twenty-three new Rust tests cover physical submit provenance, whole-form revision
+changes, secret opt-in and omission, stale replies, pointer/replay/semantic
+cancellation, field focus, masked frames, exact response shapes, request capacity,
+timeouts/late replies, owner isolation and secret-safe callback failures. Six
+Python checks separately exercise callback isolation, response correlation,
+secret-safe errors and the runnable example. A native PTY smoke passed validation
+feedback, masking, stale retention, automatic submission and cancellation;
+two settled seconds emitted zero terminal bytes. Native macOS and the full
+application workload matrix remain pending.
+
+## 2026-09-08 — source subscriptions and fair delivery
+
+Measured on `x86_64-unknown-linux-gnu` at `0f1beac` plus the subscription
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,289 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 111,854 | 122,070 | 91.63% |
+| Functions | 10,166 | 11,023 | 92.23% |
+| Regions | 170,989 | 187,526 | 91.18% |
+
+Twenty-seven new Rust tests cover atomic subscription admission, baseline and
+mutation ordering, coalescing/resynchronization, source closure and discovery,
+source ownership, saved baselines, pane targets/selections, view/job metadata,
+reserved message/byte capacity, fair producer admission, final drain wakeups and
+simultaneous host deadlines. Five Python checks cover ordered baseline callbacks,
+resynchronization, unsubscribe, generic event forwarding and bounded callback
+isolation from cancellation. Native macOS and the complete application workload
+matrix remain pending.
+
+## 2026-09-08 — private binary download staging
+
+Measured on `x86_64-unknown-linux-gnu` at `e586e39` plus the binary staging
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Ordinary and canonical suites
+each passed 3,262 tests with 33 ignored. Formatting and warnings-as-errors Clippy
+passed; the floor remains 89%.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,864 | 121,002 | 91.62% |
+| Functions | 10,077 | 10,926 | 92.23% |
+| Regions | 169,620 | 186,048 | 91.17% |
+
+Fourteen new Rust tests cover strict staging wire values, private storage and
+configured runtime roots, exact binary/empty publication, retained original write
+descriptors, confirmation cancellation/collisions, late sealing results, job
+retirement, owner-stop accounting, bounded admission and digest failure recovery.
+Python transport/UI checks separately exercise streamed downloads and finite-job
+callbacks; they are not counted as Rust coverage. Native macOS and the complete
+application performance matrix remain pending.
+
+## 2026-09-08 — SFTP example and provider read-cache release
+
+Measured on `x86_64-unknown-linux-gnu` at `3b6bbe2` plus the SFTP round, using
+Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full suite each
+passed 3,248 tests with 33 ignored. Formatting and warnings-as-errors Clippy passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,284 | 120,354 | 91.63% |
+| Functions | 10,032 | 10,875 | 92.25% |
+| Regions | 168,807 | 185,123 | 91.19% |
+
+Three Rust regressions cover reliable provider cache release on terminal reads,
+live identity reuse and failed release delivery. The full provider filter passed
+98 tests. Python checks passed schema/SDK (8+9), generic provider (10), browser (7)
+and authenticated SFTP/public-wire fixtures (18). Native editor PTY checks passed
+browsing, Enter-open, cancelled/confirmed remote saving and comparison, with no
+output in two settled seconds. The 89% floor stays unchanged; native macOS and
+full application workload measurements remain pending.
+
+## 2026-09-08 — native weaker-provider overwrite confirmation
+
+Measured on `x86_64-unknown-linux-gnu` at `6ee24e2` plus the native overwrite
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full
+suite each passed 3,245 tests with 33 ignored. Formatting, warnings-as-errors
+Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 110,250 | 120,321 | 91.63% |
+| Functions | 10,032 | 10,874 | 92.26% |
+| Regions | 168,773 | 185,098 | 91.18% |
+
+Twenty-three behavior tests cover immutable bounded hook previews, native-only
+approval, macro/replay refusal, stale/busy contexts, confirmation cancellation,
+reserved completion handles, save-close continuations and uncertainty accounting.
+The complete provider filter passed 95 tests. Native PTY checks passed cancelled
+and confirmed writes, save-close, reopened uploads and rebind, with no output in
+two settled seconds. The floor remains 89%; native macOS and full application
+workload measurements remain outstanding.
+
+## 2026-09-08 — remote conflict inspection
+
+Measured on `x86_64-unknown-linux-gnu` at `e399acc` plus the remote inspection
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical coverage and the full
+suite each passed 3,222 tests with 33 ignored. Formatting, warnings-as-errors
+Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 109,799 | 119,836 | 91.62% |
+| Functions | 10,009 | 10,849 | 92.26% |
+| Regions | 168,200 | 184,470 | 91.18% |
+
+Fourteen behavior tests cover fresh remote comparisons, immutable baselines and
+undo, uncertain unavailable sources, stale context/revisions, terminal-covered
+panes, snapshot reuse/retirement, handle saturation, bounded admission and read
+cleanup. The native PTY example passed native and plugin inspection plus the
+save/rebind flow, with no output during two settled seconds. The unchanged 89%
+floor remains satisfied; native macOS and complete workload evidence are pending.
+
+## 2026-09-08 — conditional provider saves and reconciliation
+
+Measured on `x86_64-unknown-linux-gnu` at `36fb36f` plus the provider save round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage and the
+ordinary full suite each passed 3,208 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 109,444 | 119,474 | 91.60% |
+| Functions | 9,977 | 10,817 | 92.23% |
+| Regions | 167,722 | 183,979 | 91.16% |
+
+Behavior tests cover immutable uploaded baselines, native admission and deferred
+close, conditional staging, cancellation and unknown outcomes, exact settlement
+proofs, requester/provider lifecycle, stale revisions and recovery at saturated
+payload quotas. The inherited Git quiet-period test uses an explicit timestamp
+instead of depending on a short wall-clock interval under instrumentation.
+The native PTY example passed save, save-and-close, reopening uploaded text and
+rebind, with no output during two settled seconds. The floor remains 89%; native
+macOS and complete application workload measurements remain outstanding.
+
+## 2026-09-08 — provider-backed document opening
+
+Measured on `x86_64-unknown-linux-gnu` at `bb03f2f` plus the provider read round,
+using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage and the
+ordinary full suite each passed 3,174 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 108,430 | 118,316 | 91.64% |
+| Functions | 9,915 | 10,746 | 92.27% |
+| Regions | 166,398 | 182,498 | 91.18% |
+
+Twenty new tests cover remote identity, Unicode/CRLF baseline editing, native and
+bundled-client save refusal, absence of local IO/LSP identity, canonical reuse,
+version/offset/EOF validation, cancellation and deadline races, provider stop,
+foreground changes, handle exhaustion, queue failures and shared control capacity.
+The native PTY example opened and edited multi-chunk provider text; a two-second
+settled observation emitted no bytes. The floor remains 89%. Native macOS and the
+complete application workload measurements remain required before plan completion.
+
+## 2026-09-08 — bounded recursive application filesystem operations
+
+Measured on `x86_64-unknown-linux-gnu` at `f0488bf` plus the recursive filesystem
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,154 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 107,679 | 117,546 | 91.61% |
+| Functions | 9,866 | 10,692 | 92.27% |
+| Regions | 165,515 | 181,578 | 91.15% |
+
+New coverage exercises shallow stat, contained aliases, recursive operation and
+confirmation behavior, dirty descendants, depth/count/data/metadata budgets,
+unchanged-root descendant revalidation, and growth during copy with staging
+cleanup. Native PTY confirmation copied a directory and opened text through stat;
+the two-second settled observation emitted no terminal bytes. The floor remains
+89%; native macOS validation remains required.
+
+## 2026-09-08 — asynchronous application filesystem apply
+
+Measured on `x86_64-unknown-linux-gnu` at `1c27b77` plus the asynchronous filesystem
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,142 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 107,502 | 117,376 | 91.59% |
+| Functions | 9,852 | 10,678 | 92.26% |
+| Regions | 165,267 | 181,353 | 91.13% |
+
+New regressions cover asynchronous confirmation/application, input during blocked
+trash IO, edits during rename, orphan reconciliation and accounting, both mutation
+barrier directions, wait/quit/detach, late opens, scratch/view retirement, capacity
+exhaustion, outbound startup failure and atomic cancellation phases. A native PTY
+smoke confirmed a create, opened text and returned to the retained manager; its
+two-second settled observation emitted no terminal bytes. The floor remains 89%;
+this Linux evidence does not replace native macOS validation.
+
+## 2026-09-08 — explicit application document lifecycle
+
+Measured on `x86_64-unknown-linux-gnu` at `a4b3804` plus the document lifecycle
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,132 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 106,891 | 116,639 | 91.64% |
+| Functions | 9,806 | 10,626 | 92.28% |
+| Regions | 164,555 | 180,457 | 91.19% |
+
+New regressions exercise asynchronous save baselines, later-edit undo, whitespace
+hooks, empty new documents, collisions, cancellation/stop uncertainty, retained
+recovery warnings, file observation ordering and pending close/reload/discard/quit
+and `--wait` protection. Host-owned cancellation does not depend on plugin
+acknowledgement. The floor remains 89%; native macOS validation remains required.
+
+## 2026-09-08 — native application interaction
+
+Measured on `x86_64-unknown-linux-gnu` at `364fa1c` plus the native interaction
+round, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. Canonical workspace coverage
+and the ordinary full suite each passed 3,116 tests with 33 ignored. Formatting,
+warnings-as-errors Clippy and both schema/example checkers passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 106,407 | 116,087 | 91.66% |
+| Functions | 9,780 | 10,588 | 92.37% |
+| Regions | 163,948 | 179,746 | 91.21% |
+
+New host regressions cover Unicode form editing, validation and bounds, secret
+masking through private frames, choice filtering/navigation, native confirmation,
+foreign dismissal, competing input, detach/stop, cancelled foreground grants and
+shared payload reservation/release. A main-loop test verifies input-trace
+redaction before and after surface closure. The unchanged floor remains 89%;
+native macOS validation is still required before plan completion.
+
+## 2026-09-08 — local file-manager round and application review
+
+Measured on `x86_64-unknown-linux-gnu` at `0731e51` plus the local filesystem
+adapter and comprehensive application-review fixes, using Rust 1.97.1 and
+cargo-llvm-cov 0.9.0. The canonical `cargo llvm-cov --locked --workspace`
+passed 3,108 tests, with 33 ignored, using native local socket/process access.
+The ordinary full suite, formatting and warnings-as-errors Clippy also passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 105,891 | 115,525 | 91.66% |
+| Functions | 9,754 | 10,558 | 92.38% |
+| Regions | 163,249 | 178,991 | 91.21% |
+
+The added host-boundary tests cover revision-bound directory pages, ownership,
+release and in-flight limits, actual confirmation/cancellation, collision
+revalidation, copy/rename/delete reconciliation, unsaved document reuse and
+foreground changes. Review regressions cover static symlink aliases, active and
+inactive dirty directory preservation, wrong-kind snapshot deadline isolation,
+half-open view selections and chronological job history. The separate Python
+checker covers cancellation dispatch while command workers await host replies.
+
+The enforced floor remains 89%. Native macOS coverage and the full application
+acceptance matrix remain outstanding; this Linux result does not complete them.
+
+## 2026-09-08 — application API development slice
+
+Measured on `x86_64-unknown-linux-gnu` at base `e86fe54` plus the in-progress
+application API, using Rust 1.97.1 and cargo-llvm-cov 0.9.0. The canonical
+`cargo llvm-cov --locked --workspace` passed 3,097 tests, with 33 ignored.
+Native local socket/process access was required; the sandbox refused an
+existing local-client handshake fixture's Unix-socket write. Ordinary tests,
+formatting and warnings-as-errors Clippy also passed.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 105,199 | 114,783 | 91.65% |
+| Functions | 9,712 | 10,506 | 92.44% |
+| Regions | 162,351 | 177,988 | 91.21% |
+
+New behavior coverage in `src/workspace/host/tests/plugin_applications.rs`
+exercises command/job concurrency, cancellation races, ownership and generation
+limits, native view publication and stale actions, split selection preservation,
+foreground context expiration, hidden-buffer Unicode edits, immutable snapshots,
+pane selection preconditions and private-frame rendering of diagnostic roles.
+Keyboard-driven cases exercise actual command-palette acceptance in both epochs,
+typed arguments and captured buffer/pane handles after focus changes.
+Wire conformance and argument/queue tests also live in `src/plugin/`.
+
+Coverage exposed a valid race where an immediately exiting child closes stdin
+before the worker writes hello. The worker now labels that IO failure with
+plugin context, as it already did stdout/exit failures; the original regression
+assertion was retained. The canonical rerun passed.
+
+The enforced floor remains **89%**. This is a Linux development measurement,
+not completion of the application plan or a new native macOS measurement.
 
 ## 2026-09-07 — experimental process plugins
 

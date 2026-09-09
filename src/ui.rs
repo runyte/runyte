@@ -608,7 +608,11 @@ fn render_editor_frame(
         global_status_line_area,
         interaction_line_area,
     );
-    if app.fs_confirmation.is_some() {
+    if app.plugins.input.is_some() {
+        if let Some(overlay) = overlays.iter().find(|o| o.kind == OverlayKind::Prompt) {
+            draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+        }
+    } else if app.fs_confirmation.is_some() {
         draw_fs_confirmation(frame, &app, editor_area);
     } else if app.picker.is_some() {
         draw_picker(frame, &app, editor_area);
@@ -616,11 +620,27 @@ fn render_editor_frame(
         draw_snapshot_overlay(frame, &app.theme, actions, snapshot);
     } else if app.list.is_some() {
         draw_list(frame, &app, editor_area);
+    } else if let Some(choice) = overlays.iter().find(|overlay| {
+        overlay.kind == OverlayKind::ResultList
+            && overlay.purpose == crate::snapshot::OverlayPurpose::Choice
+    }) {
+        // Some native choices deliberately keep only fenced metadata in App;
+        // their immutable snapshot is the complete rendering owner.
+        draw_snapshot_overlay(frame, &app.theme, choice, snapshot);
     } else {
         if let Some(overlay) = path_completion_overlay {
             draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::Command {
-            draw_command_palette(frame, &app, editor_area);
+            if app.plugin_id_completion_open() {
+                if let Some(overlay) = overlays
+                    .iter()
+                    .find(|overlay| overlay.kind == OverlayKind::CommandPalette)
+                {
+                    draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+                }
+            } else {
+                draw_command_palette(frame, &app, editor_area);
+            }
         } else if app.mode == Mode::Command && app.prompt_kind == PromptKind::ExternalProgram {
             draw_program_hints(frame, &app, editor_area);
             if app.program_action_menu.is_some() {
@@ -6922,6 +6942,9 @@ mod tests {
                 incompatible_protocol: None,
                 unsaved_buffers: None,
                 pending_wait_requests: None,
+                plugin_jobs: None,
+                activity_leases: None,
+                activities: Vec::new(),
                 live_terminals: None,
                 terminal_sessions: None,
                 terminal_line_activity_unix_seconds: None,
@@ -6991,6 +7014,9 @@ mod tests {
                 incompatible_protocol: None,
                 unsaved_buffers: None,
                 pending_wait_requests: None,
+                plugin_jobs: None,
+                activity_leases: None,
+                activities: Vec::new(),
                 live_terminals: None,
                 terminal_sessions: None,
                 terminal_line_activity_unix_seconds: None,
@@ -7076,6 +7102,9 @@ mod tests {
                     incompatible_protocol: None,
                     unsaved_buffers: None,
                     pending_wait_requests: None,
+                    plugin_jobs: None,
+                    activity_leases: None,
+                    activities: Vec::new(),
                     live_terminals: Some(1),
                     terminal_sessions: Some(1),
                     terminal_line_activity_unix_seconds: Some(
@@ -7102,6 +7131,9 @@ mod tests {
                     incompatible_protocol: None,
                     unsaved_buffers: None,
                     pending_wait_requests: None,
+                    plugin_jobs: None,
+                    activity_leases: None,
+                    activities: Vec::new(),
                     live_terminals: None,
                     terminal_sessions: None,
                     terminal_line_activity_unix_seconds: None,
@@ -7164,6 +7196,9 @@ mod tests {
                     incompatible_protocol: None,
                     unsaved_buffers: None,
                     pending_wait_requests: None,
+                    plugin_jobs: None,
+                    activity_leases: None,
+                    activities: Vec::new(),
                     live_terminals: None,
                     terminal_sessions: None,
                     terminal_line_activity_unix_seconds: None,
@@ -7184,6 +7219,9 @@ mod tests {
                     incompatible_protocol: None,
                     unsaved_buffers: None,
                     pending_wait_requests: None,
+                    plugin_jobs: None,
+                    activity_leases: None,
+                    activities: Vec::new(),
                     live_terminals: None,
                     terminal_sessions: None,
                     terminal_line_activity_unix_seconds: None,

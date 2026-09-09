@@ -516,20 +516,56 @@ are run deliberately and whose results are recorded by hand.
 
 # Experimental plugin comparison
 
-`plugins.py` uses this harness's existing first-document-output and idle functions
-to compare a retained pre-change release binary with the current release, first
-with plugins disabled and then with the Python uppercase example enabled:
+`plugins.py` compares retained release binaries with plugins disabled and with
+quiescent plugins, then exercises the application workloads through actual
+native input and the public extension API:
 
 ```sh
-python3 benchmarks/plugins.py --before /path/to/retained/base/runyte
+python3 benchmarks/plugins.py --before /path/to/retained/base/runyte \
+  --applications --json /tmp/plugin-comparison.json
 ```
 
-Build both binaries and finish tests before measuring. `--after` selects another
-current binary; `--runs` defaults to ten startup/quit samples, and `--idle-runs`
-to three independent ten-second windows. The representative fixtures are
-`short.txt`, `medium.lua`, and `long.lua`; idle uses `medium.lua`. Python is the
-interpreter running the harness. All configuration and runtime files remain in
-ignored `.work/` storage, and LSP is disabled. The example starts after document
-presentation; first document output does not measure plugin registration readiness.
-Each line prints the full result summary, including completion counts and idle
-ranges, so incomplete samples cannot masquerade as a zero-cost measurement.
+Build both binaries and finish tests before measuring. `--after` selects the
+current binary. The harness requires at least ten startup samples and three
+independent idle windows of at least ten seconds. Representative startup fixtures
+are `short.txt`, `medium.lua` and `long.lua`; workload windows use `medium.lua`.
+Linux `/proc` supplies CPU accounting, including live descendants and cumulative
+reaped-child CPU. This harness requires Linux with `pidfd_open` and Python
+`signal.pidfd_send_signal`: cleanup pins the measured host and descendants,
+verifies their exit and can stop those exact identities if normal shutdown fails.
+Python and `pyte` come from the environment running the harness.
+All generated documents, configuration, runtime state and host inventory live in
+isolated temporary directories; only the requested JSON artifact is retained.
+
+First document output, demonstrated editing, accepted registration and a usable
+native application view are distinct observations. Terminal matching reads decoded
+cells and waits for synchronized frames to finish. Palette commands are submitted
+only after their exact query is visible. A settled screen alone never establishes
+workload readiness. The artifact retains raw samples, binary hashes, medians,
+ranges and p95; a failed setup or incomplete window fails the run and preserves
+its failure instead of reporting a zero-cost sample.
+`screen_bytes` counts observed output bytes; `pty_read_chunks` counts harness
+reads, not editor write syscalls. Zero bytes still proves a silent observation
+window. Epoch 1 samples additionally execute a tiny transformation probe, undo
+it and restore the measured document to prove that the shipped example is live.
+
+With `--applications`, the checked-in `plugin_workload.py` provides a visible view,
+a canonical 4 MiB model with 10,000 stable rows, a finite job while detached,
+a noisy host-managed helper and descendant, and repeated maximum-size model
+publication. Workload checkpoints prove host admission and progress. Idle windows
+begin after 2.5 seconds of settlement; screen output during an active publication
+workload is measured separately from the zero-write quiescent target. Detached
+windows have no frontend, so their screen-write value is unavailable rather than
+zero.
+
+Input latency measures one exact document edit through its completed terminal
+frame while the helper or model publisher is active. The full saved document is
+then compared with the original plus the measured insertions. A quiet second
+plugin is also invoked beside the busy owner. Untimed deterministic spacing
+spans multiple publication cycles; bounded acknowledgement/output histories must
+prove progress inside the measured input phase. A detached job is checked again
+through the same host after the timed window, so a crashed worker cannot pass as
+quiet work. These are measurements on the
+recorded machine, including harness decoding, not portable absolute CI limits
+or physical display/audio timings. The target is below 16 ms p95, with any
+miss requiring investigation before the application plan's release gate closes.

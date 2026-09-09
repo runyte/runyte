@@ -7,6 +7,16 @@
 //! a multi-cursor edit a single undo step and keeps undo memory proportional to
 //! edit size rather than document size.
 
+mod filesystem;
+pub(crate) use filesystem::{FilesystemInput, FilesystemUpdate};
+mod provider;
+pub(crate) use provider::{
+    PreparedProviderReload, ProviderReloadChoice, ProviderReloadGuard, ProviderReloadSource,
+};
+pub use provider::{
+    ProviderConflict, ProviderDocument, ProviderIdentity, ProviderSave, ProviderUncertain,
+};
+
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
@@ -48,6 +58,15 @@ impl std::fmt::Display for BinaryFileError {
 
 impl std::error::Error for BinaryFileError {}
 
+#[derive(Debug)]
+pub(crate) struct ReadLimitExceeded;
+impl std::fmt::Display for ReadLimitExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("document exceeds open limit")
+    }
+}
+impl std::error::Error for ReadLimitExceeded {}
+
 /// The display name of the changed-file list, which is also how the editor
 /// finds the buffer again rather than opening a second one.
 pub const GIT_STATUS_NAME: &str = "[git status]";
@@ -78,6 +97,7 @@ const HISTORY_LIMIT: usize = 1000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BufferKind {
     File,
+    Provider(ProviderDocument),
     Directory,
     Scratch,
     Virtual {
@@ -152,6 +172,11 @@ pub enum BufferKind {
 pub enum GeneratedViewIdentity {
     /// Deliberately named internal projections and test/embedder documents.
     Named(String),
+    /// Host-owned application projection, separate from labels and local paths.
+    Plugin {
+        owner: usize,
+        view: String,
+    },
     About,
     Tutorial,
     Manual,
@@ -172,6 +197,12 @@ pub enum GeneratedViewIdentity {
     DiskSnapshot {
         source_buffer: usize,
         revision: String,
+    },
+    /// One immutable remote observation, independent of the document baseline.
+    ProviderSnapshot {
+        source_buffer: usize,
+        generation: String,
+        version: String,
     },
     /// One Markdown document rendered for reading.
     ///
@@ -249,6 +280,7 @@ pub struct Buffer {
     disk_state: Option<DiskState>,
     /// Monotonic identity of the accepted disk baseline and path ownership.
     disk_generation: u64,
+    write_uncertain: bool,
     external_status: ExternalFileStatus,
     external_observation: Option<FileObservation>,
     last_reported_observation: Option<FileObservation>,
@@ -268,6 +300,49 @@ pub struct Buffer {
     /// is editing away from its own first column would put its text somewhere
     /// its coordinates do not say it is.
     layout: ContentLayout,
+}
+
+/// Cheap immutable input for a worker-prepared generated projection.
+#[derive(Clone, Debug)]
+pub(crate) struct PluginProjectionSource {
+    text: Text,
+    layout: ContentLayout,
+    revision: Option<u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedPluginProjection {
+    text: Text,
+    layout: ContentLayout,
+    longest_line: usize,
+    revision: Option<u64>,
+}
+
+impl PluginProjectionSource {
+    pub fn empty() -> Self {
+        Self {
+            text: Text::new(),
+            layout: ContentLayout::default(),
+            revision: None,
+        }
+    }
+
+    /// Run on the bounded publication worker. The owned body becomes one
+    /// transaction; inverse text and display measurements never run at commit.
+    pub fn prepare(self, body: String) -> PreparedPluginProjection {
+        let layout = self.layout.remeasured(&body);
+        let longest_line = body.split('\n').map(str::len).max().unwrap_or_default();
+        let mut text = self.text;
+        let transaction =
+            Transaction::new(vec![crate::text::Change::new(0, text.len_chars(), body)]);
+        text.apply(&transaction);
+        PreparedPluginProjection {
+            text,
+            layout,
+            longest_line,
+            revision: self.revision,
+        }
+    }
 }
 
 /// Enough of a file's metadata to notice that something else rewrote it.
@@ -563,14 +638,43 @@ fn file_acl_digest(_file: &File) -> Result<Option<String>> {
 }
 
 fn read_text_and_state(path: &Path, action: &str) -> Result<(String, DiskState)> {
-    let mut file =
-        File::open(path).with_context(|| format!("failed to {action} {}", path.display()))?;
+    read_text_and_state_limit(path, action, None)
+}
+
+fn read_text_and_state_limit(
+    path: &Path,
+    action: &str,
+    limit: Option<usize>,
+) -> Result<(String, DiskState)> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if limit.is_some() {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to {action} {}", path.display()))?;
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {}", path.display()))?;
     let mut contents = Vec::new();
-    file.read_to_end(&mut contents)
-        .with_context(|| format!("failed to {action} {}", path.display()))?;
+    if let Some(limit) = limit {
+        ensure!(
+            metadata.is_file(),
+            "bounded document opens require a regular file"
+        );
+        (&mut file)
+            .take(limit as u64 + 1)
+            .read_to_end(&mut contents)?;
+        if contents.len() > limit {
+            return Err(ReadLimitExceeded.into());
+        }
+    } else {
+        file.read_to_end(&mut contents)
+            .with_context(|| format!("failed to {action} {}", path.display()))?;
+    }
     if crate::external_open::is_binary(&contents, true) {
         return Err(BinaryFileError)
             .with_context(|| format!("failed to {action} {}", path.display()));
@@ -1664,6 +1768,57 @@ fn sync_parent(_parent: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Immutable local save input; constructing it does not clone undo or layout state.
+#[derive(Debug)]
+pub(crate) struct DocumentSave {
+    pub path: PathBuf,
+    text: Text,
+    expected: Option<DiskState>,
+    generation: u64,
+}
+#[derive(Debug)]
+pub struct SavedDocument {
+    path: PathBuf,
+    text: Text,
+    state: Option<DiskState>,
+    generation: u64,
+    pub warning: Option<String>,
+}
+impl DocumentSave {
+    pub fn run(self, root: &Path) -> Result<SavedDocument> {
+        crate::path_safety::ensure_within_root(root, &self.path)?;
+        let identity = crate::path_safety::path_identity(&self.path)?;
+        ensure_disk_unchanged(&self.path, self.expected.as_ref())?;
+        let policy = self
+            .expected
+            .as_ref()
+            .map_or(ReplacePolicy::NoReplace, ReplacePolicy::Expected);
+        let status = atomic_write_checked(
+            &self.path,
+            self.text.to_string().as_bytes(),
+            policy,
+            &identity,
+        )?;
+        let verified = DiskState::inspect(&self.path)
+            .ok()
+            .flatten()
+            .filter(|current| current.same_contents(&status.installed_state));
+        let mut warning = status.durability_warning;
+        if verified.is_none() {
+            warning
+                .get_or_insert_with(String::new)
+                .push_str("; saved file could not be verified; inspect disk before closing");
+        }
+        Ok(SavedDocument {
+            path: self.path,
+            text: self.text,
+            state: verified,
+            generation: self.generation,
+            warning,
+        })
+    }
+}
+
 impl Buffer {
     pub fn scratch() -> Self {
         Self {
@@ -1681,6 +1836,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -1690,8 +1846,17 @@ impl Buffer {
 
     pub fn open(path: &Path) -> Result<Self> {
         let (contents, disk_state) = read_text_and_state(path, "open")?;
+        Ok(Self::from_opened_text(path, contents, disk_state))
+    }
+
+    pub(crate) fn open_bounded(path: &Path, limit: usize) -> Result<Self> {
+        let (contents, disk_state) = read_text_and_state_limit(path, "open", Some(limit))?;
+        Ok(Self::from_opened_text(path, contents, disk_state))
+    }
+
+    fn from_opened_text(path: &Path, contents: String, disk_state: DiskState) -> Self {
         let text = Text::from_str(&contents);
-        Ok(Self {
+        Self {
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -1706,11 +1871,12 @@ impl Buffer {
             undo_group: None,
             disk_state: Some(disk_state),
             disk_generation: 1,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
             layout: ContentLayout::default(),
-        })
+        }
     }
 
     pub fn external_file_status(&self) -> ExternalFileStatus {
@@ -1817,7 +1983,9 @@ impl Buffer {
     }
 
     fn apply_observed_file(&mut self, event: &FileObservationEvent) -> ObservationApply {
-        if let FileObservation::Text { text, state } = &event.observation {
+        if let FileObservation::Text { text, state } = &event.observation
+            && !self.write_uncertain
+        {
             if self.disk_state.as_ref() == Some(state) {
                 self.clear_external_file_state();
                 return ObservationApply::Synchronized;
@@ -1915,6 +2083,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -1964,6 +2133,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -1998,6 +2168,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2079,6 +2250,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2104,6 +2276,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2129,6 +2302,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2154,6 +2328,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2178,6 +2353,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2202,6 +2378,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2226,6 +2403,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2259,6 +2437,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2284,6 +2463,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2308,6 +2488,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2334,6 +2515,7 @@ impl Buffer {
             undo_group: None,
             disk_state: None,
             disk_generation: 0,
+            write_uncertain: false,
             external_status: ExternalFileStatus::Synchronized,
             external_observation: None,
             last_reported_observation: None,
@@ -2378,7 +2560,10 @@ impl Buffer {
     /// `SPECIAL_BUFFER_RETENTION_LIMIT`; scratch remains ordinary pathless
     /// text.
     pub fn is_special(&self) -> bool {
-        !matches!(self.kind, BufferKind::File | BufferKind::Scratch)
+        !matches!(
+            self.kind,
+            BufferKind::File | BufferKind::Provider(_) | BufferKind::Scratch
+        )
     }
 
     /// Whether this scratch has no text or unsaved state worth retaining.
@@ -2529,6 +2714,14 @@ impl Buffer {
 
     pub fn display_name(&self) -> String {
         match &self.kind {
+            BufferKind::Provider(document) => {
+                let suffix = if document.available {
+                    ""
+                } else {
+                    " [unavailable]"
+                };
+                format!("[remote] {}{suffix}", document.label)
+            }
             BufferKind::File => self
                 .path
                 .as_ref()
@@ -2603,6 +2796,10 @@ impl Buffer {
     /// person confirms it, undo must not resurrect the changes they chose to
     /// throw away.
     pub fn discard_changes_to(&mut self, text: &str) -> Result<()> {
+        ensure!(
+            self.provider().is_none(),
+            "Provider documents must discard to their accepted remote baseline"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }
@@ -2628,6 +2825,11 @@ impl Buffer {
     /// it is replaced wholesale by a reload or a discard.
     pub fn revision(&self) -> u64 {
         self.text.revision()
+    }
+
+    /// Revision of the accepted saved snapshot, without copying its text.
+    pub(crate) fn plugin_saved_revision(&self) -> Option<u64> {
+        self.saved_text.as_ref().map(Text::revision)
     }
 
     pub fn len_lines(&self) -> usize {
@@ -2841,6 +3043,37 @@ impl Buffer {
         Some(group)
     }
 
+    pub(crate) fn plugin_projection_source(&self) -> PluginProjectionSource {
+        PluginProjectionSource {
+            text: self.text.clone(),
+            layout: self.layout,
+            revision: Some(self.revision()),
+        }
+    }
+
+    /// Adopt only a transaction computed from this exact generated document.
+    pub(crate) fn install_plugin_projection(&mut self, prepared: PreparedPluginProjection) -> bool {
+        if !matches!(
+            self.generated_view_identity(),
+            Some(GeneratedViewIdentity::Plugin { .. })
+        ) || prepared
+            .revision
+            .map_or(self.text.len_chars() != 0, |revision| {
+                revision != self.revision()
+            })
+        {
+            return false;
+        }
+        self.text = prepared.text;
+        self.layout = prepared.layout;
+        self.longest_line = prepared.longest_line;
+        self.undo.clear();
+        self.redo.clear();
+        self.undo_group = None;
+        self.mark_saved();
+        true
+    }
+
     /// Replaces the contents of a read-only virtual buffer.
     ///
     /// Virtual buffers are projections of durable state, so this bypasses the
@@ -2874,6 +3107,49 @@ impl Buffer {
         true
     }
 
+    pub(crate) fn unsaved_document(path: PathBuf, text: String) -> Self {
+        let mut buffer = Self::scratch();
+        buffer.path = Some(path);
+        buffer.kind = BufferKind::File;
+        buffer.saved_text = None;
+        buffer.apply(&Transaction::insert(0, text));
+        buffer.update_dirty();
+        buffer
+    }
+
+    pub(crate) fn prepare_document_save(&self) -> Result<DocumentSave> {
+        ensure!(
+            self.kind == BufferKind::File,
+            "Only ordinary file documents can be saved by this adapter"
+        );
+        ensure!(
+            self.text.len_bytes() <= 8 * 1024 * 1024,
+            "Document exceeds the local save limit"
+        );
+        Ok(DocumentSave {
+            path: self.path.clone().context("Document has no path")?,
+            text: self.text.clone(),
+            expected: self.disk_state.clone(),
+            generation: self.disk_generation,
+        })
+    }
+
+    pub(crate) fn accept_document_save(&mut self, saved: SavedDocument) -> bool {
+        if self.path.as_ref() != Some(&saved.path) || self.disk_generation != saved.generation {
+            return false;
+        }
+        let Some(state) = saved.state else {
+            return false;
+        };
+        self.disk_state = Some(state);
+        self.saved_text = Some(saved.text);
+        self.write_uncertain = false;
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.clear_external_file_state();
+        self.update_dirty();
+        true
+    }
+
     /// Writes the buffer back to its own path.
     ///
     /// Refuses when the file changed underneath the buffer unless `replace` is
@@ -2900,6 +3176,10 @@ impl Buffer {
         replace: bool,
         write: impl FnOnce(&Path, &[u8], ReplacePolicy<'_>) -> Result<AtomicWriteStatus>,
     ) -> Result<SaveOutcome> {
+        ensure!(
+            self.provider().is_none(),
+            "provider document saving is not available"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }
@@ -2981,6 +3261,10 @@ impl Buffer {
         replace: bool,
         write: impl FnOnce(&Path, &[u8]) -> Result<AtomicWriteStatus>,
     ) -> Result<SaveOutcome> {
+        ensure!(
+            self.provider().is_none(),
+            "provider documents cannot be saved to a local path"
+        );
         if let Some(reason) = self.read_only_reason() {
             bail!("{reason}");
         }
@@ -3270,16 +3554,23 @@ impl Buffer {
         Ok(())
     }
 
+    pub(crate) fn mark_write_uncertain(&mut self) {
+        self.write_uncertain = true;
+        self.dirty = true;
+    }
+
     pub fn mark_saved(&mut self) {
+        self.write_uncertain = false;
         self.saved_text = Some(self.text.clone());
         self.dirty = false;
     }
 
     fn update_dirty(&mut self) {
-        self.dirty = self
-            .saved_text
-            .as_ref()
-            .is_none_or(|saved| !self.text.same_content(saved));
+        self.dirty = self.write_uncertain
+            || self
+                .saved_text
+                .as_ref()
+                .is_none_or(|saved| !self.text.same_content(saved));
     }
 
     #[cfg(test)]

@@ -404,6 +404,30 @@ impl App {
         );
         spec.staged_paths.sort();
         spec.staged_paths.dedup();
+        self.queue_filesystem_git_reconciliation(repository, spec);
+    }
+
+    /// Paths were contained and canonicalized by the filesystem worker.
+    pub(super) fn reconcile_plugin_filesystem_git(&mut self, paths: Vec<PathBuf>) {
+        let Some(repository) = self.git.repository().cloned() else {
+            return;
+        };
+        if self.ports.git_service.is_none() {
+            self.git_state.snapshot_stale = true;
+            return;
+        }
+        let paths = paths
+            .into_iter()
+            .filter(|path| repository.contains(path))
+            .collect::<HashSet<_>>();
+        let mut spec = self.git_refresh_spec_with_paths(|path| paths.contains(path));
+        spec.staged_paths.extend(paths);
+        spec.staged_paths.sort();
+        spec.staged_paths.dedup();
+        self.queue_filesystem_git_reconciliation(repository, spec);
+    }
+
+    fn queue_filesystem_git_reconciliation(&mut self, repository: Repository, spec: RefreshSpec) {
         let reconciliation = FilesystemReconciliation { repository, spec };
         match self.git_state.pending_filesystem_reconciliation.as_mut() {
             Some(pending) if pending.repository == reconciliation.repository => {
@@ -469,6 +493,12 @@ impl App {
     }
 
     pub(super) fn git_refresh_spec(&self, repository: &Repository) -> RefreshSpec {
+        self.git_refresh_spec_with_paths(|path| {
+            self.workspace_contains_path(path) && repository.contains(path)
+        })
+    }
+
+    fn git_refresh_spec_with_paths(&self, contained: impl Fn(&Path) -> bool) -> RefreshSpec {
         let visible_panes = self
             .maximized
             .as_ref()
@@ -494,7 +524,7 @@ impl App {
                 (!self.closed_buffers.contains(index) && buffer.kind == BufferKind::File)
                     .then_some(buffer.path.as_ref())
                     .flatten()
-                    .filter(|path| self.workspace_contains_path(path) && repository.contains(path))
+                    .filter(|path| contained(path))
                     .cloned()
             })
             .collect::<Vec<_>>();
@@ -625,6 +655,10 @@ impl App {
     /// the timer does not record the skipped tick, so the refresh runs as
     /// soon as the interaction ends, and `:git-refresh` stays available.
     pub(super) fn interaction_defers_git_refresh(&self) -> bool {
+        self.interaction_defers_git_refresh_at(Instant::now())
+    }
+
+    pub(super) fn interaction_defers_git_refresh_at(&self, now: Instant) -> bool {
         // Every prompt, including the `s` and `/` searches, opens in command mode.
         if self.mode == Mode::Command || self.has_input_overlay() {
             return true;
@@ -634,9 +668,7 @@ impl App {
         // reading or navigating. The filesystem monitor already debounces a
         // write burst; this shorter interaction quiet period avoids tying UI
         // responsiveness to the much longer fallback reconciliation cadence.
-        if Instant::now().saturating_duration_since(self.last_interaction)
-            < AUTOMATIC_GIT_INTERACTION_QUIET
-        {
+        if now.saturating_duration_since(self.last_interaction) < AUTOMATIC_GIT_INTERACTION_QUIET {
             return true;
         }
         // Only selections inside a projection are at risk. A selection in a

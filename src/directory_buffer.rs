@@ -114,6 +114,14 @@ impl DirectoryBuffer {
         let root = fs::canonicalize(&root)
             .with_context(|| format!("failed to resolve directory {}", root.display()))?;
         let baseline = DirectorySnapshot::read_with(&root, view.show_hidden)?;
+        Self::from_snapshot(root, view, baseline)
+    }
+
+    pub(crate) fn from_snapshot(
+        root: PathBuf,
+        view: ListingView,
+        baseline: DirectorySnapshot,
+    ) -> Result<(Self, String)> {
         let order = sorted_rows(baseline.entries(), view.sort);
         let text = render_snapshot(&baseline, &order)?;
         let mut row_origins = order

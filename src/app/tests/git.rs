@@ -797,21 +797,23 @@ fn automatic_refresh_waits_out_a_short_quiet_period_after_the_last_keystroke() {
     // Just acted: a refresh now would move the cursor mid-navigation.
     app.handle_input(InputEvent::Key(KeyStroke::char('j')))
         .unwrap();
-    assert!(app.interaction_defers_git_refresh());
+    let now = app.last_interaction;
+    assert!(app.interaction_defers_git_refresh_at(now));
 
     // Still inside the interaction quiet period, independently from the much
     // longer fallback reconciliation interval.
-    app.last_interaction = Instant::now() - Duration::from_millis(100);
-    assert!(app.interaction_defers_git_refresh());
+    app.last_interaction = now - Duration::from_millis(100);
+    assert!(app.interaction_defers_git_refresh_at(now));
 
     // Paused beyond the short quiet period, so reconciliation is welcome.
-    app.last_interaction = Instant::now() - Duration::from_secs(1);
-    assert!(!app.interaction_defers_git_refresh());
+    app.last_interaction = now - Duration::from_secs(1);
+    assert!(!app.interaction_defers_git_refresh_at(now));
 
     // Any further input restarts the wait, including pointer input.
     app.handle_input(InputEvent::Key(KeyStroke::char('k')))
         .unwrap();
-    assert!(app.interaction_defers_git_refresh());
+    assert!(app.last_interaction >= now);
+    assert!(app.interaction_defers_git_refresh_at(app.last_interaction));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -5015,7 +5017,7 @@ fn an_explorer_move_reconciles_git_with_monitoring_disabled() {
     };
 
     assert_eq!(
-        app.reconcile_applied_filesystem(&root, file, &report, true),
+        app.reconcile_applied_filesystem(&root, Some(file), &report, true),
         None
     );
 
@@ -5055,7 +5057,7 @@ fn a_partial_explorer_report_retries_one_async_post_change_barrier() {
     };
 
     assert_eq!(
-        app.reconcile_applied_filesystem(&root, file, &report, false),
+        app.reconcile_applied_filesystem(&root, Some(file), &report, false),
         None
     );
 
@@ -5260,7 +5262,7 @@ fn explorer_moves_outside_git_boundaries_are_not_batched_as_staged_reads() {
         ],
     };
 
-    app.reconcile_applied_filesystem(&workspace, second_buffer, &report, true);
+    app.reconcile_applied_filesystem(&workspace, Some(second_buffer), &report, true);
 
     assert_eq!(
         app.buffers[first_buffer].path.as_deref(),

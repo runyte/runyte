@@ -11,6 +11,45 @@ use super::{
 };
 
 impl App {
+    #[cfg(unix)]
+    pub(crate) fn reserve_plugin_terminal(
+        &mut self,
+        request: TerminalRequest,
+        context: &crate::plugin::application::CapturedContext,
+    ) -> std::result::Result<crate::terminal::TerminalPreparation, crate::plugin::application::Error>
+    {
+        use crate::plugin::application::{Error, ErrorCode};
+        self.plugin_foreground(context)?;
+        let (columns, rows) = self.pane_cells(context.pane);
+        self.terminals
+            .prepare_open(request, columns, rows)
+            .map_err(|error| {
+                let code = match error.kind() {
+                    std::io::ErrorKind::WouldBlock => ErrorCode::Busy,
+                    std::io::ErrorKind::InvalidInput => ErrorCode::LimitExceeded,
+                    _ => ErrorCode::Unavailable,
+                };
+                Error::new(code, "Terminal handoff could not be reserved")
+            })
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn install_plugin_terminal(
+        &mut self,
+        pending: crate::terminal::PendingTerminal,
+        context: &crate::plugin::application::CapturedContext,
+    ) -> std::result::Result<TerminalId, crate::plugin::application::Error> {
+        use crate::plugin::application::{Error, ErrorCode};
+        self.plugin_foreground(context)?;
+        let id = self
+            .terminals
+            .install_prepared(pending)
+            .map_err(|_| Error::new(ErrorCode::Cancelled, "Terminal handoff was cancelled"))?;
+        self.show_terminal(id);
+        self.plugins.presentation_dirty = true;
+        Ok(id)
+    }
+
     // -- Terminals ---------------------------------------------------------
 
     /// The terminal the active pane is showing, if it is showing one.
