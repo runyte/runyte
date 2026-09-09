@@ -84,6 +84,10 @@ them. An unchanged manager starts no refresh timer or redraw loop.
 
 ## Native task list
 
+The [Python, Rust and C todo showcase](todo/README.md) expands this example into
+three independent applications with matching add, toggle, remove and filter
+commands, reproducible build instructions and shared behavior checks.
+
 Use the same configuration with `id: tasks`, `args` pointing at `tasks.py`, and
 `capabilities: [views]`. Run `:plugin.tasks.open`. `Enter` toggles selected rows;
 `Tab` opens actions, including an explicit unfinished-only filter. Ordinary

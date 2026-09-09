@@ -3102,6 +3102,8 @@ local files. The
 [application guide](plugins/applications.md) also includes runnable task-list,
 local file-manager, document, memory-provider and background-job examples and
 lists the remaining work.
+The [todo showcase](plugins/todo/README.md) provides matching Python, Rust and C
+applications with task creation, completion, removal and filtering.
 
 Applications can launch [managed helpers](plugins/applications.md#managed-helpers)
 with bounded binary input and retained output. Their output stays separate from

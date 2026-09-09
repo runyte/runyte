@@ -73,7 +73,22 @@ The Node checker also accepts an explicit `NODE` executable and reports skips
 when no runtime is available; record those skips rather than treating them as
 another language's successful conformance run.
 
-Once the Python dependencies, mpv and Node are installed, run every checked-in
+The [todo showcase](todo/README.md) has matching Python, Rust and C checks.
+Install its C/json-c build dependencies, then compile the native variants before
+running the suite:
+
+```sh
+python3 docs/plugins/todo/build.py
+"$plugin_python" docs/plugins/check_todo.py --require-all
+```
+
+Set `RUNYTE_TODO_BIN_DIR` to the output directory when using `build.py --output`.
+The checker runs each program against the same public-wire scenarios. Compiled
+variants that have not been built are skipped unless `--require-all` is supplied.
+The Rust example is an independent Cargo package and is outside the editor's
+canonical workspace coverage; its behavior is measured by these process tests.
+
+Once the Python dependencies, mpv and Node are installed and the todo variants built, run every checked-in
 `check_*.py` suite through the central entry point:
 
 ```sh
@@ -81,7 +96,7 @@ Once the Python dependencies, mpv and Node are installed, run every checked-in
 ```
 
 The runner discovers suites in filename order and stops at the first failure.
-`--require-backends` refuses missing mpv or Node instead of accepting backend
+`--require-backends` refuses missing mpv, Node or compiled todo variants instead of accepting backend
 skips. Without this option, individual suites report their own skips.
 
 For changes to Runyte, run the host and worker tests as well:

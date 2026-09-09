@@ -78,11 +78,18 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends mpv nodejs
+          sudo apt-get install --yes --no-install-recommends mpv nodejs build-essential pkg-config libjson-c-dev
 
       - name: Install macOS example backends
         if: runner.os == 'macOS'
-        run: brew install mpv node
+        run: brew install mpv node pkg-config json-c
+
+      - name: Build and lint native todo examples
+        run: |
+          python3 docs/plugins/todo/build.py
+          cargo fmt --manifest-path docs/plugins/todo/rust/Cargo.toml --check
+          cargo clippy --locked --manifest-path docs/plugins/todo/rust/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path docs/plugins/todo/rust/Cargo.toml
 
       - name: Validate plugin contracts and examples
         run: |

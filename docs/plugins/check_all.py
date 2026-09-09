@@ -11,7 +11,7 @@ import sys
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--require-backends', action='store_true',
-                        help='Refuse missing mpv/Node instead of allowing backend skips')
+                        help='Require mpv, Node and built Rust/C todo examples')
     options = parser.parse_args()
     if options.require_backends:
         for variable, executable in [('MPV', 'mpv'), ('NODE', 'node')]:
@@ -24,7 +24,8 @@ def main():
         # Each suite owns its child lifetimes and deadlines. Killing only its
         # leader cannot clean up fixtures that intentionally test new groups.
         # Let that ownership unwind; CI bounds the whole job separately.
-        result = subprocess.run([sys.executable, str(script)])
+        arguments = ['--require-all'] if options.require_backends and script.name == 'check_todo.py' else []
+        result = subprocess.run([sys.executable, str(script)] + arguments)
         if result.returncode:
             return 1
     print(f'Passed all {len(scripts)} plugin conformance suites', flush=True)

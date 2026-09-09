@@ -87,7 +87,9 @@ with conditional updates for nonsecret saved preferences.
 The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains
 failed entries and provides explicit stop/restart after cleanup.
 The [authoring kit](docs/plugins/authoring.md) includes local setup, a Python
-client, an independent Node example and a conformance matrix.
+client, an independent Node example and a conformance matrix. The
+[todo showcase](docs/plugins/todo/README.md) implements the same native task list
+in Python, Rust and C.
 The broader application platform remains in development.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 

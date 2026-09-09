@@ -70,6 +70,11 @@ workspace root. Disabled entries start no program and trigger no bundle scan.
 
 ## Write a command using the Python client
 
+For the same native application implemented in three languages, try the
+[todo showcase](todo/README.md). Its Python, Rust and C variants support adding,
+toggling, removing and filtering tasks. A build helper generates a configuration
+for all three, and a shared wire suite checks their behavior.
+
 The optional client handles the handshake, request IDs, response correlation,
 bounded dispatch and ordered observation callbacks. Every host method remains
 available through `app.request(method, **params)`; convenience methods add model
