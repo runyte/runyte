@@ -58,6 +58,17 @@ an `EVFILT_READ` kqueue filter and reacts only to `EV_EOF`. Ordinary read
 events are cleared without reading, so the watcher cannot consume input owned
 by Crossterm or lose a later EOF behind already-pending input.
 
+Unpublished plugin terminal handoffs gate reader and writer threads until
+native installation. Cancellation releases those gates and closes the retained
+master before waiting for the child. Darwin's
+[session-leader exit path](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exit.c)
+drains controlling-terminal output before becoming a zombie; waiting while
+retaining an undrained master can therefore prevent cleanup from completing.
+`pending_terminal_cancel_releases_reader_accounting_while_an_external_slave_stays_open`
+in `src/terminal/pending/tests.rs` covers cancellation with unread output and
+an independently held slave. The exited-leader descendant test in that file
+keeps terminal output empty to establish its non-reaping zombie barrier.
+
 Deliberate limits:
 
 - Windows remains unsupported until a separately approved ConPTY backend.

@@ -6,7 +6,9 @@ use super::*;
 #[test]
 fn captured_symlink_targets_consume_the_metadata_budget() {
     let root = TempDir::new();
-    let target = "x".repeat(1024);
+    // Stay within both Linux and macOS symlink limits; the budget boundary
+    // depends on the captured length, not on a platform's maximum path size.
+    let target = "x".repeat(128);
     std::os::unix::fs::symlink(&target, root.join("link")).unwrap();
     let mut limits = OperationLimits {
         entries: 2,
@@ -110,6 +112,8 @@ fn application_file_copy_rejects_growth_past_its_eight_megabyte_limit() {
 #[test]
 fn copied_symlink_target_growth_consumes_the_metadata_budget() {
     let root = TempDir::new();
+    let target = "x".repeat(128);
+    let target_len = target.len();
     fs::create_dir(root.join("source")).unwrap();
     std::os::unix::fs::symlink("short", root.join("source/link")).unwrap();
     let snapshot = DirectorySnapshot::read(&root.0).unwrap();
@@ -122,18 +126,18 @@ fn copied_symlink_target_growth_consumes_the_metadata_budget() {
         entries: 2,
         depth: 1,
         bytes: 0,
-        metadata_bytes: 1500,
+        metadata_bytes: 512 * 2 + "link".len() + target_len - 1,
     };
     let plan = FsPlan::build_bounded(root.0.clone(), snapshot, desired, limits).unwrap();
-    let error = apply(&plan, |step, source, _| {
+    let error = apply(&plan, move |step, source, _| {
         if step == IoStep::CopyEntry && source.file_name().is_some_and(|name| name == "link") {
             fs::remove_file(source)?;
-            std::os::unix::fs::symlink("x".repeat(1024), source)?;
+            std::os::unix::fs::symlink(&target, source)?;
         }
         Ok(())
     })
     .unwrap_err();
-    assert!(error.to_string().contains("resource limits"));
+    assert!(error.to_string().contains("resource limits"), "{error}");
     assert!(error.report.applied.is_empty());
     assert!(error.report.recovery.is_empty());
     assert_eq!(
@@ -141,7 +145,7 @@ fn copied_symlink_target_growth_consumes_the_metadata_budget() {
             .unwrap()
             .as_os_str()
             .len(),
-        1024
+        target_len
     );
     assert!(!root.join("destination").exists());
     assert_eq!(fs::read_dir(&root.0).unwrap().count(), 1);

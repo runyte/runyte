@@ -50,7 +50,7 @@ pub(super) struct PendingActivation {
 
 /// A child process attached to a pseudoterminal.
 pub struct Pty {
-    master: OwnedFd,
+    master: Option<OwnedFd>,
     input: mpsc::SyncSender<Vec<u8>>,
     child: Child,
 }
@@ -327,7 +327,7 @@ impl Pty {
             })?;
 
         Ok(Self {
-            master,
+            master: Some(master),
             input,
             child: child.disarm(),
         })
@@ -345,7 +345,10 @@ impl Pty {
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
-        set_size(self.master.as_raw_fd(), columns, rows)
+        let master = self.master.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "Terminal master is closed")
+        })?;
+        set_size(master.as_raw_fd(), columns, rows)
     }
 
     /// Asks the child's process group to end, then ends it.
@@ -365,6 +368,11 @@ impl Pty {
 
     pub(super) fn terminate_unpublished(&mut self) {
         self.signal_unpublished();
+        // Gated readers never drain output before installation. Darwin's
+        // session-leader exit waits for that output, even after SIGKILL.
+        // Cancellation closes the reader/writer copies; release our final
+        // master before waiting so terminal drain cannot block reaping.
+        drop(self.master.take());
         let _ = self.child.wait();
     }
 
