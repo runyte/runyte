@@ -287,6 +287,136 @@ fn rich_projection_empty_view_retains_nonprimary_legacy_actions() {
     }
 }
 
+fn argument_action_fixture(
+    ids: &[&str],
+) -> (App, tokio::sync::mpsc::Receiver<plugin::HostMessage>) {
+    let value = model(ids);
+    let (mut app, buffer, projection) = fixture(value.clone());
+    let receiver = commands(&mut app, buffer, value, projection);
+    let command = app.plugins.commands.get_mut(&2).unwrap();
+    command.local = "add".into();
+    command.name = "plugin.test.add".into();
+    command.usage = "plugin.test.add <title>".into();
+    command.arguments = vec![plugin::arguments::Argument {
+        name: "title".into(),
+        kind: plugin::arguments::Kind::String,
+    }];
+    (app, receiver)
+}
+
+fn choose_argument_action(app: &mut App) {
+    key(app, KeyCode::Tab, Modifiers::NONE);
+    let list = app.list.as_mut().expect("Tab opens application actions");
+    list.selected = list
+        .items
+        .iter()
+        .position(|item| item.label == "add")
+        .unwrap();
+    key(app, KeyCode::Enter, Modifiers::NONE);
+}
+
+#[test]
+fn plugin_action_arguments_open_palette_and_submit_quoted_unicode_on_populated_or_empty_views() {
+    for ids in [vec!["a"], vec![]] {
+        let (mut app, mut receiver) = argument_action_fixture(&ids);
+        let buffer = app.active().buffer;
+        let selection = app.active().selection.clone();
+        choose_argument_action(&mut app);
+        assert!(app.list.is_none());
+        assert_eq!(app.mode, Mode::Command);
+        assert_eq!(app.prompt_kind, PromptKind::Command);
+        assert_eq!(app.command, "plugin.test.add ");
+        assert_eq!(app.command_cursor, app.command.chars().count());
+        assert_eq!(app.active().selection, selection);
+        assert!(
+            receiver.try_recv().is_err(),
+            "Choosing add must not invoke it yet"
+        );
+
+        // Missing input remains correctable in the same palette.
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.mode, Mode::Command);
+        assert!(receiver.try_recv().is_err());
+        for character in "\"Write 猫 release notes\"".chars() {
+            press(&mut app, character);
+        }
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.active().buffer, buffer);
+        match receiver.try_recv().unwrap() {
+            plugin::HostMessage::Application(api::HostMessage::Request {
+                method, params, ..
+            }) => {
+                assert_eq!(method, "command.invoke");
+                assert_eq!(params.command, "add");
+                assert_eq!(params.view.as_deref(), Some("v:1"));
+                assert_eq!(params.rows, ids);
+                assert!(matches!(params.arguments.get("title"),
+                    Some(plugin::arguments::Scalar::String(title)) if title == "Write 猫 release notes"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        receiver.try_recv().unwrap(); // Request deadline.
+        assert!(receiver.try_recv().is_err());
+    }
+}
+
+#[test]
+fn plugin_action_arguments_cancel_without_invoking_or_changing_selection() {
+    let (mut app, mut receiver) = argument_action_fixture(&["a"]);
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, 2)));
+    let selection = app.active().selection.clone();
+    choose_argument_action(&mut app);
+    assert_eq!(app.mode, Mode::Command);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection, selection);
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn plugin_action_arguments_stale_menu_is_refused_before_opening_palette() {
+    let (mut app, mut receiver) = argument_action_fixture(&["a"]);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let list = app.list.as_mut().unwrap();
+    list.selected = list
+        .items
+        .iter()
+        .position(|item| item.label == "add")
+        .unwrap();
+    let buffer = app.active().buffer;
+    let old = app.plugins.instances[&0].application.views["v:1"]
+        .projection
+        .clone();
+    publish(&mut app, buffer, &old, model(&["b"]));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.status.contains("reopen the actions"));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn plugin_action_without_arguments_still_invokes_directly_from_picker() {
+    let (mut app, mut receiver) = argument_action_fixture(&["a"]);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let list = app.list.as_mut().unwrap();
+    list.selected = list
+        .items
+        .iter()
+        .position(|item| item.label == "enter")
+        .unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    match receiver.try_recv().unwrap() {
+        plugin::HostMessage::Application(api::HostMessage::Request { params, .. }) => {
+            assert_eq!(params.command, "enter");
+            assert!(params.arguments.is_empty());
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
 #[test]
 fn rich_projection_nonrow_selection_stays_positional_across_publication_and_return() {
     let mut value = model(&["a"]);

@@ -95,6 +95,9 @@ buffer movement, search, copying, splits, help, Navigator and Finder remain
 available. A refresh retains each pane's selection direction and row identity.
 Actions against a model that has changed since presentation are refused until
 the refreshed frame is prepared.
+Choosing an action that declares positional arguments opens the command palette
+with its full name and a trailing space. Enter the arguments there, then press
+Enter to invoke it; Escape cancels. Actions without arguments invoke directly.
 
 Views are special buffers backed by bounded semantic models. Purposes are
 `document`, `list` and `dashboard`; each row has a stable ID, one line of text

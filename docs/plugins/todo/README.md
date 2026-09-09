@@ -14,6 +14,8 @@ library, Python bridge, terminal renderer, account or network service is needed.
 The examples target Linux and macOS. Each owns its own task list; enabling all
 three does not share tasks between them. The original [tasks.py](../tasks.py)
 remains the smaller example of using the Python client.
+The Rust variant is a separate Cargo package, which Cargo omits from the
+published editor crate. Use a repository checkout to obtain all three variants.
 
 ## Build and launch
 
@@ -89,9 +91,13 @@ ID; substitute `todo-rust` or `todo-c` for either native variant.
 | Switch between all and unfinished tasks | `:plugin.todo-python.filter` |
 | Discover available list actions | `Tab` |
 
-Quotes preserve spaces in the typed title; no shell evaluates it. Adding uses a
-typed command argument, without a separate input form. Removal is immediate and
-has no undo. Other commands act on the selected task IDs in the current view.
+Choosing `add` from the `Tab` action list opens the command palette with
+`:plugin.todo-python.add ` filled in (or the corresponding Rust/C command).
+Type a quoted title such as `"Write release notes"` and press Enter; Escape
+cancels without adding a task. Quotes preserve spaces in the typed title; no
+shell evaluates it. Adding uses a typed command argument, without a separate
+input form. Removal is immediate and has no undo. Other commands act on the
+selected task IDs in the current view.
 Normal movement, selections, search, copying, splits, help, Navigator and Finder
 come from Runyte. Split a list into two panes, toggle a task, then switch filters
 to show how both panes follow the same model while retaining their own selections.
