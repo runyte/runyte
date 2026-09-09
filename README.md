@@ -3,9 +3,9 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-[![Watch the Runyte demo: Markdown tables, integrated Codex, terminal navigation, and Rust diagnostics.](https://runyte.com/videos/runyte-demo-poster.webp)](https://runyte.com/videos/runyte-demo.mp4)
+https://github.com/user-attachments/assets/cc77a90c-25e5-4b15-a1c9-f5da7f3f12fb
 
-*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, in one workspace.*
+*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, then find text across files and terminals.*
 
 **Runyte** is a terminal workspace built around a modal text editor.
 
