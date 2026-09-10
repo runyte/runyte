@@ -141,10 +141,10 @@ sequenceDiagram
     App->>Host: job.create
     Host-->>App: issued job
     App-->>Host: command response (accepted job)
-    Note over Host,App: Finite work continues; detach keeps the same process
+    Note over Host,App: Finite work continues and detach keeps the same process
     Host->>App: job.cancel_requested, if cancellation is requested
     App->>Host: job.finish after work or cleanup settles
-    Note over Host,App: Stop retires handles; restart waits for old cleanup
+    Note over Host,App: Stop retires handles, and restart waits for old cleanup
 ```
 
 An accepted command, a job, a view and a provider document have separate

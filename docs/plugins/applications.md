@@ -247,7 +247,7 @@ sequenceDiagram
     Editor-->>Plugin: response (p:1), issued job handle
     Editor-->>Plugin: job.changed (running)
     Plugin-->>Editor: response (h:1), accepted job
-    Note over Editor,Plugin: Command deadline ends; the finite job continues through detach
+    Note over Editor,Plugin: Command deadline ends while the finite job continues through detach
     Plugin->>Editor: job.finish (p:2)
     Editor-->>Plugin: response (p:2)
     Editor-->>Plugin: job.changed (terminal)
