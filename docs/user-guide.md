@@ -1900,6 +1900,7 @@ search has to match case.
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
@@ -1907,6 +1908,8 @@ search has to match case.
 
 The directory-scoped pickers have no key. `:file-picker-directory` and
 `:fuzzy-grep-directory` search below the active file or explorer directory.
+An explorer reaches the unified Finder at its own directory through `Tab f`,
+which is `:open-explorer-finder` elsewhere.
 
 The two workspace searches walk the project themselves and consult no ignore
 file: a gitignored path the Finder omits is still searched by `Space / s` and
@@ -2102,6 +2105,7 @@ targets stay within one buffer line or terminal review row.
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
@@ -2197,6 +2201,15 @@ same boundary before a confirmation opens.
 the explorer currently shows. The explorer remains available behind the terminal,
 including any unsaved edits. The directory under the cursor does not change where
 the terminal starts.
+
+`Tab f` opens the Finder rooted at the directory the explorer currently shows
+rather than at the project root, again independently of the row under the
+cursor. It is the same unified Finder `Space f` opens, with files, open
+buffers, and terminals in one list and `Tab` switching to content mode. An
+explorer inside the project keeps the ignore rules that apply from the project
+root down; one opened elsewhere reads the ignore files from its own directory
+down. Dotfiles follow `editor.show_hidden_files`, so a listing showing them
+opens a finder that offers them.
 
 Three settings decide how an explorer shows a directory, and `Tab` offers all
 of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
@@ -2332,9 +2345,17 @@ reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
 state directory, symlinks, and `editor.show_hidden_files` apply exactly as
 before. `Space / p` asks for a path first, completing entries as they are
 typed; `~` expands, a relative path resolves against the working directory,
-and `Tab` accepts the selected row. The path need not be inside the workspace,
-and the Finder's title names the root it was given. Both scopes survive the
-`Tab` into content mode, so an ignored file's lines are searchable too.
+and `Tab` accepts the selected row. The path need not be inside the workspace.
+Both scopes survive the `Tab` into content mode, so an ignored file's lines
+are searchable too.
+
+A Finder that is not the ordinary project one says so in its title, because a
+scope is two facts and either can differ: `all files` means the ignore rules
+were not consulted, and a path means the walk began somewhere other than the
+project root. `Space / a` therefore reads `all files`, the explorer's `Tab f`
+below or outside the project root reads that root's path, and `Space / p`
+reads `all files in <path>`. The label belongs to the Finder rather than to
+one scan, so it survives the switch into content mode.
 Type an ordered subsequence to rank paths; exact basenames, basename prefixes,
 consecutive characters, and path-component boundaries rank highest. Ending the
 query with `/` narrows the results to directories, matched without the slash
@@ -3200,6 +3221,7 @@ are enabled.
 :explorer [path]        open an editable directory explorer (alias: files)
 :file-picker            open the Finder over files, buffers, and terminals
 :file-picker-directory  fuzzy-find below the active file/explorer directory
+:open-explorer-finder   open the Finder at the active explorer's directory
 :fuzzy-grep             open the Finder in content mode
 :fuzzy-grep-directory   fuzzy-search contents below the active file/explorer directory
 :format                 format the active buffer (alias: fmt)

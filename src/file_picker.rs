@@ -603,15 +603,23 @@ impl FilePicker {
     /// How this picker's scope reads in a title, or `None` for the ordinary
     /// project one, which needs no saying.
     ///
-    /// Three keys open the finder over three scopes, so every surface that
-    /// draws it has to name the one in front of the reader. It lives here so
-    /// that the drawn title and an attached client's snapshot cannot disagree
-    /// about which finder is open.
+    /// Several keys open the finder over several scopes, so every surface
+    /// that draws it has to name the one in front of the reader. It lives
+    /// here so that the drawn title and an attached client's snapshot cannot
+    /// disagree about which finder is open.
+    ///
+    /// A scope is two facts, and the label carries whichever of them is not
+    /// the ordinary one: `all files` says the ignore files were not
+    /// consulted, and a path says the walk began somewhere other than the
+    /// project root. The explorer's own finder is ignore-aware like the
+    /// project one but rooted at the listing, so it names the root alone —
+    /// the same thing an unlabelled title says about the project root.
     pub fn scope_label(&self, project_root: &Path) -> Option<String> {
-        match &self.scope {
-            ScanScope::Ignoring { .. } => None,
-            ScanScope::Everything if self.root == project_root => Some("all files".to_owned()),
-            ScanScope::Everything => Some(self.root.display().to_string()),
+        let root = (self.root != project_root).then(|| self.root.display().to_string());
+        match (&self.scope, root) {
+            (ScanScope::Ignoring { .. }, root) => root,
+            (ScanScope::Everything, None) => Some("all files".to_owned()),
+            (ScanScope::Everything, Some(root)) => Some(format!("all files in {root}")),
         }
     }
 

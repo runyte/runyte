@@ -154,11 +154,17 @@ them, regardless of which extensibility direction is chosen.
   kinds. A finder also has a **scan scope**: the root it walks and whether it
   reads the ignore files it finds. The scope belongs to the picker rather than
   to one scan, because a mode switch and a content re-scan both restart the
-  walk on the reader's behalf. Three keys open the same overlay over three
-  scopes — the project's ignore-aware files, every file the project holds, and
-  every file under a typed path that need not be inside the workspace — so a
+  walk on the reader's behalf. Several keys open the same overlay over
+  several scopes — the project's ignore-aware files, every file the project
+  holds, every file under a typed path that need not be inside the workspace,
+  and the ignore-aware files under the directory an explorer is showing — so a
   finder that is not the ordinary project one names its scope in the title
-  rather than looking identical to the one that is. **Name mode** merges files, open buffers, and terminal sessions by
+  rather than looking identical to the one that is. A scope is two facts, and
+  the title carries whichever of them is not the ordinary one: `all files`
+  says the ignore files were not consulted, and a path says the walk began
+  somewhere other than the project root. So an unfiltered finder at the
+  project root reads `all files`, an ignore-aware one below or outside it
+  reads that root's path, and one that is both reads `all files in <path>`. **Name mode** merges files, open buffers, and terminal sessions by
   resource identity. **Content mode** merges file lines, authoritative
   in-memory buffer lines including pathless buffers, and decoded retained
   terminal rows. Matching characters are emphasized in the content detail

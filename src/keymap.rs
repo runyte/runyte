@@ -2420,6 +2420,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             "terminal",
             EditorCommand::OpenTerminalDirectoryRoot,
         ),
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('f'),
+            "finder",
+            EditorCommand::OpenExplorerFinder,
+        ),
         // These explorer actions are the three settings that decide
         // how it shows a directory. They are buffer-wide because none of them
         // is about the row under the cursor, and they sit here rather than on

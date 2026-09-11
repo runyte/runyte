@@ -4638,13 +4638,54 @@ fn every_surface_names_the_finder_scope_in_front_of_the_reader() {
     );
 
     // The picker owns the label, so the drawn title cannot drift from it.
+    // A scope is two facts and the title carries both: this one dropped the
+    // ignore files and began somewhere other than the project root.
     assert_eq!(
         app.picker
             .as_ref()
             .unwrap()
             .scope_label(&app.project_root)
             .as_deref(),
-        Some(expected.display().to_string().as_str())
+        Some(format!("all files in {}", expected.display()).as_str())
+    );
+
+    // The explorer's own finder is ignore-aware like the project one, so the
+    // root is the only fact it has to say. Without it the title would be the
+    // project finder's exactly, and the reader could not see the boundary.
+    app.close_file_picker();
+    app.open_explorer(Some(root.join("build"))).unwrap();
+    app.open_explorer_finder().unwrap();
+    let nested = root.join("build").canonicalize().unwrap();
+    assert_eq!(
+        app.picker
+            .as_ref()
+            .unwrap()
+            .scope_label(&app.project_root)
+            .as_deref(),
+        Some(nested.display().to_string().as_str())
+    );
+    assert!(
+        scope_of(&app).contains(&nested.display().to_string()),
+        "{}",
+        scope_of(&app)
+    );
+    // The scope belongs to the picker rather than to one scan, so the
+    // boundary is still named after a mode switch restarts the walk.
+    app.toggle_finder_mode();
+    assert!(
+        scope_of(&app).contains(&nested.display().to_string()),
+        "{}",
+        scope_of(&app)
+    );
+
+    // An explorer at the project root is the ordinary project finder, and an
+    // ordinary scope still needs no saying.
+    app.close_file_picker();
+    app.open_explorer(Some(root.clone())).unwrap();
+    app.open_explorer_finder().unwrap();
+    assert_eq!(
+        app.picker.as_ref().unwrap().scope_label(&app.project_root),
+        None
     );
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(outside).unwrap();
@@ -4747,5 +4788,75 @@ fn the_colon_path_finder_accepts_a_quoted_argument_and_a_bare_call() {
         PromptKind::FinderPath,
         "a bare call asks for the path rather than refusing"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The explorer's `Tab f` finder roots itself at the directory the listing
+/// shows, not at the project root and not at the selected row.
+#[test]
+fn the_explorer_finder_roots_itself_at_the_listed_directory() {
+    let root = ignored_file_project("explorer-finder-root");
+    let nested = root.join("nested");
+    fs::create_dir_all(nested.join("build")).unwrap();
+    fs::write(nested.join("deep.rs"), "deep marker\n").unwrap();
+    fs::write(nested.join(".hidden.rs"), "hidden marker\n").unwrap();
+    fs::write(nested.join("build/out.rs"), "generated marker\n").unwrap();
+    let mut app = isolated_app(&root);
+    app.open_explorer(Some(nested.clone())).unwrap();
+
+    app.open_explorer_finder().unwrap();
+
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        nested.canonicalize().unwrap()
+    );
+    let rows = finder_file_rows(&app);
+    assert!(
+        rows.iter().any(|path| path == "deep.rs"),
+        "the listed directory's own files are the finder's corpus: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|path| path == "tracked.rs"),
+        "a sibling of the explorer root is outside it: {rows:?}"
+    );
+    // The project's `.gitignore` states `build/` at the root, so the scope
+    // inheriting from there is what keeps this row out.
+    assert!(
+        !rows.iter().any(|path| path == "build/out.rs"),
+        "the project's ignore rules still apply below the explorer: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|path| path == ".hidden.rs"),
+        "a dotfile follows editor.show_hidden_files: {rows:?}"
+    );
+
+    app.close_file_picker();
+    app.config.editor.show_hidden_files = true;
+    app.open_explorer_finder().unwrap();
+    let rows = finder_file_rows(&app);
+    assert!(
+        rows.iter().any(|path| path == ".hidden.rs"),
+        "and the setting reaches this finder as it reaches every other: {rows:?}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The action is buffer-wide inside the explorer scope, so it says so rather
+/// than opening a finder somewhere else when the active view is a file.
+#[test]
+fn the_explorer_finder_refuses_a_view_that_is_not_an_explorer() {
+    let root = ignored_file_project("explorer-finder-refusal");
+    let mut app = isolated_app(&root);
+    app.open_file(root.join("tracked.rs")).unwrap();
+
+    app.open_explorer_finder().unwrap();
+
+    assert!(app.picker.is_none(), "no finder opens over a file buffer");
+    assert!(
+        app.status.contains("not a directory buffer"),
+        "{}",
+        app.status
+    );
+    assert!(app.status_error);
     fs::remove_dir_all(root).unwrap();
 }

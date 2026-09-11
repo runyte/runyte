@@ -120,6 +120,33 @@ fn explorer_tab_t_opens_terminal_here_in_the_same_pane() {
     }
 }
 
+/// `Tab f` is the explorer's own finder: rooted where the listing is, in both
+/// binding modes, and independent of the row under the cursor.
+#[test]
+fn explorer_tab_f_opens_the_finder_at_the_listed_directory() {
+    let directory = TempDir::new("finder-here");
+    let nested = directory.path().join("nested");
+    fs::create_dir_all(nested.join("child")).unwrap();
+    fs::write(nested.join("deep.txt"), "deep\n").unwrap();
+    for mode in [Mode::Normal, Mode::Select] {
+        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert_eq!(app.active_buffer().directory_root(), Some(nested.as_path()));
+        app.mode = mode;
+
+        app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyStroke::char('f')).unwrap();
+
+        let picker = app.picker.as_ref().expect("Tab f opens the finder");
+        assert_eq!(picker.root, nested);
+        assert!(
+            app.finder.is_some(),
+            "and it is the unified finder, not a bare file picker"
+        );
+    }
+}
+
 struct TemporaryTrash {
     destination: PathBuf,
     fail: bool,
