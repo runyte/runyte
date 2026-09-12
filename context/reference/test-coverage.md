@@ -63,6 +63,12 @@ reattachment and undo. Process and PTY checks ran outside the sandbox. The
 enforced floor remains 89%; this Linux measurement does not establish a native
 macOS result.
 
+The review follow-up adds explicit descendant-termination assertions and tests
+both sides of the selection-count and input-byte limits. Ordinary and canonical
+instrumented suites each pass 3,610 tests with 33 existing ignored tests; formatting
+and warnings-as-errors Clippy pass. The Linux canonical result is 91.77% total
+line coverage (120,339 of 131,130 lines). The enforced floor remains 89%.
+
 ## 2026-09-09 — plugin review fixes and dev integration
 
 Measured on `x86_64-unknown-linux-gnu` at `fc2d4d3`, following review fixes in

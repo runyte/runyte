@@ -35,6 +35,13 @@ shutdown cancels and waits for the worker. The bare `|` binding remains reserved
 and now points to the typed command. Editor-variable expansion and additional
 Helix shell commands remain outside this implementation.
 
+A review follow-up strengthens the cleanup and admission regressions. Cleanup
+now checks the recorded descendant PID after both cancellation and successful
+shell completion, distinguishing terminated Linux zombies from executing
+processes. Admission tests exercise both sides of the 256-selection and 8 MiB
+input boundaries, including multibyte text whose character count remains below
+the byte limit. Rejected requests leave no queued work or buffer mutation.
+
 Regression coverage:
 
 - `shell_filters_preserve_text_and_parse_only_the_command`,
@@ -50,6 +57,9 @@ Regression coverage:
   `command_quotes_trailing_escapes_and_captured_directory_reach_the_shell`, and
   `empty_buffer_empty_output_is_success_and_admission_limits_do_not_queue_work`
   in `src/workspace/host/tests/pipe.rs`.
+- `selection_count_limit_admits_256_and_refuses_257_without_mutation` and
+  `input_byte_limit_admits_exactly_eight_mib_and_refuses_ascii_and_multibyte_overflow`
+  in `src/workspace/host/tests/pipe.rs` cover the reviewed admission boundaries.
 - `pipe_completion_while_detached_and_reattachment_keep_one_invocation` in
   `tests/persistent_host.rs` verifies actual detached completion, one invocation,
   reattachment, single-step undo and unchanged on-disk text.

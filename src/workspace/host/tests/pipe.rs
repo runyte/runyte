@@ -211,3 +211,76 @@ async fn empty_buffer_empty_output_is_success_and_admission_limits_do_not_queue_
     ));
     assert!(host.app.pipe.request.is_none());
 }
+
+#[test]
+fn selection_count_limit_admits_256_and_refuses_257_without_mutation() {
+    let text = "a ".repeat(257);
+    for count in [256, 257] {
+        let (_root, mut host, mut receiver) = host(&text);
+        host.app.panes.get_mut(&0).unwrap().selection =
+            Selection::new((0..count).map(|i| Range::point(i * 2)).collect(), 0);
+        let revision = host.app.buffers[0].revision();
+        let outcome = host
+            .app
+            .execute(parse_colon_command("pipe cat").unwrap())
+            .unwrap();
+        if count == 256 {
+            assert!(matches!(
+                outcome,
+                crate::app::CommandOutcome::AsynchronousRequest(_)
+            ));
+            let request = host.app.pipe.request.as_ref().unwrap();
+            assert_eq!(request.inputs, vec!["a"; 256]);
+            assert_eq!(request.spans.len(), 256);
+        } else {
+            assert!(
+                matches!(outcome, crate::app::CommandOutcome::UserError(message) if message.contains("256 selections"))
+            );
+            assert!(host.app.pipe.request.is_none());
+            assert!(host.app.pipe.cancellation.is_none());
+            host.sync_pipe();
+        }
+        assert!(host.pipe_worker.is_none());
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(host.app.buffers[0].revision(), revision);
+        assert_eq!(host.app.buffers[0].to_string(), text);
+    }
+}
+
+#[test]
+fn input_byte_limit_admits_exactly_eight_mib_and_refuses_ascii_and_multibyte_overflow() {
+    for (character, count, admitted) in [
+        ("😀", crate::pipe::MAX_BYTES / 4, true),
+        ("😀", crate::pipe::MAX_BYTES / 4 + 1, false),
+        ("a", crate::pipe::MAX_BYTES + 1, false),
+    ] {
+        let text = character.repeat(count);
+        let (_root, mut host, mut receiver) = host(&text);
+        let revision = host.app.buffers[0].revision();
+        let outcome = host
+            .app
+            .execute(parse_colon_command("pipe cat").unwrap())
+            .unwrap();
+        if admitted {
+            assert!(matches!(
+                outcome,
+                crate::app::CommandOutcome::AsynchronousRequest(_)
+            ));
+            assert_eq!(
+                host.app.pipe.request.as_ref().unwrap().inputs.as_slice(),
+                std::slice::from_ref(&text)
+            );
+        } else {
+            assert!(
+                matches!(outcome, crate::app::CommandOutcome::UserError(message) if message.contains("8 MiB"))
+            );
+            assert!(host.app.pipe.request.is_none());
+            assert!(host.app.pipe.cancellation.is_none());
+            host.sync_pipe();
+        }
+        assert!(host.pipe_worker.is_none());
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(host.app.buffers[0].revision(), revision);
+        assert_eq!(host.app.buffers[0].to_string(), text);
+    }
+}

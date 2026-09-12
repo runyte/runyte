@@ -123,12 +123,24 @@ fn cancellation_and_success_clean_up_children_without_waiting_for_inherited_pipe
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
+    let cancelled_child = std::fs::read_to_string(root.path().join("child.pid"))
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        process_is_running(cancelled_child),
+        "fixture child exited before cancellation"
+    );
+    let cancellation_started = Instant::now();
     cancel.store(true, Ordering::Release);
     assert!(worker.join().unwrap().0.unwrap_err().contains("cancelled"));
+    assert!(cancellation_started.elapsed() < Duration::from_secs(5));
+    assert_process_stopped(cancelled_child);
+
     let start = Instant::now();
     assert_eq!(
         run_inner(
-            "sleep 30 & printf done",
+            "sleep 30 & printf '%s' \"$!\" > completed-child.pid; printf done",
             root.path(),
             vec!["".into()],
             &AtomicBool::new(false),
@@ -138,6 +150,39 @@ fn cancellation_and_success_clean_up_children_without_waiting_for_inherited_pipe
         ["done"]
     );
     assert!(start.elapsed() < Duration::from_secs(5));
+    let completed_child = std::fs::read_to_string(root.path().join("completed-child.pid"))
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert_process_stopped(completed_child);
+}
+
+fn process_is_running(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        return stat
+            .rsplit_once(") ")
+            .and_then(|(_, suffix)| suffix.chars().next())
+            .is_some_and(|state| state != 'Z' && state != 'X');
+    }
+    // SAFETY: signal zero only probes the freshly recorded fixture PID; it
+    // cannot signal a process if the PID has since been recycled.
+    (unsafe { libc::kill(pid as libc::pid_t, 0) }) == 0
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn assert_process_stopped(pid: u32) {
+    assert!(pid > 1, "invalid fixture child PID");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // A killed grandchild can remain a zombie until the system reaper runs.
+    // Linux state observation distinguishes that from an executing process.
+    while process_is_running(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "pipe descendant {pid} survived cleanup"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]
