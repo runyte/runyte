@@ -43,6 +43,26 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-12 — plain shell filters
+
+Measured on `x86_64-unknown-linux-gnu` for the plain-pipe implementation based on
+`2e92262`, using the canonical `cargo llvm-cov --locked --workspace` command.
+Ordinary and instrumented suites each pass 3,608 tests with 33 existing ignored
+tests. Formatting and warnings-as-errors Clippy pass.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 120,312 | 131,130 | 91.75% |
+| Functions | 10,847 | 11,828 | 91.71% |
+| Regions | 182,297 | 199,906 | 91.19% |
+
+New regressions cover shell argument handling, bounded concurrent pipe I/O,
+timeouts and cancellation, atomic selection replacement, revision and focus
+fences, and a real persistent-host pipe completion while detached followed by
+reattachment and undo. Process and PTY checks ran outside the sandbox. The
+enforced floor remains 89%; this Linux measurement does not establish a native
+macOS result.
+
 ## 2026-09-09 — plugin review fixes and dev integration
 
 Measured on `x86_64-unknown-linux-gnu` at `fc2d4d3`, following review fixes in

@@ -2096,7 +2096,7 @@ fn built_in_bindings() -> Vec<Binding> {
         unsupported(
             Key::char('|'),
             Command::ShellPipe,
-            "shell pipes are not available",
+            "use :pipe <shell-command>",
         ),
         modal([Key::char('m'), Key::char('m')], Command::MatchBracket),
         insert(Key::plain(KeyCode::Escape), Command::EnterNormalMode),

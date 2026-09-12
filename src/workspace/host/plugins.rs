@@ -16,6 +16,7 @@ impl WorkspaceHost {
     /// Cancels every worker before waiting, and keeps the runtime alive until
     /// all owned plugin children have been reaped. No new input is dispatched.
     pub async fn shutdown_plugins(&mut self) -> Result<()> {
+        self.shutdown_pipe().await;
         let workers = std::mem::take(&mut self.plugin_workers);
         for worker in workers.values() {
             worker.stop();
@@ -662,6 +663,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_pipe();
         self.sync_plugin_handoffs();
         self.sync_provider_writes();
         self.sync_provider_inspections();

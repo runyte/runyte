@@ -1703,7 +1703,7 @@ context; scoped explorer keys are documented under
 | `Ctrl-s` | Save |
 | `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
-| `\|` | Shell pipe (reserved but unsupported) |
+| `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
 | `<n>` before a command | Repeat a motion or countable command |
 | `<n>gg` / `<n>G` | Go to line `<n>` |
 | `"` then a register | Select a named register; uppercase appends and `_` discards |
@@ -2131,6 +2131,8 @@ targets stay within one buffer line or terminal review row.
 | `Space o t` | Preview and save a theme in `config.yaml`; `Tab` narrows to the dark or light ones |
 | `Space o s` | Inspect syntax, LSP, and Git service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
+| `:pipe <shell-command>` or `:| <shell-command>` | Replace each selection with the command’s stdout |
+| `:pipe-cancel` | Cancel the workspace’s running pipe job |
 | `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
 | `:diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
@@ -2146,6 +2148,31 @@ targets stay within one buffer line or terminal review row.
 | `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session and return to a previous running session, with unsaved-change protection |
 | `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
+
+`:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
+stdin and replaces it with stdout. Programs resolve through the inherited
+`PATH`; arguments, quotes and pipelines are interpreted by the shell. Runyte
+does not expand editor variables or interpolate selected text into the command.
+The working directory is the workspace root captured when the command starts.
+
+Selections run sequentially, with at most one pipe job per workspace and 256
+selections per job. Command text is limited to 16 KiB, selected input and combined
+stdout to 8 MiB each, and retained stderr to 16 KiB per invocation. The whole job
+has a 30-second deadline. Stdout must be UTF-8 and is preserved exactly, including
+trailing newlines; empty stdout deletes the selection. All replacements form one
+undo step. Any failed invocation discards every replacement and reports an error.
+Commands may have external side effects that undo and cancellation cannot reverse.
+
+Editing and rendering continue while a pipe runs. Results target the captured
+buffer even after switching panes, and are refused if it changed (including an
+edit followed by undo), closed, or became read-only. Moving selections does not
+retarget the result. `:pipe-cancel` cancels the job. The workspace host owns it in
+both modes, so detaching and reattaching a persistent session does not restart or
+cancel it. Host shutdown cancels outstanding work. Cancellation, timeout, failure
+and shell completion kill the owned process group and reap the shell; processes
+that deliberately leave that group are outside cleanup’s scope. Inherited output
+pipes cannot keep a completed shell’s job alive indefinitely. No default key
+binding is added; the bare `|` key remains reserved.
 
 Panes are reached from `Space w` or its `Ctrl-w` compatibility alias, both of
 which want two keystrokes before a direction. Setting `editor.fast_pane_keys`

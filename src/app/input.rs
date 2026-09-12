@@ -3213,7 +3213,13 @@ impl App {
                 self.close_prompt();
             }
             KeyCode::Enter => {
-                let command = self.command.trim().to_owned();
+                let command =
+                    if matches!(self.command.split_whitespace().next(), Some("pipe" | "|")) {
+                        self.command.trim_start()
+                    } else {
+                        self.command.trim()
+                    }
+                    .to_owned();
                 if command.is_empty() {
                     return Ok(());
                 }
@@ -4781,6 +4787,7 @@ impl App {
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
         let hint = match id {
+            CommandId::Colon(ColonCommand::Pipe) => CommandOutcomeHint::Asynchronous,
             CommandId::Colon(ColonCommand::Format) => {
                 if self.has_language_server() {
                     CommandOutcomeHint::Asynchronous
@@ -5356,6 +5363,13 @@ impl App {
             }
             (Colon::Path, InvocationParameters::None) => {
                 self.open_path_popup();
+                Ok(())
+            }
+            (Colon::Pipe, InvocationParameters::OptionalText(Some(command))) => {
+                self.request_pipe(command)
+            }
+            (Colon::PipeCancel, InvocationParameters::None) => {
+                self.cancel_pipe();
                 Ok(())
             }
             (Colon::Plugins, InvocationParameters::None) => {

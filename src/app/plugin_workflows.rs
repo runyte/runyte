@@ -130,6 +130,9 @@ impl App {
         &self,
         text: &str,
     ) -> Result<CommandInvocation, crate::command::CommandParseError> {
+        if matches!(text.split_whitespace().next(), Some("pipe" | "|")) {
+            return crate::command::parse_colon_command(text);
+        }
         let text = text.trim();
         let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
         if let Some(command) = self.plugins.commands.values().find(|c| c.name == name) {
