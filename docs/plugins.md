@@ -53,6 +53,13 @@ rejected because the modal grammar owns counts and prefix cancellation. A
 collision rejects that plugin's registration; it never replaces an existing
 binding. `keys.rebind` continues to move built-in defaults only.
 
+Bindings that share a prefix no built-in namespace labels are folded in the
+key-hint popup. With `Space = =`, `Space = a` and `Space = p` bound, pressing
+`Space` shows a single `Space =` row named after the command name the bindings
+share, here `::time commands`, and pressing `=` lists the three commands. Bindings
+with no shared name are labelled by count, such as `3 commands`. A prefix
+holding only one binding is not folded, so that binding is listed in full.
+
 `:plugin.case.stop` stops the instance, cancels pending work, and removes its
 commands, bindings and subscriptions. `:plugin-restart case` explicitly starts a
 fresh instance after old work finishes cleanup. `:plugins` shows configured,

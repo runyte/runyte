@@ -226,7 +226,13 @@ Helix-style surface. Registry role metadata calls canonical/default bindings
 aliases **Compatibility**. These roles do not duplicate command descriptions:
 dispatch, help, and which-key hints still obtain the description from the
 semantic command inventory. Labelled namespace rows are generated from that
-same registry and are not executable exact bindings.
+same registry and are not executable exact bindings. Every prefix the built-in
+keymaps use is declared with a label. Plugin and configured bindings may use a
+prefix nobody declared; when more than one binding lies beyond that next key,
+and none is bound to the prefix itself, the hints fold them into one namespace
+row labelled by their shared command name, cut at a `-` or `.` separator, or
+by count. This is a projection of the effective keymap, not a declared
+namespace, so validation, dispatch, and help are unaffected.
 
 An overflowing key-hint popup scrolls unconditionally with `Ctrl-n` and
 `Ctrl-p`, without adding either key to the pending sequence. In Normal and

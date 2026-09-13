@@ -81,6 +81,29 @@ impl KeyHintRow {
         }
     }
 
+    /// A namespace row for bindings that share a prefix no registry entry
+    /// labels. It is as prominent as the most prominent binding it holds.
+    fn from_fold(sequence: KeySequence, members: &[&Binding]) -> Self {
+        Self {
+            sequence,
+            grouped_keys: None,
+            alias: None,
+            alias_modes: None,
+            target: None,
+            description: fold_label(members).into(),
+            availability: BindingAvailability::Implemented,
+            capability: None,
+            unavailable_reason: None,
+            role: members
+                .iter()
+                .map(|binding| binding.role)
+                .min()
+                .unwrap_or_default(),
+            exact: false,
+            namespace: true,
+        }
+    }
+
     /// Applies one active-buffer capability snapshot to this presentation row.
     /// Static planned/unsupported metadata remains authoritative when present.
     pub fn apply_capabilities(&mut self, capabilities: &AppCapabilitySnapshot) {
@@ -195,6 +218,91 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         "key-hint description exceeds {KEY_HINT_MAX_DESCRIPTION_WIDTH} cells: {compact}"
     );
     compact
+}
+
+/// Rows for the continuations of `prefix` that no declared namespace claims.
+///
+/// Bindings a plugin or configuration adds under a prefix the registry never
+/// labelled would otherwise all appear at once, several keys deep. Any next
+/// key that leads to more than one of them becomes a namespace row of its
+/// own, the way a declared namespace does; pressing it reveals them. A lone
+/// binding stays visible in full, since folding it would only hide it, and a
+/// prefix that is itself a command keeps its row and its continuations.
+fn fold_undeclared_prefixes(prefix: &KeySequence, continuations: Vec<&Binding>) -> Vec<KeyHintRow> {
+    let depth = prefix.len() + 1;
+    let mut groups: Vec<(KeySequence, Vec<&Binding>)> = Vec::new();
+    for binding in continuations {
+        let next = KeySequence::new(binding.sequence.as_slice()[..depth].iter().copied());
+        match groups.iter_mut().find(|(sequence, _)| *sequence == next) {
+            Some((_, members)) => members.push(binding),
+            None => groups.push((next, vec![binding])),
+        }
+    }
+    let mut rows = Vec::new();
+    for (sequence, members) in groups {
+        let foldable =
+            members.len() > 1 && members.iter().all(|binding| binding.sequence.len() > depth);
+        if foldable {
+            rows.push(KeyHintRow::from_fold(sequence, &members));
+        } else {
+            rows.extend(
+                members
+                    .into_iter()
+                    .map(|binding| KeyHintRow::from_binding(binding, false)),
+            );
+        }
+    }
+    rows
+}
+
+/// The label for a namespace no one declared: the command name its bindings
+/// share, such as `::time` for `::time-add` and `::time-pause`, or how many
+/// commands it holds when they share none.
+fn fold_label(members: &[&Binding]) -> String {
+    let names = members
+        .iter()
+        .map(|binding| match binding.target {
+            BindingTarget::Plugin(_) => binding.description.split(" — ").next().unwrap_or_default(),
+            target => target.name(),
+        })
+        .collect::<Vec<_>>();
+    let stem = shared_command_stem(&names);
+    let label = stem.map(|stem| format!("{stem} commands"));
+    match label {
+        // The namespace marker counts toward the description limit.
+        Some(label)
+            if UnicodeWidthStr::width(label.as_str()) + 2 <= KEY_HINT_MAX_DESCRIPTION_WIDTH =>
+        {
+            label
+        }
+        _ => format!("{} commands", members.len()),
+    }
+}
+
+/// The longest leading name every command shares, ending where a name does
+/// or at a `-` or `.` separator, so `time-add` and `time-delete` share `time`
+/// rather than `time-`, and `git-log` and `git-local` share `git`, not `git-lo`.
+fn shared_command_stem<'a>(names: &[&'a str]) -> Option<&'a str> {
+    let separators = ['-', '.'];
+    let first = *names.first()?;
+    let mut length = names.iter().skip(1).fold(first.len(), |length, name| {
+        first[..length]
+            .char_indices()
+            .zip(name.chars())
+            .find(|((_, left), right)| left != right)
+            .map_or(length.min(name.len()), |((index, _), _)| index)
+    });
+    loop {
+        let stem = &first[..length];
+        if names
+            .iter()
+            .all(|name| name.len() == length || name[length..].starts_with(separators))
+        {
+            let stem = stem.trim_end_matches(separators);
+            return (!stem.trim_start_matches(':').is_empty()).then_some(stem);
+        }
+        length = stem.rfind(separators)?;
+    }
 }
 
 /// Collapse only a complete numbered family in the effective registry. A
@@ -552,36 +660,29 @@ impl KeyHintState {
                     && namespace.sequence.starts_with(&self.pending)
             })
             .collect::<Vec<_>>();
-        let mut rows = match keymap.lookup_in(mode, scope, &self.pending) {
-            Lookup::NoMatch => Vec::new(),
-            Lookup::Exact(binding) => vec![KeyHintRow::from_binding(binding, true)],
-            Lookup::Prefix(bindings) => bindings
-                .into_iter()
-                .filter(|binding| {
-                    binding.sequence.len() == self.pending.len() + 1
-                        || !namespaces
-                            .iter()
-                            .any(|namespace| binding.sequence.starts_with(&namespace.sequence))
-                })
-                .map(|binding| KeyHintRow::from_binding(binding, false))
-                .collect(),
+        let (exact, continuations) = match keymap.lookup_in(mode, scope, &self.pending) {
+            Lookup::NoMatch => (None, Vec::new()),
+            Lookup::Exact(binding) => (Some(binding), Vec::new()),
+            Lookup::Prefix(bindings) => (None, bindings),
             Lookup::ExactAndPrefix {
                 exact,
                 continuations,
-            } => std::iter::once(KeyHintRow::from_binding(exact, true))
-                .chain(
-                    continuations
-                        .into_iter()
-                        .filter(|binding| {
-                            binding.sequence.len() == self.pending.len() + 1
-                                || !namespaces.iter().any(|namespace| {
-                                    binding.sequence.starts_with(&namespace.sequence)
-                                })
-                        })
-                        .map(|binding| KeyHintRow::from_binding(binding, false)),
-                )
-                .collect(),
+            } => (Some(exact), continuations),
         };
+        let continuations = continuations
+            .into_iter()
+            .filter(|binding| {
+                binding.sequence.len() == self.pending.len() + 1
+                    || !namespaces
+                        .iter()
+                        .any(|namespace| binding.sequence.starts_with(&namespace.sequence))
+            })
+            .collect::<Vec<_>>();
+        let mut rows = exact
+            .map(|binding| KeyHintRow::from_binding(binding, true))
+            .into_iter()
+            .collect::<Vec<_>>();
+        rows.extend(fold_undeclared_prefixes(&self.pending, continuations));
         rows.extend(namespaces.into_iter().map(KeyHintRow::from_namespace));
         collapse_session_hints(&mut rows, &self.pending);
         rows.sort_by(|left, right| {
@@ -1265,5 +1366,133 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    /// The default keymap plus plugin bindings, each spelled as configured
+    /// and described the way the runtime registry describes plugin commands.
+    fn with_plugin_bindings(bindings: &[(&str, &str)]) -> Keymap {
+        const MODES: &[Mode] = &[Mode::Normal, Mode::Select];
+        default_keymap()
+            .with_plugin_bindings(
+                bindings
+                    .iter()
+                    .zip(1..)
+                    .map(|((keys, description), id)| {
+                        let mut binding = Binding::implemented(
+                            MODES,
+                            KeySequence::parse(keys).unwrap(),
+                            BindingTarget::Plugin(id),
+                        );
+                        binding.description = (*description).to_owned().into();
+                        binding
+                    })
+                    .collect(),
+            )
+            .unwrap()
+    }
+
+    fn rows_after(keymap: &Keymap, keys: &str) -> Vec<KeyHintRow> {
+        let mut hints = KeyHintState::default();
+        for key in KeySequence::parse(keys).unwrap().as_slice() {
+            hints.observe(*key, Mode::Normal, keymap);
+        }
+        hints.rows(keymap, Mode::Normal)
+    }
+
+    #[test]
+    fn plugin_bindings_under_an_undeclared_prefix_fold_into_one_namespace_row() {
+        let keymap = with_plugin_bindings(&[
+            ("Space = =", "::time — Open time tracker"),
+            ("Space = a", "::time-add — Add a task"),
+            ("Space = d", "::time-delete"),
+            ("Space = n", "::time-note — Add or edit this task’s note"),
+            ("Space = p", "::time-pause — Pause the running timer"),
+        ]);
+        let root = rows_after(&keymap, "Space");
+        let prefix = KeySequence::parse("Space =").unwrap();
+        let folded = root
+            .iter()
+            .filter(|row| row.sequence.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(folded.len(), 1, "{folded:?}");
+        assert!(folded[0].namespace && folded[0].target.is_none());
+        assert_eq!(folded[0].sequence, prefix);
+        assert_eq!(key_hint_description(folded[0]), "::time commands ›");
+        // Declared namespaces are untouched beside the folded one.
+        assert!(
+            root.iter()
+                .any(|row| row.namespace && row.description == "Buffers")
+        );
+
+        let inside = rows_after(&keymap, "Space =");
+        assert_eq!(inside.len(), 5);
+        assert!(
+            inside
+                .iter()
+                .all(|row| !row.namespace && matches!(row.target, Some(BindingTarget::Plugin(_))))
+        );
+    }
+
+    #[test]
+    fn undeclared_prefixes_fold_only_groups_and_name_them_by_what_they_share() {
+        let keymap = with_plugin_bindings(&[
+            ("Space ; a", ":plugin.notes.append — Append"),
+            ("Space ; b", ":plugin.notes.browse — Browse"),
+            ("Space ' x", "::alpha — First"),
+            ("Space ' y", "::beta — Second"),
+            ("Space - z", "::lonely — Only one"),
+            ("Space , a", "::task-add"),
+            ("Space , l", "::tasking-list"),
+        ]);
+        let root = rows_after(&keymap, "Space");
+        let row = |keys: &str| {
+            let sequence = KeySequence::parse(keys).unwrap();
+            root.iter()
+                .find(|row| row.sequence == sequence)
+                .unwrap_or_else(|| panic!("no row for {keys}: {root:?}"))
+        };
+        assert_eq!(row("Space ;").description, ":plugin.notes commands");
+        assert_eq!(row("Space '").description, "2 commands");
+        // `task` is not a stem of `tasking`; the shared text stops at a separator.
+        assert_eq!(row("Space ,").description, "2 commands");
+        // A single binding would only be hidden by folding.
+        let lonely = row("Space - z");
+        assert!(!lonely.namespace);
+        assert!(
+            !root
+                .iter()
+                .any(|row| row.sequence == KeySequence::parse("Space -").unwrap())
+        );
+    }
+
+    #[test]
+    fn built_in_keymaps_declare_every_namespace_their_hints_show() {
+        for keymap in [default_keymap(), &*crate::keymap::keymap_for(true)] {
+            for binding in keymap.bindings() {
+                let keys = binding.sequence.as_slice();
+                for mode in binding.modes {
+                    for length in 1..keys.len() {
+                        let mut hints = KeyHintState::default();
+                        for key in &keys[..length] {
+                            hints.push(*key);
+                        }
+                        for row in hints.rows_in(keymap, *mode, binding.scope) {
+                            if !row.namespace || row.grouped_keys.is_some() {
+                                continue;
+                            }
+                            assert!(
+                                keymap
+                                    .namespaces_for_scope(*mode, binding.scope)
+                                    .any(|namespace| namespace.sequence == row.sequence),
+                                "{mode:?} {} folds undeclared prefix {} as {:?}",
+                                binding.sequence,
+                                row.sequence,
+                                row.description
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

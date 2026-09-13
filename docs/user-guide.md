@@ -1474,7 +1474,10 @@ the popup shows one namespace row at a time, then reveals its generated
 registry entries when you enter it. Existing short keys remain fast or
 compatibility bindings. A row that names two keys, such as `Space s a, &`,
 runs the same command either way, so the namespace teaches the short spelling
-rather than hiding it. `Space l` is labelled **Language (LSP)** and `Space x`
+rather than hiding it. Bindings added by plugins or configuration under a
+prefix that has no label of its own fold the same way: several bindings under
+`Space =` appear as one `Space =` row, named after the command name they share
+or by how many there are. `Space l` is labelled **Language (LSP)** and `Space x`
 is labelled **Syntax (Tree-sitter)**. Either row is dimmed with an unavailable
 reason when the active file does not have that service ready. The namespace
 remains navigable so its individual commands can explain their availability;
