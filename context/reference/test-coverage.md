@@ -43,6 +43,30 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-13 — plugin command aliases
+
+Measured on `x86_64-unknown-linux-gnu` for the alias implementation based on
+`3eea992`, using `cargo llvm-cov --locked --workspace`. Ordinary and instrumented
+suites pass 3,616 tests with 33 existing ignored tests. Formatting and
+warnings-as-errors Clippy pass, including the separate Rust todo example's
+format check.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 120,421 | 131,220 | 91.77% |
+| Functions | 10,863 | 11,839 | 91.76% |
+| Regions | 182,479 | 200,054 | 91.21% |
+
+Six host regressions in `src/workspace/host/tests/plugin_aliases.rs` cover both
+API epochs, double-colon discovery and presentation, quoted arguments, full-name
+compatibility, alias collisions and restoration, invalid registration rollback,
+and unchanged built-in command identity. All 27 Python conformance suites pass;
+eight optional real-mpv cases are skipped because mpv is unavailable locally.
+The shared todo suite includes freshly built Python, Rust and C examples.
+The separate ru-time plugin passes 35 tests, including real-editor short-command
+acceptance against the changed host. The enforced floor remains 89%; this local
+measurement does not establish native macOS coverage.
+
 ## 2026-09-12 — plain shell filters
 
 Measured on `x86_64-unknown-linux-gnu` for the plain-pipe implementation based on

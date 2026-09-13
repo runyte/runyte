@@ -201,6 +201,8 @@ pub(super) fn commands(
         app.plugins.commands.insert(
             id,
             RuntimeCommand {
+                alias: None,
+                alias_name: None,
                 arguments: vec![],
                 id,
                 plugin: 0,

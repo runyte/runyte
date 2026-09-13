@@ -9,12 +9,12 @@ import time
 VERSION = 'runyte-experimental-2'
 LIMIT = 1024 * 1024
 COMMANDS = [
-    {'name': 'open', 'description': 'Open todo list', 'context': 'workspace'},
-    {'name': 'add', 'description': 'Add a task', 'context': 'view',
+    {'name': 'open', 'alias': 'todo-python', 'description': 'Open todo list', 'context': 'workspace'},
+    {'name': 'add', 'alias': 'todo-python-add', 'description': 'Add a task', 'context': 'view',
      'arguments': [{'name': 'title', 'type': 'string'}]},
-    {'name': 'toggle', 'description': 'Toggle selected tasks', 'context': 'view', 'primary': True},
-    {'name': 'remove', 'description': 'Remove selected tasks', 'context': 'view'},
-    {'name': 'filter', 'description': 'Toggle unfinished-only filter', 'context': 'view'},
+    {'name': 'toggle', 'alias': 'todo-python-toggle', 'description': 'Toggle selected tasks', 'context': 'view', 'primary': True},
+    {'name': 'remove', 'alias': 'todo-python-remove', 'description': 'Remove selected tasks', 'context': 'view'},
+    {'name': 'filter', 'alias': 'todo-python-filter', 'description': 'Toggle unfinished-only filter', 'context': 'view'},
 ]
 
 

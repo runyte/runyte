@@ -265,11 +265,11 @@ impl Todo {
                 send(
                     json!({"type":"register", "version":VERSION, "name":"Todo · Rust",
                     "required_capabilities":["views"], "optional_capabilities":[], "commands":[
-                        {"name":"open", "description":"Open todo list", "context":"workspace"},
-                        {"name":"add", "description":"Add a task", "context":"view", "arguments":[{"name":"title", "type":"string"}]},
-                        {"name":"toggle", "description":"Toggle selected tasks", "context":"view", "primary":true},
-                        {"name":"remove", "description":"Remove selected tasks", "context":"view"},
-                        {"name":"filter", "description":"Toggle unfinished-only filter", "context":"view"}
+                        {"name":"open","alias":"todo-rust", "description":"Open todo list", "context":"workspace"},
+                        {"name":"add","alias":"todo-rust-add", "description":"Add a task", "context":"view", "arguments":[{"name":"title", "type":"string"}]},
+                        {"name":"toggle","alias":"todo-rust-toggle", "description":"Toggle selected tasks", "context":"view", "primary":true},
+                        {"name":"remove","alias":"todo-rust-remove", "description":"Remove selected tasks", "context":"view"},
+                        {"name":"filter","alias":"todo-rust-filter", "description":"Toggle unfinished-only filter", "context":"view"}
                     ]}),
                 )?;
             } else {

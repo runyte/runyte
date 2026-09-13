@@ -234,11 +234,11 @@ static void receive(J *message) {
             if (strcmp(field(message, "version"), VERSION)) fail();
             send(literal("{\"type\":\"register\",\"version\":\"" VERSION "\",\"name\":\"Todo · C\","
                 "\"required_capabilities\":[\"views\"],\"optional_capabilities\":[],\"commands\":["
-                "{\"name\":\"open\",\"description\":\"Open todo list\",\"context\":\"workspace\"},"
-                "{\"name\":\"add\",\"description\":\"Add a task\",\"context\":\"view\",\"arguments\":[{\"name\":\"title\",\"type\":\"string\"}]},"
-                "{\"name\":\"toggle\",\"description\":\"Toggle selected tasks\",\"context\":\"view\",\"primary\":true},"
-                "{\"name\":\"remove\",\"description\":\"Remove selected tasks\",\"context\":\"view\"},"
-                "{\"name\":\"filter\",\"description\":\"Toggle unfinished-only filter\",\"context\":\"view\"}]}"));
+                "{\"name\":\"open\",\"alias\":\"todo-c\",\"description\":\"Open todo list\",\"context\":\"workspace\"},"
+                "{\"name\":\"add\",\"alias\":\"todo-c-add\",\"description\":\"Add a task\",\"context\":\"view\",\"arguments\":[{\"name\":\"title\",\"type\":\"string\"}]},"
+                "{\"name\":\"toggle\",\"alias\":\"todo-c-toggle\",\"description\":\"Toggle selected tasks\",\"context\":\"view\",\"primary\":true},"
+                "{\"name\":\"remove\",\"alias\":\"todo-c-remove\",\"description\":\"Remove selected tasks\",\"context\":\"view\"},"
+                "{\"name\":\"filter\",\"alias\":\"todo-c-filter\",\"description\":\"Toggle unfinished-only filter\",\"context\":\"view\"}]}"));
         } else deadline = 0;
         phase++;
         return;

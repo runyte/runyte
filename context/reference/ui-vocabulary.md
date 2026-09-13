@@ -470,6 +470,12 @@ reports pending work or failure through the existing service-health surface.
 ## Experimental plugins
 
 Plugin commands use the colon palette and the existing keymap help and hints.
+A second leading colon changes the same palette to **Plugin commands** and
+filters out built-ins. Registered unique aliases display as `::name`; full
+`:plugin.<id>.<command>` spellings remain available, including for commands whose
+alias is absent or ambiguous. Completion preserves typed arguments, and removing
+the second colon returns to the ordinary palette. Help, hints and argument prompts
+prefer the active alias from the same runtime registry.
 They introduce no new pane content or overlay. Acceptance and completion use
 the interaction line; stale, closed and read-only results produce protective
 warning notifications, process/protocol failures produce errors, and explicit

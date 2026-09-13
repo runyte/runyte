@@ -14,7 +14,7 @@ class FtpApplication(RemoteApplication):
             raise PluginError('invalid_argument', 'FTP transport must be ftps or explicitly ftp')
         label = 'FTPS' if transport.protocol == 'ftps' else 'FTP (unencrypted)'
         super().__init__(transport, provider, plugin_id, app,
-                         protocol_label=label, atomic_replace=False)
+                         protocol_label=label, atomic_replace=False, alias_prefix='ftp')
 
 
 def main():

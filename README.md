@@ -59,39 +59,11 @@ Community: [r/runyte](https://www.reddit.com/r/runyte/)
 | **Language** | 31 bundled Tree-sitter grammars and asynchronous LSP |
 | **Sessions** | Standalone or persistent workspaces, session switching, and `$EDITOR`-compatible `--wait` |
 | **Interface** | Registry-backed key hints and help, themes, settings, and notifications |
+| **Plugins** | Plugins written in any programming language, with native commands, views, and background work |
 
 Language servers require permission per workspace; editing and Tree-sitter
 features remain available without them. Use `:lsp-trust` to change permission.
 
-Runyte uses optional YAML configuration. Explicitly enabled
-[experimental process plugins](docs/plugins.md) can register commands and transform
-multiple selections in one undoable edit. The opt-in
-[application API](docs/plugins/applications.md) adds native application views,
-a local file manager, background jobs, ordered metadata subscriptions, explicit text operations and provider-backed
-UTF-8 editing with conditional or explicitly confirmed remote saves, conflict
-comparison, and [native reload recovery](docs/plugins/applications.md#native-reload-and-conflict-recovery).
-Runnable [SFTP](docs/plugins/applications.md#sftp-browser-and-editor)
-and [FTP/FTPS](docs/plugins/applications.md#ftp-and-ftps-browser-and-editor) browsers
-state their transport and overwrite guarantees explicitly and can download or
-upload binary files through native confirmation. Applications can also control
-[managed helpers](docs/plugins/applications.md#managed-helpers) with bounded binary
-pipes and process-group cleanup, publish retained notifications, and make explicit
-[native terminal/browser handoffs](docs/plugins/applications.md#notifications-and-native-handoffs).
-Continuing work can use bounded, renewable
-[activity leases](docs/plugins/applications.md#continuing-activity) that appear in
-session health and protect normal shutdown.
-The optional [local media controller](docs/plugins/applications.md#local-media-controller)
-uses mpv for playback, with a native playlist, progress and playback controls.
-Applications can read validated [settings and workspace state](docs/plugins/applications.md#settings-and-workspace-state),
-with conditional updates for nonsecret saved preferences.
-The native [plugin manager](docs/plugins/applications.md#plugin-manager) retains
-failed entries and provides explicit stop/restart after cleanup.
-The [authoring kit](docs/plugins/authoring.md) includes local setup, a Python
-client, an independent Node example and a conformance matrix. The
-[todo showcase](docs/plugins/todo/README.md) implements the same native task list
-in Python, Rust and C.
-The application API remains experimental after completing its planned
-implementation and validation.
 See the [user guide](docs/user-guide.md) for complete behavior and limits.
 
 ### Workspaces, panes, and navigation
@@ -184,6 +156,34 @@ shell before launching the agent. The attached client displays the prompt;
 `:wq` saves it, completes the request, and restores the agent's terminal.
 See the [navigation guide](docs/user-guide.md#session-and-destination-navigation)
 for editor environment handling and the full return-to-terminal behavior.
+
+## Plugins
+
+Official Runyte plugins are in development. The first is
+[**ru-time**](https://github.com/runyte/ru-time), a task list and time tracker
+written in Python using only the standard library. It keeps task status and
+recorded time in a native editor buffer, with persistent history and recovery
+for interrupted timers.
+
+Plugins can be written in **any programming language**. Each runs as an
+explicitly enabled external process and exchanges bounded, newline-delimited
+JSON with Runyte over stdin/stdout. The asynchronous host handles registered
+commands, native views and input, background work, and capability grants.
+There is no Rust ABI to link against. Type `::` to browse plugin commands;
+ru-time offers `::time`, `::time-add`, and `::time-delete`. Plugins can also
+provide configurable keybindings through the editor's regular help and hints.
+
+The repository includes examples to build on:
+
+- [Uppercase selections](docs/plugins/uppercase.py), a minimal Python plugin.
+- [Todo lists in Python, Rust, and C](docs/plugins/todo/README.md), plus an
+  independent [JavaScript example](docs/plugins/tasks.mjs).
+- A [local file manager](docs/plugins/applications.md#local-file-manager),
+  [SFTP and FTP/FTPS browsers](docs/plugins/applications.md#sftp-browser-and-editor),
+  and a [local media controller](docs/plugins/applications.md#local-media-controller).
+
+The API is experimental. Start with the [installation and protocol guide](docs/plugins.md)
+or the [application authoring guide](docs/plugins/authoring.md).
 
 ## Installation
 

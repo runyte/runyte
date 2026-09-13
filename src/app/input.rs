@@ -302,6 +302,13 @@ impl App {
     ) -> Vec<CommandMatch<'_>> {
         let trimmed = self.command.trim();
         let query = trimmed.split_whitespace().next().unwrap_or_default();
+        if trimmed.starts_with(':') {
+            let mut matches = self.plugin_command_matches(trimmed);
+            matches.sort_by_key(|matched| {
+                (usize::from(!matched.name.starts_with(query)), matched.name)
+            });
+            return matches;
+        }
         if query.is_empty() {
             // Nothing typed yet is a table of contents, so it lists each
             // command once under its canonical name.
@@ -3225,11 +3232,7 @@ impl App {
                 }
                 let name = command.split_whitespace().next().unwrap_or_default();
                 let spec = resolve_command(name);
-                let plugin = self
-                    .plugins
-                    .commands
-                    .values()
-                    .find(|entry| entry.name == name);
+                let plugin = self.plugin_command_named(name);
                 let description = if let Some(spec) = spec {
                     spec.description.to_owned()
                 } else if let Some(plugin) = plugin {

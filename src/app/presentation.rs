@@ -1872,7 +1872,11 @@ impl App {
                     let matches = self.matching_commands();
                     overlays.push(bounded(
                         OverlayKind::CommandPalette,
-                        "Commands",
+                        if self.command.trim_start().starts_with(':') {
+                            "Plugin commands"
+                        } else {
+                            "Commands"
+                        },
                         "",
                         matches
                             .iter()

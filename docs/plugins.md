@@ -37,13 +37,14 @@ host startup; restarting an existing persistent host is required to load changes
 Enablement applies to every workspace using this configuration.
 
 Select text with the editor's normal selection commands, then run
-`:plugin.case.uppercase`, or press `F12` in Normal or Select mode. Multiple
+`::uppercase`, or press `F12` in Normal or Select mode. Multiple
 selections are transformed together. For example `éß` becomes `ÉSS`; other text
 stays in place. `u` undoes the entire result in one step. A bare caret transforms
 the character it operates on, just like built-in selection edits; at EOF its
 empty span permits an insertion.
 
-The colon palette lists registered commands and their descriptions. Configured
+The colon palette lists registered commands and their descriptions; `::` filters
+it to plugin commands. Configured
 plugin bindings join the same keymap used by dispatch, view help, and hints.
 Bindings use physical key spellings, at most eight keys, and apply in Normal and
 Select modes. They are checked against both fast-pane variants and all effective
@@ -59,6 +60,33 @@ disabled and failed entries. Restarting a plugin uses its already loaded
 configuration; configuration changes require a workspace host restart. Failures
 never trigger automatic restart. `stop` is a reserved local command name,
 supplied by Runyte.
+
+## Plugin command names
+
+Type `::` to switch the existing command palette to plugin commands only.
+Commands may register an optional `alias`, such as `"alias": "time-delete"`,
+which is invoked as `::time-delete`. Aliases contain 1–48 lowercase ASCII
+letters, digits or hyphens, without the colons. They are explicitly authored
+by the plugin and do not depend on its configured ID. Both API epochs accept
+this optional field; existing registrations may omit it. Older hosts that
+predate alias support reject registrations containing it.
+
+The canonical identity remains `plugin.<configured-id>.<local-name>`.
+For example, `::uppercase` invokes `:plugin.case.uppercase` with the example
+configuration. Full commands and configured bindings continue to work, and
+invocations on the wire still carry the local command name. The palette, help,
+and key hints prefer the active short spelling. Typing a full command prefix
+keeps completion on that full spelling; arguments retain their ordinary quoting
+and validation. Backspace over the second colon returns to the ordinary palette.
+
+Aliases are unique across registered commands in a workspace, including commands
+from the same plugin. A collision disables the alias for every claimant, retains
+their full commands and bindings, and reports those commands in `:notifications`.
+Stopping a claimant restores the alias when exactly one registration remains.
+Neither startup order nor an alias matching a built-in name can shadow a built-in:
+`:write` and `::write` are distinct. The plugin palette also offers full names
+for commands without an active alias. Invalid alias spelling rejects registration
+atomically, just like other malformed command metadata.
 
 ## Asynchronous behavior and errors
 
@@ -178,7 +206,7 @@ Runyte sends:
 The plugin responds once, within ten seconds:
 
 ```json
-{"type":"register","version":"runyte-experimental-1","commands":[{"name":"uppercase","description":"Uppercase every selection"}]}
+{"type":"register","version":"runyte-experimental-1","commands":[{"name":"uppercase","alias":"uppercase","description":"Uppercase every selection"}]}
 ```
 
 Local names and configured plugin IDs contain 1–48 lowercase ASCII letters,

@@ -11,7 +11,7 @@ from remote_application import MAX_ROWS, MAX_MODEL_BYTES, RemoteApplication
 class SftpApplication(RemoteApplication):
     def __init__(self, transport, provider, plugin_id='sftp', app=None):
         super().__init__(transport, provider, plugin_id, app,
-                         protocol_label='SFTP', atomic_replace=True)
+                         protocol_label='SFTP', atomic_replace=True, alias_prefix='sftp')
 
 
 def main():

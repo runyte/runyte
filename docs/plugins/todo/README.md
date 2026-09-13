@@ -77,22 +77,24 @@ your personal configuration or an existing persistent session.
 
 ## Demonstrate the same workflow in each language
 
-Open `:plugin.todo-python.open`, `:plugin.todo-rust.open`, or
-`:plugin.todo-c.open`. The title identifies the implementation. Each starts with
+Open `::todo-python`, `::todo-rust`, or
+`::todo-c`. The title identifies the implementation. Each starts with
 one sample task, “Read the plugin guide”. The following commands use the Python
-ID; substitute `todo-rust` or `todo-c` for either native variant.
+variant's aliases; substitute `todo-rust` or `todo-c` for the native variants.
+These names are declared by each example and stay the same if its configured
+plugin ID changes.
 
 | Action | Command / default key |
 | --- | --- |
-| Open or return to the retained list | `:plugin.todo-python.open` |
-| Add a task while its list is active | `:plugin.todo-python.add "Write the release notes"` |
-| Mark selected tasks done or unfinished | `Enter` or `:plugin.todo-python.toggle` |
-| Remove selected tasks | `:plugin.todo-python.remove` |
-| Switch between all and unfinished tasks | `:plugin.todo-python.filter` |
+| Open or return to the retained list | `::todo-python` |
+| Add a task while its list is active | `::todo-python-add "Write the release notes"` |
+| Mark selected tasks done or unfinished | `Enter` or `::todo-python-toggle` |
+| Remove selected tasks | `::todo-python-remove` |
+| Switch between all and unfinished tasks | `::todo-python-filter` |
 | Discover available list actions | `Tab` |
 
 Choosing `add` from the `Tab` action list opens the command palette with
-`:plugin.todo-python.add ` filled in (or the corresponding Rust/C command).
+`::todo-python-add ` filled in (or the corresponding Rust/C command).
 Type a quoted title such as `"Write release notes"` and press Enter; Escape
 cancels without adding a task. Quotes preserve spaces in the typed title; no
 shell evaluates it. Adding uses a typed command argument, without a separate

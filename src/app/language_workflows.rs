@@ -3779,7 +3779,7 @@ impl App {
                 {
                     // The picker supplies no positional values. Collect them
                     // through the normal palette before capturing an invocation.
-                    let value = format!("{} ", command.name);
+                    let value = format!("{} ", command.palette_name());
                     self.open_prompt_with_value(PromptKind::Command, value);
                 } else {
                     self.invoke_plugin(command)?;

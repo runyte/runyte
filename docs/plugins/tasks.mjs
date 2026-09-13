@@ -182,8 +182,8 @@ function receive(message) {
     if (message.type !== 'hello' || message.version !== VERSION
         || !Array.isArray(message.capabilities) || !message.capabilities.includes('views')) throw new Error();
     send({type: 'register', version: VERSION, name: 'Node tasks', commands: [
-      {name: 'open', description: 'Open task list', context: 'workspace'},
-      {name: 'toggle', description: 'Toggle selected tasks', context: 'view', primary: true},
+      {name: 'open', alias: 'node-tasks', description: 'Open task list', context: 'workspace'},
+      {name: 'toggle', alias: 'node-tasks-toggle', description: 'Toggle selected tasks', context: 'view', primary: true},
     ], required_capabilities: ['views'], optional_capabilities: []});
     phase = 'registering';
     return;

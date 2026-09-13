@@ -8,11 +8,11 @@ import time
 from application import Application, PluginError
 
 app = Application('Helper', [
-    {'name': 'open', 'description': 'Open the managed helper', 'context': 'workspace'},
-    {'name': 'send', 'description': 'Send a line to the helper', 'context': 'view'},
-    {'name': 'flood', 'description': 'Generate bounded retained output', 'context': 'view'},
-    {'name': 'eof', 'description': 'Close helper input', 'context': 'view'},
-    {'name': 'close', 'description': 'Stop and reap the helper', 'context': 'view'},
+    {'name': 'open', 'alias': 'helper', 'description': 'Open the managed helper', 'context': 'workspace'},
+    {'name': 'send', 'alias': 'helper-send', 'description': 'Send a line to the helper', 'context': 'view'},
+    {'name': 'flood', 'alias': 'helper-flood', 'description': 'Generate bounded retained output', 'context': 'view'},
+    {'name': 'eof', 'alias': 'helper-eof', 'description': 'Close helper input', 'context': 'view'},
+    {'name': 'close', 'alias': 'helper-close', 'description': 'Stop and reap the helper', 'context': 'view'},
 ], ['views', 'interaction', 'processes'])
 lock = threading.RLock()
 worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)

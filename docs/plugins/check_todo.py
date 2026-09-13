@@ -94,6 +94,9 @@ class TodoChecks:
         self.assertEqual(registration['required_capabilities'], ['views'])
         commands = registration['commands']
         self.assertEqual([c['name'] for c in commands], ['open', 'add', 'toggle', 'remove', 'filter'])
+        prefix = 'todo-' + self.language.lower()
+        self.assertEqual([c['alias'] for c in commands],
+                         [prefix, prefix + '-add', prefix + '-toggle', prefix + '-remove', prefix + '-filter'])
         self.assertEqual(commands[1]['arguments'], [{'name': 'title', 'type': 'string'}])
         self.assertEqual([c['name'] for c in commands if c.get('primary')], ['toggle'])
         self.send({**HOST[1], 'capabilities': ['views']})

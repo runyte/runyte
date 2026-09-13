@@ -35,7 +35,7 @@ def media_path(root, value):
 
 
 def command(name, description, argument=None, context='view', primary=False):
-    result = {'name': name, 'description': description, 'context': context, 'primary': primary}
+    result = {'name': name, 'alias': 'media' if name == 'open' else 'media-' + name, 'description': description, 'context': context, 'primary': primary}
     if argument:
         result['arguments'] = [{'name': argument, 'type': 'string'}]
     return result

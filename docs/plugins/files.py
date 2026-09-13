@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from application import Application, PluginError
 
 def command(name, description, argument=None, primary=False, context='view'):
-    result = {'name': name, 'description': description, 'context': context, 'primary': primary}
+    result = {'name': name, 'alias': 'files' if name == 'open' else 'files-' + name, 'description': description, 'context': context, 'primary': primary}
     if argument:
         result['arguments'] = [{'name': argument, 'type': 'string'}]
     return result

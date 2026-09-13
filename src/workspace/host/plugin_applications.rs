@@ -107,6 +107,7 @@ impl WorkspaceHost {
                         commands: commands
                             .into_iter()
                             .map(|c| plugin::Registration {
+                                alias: c.alias,
                                 name: c.name,
                                 description: c.description,
                             })

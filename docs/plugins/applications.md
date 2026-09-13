@@ -34,7 +34,7 @@ plugins:
     capabilities: [jobs]
 ```
 
-Run `:plugin.jobs.start`, continue editing, and use `:plugin.jobs.cancel` to
+Run `::jobs-start`, continue editing, and use `::jobs-cancel` to
 cancel the twelve-second task. `:plugin.jobs.stop` stops the owning process and
 removes its commands. The host owns one process across persistent-session
 attachments. Active jobs protect normal persistent-session quit and idle
@@ -89,14 +89,14 @@ three independent applications with matching add, toggle, remove and filter
 commands, reproducible build instructions and shared behavior checks.
 
 Use the same configuration with `id: tasks`, `args` pointing at `tasks.py`, and
-`capabilities: [views]`. Run `:plugin.tasks.open`. `Enter` toggles selected rows;
+`capabilities: [views]`. Run `::tasks`. `Enter` toggles selected rows;
 `Tab` opens actions, including an explicit unfinished-only filter. Ordinary
 buffer movement, search, copying, splits, help, Navigator and Finder remain
 available. A refresh retains each pane's selection direction and row identity.
 Actions against a model that has changed since presentation are refused until
 the refreshed frame is prepared.
 Choosing an action that declares positional arguments opens the command palette
-with its full name and a trailing space. Enter the arguments there, then press
+with its active short spelling (or full name) and a trailing space. Enter the arguments there, then press
 Enter to invoke it; Escape cancels. Actions without arguments invoke directly.
 
 Views are special buffers backed by bounded semantic models. Purposes are
@@ -120,6 +120,11 @@ with the lower previous index breaking ties. Selection direction is preserved
 even when a reorder crosses its endpoints. Closing or
 ordinary special-buffer eviction produces `view.closed` after any close response.
 A stopped plugin leaves its readable view marked `[unavailable]`.
+
+Commands may declare an optional `alias`, a 1–48 character lowercase ASCII
+letter/digit/hyphen name typed after `::`. The host retains the scoped identity
+and wire-local name, disables ambiguous aliases without removing full commands,
+and restores uniqueness after owner cleanup. See [plugin command names](../plugins.md#plugin-command-names).
 
 Commands may declare `context: view` and one `primary: true` action. The primary
 action defaults to Enter in the application's dynamic key scope. Configured
@@ -371,7 +376,7 @@ stopped-owner reservations until actual worker completion.
 ## Explicit queries and observed views
 
 `catalog.py` demonstrates explicit filtering over 5,000 deterministic local
-records with capabilities `views` and `interaction`. Run `:plugin.catalog.open`,
+records with capabilities `views` and `interaction`. Run `::catalog`,
 then Tab → Filter. The native prompt sends no query while typing; Enter starts a
 finite lookup and empty text restores all records. Refresh explicitly retries.
 One worker and one replaceable latest intent bound concurrent lookup work. There
@@ -444,12 +449,12 @@ plugins:
     capabilities: [views, filesystem, documents, interaction, jobs]
 ```
 
-Run `:plugin.files.open .`. Enter opens the selected regular text file or browses
+Run `::files .`. Enter opens the selected regular text file or browses
 the selected directory; Tab offers Parent, Refresh, Trash and native destination
 prompts for New, New directory, Rename selected and Copy selected. Destination-taking
-actions use the colon palette: `:plugin.files.create "new note.txt"`,
-`:plugin.files.mkdir subdir`, `:plugin.files.rename renamed.txt`, and
-`:plugin.files.copy copy.txt`. Destinations are relative to the directory shown.
+actions use the colon palette: `::files-create "new note.txt"`,
+`::files-mkdir subdir`, `::files-rename renamed.txt`, and
+`::files-copy copy.txt`. Destinations are relative to the directory shown.
 Rename, Copy and Trash operate on exactly one selected entry. The native
 confirmation shows the proposed operations; Enter applies with trash semantics,
 Escape cancels, and its existing `P` key explicitly chooses permanent deletion.
@@ -625,7 +630,7 @@ reserved control worker, so a validator waiting on IO cannot block cancellation.
 Use bounded IO and keep secrets out of plugin logs.
 
 For an account-free demonstration, configure `validation.py` with the
-`interaction` capability and run `:plugin.validation.open`. Enter any name except
+`interaction` capability and run `::validation`. Enter any name except
 `taken` and the example code `demo-code`, then press Enter. The example simulates
 a 200 ms service check; editing during that check keeps the form open. It has no
 accounts, network dependencies or background polling.
@@ -674,8 +679,8 @@ user changes.
 buffer-context `save`/`close` commands. Configure it like `files.py`, using
 `id: documents`, `args: [docs/plugins/documents.py]` and
 `capabilities: [documents, jobs]`. For example,
-`:plugin.documents.create notes.txt "first note"` opens the new unsaved document;
-`:plugin.documents.save` returns its save job. Normal `:write`, movement, editing
+`::documents-create notes.txt "first note"` opens the new unsaved document;
+`::documents-save` returns its save job. Normal `:write`, movement, editing
 and buffer management remain available.
 
 
@@ -684,13 +689,13 @@ and buffer management remain available.
 `memory.py` is a deterministic multi-chunk provider with no network or storage.
 Configure its plugin ID as `memory`, executable as `python3`, argument as the
 absolute path to `docs/plugins/memory.py`, epoch as `runyte-experimental-2` and
-capabilities as `[providers, documents, jobs]`. Run `:plugin.memory.open notes`;
+capabilities as `[providers, documents, jobs]`. Run `::memory notes`;
 `alias` resolves to the same live document. The document supports normal editing,
 search, selection, splits, undo and syntax highlighting. Newline bytes are
 preserved, including CRLF. Native `:write`, `:wq` and `:write-buffer-close`, plus
-`:plugin.memory.save`, use the conditional upload protocol below. Normal save
-trimming hooks still apply. `:plugin.memory.rebind` explicitly reconciles the
-current provider document. `:plugin.memory.inspect` and native `:diff-remote`
+`::memory-save`, use the conditional upload protocol below. Normal save
+trimming hooks still apply. `::memory-rebind` explicitly reconciles the
+current provider document. `::memory-inspect` and native `:diff-remote`
 compare fresh remote text with the editable document. Native `:reload` obtains
 a fresh remote version and offers recovery choices for dirty or uncertain text,
 as described below. Local write-to-path remains refused. Native writes to weaker providers require
@@ -703,7 +708,7 @@ advertise `conditional_write: false` while retaining `atomic_replace: true`.
 Native saves then show the overwrite confirmation described below. The memory
 implementation still compares and replaces under its local lock; this mode
 demonstrates a weaker capability declaration without using a remote account.
-`:plugin.memory.save` is refused in this mode because plugin-facing `buffer.save`
+`::memory-save` is refused in this mode because plugin-facing `buffer.save`
 does not yet carry foreground overwrite approval.
 
 An instance grants `providers` before `provider.register {name, conditional_write,
@@ -787,7 +792,7 @@ contract before a new baseline can be accepted. An inspection snapshot alone
 cannot provide that proof. Public `resource.rebind` remains conservative and
 accepts only a known baseline; native reload makes divergent recovery an explicit
 user decision. After restart, the provider must register the same identity again.
-For the memory example, `:plugin.memory.rebind` performs that registration even
+For the memory example, `::memory-rebind` performs that registration even
 when its conservative reconciliation reports a conflict; `:reload` then offers
 the native recovery choices.
 
@@ -994,12 +999,12 @@ process has one profile and registers provider `remote`. The connection identity
 includes the endpoint and remote root, while labels use the profile alias;
 credential paths are not resource keys.
 
-Run `:plugin.sftp.browse .`. Enter browses the selected directory or opens a
+Run `::sftp .`. Enter browses the selected directory or opens a
 regular UTF-8 file as a normal editable provider document. `Tab` exposes the same
-registered actions as the palette: `:plugin.sftp.parent` and
-`:plugin.sftp.refresh`. Row identities survive reorder and refresh, while actions
+registered actions as the palette: `::sftp-parent` and
+`::sftp-refresh`. Row identities survive reorder and refresh, while actions
 from stale view revisions are refused. Symbolic links are displayed but not
-followed. `:plugin.sftp.open "notes/猫 notes.md"` opens a path directly. The browser
+followed. `::sftp-open "notes/猫 notes.md"` opens a path directly. The browser
 is bounded to 1,024 entries and a 900 KiB encoded model; larger directories are
 refused without replacing the previous view. Network work runs outside the SDK
 reader, has a finite transport deadline, and does not poll while idle. Overlapping
@@ -1017,9 +1022,9 @@ save command that bypasses native approval, and `:write!` does not bypass it.
 
 `:write-quit` and `:write-buffer-close` close only after confirmed clean success
 in the original foreground context. Edits made during an upload remain dirty.
-`:diff-remote` or `:plugin.sftp.inspect` compares a fresh remote snapshot without
+`:diff-remote` or `::sftp-inspect` compares a fresh remote snapshot without
 changing local text or its saved baseline; each side is limited to 4 MiB.
-`:plugin.sftp.rebind` explicitly reconciles a document after provider restart or
+`::sftp-rebind` explicitly reconciles a document after provider restart or
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
 be retried blindly; if settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
@@ -1088,9 +1093,9 @@ plugins:
 ```
 
 Pass `--plugin-id` as well when the configured ID differs from `ftp`. Run
-`:plugin.ftp.browse .`; Enter opens a selected directory or regular UTF-8 file.
-`:plugin.ftp.parent`, `:plugin.ftp.refresh`, `:plugin.ftp.open "notes/猫 notes.md"`,
-`:plugin.ftp.inspect` and `:plugin.ftp.rebind` have the same captured-context and
+`::ftp .`; Enter opens a selected directory or regular UTF-8 file.
+`::ftp-parent`, `::ftp-refresh`, `::ftp-open "notes/猫 notes.md"`,
+`::ftp-inspect` and `::ftp-rebind` have the same captured-context and
 revision behavior as SFTP. The browser requires structured server metadata and
 does not parse presentation-oriented `LIST` output. Directory listing is bounded
 to 1,024 entries and a 900 KiB encoded view; documents are bounded to 8 MiB of
@@ -1127,12 +1132,12 @@ The initial limit is 8 MiB per download, including arbitrary non-text formats an
 empty files. Larger downloads are refused.
 
 In either remote browser, select one regular file and run
-`:plugin.sftp.download` or `:plugin.ftp.download` from the palette or `Tab` actions.
+`::sftp-download` or `::ftp-download` from the palette or `Tab` actions.
 The native prompt asks for a new workspace-relative local destination. The
 application returns a finite transfer job immediately, then streams the file and
 prepares a plan outside the command handler. A browser status row reads
-`Download ready` and names the next command. Run `:plugin.sftp.confirm-download`
-or `:plugin.ftp.confirm-download` to present native filesystem confirmation using
+`Download ready` and names the next command. Run `::sftp-confirm-download`
+or `::ftp-confirm-download` to present native filesystem confirmation using
 a fresh invocation; publication always requires this separate review step. `cancel-download` cancels the pending
 prompt, transfer or unpresented plan. Each application retains one download flow
 at a time; the transfer job stays running until confirmation is presented and
@@ -1217,7 +1222,7 @@ source until that operation settles.
 
 ## Binary uploads from workspace disk files
 
-In either remote browser, run `:plugin.sftp.upload` or `:plugin.ftp.upload`.
+In either remote browser, run `::sftp-upload` or `::ftp-upload`.
 The native form asks for a workspace-relative source file and a destination
 relative to the displayed remote directory. This uploads the file's disk bytes;
 unsaved editor text is separate. Files must be ordinary files within the workspace,
@@ -1227,8 +1232,8 @@ through the editor's text or extension-message APIs.
 
 Preparation freezes the source bytes and reads the remote destination's current
 content hash or proves its absence. It does not upload data. When the browser
-reports `Upload ready`, run `:plugin.sftp.confirm-upload` or
-`:plugin.ftp.confirm-upload`. A fresh native confirmation names the source,
+reports `Upload ready`, run `::sftp-confirm-upload` or
+`::ftp-confirm-upload`. A fresh native confirmation names the source,
 destination, byte count and transport limitations. Unrenderable or excessive
 labels are refused instead of shortened. Changing the source file after preparation
 does not alter the frozen bytes that confirmation authorizes.
@@ -1270,11 +1275,11 @@ this is an application workflow, not a sandbox for its network traffic.
 Use these actions in an SFTP or FTP/FTPS browser (replace `sftp` with `ftp` for the
 second adapter):
 
-- `:plugin.sftp.mkdir` prompts for a destination relative to the displayed directory.
-- `:plugin.sftp.rename` prompts for a destination relative to the selected entry's parent.
-- `:plugin.sftp.delete` prepares deletion of the selected entry.
-- `:plugin.sftp.confirm-operation` shows the prepared operation in native confirmation.
-- `:plugin.sftp.cancel-operation` cancels the pending prompt, inspection or operation.
+- `::sftp-mkdir` prompts for a destination relative to the displayed directory.
+- `::sftp-rename` prompts for a destination relative to the selected entry's parent.
+- `::sftp-delete` prepares deletion of the selected entry.
+- `::sftp-confirm-operation` shows the prepared operation in native confirmation.
+- `::sftp-cancel-operation` cancels the pending prompt, inspection or operation.
 
 Preparation returns a finite job immediately and inspects remote state in a
 bounded worker. A retained browser row reports `Remote operation ready` and names
@@ -1412,7 +1417,7 @@ processing must run through the same ordered callback lane.
 
 `helper.py` is a runnable, network-free controller with capabilities `processes`,
 `views` and `interaction`. Configure it like the jobs example with ID `helper`,
-then run `:plugin.helper.open`. Tab offers Send, Flood, EOF and Close. Its
+then run `::helper`. Tab offers Send, Flood, EOF and Close. Its
 checked-in `echo_helper.py` backend demonstrates binary pipe separation, retained
 output eviction, natural EOF exit and explicit stop. The native view renders only
 a bounded output tail and groups pending output observations; it has no idle
@@ -1492,10 +1497,10 @@ and invalid write acknowledgements produce `outcome_unknown` without replay.
 
 `handoffs.py` demonstrates these operations. Configure it like the jobs example,
 with ID `handoffs` and capabilities `notifications`, `terminals` and `external`.
-Run `:plugin.handoffs.notify`, then `:notifications` to read the retained message.
-`:plugin.handoffs.terminal` opens the configured environment's interactive shell
-in a native terminal session. `:plugin.handoffs.browser https://example.org/`
-requests a system-browser handoff, and `:plugin.handoffs.file report.pdf` requests
+Run `::handoffs-notify`, then `:notifications` to read the retained message.
+`::handoffs-terminal` opens the configured environment's interactive shell
+in a native terminal session. `::handoffs-browser https://example.org/`
+requests a system-browser handoff, and `::handoffs-file report.pdf` requests
 the system handler for an existing workspace file. These are explicit actions;
 the example never opens a browser during registration or in its conformance tests.
 
@@ -1638,12 +1643,12 @@ plugins:
     capabilities: [views, processes, activity, jobs]
 ```
 
-Use `:plugin.media.open music/first.wav` to replace the playlist and play a file,
-or `:plugin.media.add music/second.wav` to append one. Paths are workspace-relative;
-quote spaces using the ordinary command syntax. `:plugin.media.show` returns to
+Use `::media music/first.wav` to replace the playlist and play a file,
+or `::media-add music/second.wav` to append one. Paths are workspace-relative;
+quote spaces using the ordinary command syntax. `::media-show` returns to
 the retained view. Select an item and use its primary action to play it. The
 view also exposes `play`, `pause`, `seek`, `next`, `previous` and `stop-playback`; for
-example, `:plugin.media.seek -10` seeks ten seconds backwards. Controls are
+example, `::media-seek -10` seeks ten seconds backwards. Controls are
 serialized, and each finite control job waits for the backend acknowledgement.
 Next/previous preserve pause. Playing the currently paused row resumes at its
 existing position; selecting a different row starts that item.
@@ -1785,9 +1790,9 @@ plugins:
       default_destination: .
 ```
 
-`:plugin.preferences.open` inspects the current preference.
-`:plugin.preferences.remember "sample directory"` saves it and
-`:plugin.preferences.forget` conditionally deletes it; open the view again to
+`::preferences` inspects the current preference.
+`::preferences-remember "sample directory"` saves it and
+`::preferences-forget` conditionally deletes it; open the view again to
 inspect the result. Restarting the editor preserves the document. Opening or remembering refuses unknown stored versions and leaves migration
 to an explicit future implementation; forget remains an explicit conditional
 deletion. It performs no startup state read and does not automatically

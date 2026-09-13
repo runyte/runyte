@@ -3096,6 +3096,13 @@ likewise ignored after their open document advances.
 
 ### Experimental plugins
 
+Type `::` for the plugin-only command palette, with completion and descriptions.
+Plugins can declare short names such as ru-time's `::time`, `::time-add`, and
+`::time-delete`. Full `:plugin.<id>.<command>` names remain available.
+Conflicting short names are disabled for all claimants and reported in
+`:notifications`; stopping a claimant restores a name when it becomes unique.
+Backspace over the second colon returns to the ordinary command palette.
+
 `:plugins` opens the native manager for configured, disabled and failed plugins.
 Select an entry to inspect its capabilities, jobs, activity, helpers and diagnostic
 summary; Enter offers lifecycle actions. `:plugin-stop <id>` stops an owner and
@@ -3136,7 +3143,7 @@ provider settlement before accepting a baseline. Each side may contain at most
 The runnable
 [SFTP browser and editor](plugins/applications.md#sftp-browser-and-editor) verifies
 SSH host keys, uses explicit identity files or an existing SSH agent, and opens
-remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
+remote UTF-8 documents up to 8 MiB. Run `::sftp .` with its documented
 profile; Enter opens a selected file, and native `:write` confirms the remaining
 remote overwrite race. The [FTP/FTPS example](plugins/applications.md#ftp-and-ftps-browser-and-editor)
 shares the browser and editor workflow using standard-library transport. It

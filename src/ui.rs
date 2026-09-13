@@ -3725,7 +3725,11 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(" Commands by category · ↑/↓ select · Tab complete "),
+                .title(if app.command.trim_start().starts_with(':') {
+                    " Plugin commands · ↑/↓ select · Tab complete "
+                } else {
+                    " Commands by category · ↑/↓ select · Tab complete "
+                }),
         )
         .style(
             Style::default()

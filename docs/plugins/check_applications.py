@@ -16,6 +16,16 @@ SCHEMA = json.loads((DIRECTORY / 'runyte-experimental-2.schema.json').read_text(
 FIXTURES = json.loads((DIRECTORY / 'epoch2-fixtures.json').read_text())
 
 class ApplicationSchemaTests(unittest.TestCase):
+    def test_optional_alias_preserves_local_command_identity_and_bounds(self):
+        schema = SCHEMA['$defs']['command']
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **schema})
+        command = {'name': 'open', 'description': 'Open task list', 'context': 'workspace'}
+        validator.validate(command)
+        for alias in (None, 'time', 'time-delete', 'x' * 48):
+            validator.validate({**command, 'alias': alias})
+        for alias in ('', ':time', 'time.open', 'Time', 'é', 'a\n', 'a\r', 'x' * 49, False):
+            self.assertFalse(validator.is_valid({**command, 'alias': alias}), alias)
+
     def test_cancellation_dispatch_survives_waiting_command_workers(self):
         app = Application('Test', [], [])
         requests = queue.Queue()

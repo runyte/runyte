@@ -25,6 +25,16 @@ landed. Their availability is now unconditional in the registry: a buffer with
 no configured or reachable server reports why as a notification rather than
 being unbound.
 
+## Plugin command palette
+
+`::` opens the plugin-only variant of the ordinary `:` palette (Added). The
+first colon uses the existing command-mode binding; a leading colon in its text
+selects plugin discovery. Commands declare optional short aliases independently
+of their configured ID. Full `:plugin.<id>.<command>` spellings and plugin bindings
+remain valid. Alias collisions disable only the shared spelling, and help and
+hints use the resolved runtime registration. Backspace over the second colon
+returns to ordinary command completion; no global letter binding is added.
+
 ## Single-letter bindings
 
 A single letter in an **editable** buffer must be a Vim or Helix binding, or

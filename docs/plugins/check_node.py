@@ -79,6 +79,7 @@ class NodeTasksTests(unittest.TestCase):
         self.assertEqual(registered['type'], 'register')
         self.assertEqual(registered['required_capabilities'], ['views'])
         self.assertEqual([command['name'] for command in registered['commands']], ['open', 'toggle'])
+        self.assertEqual([command['alias'] for command in registered['commands']], ['node-tasks', 'node-tasks-toggle'])
         self.send({**HOST[1], 'commands': ['plugin.node-tasks.open', 'plugin.node-tasks.toggle'],
                    'capabilities': ['views']})
 

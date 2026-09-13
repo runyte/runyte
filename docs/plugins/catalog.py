@@ -6,11 +6,11 @@ import time
 from application import Application, PluginError
 
 app = Application('Catalog', [
-    {'name': 'open', 'description': 'Open the searchable catalog', 'context': 'workspace'},
-    {'name': 'filter', 'description': 'Enter a catalog query', 'context': 'view'},
-    {'name': 'refresh', 'description': 'Retry the current catalog query', 'context': 'view'},
-    {'name': 'inspect', 'description': 'Inspect the selected record', 'context': 'view', 'primary': True},
-    {'name': 'observations', 'description': 'Show the last viewport and accepted action', 'context': 'view'},
+    {'name': 'open', 'alias': 'catalog', 'description': 'Open the searchable catalog', 'context': 'workspace'},
+    {'name': 'filter', 'alias': 'catalog-filter', 'description': 'Enter a catalog query', 'context': 'view'},
+    {'name': 'refresh', 'alias': 'catalog-refresh', 'description': 'Retry the current catalog query', 'context': 'view'},
+    {'name': 'inspect', 'alias': 'catalog-inspect', 'description': 'Inspect the selected record', 'context': 'view', 'primary': True},
+    {'name': 'observations', 'alias': 'catalog-observations', 'description': 'Show the last viewport and accepted action', 'context': 'view'},
 ], ['views', 'interaction'])
 lock = threading.RLock()
 worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)

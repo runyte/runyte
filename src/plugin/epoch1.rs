@@ -41,6 +41,9 @@ pub fn valid_name(name: &str) -> bool {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    /// Public spelling after `::`; independent of the configured plugin ID.
+    #[serde(default)]
+    pub alias: Option<String>,
     pub name: String,
     pub description: String,
 }

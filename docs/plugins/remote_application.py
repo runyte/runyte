@@ -47,7 +47,7 @@ def available(lock):
 
 
 class RemoteApplication:
-    def __init__(self, transport, provider, plugin_id, app=None, *, protocol_label, atomic_replace, workspace_root=None):
+    def __init__(self, transport, provider, plugin_id, app=None, *, protocol_label, atomic_replace, workspace_root=None, alias_prefix='remote'):
         if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', plugin_id):
             raise PluginError('invalid_argument', 'Invalid configured plugin ID')
         self.transport, self.provider, self.plugin_id = transport, provider, plugin_id
@@ -72,6 +72,9 @@ class RemoteApplication:
             command('confirm-operation', 'Review the prepared remote operation', context='workspace'),
             command('cancel-operation', 'Cancel the pending remote operation', context='workspace'),
         ], ['views', 'providers', 'documents', 'jobs', 'filesystem', 'interaction'])
+        if app is None:
+            for entry in self.app.commands:
+                entry['alias'] = alias_prefix if entry['name'] == 'browse' else alias_prefix + '-' + entry['name']
         self.lock = threading.Lock()
         self.registration_lock = threading.Lock()
         self.registered = False
