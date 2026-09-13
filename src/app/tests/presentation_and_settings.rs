@@ -2099,7 +2099,8 @@ fn immediate_setting_preview_rolls_back_and_enter_persists_losslessly() {
 #[test]
 fn focused_theme_setting_previews_without_remembering_and_saves_on_enter() {
     let path = temporary("theme-settings.yaml");
-    fs::write(&path, "theme: light\n").unwrap();
+    let source = "theme: light\neditor: {tab_width: 2} # keep compact\n";
+    fs::write(&path, source).unwrap();
     let (config, _) = Config::load(Some(&path)).unwrap();
     let mut app = App::new(config, None).unwrap();
     app.note_loaded_config(&path);
@@ -2125,7 +2126,7 @@ fn focused_theme_setting_previews_without_remembering_and_saves_on_enter() {
         app.terminals.default_colors(),
         DefaultColors::new(Some((0xd6, 0xda, 0xe0)), Some((0x16, 0x18, 0x1d)))
     );
-    assert_eq!(fs::read_to_string(&path).unwrap(), "theme: light\n");
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
     key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
     assert_eq!(app.theme_name, "light");
     assert_eq!(
@@ -2142,7 +2143,10 @@ fn focused_theme_setting_previews_without_remembering_and_saves_on_enter() {
         app.terminals.default_colors(),
         DefaultColors::new(Some((0xd6, 0xda, 0xe0)), Some((0x16, 0x18, 0x1d)))
     );
-    assert_eq!(fs::read_to_string(&path).unwrap(), "theme: 'dark'\n");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        source.replace("theme: light", "theme: 'dark'")
+    );
     fs::remove_file(path).unwrap();
 }
 

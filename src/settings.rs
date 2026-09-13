@@ -891,9 +891,10 @@ struct Entry<'a> {
 }
 
 fn scan_document(source: &str) -> Result<Vec<Line<'_>>, SettingError> {
-    let mut lines = Vec::new();
+    let mut lines: Vec<Line<'_>> = Vec::new();
     let mut offset = 0;
     let mut scopes = vec![(0usize, HashSet::<String>::new())];
+    let mut flow = FlowScan::default();
     for (index, chunk) in source.split_inclusive('\n').enumerate() {
         let end = offset + chunk.len();
         let content_end = end - usize::from(chunk.ends_with('\n'));
@@ -909,7 +910,21 @@ fn scan_document(source: &str) -> Result<Vec<Line<'_>>, SettingError> {
                 reason: "tab indentation is not losslessly patchable; use spaces",
             });
         }
-        reject_unsafe_tokens(text, index + 1)?;
+        let continuation = flow.depth > 0;
+        reject_unsafe_tokens(text, index + 1, &mut flow)?;
+        if continuation {
+            // A flow collection is one opaque value, regardless of how its
+            // continuation lines are indented or which keys they contain.
+            let line = lines
+                .last_mut()
+                .expect("flow collection has an opening line");
+            line.end = end;
+            if let Some(entry) = &mut line.entry {
+                entry.value_end = offset + scalar_end(text, 0);
+            }
+            offset = end;
+            continue;
+        }
         let entry = parse_entry(text, offset, indent);
         if let Some(entry) = &entry {
             while scopes.len() > 1 && scopes.last().is_some_and(|(level, _)| *level > indent) {
@@ -947,39 +962,48 @@ fn scan_document(source: &str) -> Result<Vec<Line<'_>>, SettingError> {
     Ok(lines)
 }
 
-fn reject_unsafe_tokens(line: &str, number: usize) -> Result<(), SettingError> {
-    let mut single = false;
-    let mut double = false;
+#[derive(Default)]
+struct FlowScan {
+    depth: usize,
+    single: bool,
+    double: bool,
+}
+
+fn reject_unsafe_tokens(
+    line: &str,
+    number: usize,
+    flow: &mut FlowScan,
+) -> Result<(), SettingError> {
+    if flow.depth == 0 {
+        flow.single = false;
+        flow.double = false;
+    }
     let mut chars = line.char_indices().peekable();
     while let Some((index, character)) = chars.next() {
-        if single {
+        if flow.single {
             if character == '\'' {
                 if chars.peek().is_some_and(|(_, next)| *next == '\'') {
                     chars.next();
                 } else {
-                    single = false;
+                    flow.single = false;
                 }
             }
             continue;
         }
-        if double {
+        if flow.double {
             if character == '\\' {
                 chars.next();
             } else if character == '"' {
-                double = false;
+                flow.double = false;
             }
             continue;
         }
         match character {
-            '\'' => single = true,
-            '"' => double = true,
+            '\'' => flow.single = true,
+            '"' => flow.double = true,
             '#' if index == 0 || line[..index].ends_with(char::is_whitespace) => break,
-            '{' | '}' => {
-                return Err(SettingError::UnsafeYaml {
-                    line: number,
-                    reason: "flow mappings cannot be updated without normalizing the file",
-                });
-            }
+            '{' | '[' => flow.depth += 1,
+            '}' | ']' => flow.depth = flow.depth.saturating_sub(1),
             '&' | '*' => {
                 return Err(SettingError::UnsafeYaml {
                     line: number,
@@ -1151,7 +1175,7 @@ fn ensure_mapping(line: &Line<'_>) -> Result<(), SettingError> {
 fn replace_scalar(source: &str, line: &Line<'_>, scalar: &str) -> Result<String, SettingError> {
     let entry = line.entry.as_ref().expect("caller found a mapping entry");
     let existing = &source[entry.value_start..entry.value_end];
-    if existing.starts_with('|') || existing.starts_with('>') || existing.starts_with('[') {
+    if existing.starts_with(['|', '>', '[', '{']) || existing.contains('\n') {
         return Err(SettingError::UnsafeYaml {
             line: line.number,
             reason: "the setting value is not an ordinary scalar",
@@ -1741,7 +1765,7 @@ mod tests {
     fn refuses_unsafe_yaml_without_modifying_it() {
         let cases = [
             ("editor:\n\ttab_width: 2\n", "tab indentation"),
-            ("editor: { tab_width: 2 }\n", "flow mappings"),
+            ("editor: { tab_width: 2 }\n", "ordinary block mapping"),
             (
                 "defaults: &defaults\neditor: *defaults\n",
                 "anchors and aliases",

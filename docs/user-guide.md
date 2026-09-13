@@ -3602,7 +3602,10 @@ saved choice applies to future bare launches.
 `workspace.idle_retirement_minutes` is in the same menu but applies at once: a
 persistent host reads it each time it considers retiring, so a shorter or
 longer interval takes effect without restarting the host it governs.
-YAML features that cannot be patched losslessly are rejected with the file
+Unrelated YAML flow collections (`{...}` and `[...]`), including multiline
+ones, are preserved when saving a setting. The setting being changed must
+still be a scalar in a block mapping; editing inside a flow mapping is not
+supported. YAML features that cannot be patched losslessly are rejected with the file
 left untouched. A failed save also rolls back any live preview while keeping
 the choice popup open for correction or retry.
 
