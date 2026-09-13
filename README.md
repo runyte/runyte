@@ -163,7 +163,8 @@ Official Runyte plugins are in development. The first is
 [**ru-time**](https://github.com/runyte/ru-time), a task list and time tracker
 written in Python using only the standard library. It keeps task status and
 recorded time in a native editor buffer, with persistent history and recovery
-for interrupted timers.
+for interrupted timers. Each task can have a note opened as an ordinary editable
+buffer with `::time-note` or `Space = n`.
 
 Plugins can be written in **any programming language**. Each runs as an
 explicitly enabled external process and exchanges bounded, newline-delimited

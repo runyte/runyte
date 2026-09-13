@@ -2116,12 +2116,32 @@ impl App {
             snapshot.layout = OverlayLayout::Standard;
             snapshot.query_cursor = Some(surface.cursor);
             snapshot.query_placeholder = surface.fields[surface.selected].label.clone();
-            snapshot.actions = vec![
-                OverlayAction::new("Enter", "submit"),
-                OverlayAction::new("Tab/↑/↓", "field"),
-                OverlayAction::new("←/→/Space", "choice"),
-                OverlayAction::new("Esc", "cancel"),
-            ];
+            snapshot.actions = vec![OverlayAction::new("Enter", "submit")];
+            if surface.fields.len() > 1 {
+                snapshot
+                    .actions
+                    .push(OverlayAction::new("Tab/↑/↓", "field"));
+            } else if matches!(
+                surface.fields[0].kind,
+                crate::plugin::interaction::Kind::Text | crate::plugin::interaction::Kind::Secret
+            ) {
+                // A single text field is the editing line itself, not a list
+                // containing another copy of its label and value.
+                snapshot.rows.clear();
+                snapshot.total_rows = 0;
+                snapshot.selected = None;
+                snapshot.scroll_anchor = None;
+            }
+            if matches!(
+                surface.fields[surface.selected].kind,
+                crate::plugin::interaction::Kind::Choice
+                    | crate::plugin::interaction::Kind::Boolean
+            ) {
+                snapshot
+                    .actions
+                    .push(OverlayAction::new("←/→/Space", "choice"));
+            }
+            snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
             if surface.confirmation {
                 snapshot.purpose = OverlayPurpose::Confirmation;
                 snapshot.input = OverlayInput::None;

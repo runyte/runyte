@@ -500,8 +500,13 @@ Acceptance applies the reviewed plan through ordinary filesystem reconciliation;
 application plans preserve unsaved directory projections, including the active
 explorer. Cancellation is delivered to the owner as a lifecycle event.
 
-Application input reuses native input overlays. A form shows labelled fields and
-a current editing line, with Tab/Shift-Tab or arrows moving between fields.
+Application input reuses native input overlays, sized to their content with an
+80-column preferred width. They center within the active pane when it has room,
+otherwise within the editor area, and shrink to fit. A single text prompt shows
+only its editing line and Enter/Escape hints; its label is not repeated as a list
+row. Forms show labelled fields and a current editing line, with Tab/Shift-Tab or
+arrows moving between fields. Choice hints appear only for a selected choice or
+boolean field.
 Secret fields are masked before snapshot production. Application pickers display
 filterable candidate rows using the shared matcher. Opening competing native
 input cancels the application surface, as do detach and owner/source closure.

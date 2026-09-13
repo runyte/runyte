@@ -492,3 +492,63 @@ fn input_reserves_shared_payload_and_releases_it_on_acceptance() {
             .is_empty()
     );
 }
+
+#[test]
+fn single_text_prompt_is_compact_and_does_not_repeat_its_field() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["interaction", "views"]);
+    next(&mut output);
+    begin(
+        &mut host,
+        &mut output,
+        1,
+        vec![Field::text("task", "Task".into())],
+    );
+    for (width, height) in [(200, 60), (30, 10)] {
+        let geometry = crate::ui::frame_geometry(ratatui::layout::Rect::new(0, 0, width, height));
+        let frame = host.prepare_frame(geometry);
+        let overlay = frame.overlays.last().unwrap();
+        assert!(overlay.rows.is_empty());
+        assert_eq!(overlay.total_rows, 0);
+        assert_eq!(overlay.actions.len(), 2);
+        assert_eq!(overlay.actions[0].key_hint, "Enter");
+        assert_eq!(overlay.actions[1].key_hint, "Esc");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| crate::ui::render_host_frame_exact_colors_for_test(f, &frame))
+            .unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(usize::from(width))
+            .map(|cells| cells.iter().map(|cell| cell.symbol()).collect())
+            .collect();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.matches("Task").count())
+                .sum::<usize>(),
+            1
+        );
+        if width == 200 {
+            let top = rows
+                .iter()
+                .position(|row| row.contains(" Connection "))
+                .unwrap();
+            let start = rows[top].chars().position(|c| c == '┌').unwrap();
+            let end = rows[top].chars().position(|c| c == '┐').unwrap();
+            assert_eq!(end - start + 1, 80);
+            assert_eq!(rows[top + 2].chars().nth(start), Some('└'));
+        }
+    }
+    key(&mut host, "Enter");
+    assert!(
+        host.app
+            .overlay_snapshots()
+            .last()
+            .unwrap()
+            .message
+            .is_some()
+    );
+}

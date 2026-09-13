@@ -549,6 +549,11 @@ switching panes. Opening an existing file does not save, reload or close it.
 
 ## Native input
 
+Native application input is content-sized with a preferred width of 80 columns,
+shrinking to fit the active pane or editor area. Single text prompts show one
+editing line with Enter/Escape hints; multi-field navigation and choice hints
+appear only when applicable. Plugins do not supply terminal dimensions.
+
 The `interaction` capability admits `ui.prompt`, `ui.pick`, `ui.form`,
 `ui.confirm` and `ui.dismiss`. Every opening request names a current foreground
 `invocation`. A second surface returns `busy`; macro recording/replay also refuses
