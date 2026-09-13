@@ -5,7 +5,7 @@ import time
 from application import Application
 
 app = Application('Field validation', [
-    {'name': 'open', 'description': 'Open the validation example', 'context': 'workspace'}
+    {'name': 'open', 'alias': 'validation', 'description': 'Open the validation example', 'context': 'workspace'}
 ], ['interaction'])
 
 

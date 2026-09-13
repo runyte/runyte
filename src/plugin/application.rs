@@ -70,6 +70,9 @@ impl Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    /// Public spelling after `::`; omitted by older applications.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
     #[serde(default)]
     pub arguments: Vec<super::arguments::Argument>,
     #[serde(default)]

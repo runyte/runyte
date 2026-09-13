@@ -6,7 +6,11 @@ fn repository_files_below(root: &Path, directory: &Path, files: &mut Vec<String>
     for entry in fs::read_dir(directory).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            repository_files_below(root, &path, files);
+            // Cargo excludes nested packages, including their build artifacts,
+            // even when the parent's include patterns cover the directory.
+            if !path.join("Cargo.toml").is_file() {
+                repository_files_below(root, &path, files);
+            }
         } else {
             files.push(
                 path.strip_prefix(root)
@@ -97,6 +101,12 @@ fn published_crate_contains_the_runtime_inputs_and_not_repository_context() {
     assert!(
         files.iter().all(|path| !path.starts_with("tests/")),
         "repository-only tests leaked into the crate: {files:?}"
+    );
+    assert!(
+        files
+            .iter()
+            .all(|path| !path.starts_with("docs/plugins/todo/rust/")),
+        "the independent Rust plugin package leaked into the editor crate: {files:?}"
     );
     assert!(
         files.iter().all(|path| !path.starts_with("src/app/tests/")),

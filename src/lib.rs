@@ -46,6 +46,7 @@ pub mod notification;
 pub mod pasted_image;
 pub mod path_safety;
 pub mod picker;
+pub mod pipe;
 mod private_storage;
 #[cfg(unix)]
 pub mod process_group;

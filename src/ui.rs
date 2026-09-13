@@ -875,6 +875,7 @@ fn draw_snapshot_overlay(
         to_tui_rect(centered(editor_area, 90, 85, 28, 8))
     } else {
         match overlay.kind {
+            OverlayKind::Prompt => to_tui_rect(plugin_input_area(editor, overlay)),
             OverlayKind::Confirmation => {
                 to_tui_rect(confirmation_overlay_area(editor_area, overlay))
             }
@@ -948,27 +949,51 @@ fn draw_snapshot_overlay(
     } else {
         format!(" · {action_hints}")
     };
+    let compact_input =
+        overlay.kind == OverlayKind::Prompt && overlay.layout == OverlayLayout::Standard;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
-        .title(format!(" {}{range}{action_hints} ", overlay.title))
+        .title(if compact_input {
+            format!(" {}{range} ", overlay.title)
+        } else {
+            format!(" {}{range}{action_hints} ", overlay.title)
+        })
         .style(
             Style::default()
                 .fg(theme.foreground)
                 .bg(theme.overlay_background),
         );
+    let block = if compact_input {
+        block.title_bottom(format!(" {} ", overlay_action_hints(overlay)))
+    } else {
+        block
+    };
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
+    let (query, cursor_cells) = if compact_input {
+        prompt_query_window(
+            &overlay.query,
+            overlay.query_cursor.unwrap_or(0),
+            inner.width.saturating_sub(2),
+        )
+    } else {
+        (
+            overlay.query.clone(),
+            overlay
+                .query
+                .chars()
+                .take(overlay.query_cursor.unwrap_or(0))
+                .map(|character| character.width().unwrap_or(0))
+                .sum(),
+        )
+    };
     let mut query_height = 0;
     if shows_query {
         query_height = 1;
         frame.render_widget(
-            Paragraph::new(query_line(
-                &overlay.query,
-                &overlay.query_placeholder,
-                theme,
-            )),
+            Paragraph::new(query_line(&query, &overlay.query_placeholder, theme)),
             TuiRect::new(inner.x, inner.y, inner.width, 1),
         );
     }
@@ -1185,13 +1210,8 @@ fn draw_snapshot_overlay(
             );
         }
     }
-    if let Some(cursor) = overlay.query_cursor.filter(|_| query_height > 0) {
-        let cells = overlay
-            .query
-            .chars()
-            .take(cursor)
-            .map(|character| character.width().unwrap_or(0))
-            .sum::<usize>();
+    if overlay.query_cursor.is_some() && query_height > 0 {
+        let cells = cursor_cells;
         let x = inner
             .x
             .saturating_add(2)
@@ -3725,7 +3745,11 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(" Commands by category · ↑/↓ select · Tab complete "),
+                .title(if app.command.trim_start().starts_with(':') {
+                    " Plugin commands · ↑/↓ select · Tab complete "
+                } else {
+                    " Commands by category · ↑/↓ select · Tab complete "
+                }),
         )
         .style(
             Style::default()
@@ -4145,6 +4169,42 @@ fn wrapped_text_rows(text: &str, width: u16) -> usize {
             rows
         })
         .sum()
+}
+
+/// Keep the insertion point visible without splitting Unicode characters.
+fn prompt_query_window(query: &str, cursor: usize, width: u16) -> (String, usize) {
+    let mut cells: usize = query
+        .chars()
+        .take(cursor)
+        .map(|c| c.width().unwrap_or(0))
+        .sum();
+    let mut start = 0;
+    for (byte, character) in query.char_indices().take(cursor) {
+        if cells < usize::from(width.max(1)) {
+            break;
+        }
+        cells = cells.saturating_sub(character.width().unwrap_or(0));
+        start = byte + character.len_utf8();
+    }
+    (query[start..].to_owned(), cells)
+}
+
+/// Application input stays near its task and takes only the rows it needs.
+fn plugin_input_area(editor: &EditorSnapshot, overlay: &OverlaySnapshot) -> Rect {
+    let area = editor
+        .panes
+        .iter()
+        .find(|pane| pane.active && pane.area.width >= 40 && pane.area.height >= 5)
+        .map_or(editor.geometry.editor, |pane| pane.area);
+    let width = area.width.min(80);
+    let query = usize::from(overlay.input != crate::snapshot::OverlayInput::None);
+    let message = overlay.message.as_ref().map_or(0, |message| {
+        wrapped_text_rows(message, width.saturating_sub(2))
+    });
+    let height = (2 + query + overlay.rows.len().min(12) + message)
+        .max(3)
+        .min(usize::from(area.height)) as u16;
+    fixed_centered(area, width, height)
 }
 
 fn setting_popup_area(area: Rect) -> Rect {
@@ -8776,5 +8836,18 @@ mod tests {
         assert!(row.contains(" s1 ? "), "{row}");
         assert!(row.contains(" s2 ! "), "{row}");
         assert!(row.contains(" s3 + "), "{row}");
+    }
+}
+
+#[cfg(test)]
+mod plugin_prompt_tests {
+    use super::prompt_query_window;
+
+    #[test]
+    fn long_unicode_prompt_keeps_the_caret_and_trailing_text_visible() {
+        assert_eq!(prompt_query_window("é猫abc", 5, 5), ("abc".into(), 3));
+        assert_eq!(prompt_query_window("é猫abc", 1, 5), ("é猫abc".into(), 1));
+        assert_eq!(prompt_query_window("猫", 1, 1), (String::new(), 0));
+        assert_eq!(prompt_query_window("", 0, 0), (String::new(), 0));
     }
 }

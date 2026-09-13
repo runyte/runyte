@@ -2603,5 +2603,106 @@ done
     fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn pipe_completion_while_detached_and_reattachment_keep_one_invocation() {
+    let sandbox = TestSandbox::new();
+    let root = project();
+    let program = sandbox.runtime.join("pipe-worker");
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &program,
+    )
+    .unwrap();
+    fs::write(
+        sandbox.runtime.join("pipe-worker.behavior"),
+        r#"
+printf 'started\n' >> "$0.starts"
+printf 'invoked\n' > "$0.invoked"
+while [ ! -e "$0.release" ]; do sleep 0.01; done
+tr 'a-z' 'A-Z'
+"#,
+    )
+    .unwrap();
+    let child = sandbox
+        .bundled_runyte()
+        .args(["--serve", "note.txt"])
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(Some(child));
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    assert!(wait_for_endpoint(&mut child, &endpoint).await);
+    let mut first = LocalClient::connect(&endpoint, geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut first).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = response(&mut first).await;
+    let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('%'))).await;
+    first.send(&ClientRequest::Resynchronize).await.unwrap();
+    let selected = next_complete_frame(&mut first).await;
+    let command = format!("'{}'", program.display());
+    let result =
+        invoke_with_argument_when_current(&mut first, "pipe", Some(&command), selected).await;
+    assert!(matches!(result, HostResponse::CommandResult { .. }));
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+    while !sandbox.runtime.join("pipe-worker.invoked").exists() {
+        assert!(Instant::now() < deadline, "pipe was not invoked");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    detach(&mut first, "detaching during pipe work").await;
+    fs::write(sandbox.runtime.join("pipe-worker.release"), "continue").unwrap();
+    let mut control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Welcome { .. }
+    ));
+    wait_for_session_preview(&mut control, "pipe result while detached", |preview| {
+        preview
+            .panes
+            .iter()
+            .any(|pane| pane.lines.iter().any(|line| line.contains("BASE")))
+    })
+    .await;
+    let (mut attached, _) = connect_interactive_when_available(&endpoint, geometry()).await;
+    let frame = response(&mut attached).await;
+    assert!(frame_text(&frame).contains("BASE"));
+    assert_eq!(
+        fs::read_to_string(sandbox.runtime.join("pipe-worker.starts")).unwrap(),
+        "started\n"
+    );
+    let _ = send_input(&mut attached, KeyStroke::plain(KeyCode::Char('u'))).await;
+    detach(&mut attached, "detaching after pipe undo").await;
+    wait_for_session_preview(&mut control, "single-step pipe undo", |preview| {
+        preview
+            .panes
+            .iter()
+            .any(|pane| pane.lines.iter().any(|line| line.contains("base")))
+    })
+    .await;
+    shutdown(&mut control, ClientRequest::Shutdown).await;
+    let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "base\n");
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[path = "persistent_host/plugin_epoch2.rs"]
 mod plugin_epoch2;

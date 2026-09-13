@@ -4,11 +4,11 @@ import os
 from application import Application
 
 app = Application('Handoffs', [
-    {'name': 'notify', 'description': 'Publish an example notification', 'context': 'workspace'},
-    {'name': 'terminal', 'description': 'Open a native shell terminal', 'context': 'workspace'},
-    {'name': 'browser', 'description': 'Open an HTTP or HTTPS URL in the system browser',
+    {'name': 'notify', 'alias': 'handoffs-notify', 'description': 'Publish an example notification', 'context': 'workspace'},
+    {'name': 'terminal', 'alias': 'handoffs-terminal', 'description': 'Open a native shell terminal', 'context': 'workspace'},
+    {'name': 'browser', 'alias': 'handoffs-browser', 'description': 'Open an HTTP or HTTPS URL in the system browser',
      'context': 'workspace', 'arguments': [{'name': 'url', 'type': 'string'}]},
-    {'name': 'file', 'description': 'Open a workspace file with its system handler',
+    {'name': 'file', 'alias': 'handoffs-file', 'description': 'Open a workspace file with its system handler',
      'context': 'workspace', 'arguments': [{'name': 'path', 'type': 'string'}]},
 ], ['notifications', 'terminals', 'external'])
 

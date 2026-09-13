@@ -34,6 +34,16 @@ def example(name):
 
 
 class PluginSchemaTests(unittest.TestCase):
+    def test_optional_alias_spelling_is_distinct_from_reserved_local_names(self):
+        for alias in (None, 'uppercase', 'time-delete', 'stop', 'x' * 48):
+            message = example('register')
+            message['commands'][0]['alias'] = alias
+            VALIDATOR.validate(message)
+        for alias in ('', '::uppercase', 'Uppercase', 'has.dot', 'a b', 'é', 'a\n', 'a\r', 'x' * 49, 123):
+            message = example('register')
+            message['commands'][0]['alias'] = alias
+            self.assertFalse(VALIDATOR.is_valid(message), alias)
+
     def test_schema_and_all_message_examples(self):
         Draft202012Validator.check_schema(SCHEMA)
         for direction in ("hostMessage", "pluginMessage"):

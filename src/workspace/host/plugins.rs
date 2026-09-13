@@ -16,6 +16,7 @@ impl WorkspaceHost {
     /// Cancels every worker before waiting, and keeps the runtime alive until
     /// all owned plugin children have been reaped. No new input is dispatched.
     pub async fn shutdown_plugins(&mut self) -> Result<()> {
+        self.shutdown_pipe().await;
         let workers = std::mem::take(&mut self.plugin_workers);
         for worker in workers.values() {
             worker.stop();
@@ -225,6 +226,9 @@ impl WorkspaceHost {
             .plugins
             .commands
             .retain(|_, command| command.plugin != id);
+        let conflicts =
+            crate::app::plugin_workflows::resolve_aliases(&mut self.app.plugins.commands);
+        self.app.plugin_alias_conflicts(conflicts);
         let maps = self
             .app
             .plugin_keymaps(&self.app.plugins.commands)
@@ -344,6 +348,10 @@ impl WorkspaceHost {
             let mut full_names = Vec::new();
             for registration in commands {
                 ensure!(
+                    registration.alias.as_deref().is_none_or(plugin::valid_name),
+                    "invalid plugin command alias"
+                );
+                ensure!(
                     plugin::valid_name(&registration.name)
                         && registration.name != "stop"
                         && names.insert(registration.name.clone()),
@@ -384,6 +392,8 @@ impl WorkspaceHost {
                 candidate.insert(
                     command_id,
                     RuntimeCommand {
+                        alias: registration.alias,
+                        alias_name: None,
                         arguments: instance
                             .application
                             .command_arguments
@@ -432,6 +442,8 @@ impl WorkspaceHost {
             candidate.insert(
                 command_id,
                 RuntimeCommand {
+                    alias: None,
+                    alias_name: None,
                     arguments: vec![],
                     id: command_id,
                     plugin: id,
@@ -443,9 +455,11 @@ impl WorkspaceHost {
                     context: plugin::application::CommandContext::Workspace,
                 },
             );
+            let conflicts = crate::app::plugin_workflows::resolve_aliases(&mut candidate);
             let maps = self.app.plugin_keymaps(&candidate)?;
             self.app.plugins.commands = candidate;
             self.app.install_plugin_keymaps(maps);
+            self.app.plugin_alias_conflicts(conflicts);
             self.app.plugins.instances.get_mut(&id).unwrap().registered = true;
             let instance = &self.app.plugins.instances[&id];
             let message = if instance.config.api == plugin::application::Api::Epoch2 {
@@ -662,6 +676,7 @@ impl WorkspaceHost {
     /// Observation checkpoints coalesce changes within a host turn, including
     /// undo/reload paths. No scan or wakeup exists when there are no subscribers.
     pub fn sync_plugin_observers(&mut self) {
+        self.sync_pipe();
         self.sync_plugin_handoffs();
         self.sync_provider_writes();
         self.sync_provider_inspections();

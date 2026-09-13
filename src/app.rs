@@ -270,6 +270,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 mod picker_workflows;
+pub(crate) mod pipe;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
@@ -2957,6 +2958,7 @@ pub struct App {
     /// ends. Unlike `v`, a line selection is transient: it survives only
     /// consecutive `x`/`X` presses, and any other command drops it.
     line_select: Option<Mode>,
+    pub(crate) pipe: pipe::State,
     pub(crate) plugins: plugin_workflows::Plugins,
     keymap: Arc<Keymap>,
     /// Precompiled variants indexed by `editor.fast_pane_keys` when the
@@ -3460,6 +3462,7 @@ impl App {
             jump: None,
             line_select: None,
             keymap,
+            pipe: Default::default(),
             plugins: Default::default(),
             configured_keymaps,
             grammar,

@@ -237,6 +237,7 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
+mod pipe;
 mod plugin_activity;
 mod plugin_applications;
 mod plugin_documents;
@@ -287,6 +288,8 @@ pub struct WorkspaceHost {
     plugin_local_slots: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     plugin_local_orphans: std::collections::BTreeMap<(usize, String, String), usize>,
     plugins_started: bool,
+    pipe_events: Option<tokio::sync::mpsc::Sender<crate::pipe::Completion>>,
+    pipe_worker: Option<pipe::Worker>,
     identity: WorkspaceIdentity,
     app: App,
     services: ServiceLifecycle,
@@ -396,6 +399,8 @@ impl WorkspaceHost {
             plugin_local_slots: None,
             plugin_local_orphans: Default::default(),
             plugins_started: false,
+            pipe_events: None,
+            pipe_worker: None,
             app,
             services: ServiceLifecycle::new(256),
             next_frame: 1,

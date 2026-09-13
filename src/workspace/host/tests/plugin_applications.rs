@@ -81,6 +81,7 @@ fn setup(
             version: api::VERSION.into(),
             name: "Tasks".into(),
             commands: vec![api::Registration {
+                alias: None,
                 arguments: vec![],
                 primary: false,
                 name: "open".into(),
@@ -174,6 +175,7 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
             version: api::VERSION.into(),
             name: "Arguments".into(),
             commands: vec![api::Registration {
+                alias: None,
                 name: "echo".into(),
                 description: "Echo arguments".into(),
                 context: api::CommandContext::Workspace,
@@ -674,6 +676,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
             name: "Tasks".into(),
             commands: vec![
                 api::Registration {
+                    alias: None,
                     arguments: vec![],
                     name: "open".into(),
                     description: "Open tasks".into(),
@@ -681,6 +684,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
                     primary: false,
                 },
                 api::Registration {
+                    alias: None,
                     arguments: vec![],
                     name: "toggle".into(),
                     description: "Toggle selected tasks".into(),

@@ -140,6 +140,28 @@ impl App {
         Ok(())
     }
 
+    /// The unified finder rooted at the directory the active explorer shows,
+    /// independent of the selected row.
+    ///
+    /// It takes the project's own ignore-aware scope rather than the
+    /// unfiltered one `Space / p` uses for a typed path: an explorer inside
+    /// the project inherits the rules from the project root down, and one
+    /// outside it reads the ignore files from its own directory down. The
+    /// hidden-file rule is `editor.show_hidden_files` either way, so a
+    /// listing showing dotfiles opens a finder that offers them.
+    pub(super) fn open_explorer_finder(&mut self) -> Result<()> {
+        if !self.active_buffer().is_directory() {
+            self.action_failed("the active view is not a directory buffer");
+            return Ok(());
+        }
+        let directory = self
+            .active_buffer()
+            .path
+            .clone()
+            .expect("directory buffers have paths");
+        self.open_finder_at(directory, self.project_scan_scope())
+    }
+
     pub(super) fn open_directory_picker(&mut self) -> Result<()> {
         self.open_picker_at(
             self.active_directory(),

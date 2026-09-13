@@ -49,12 +49,12 @@ cd "$plugin_demo/workspace"
 ```
 
 `--init` makes this non-Git directory the exact standalone workspace root.
-In this new editor, `:plugin.files.open .` opens the local file manager.
+In this new editor, `::files .` opens the local file manager.
 Enter opens its selected ordinary file or directory; Tab lists available actions.
-`:plugin.files.new` prompts for a filename and then presents the native filesystem
+`::files-new` prompts for a filename and then presents the native filesystem
 confirmation. Escape cancels that confirmation without creating the file.
-`:plugin.jobs.start` starts a twelve-second task; editing remains available and
-`:plugin.jobs.cancel` requests cancellation. `:plugins` shows lifecycle details.
+`::jobs-start` starts a twelve-second task; editing remains available and
+`::jobs-cancel` requests cancellation. `:plugins` shows lifecycle details.
 
 No existing TUI or persistent session is needed. The automated checks below run
 without opening one. For an existing persistent host, configuration changes require
@@ -70,6 +70,11 @@ workspace root. Disabled entries start no program and trigger no bundle scan.
 
 ## Write a command using the Python client
 
+For the same native application implemented in three languages, try the
+[todo showcase](todo/README.md). Its Python, Rust and C variants support adding,
+toggling, removing and filtering tasks. A build helper generates a configuration
+for all three, and a shared wire suite checks their behavior.
+
 The optional client handles the handshake, request IDs, response correlation,
 bounded dispatch and ordered observation callbacks. Every host method remains
 available through `app.request(method, **params)`; convenience methods add model
@@ -84,7 +89,7 @@ so restart alone is not permission to replay it.
 from application import Application
 
 app = Application('Example', [
-    {'name': 'show', 'description': 'Show the example page', 'context': 'workspace'},
+    {'name': 'show', 'alias': 'example', 'description': 'Show the example page', 'context': 'workspace'},
 ], ['views'])
 
 def show(context):
@@ -110,15 +115,18 @@ wire protocol, and keep diagnostic output free of request bodies, secrets and
 raw helper output.
 
 Commands declare `workspace`, `buffer` or `view` context and typed positional
-arguments. The configured ID supplies the `plugin.<id>.` command prefix. Command
-names such as `stop` are reserved by Runyte; use a distinct action name such as
+arguments. The configured ID supplies the internal `plugin.<id>.` command prefix.
+An optional `alias` supplies the short name after `::`: the example above
+registers `::example`, independently of its configured ID. Completion and
+key hints read the same registration. See the
+[alias collision rules](../plugins.md#plugin-command-names). Command names such as `stop` are reserved by Runyte; use a distinct action name such as
 `stop-playback`. Registration, configured bindings and capability negotiation
 must succeed before a command becomes available.
 
 The independent [tasks.mjs](tasks.mjs) example uses Node.js 18+ built-ins without the
 Python client or an npm dependency. Configure it with ID `node-tasks`, an absolute
 Node executable, the absolute script path, epoch 2 and `capabilities: [views]`.
-`:plugin.node-tasks.open` shows its checklist; Enter invokes `toggle` for the
+`::node-tasks` shows its checklist; Enter invokes `toggle` for the
 selected row. Its [public-wire check](check_node.py) exercises another language's
 reader and response correlation. An ambiguous model publication makes this
 example unavailable until explicit plugin restart; it never retries the mutation.
@@ -136,10 +144,10 @@ sequenceDiagram
     App->>Host: job.create
     Host-->>App: issued job
     App-->>Host: command response (accepted job)
-    Note over Host,App: Finite work continues; detach keeps the same process
+    Note over Host,App: Finite work continues and detach keeps the same process
     Host->>App: job.cancel_requested, if cancellation is requested
     App->>Host: job.finish after work or cleanup settles
-    Note over Host,App: Stop retires handles; restart waits for old cleanup
+    Note over Host,App: Stop retires handles, and restart waits for old cleanup
 ```
 
 An accepted command, a job, a view and a provider document have separate

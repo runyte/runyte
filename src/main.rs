@@ -1534,6 +1534,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         app.sync_plugin_observers();
         tokio::select! {
             _ = std::future::ready(()), if app.plugin_presentation_pending() => { app.take_plugin_presentation_change(); }
+            Some(event) = services.pipe_events.recv() => { app.handle_pipe_completion(event); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
                 if let Some(event) = event {
                     if !app.handle_plugin_event(event) && !app.plugin_presentation_pending() {
@@ -2019,6 +2020,7 @@ async fn run_host_server(
         host.sync_plugin_observers();
         tokio::select! {
             _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }
+            Some(event) = services.pipe_events.recv() => { host.handle_pipe_completion(event); changed = true; }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
                 if let Some(event) = event { changed |= host.handle_plugin_event(event); }
                 else { services.plugin_events = None; }
@@ -4987,6 +4989,7 @@ async fn recover_wait_after_lifecycle_loss(
 }
 
 struct HostServices {
+    pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
     plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
     syntax_events: SyntaxEvents,
     git_events: Option<tokio::sync::mpsc::Receiver<GitServiceEvent>>,
@@ -5068,7 +5071,9 @@ fn start_host_services(
         .take_terminal_events()
         .expect("terminal output is claimed once, when services start");
     let plugin_events = app.start_plugins();
+    let pipe_events = app.start_pipe_service();
     Ok(HostServices {
+        pipe_events,
         plugin_events,
         syntax_events,
         git_events,

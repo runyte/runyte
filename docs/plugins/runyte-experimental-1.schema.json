@@ -81,6 +81,7 @@
       "required": ["name", "description"],
       "properties": {
         "name": { "$ref": "#/$defs/localName" },
+        "alias": { "type": ["string", "null"], "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])", "description": "Optional public name after ::; collisions disable only this alias." },
         "description": {
           "type": "string",
           "minLength": 1,

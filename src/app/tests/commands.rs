@@ -1478,7 +1478,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::SharedColon)
             .count(),
-        48
+        49
     );
     assert_eq!(
         exposures
@@ -1488,7 +1488,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         EditorCommand::ALL.len()
             - INTERNAL_EDITOR_COMMANDS.len()
             - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 49
+            - 50
     );
 
     for spec in COMMANDS {
@@ -1945,7 +1945,7 @@ fn key_and_direct_execution_clear_stale_error_styling() {
 
 #[test]
 fn unsupported_key_and_direct_routes_share_the_semantic_unavailable_boundary() {
-    const REASON: &str = "shell pipes are not available";
+    const REASON: &str = "use :pipe <shell-command>";
     let mut key_path = App::new(Config::default(), None).unwrap();
     press(&mut key_path, '|');
 
@@ -1961,7 +1961,7 @@ fn unsupported_key_and_direct_routes_share_the_semantic_unavailable_boundary() {
     assert_eq!(direct.status_error, key_path.status_error);
     assert_eq!(
         direct.status,
-        "Pipe the selection through a shell command is unsupported: shell pipes are not available"
+        "Pipe the selection through a shell command is unsupported: use :pipe <shell-command>"
     );
 }
 
@@ -3401,7 +3401,7 @@ fn unsupported_key_binding_echoes_its_message_inline() {
     assert_eq!(
         app.displayed_status_message(),
         "| (Pipe the selection through a shell command · unavailable: Pipe the selection \
-             through a shell command is unsupported: shell pipes are not available)"
+             through a shell command is unsupported: use :pipe <shell-command>)"
     );
     assert!(!app.displayed_status_message_is_error());
 }

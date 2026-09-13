@@ -59,7 +59,7 @@ The delivered baseline is a browser handoff. With the existing `handoffs.py`
 example enabled as `handoffs`, run:
 
 ```text
-:plugin.handoffs.browser https://www.youtube.com/
+::handoffs-browser https://www.youtube.com/
 ```
 
 This opens the system browser from the current foreground invocation. It does

@@ -154,11 +154,17 @@ them, regardless of which extensibility direction is chosen.
   kinds. A finder also has a **scan scope**: the root it walks and whether it
   reads the ignore files it finds. The scope belongs to the picker rather than
   to one scan, because a mode switch and a content re-scan both restart the
-  walk on the reader's behalf. Three keys open the same overlay over three
-  scopes — the project's ignore-aware files, every file the project holds, and
-  every file under a typed path that need not be inside the workspace — so a
+  walk on the reader's behalf. Several keys open the same overlay over
+  several scopes — the project's ignore-aware files, every file the project
+  holds, every file under a typed path that need not be inside the workspace,
+  and the ignore-aware files under the directory an explorer is showing — so a
   finder that is not the ordinary project one names its scope in the title
-  rather than looking identical to the one that is. **Name mode** merges files, open buffers, and terminal sessions by
+  rather than looking identical to the one that is. A scope is two facts, and
+  the title carries whichever of them is not the ordinary one: `all files`
+  says the ignore files were not consulted, and a path says the walk began
+  somewhere other than the project root. So an unfiltered finder at the
+  project root reads `all files`, an ignore-aware one below or outside it
+  reads that root's path, and one that is both reads `all files in <path>`. **Name mode** merges files, open buffers, and terminal sessions by
   resource identity. **Content mode** merges file lines, authoritative
   in-memory buffer lines including pathless buffers, and decoded retained
   terminal rows. Matching characters are emphasized in the content detail
@@ -464,6 +470,12 @@ reports pending work or failure through the existing service-health surface.
 ## Experimental plugins
 
 Plugin commands use the colon palette and the existing keymap help and hints.
+A second leading colon changes the same palette to **Plugin commands** and
+filters out built-ins. Registered unique aliases display as `::name`; full
+`:plugin.<id>.<command>` spellings remain available, including for commands whose
+alias is absent or ambiguous. Completion preserves typed arguments, and removing
+the second colon returns to the ordinary palette. Help, hints and argument prompts
+prefer the active alias from the same runtime registry.
 They introduce no new pane content or overlay. Acceptance and completion use
 the interaction line; stale, closed and read-only results produce protective
 warning notifications, process/protocol failures produce errors, and explicit
@@ -488,8 +500,13 @@ Acceptance applies the reviewed plan through ordinary filesystem reconciliation;
 application plans preserve unsaved directory projections, including the active
 explorer. Cancellation is delivered to the owner as a lifecycle event.
 
-Application input reuses native input overlays. A form shows labelled fields and
-a current editing line, with Tab/Shift-Tab or arrows moving between fields.
+Application input reuses native input overlays, sized to their content with an
+80-column preferred width. They center within the active pane when it has room,
+otherwise within the editor area, and shrink to fit. A single text prompt shows
+only its editing line and Enter/Escape hints; its label is not repeated as a list
+row. Forms show labelled fields and a current editing line, with Tab/Shift-Tab or
+arrows moving between fields. Choice hints appear only for a selected choice or
+boolean field.
 Secret fields are masked before snapshot production. Application pickers display
 filterable candidate rows using the shared matcher. Opening competing native
 input cancels the application surface, as do detach and owner/source closure.

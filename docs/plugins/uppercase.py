@@ -16,7 +16,7 @@ def main():
     if hello != {"type": "hello", "version": VERSION}:
         raise SystemExit("unsupported Runyte plugin API")
     send({"type": "register", "version": VERSION, "commands": [
-        {"name": "uppercase", "description": "Uppercase every selection"}
+        {"name": "uppercase", "alias": "uppercase", "description": "Uppercase every selection"}
     ]})
     for line in sys.stdin:
         message = json.loads(line)

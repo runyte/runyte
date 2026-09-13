@@ -107,6 +107,14 @@
         },
         "primary": {
           "type": "boolean"
+        },
+        "alias": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])",
+          "description": "Optional public name after ::, independent of the configured plugin ID. Ambiguous aliases are disabled; full names remain available."
         }
       },
       "required": [

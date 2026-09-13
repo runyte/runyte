@@ -199,6 +199,10 @@ and the order of the push. Do not infer any of those from the commit history.
   clients. Core workspace values do not serialize themselves.
 - `src/picker.rs`: the shared filterable result list behind symbol,
   reference, diagnostic, and code-action pickers.
+- `src/pipe.rs`: bounded plain-text shell filter execution and process cleanup.
+  `src/app/pipe.rs` captures native selection-filter requests;
+  `src/workspace/host/pipe.rs` owns workers and revision-checked transactional
+  results across persistent-session attachment changes.
 - `src/file_picker.rs`: the ignore-aware background file scan, its fuzzy
   matcher, and file previews. It never invokes `git`, `fd`, `find`, or an
   external fuzzy finder.

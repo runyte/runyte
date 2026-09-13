@@ -12,11 +12,11 @@ from application import Application, PluginError
 TEXT = ('# Provider document\r\n\r\nEditable Unicode: é猫 🦀\r\n' * 4096).encode('utf-8')
 WEAK = False
 app = Application('Memory provider', [
-    {'name': 'open', 'description': 'Open a deterministic provider document',
+    {'name': 'open', 'alias': 'memory', 'description': 'Open a deterministic provider document',
      'context': 'workspace', 'arguments': [{'name': 'key', 'type': 'string'}]},
-    {'name': 'save', 'description': 'Save the captured provider document', 'context': 'buffer'},
-    {'name': 'rebind', 'description': 'Reconcile the provider document explicitly', 'context': 'buffer'},
-    {'name': 'inspect', 'description': 'Compare fresh remote text with the provider document', 'context': 'buffer'},
+    {'name': 'save', 'alias': 'memory-save', 'description': 'Save the captured provider document', 'context': 'buffer'},
+    {'name': 'rebind', 'alias': 'memory-rebind', 'description': 'Reconcile the provider document explicitly', 'context': 'buffer'},
+    {'name': 'inspect', 'alias': 'memory-inspect', 'description': 'Compare fresh remote text with the provider document', 'context': 'buffer'},
 ], ['providers', 'documents', 'jobs'])
 registered = False
 registration_lock = threading.Lock()

@@ -302,6 +302,13 @@ impl App {
     ) -> Vec<CommandMatch<'_>> {
         let trimmed = self.command.trim();
         let query = trimmed.split_whitespace().next().unwrap_or_default();
+        if trimmed.starts_with(':') {
+            let mut matches = self.plugin_command_matches(trimmed);
+            matches.sort_by_key(|matched| {
+                (usize::from(!matched.name.starts_with(query)), matched.name)
+            });
+            return matches;
+        }
         if query.is_empty() {
             // Nothing typed yet is a table of contents, so it lists each
             // command once under its canonical name.
@@ -3213,17 +3220,19 @@ impl App {
                 self.close_prompt();
             }
             KeyCode::Enter => {
-                let command = self.command.trim().to_owned();
+                let command =
+                    if matches!(self.command.split_whitespace().next(), Some("pipe" | "|")) {
+                        self.command.trim_start()
+                    } else {
+                        self.command.trim()
+                    }
+                    .to_owned();
                 if command.is_empty() {
                     return Ok(());
                 }
                 let name = command.split_whitespace().next().unwrap_or_default();
                 let spec = resolve_command(name);
-                let plugin = self
-                    .plugins
-                    .commands
-                    .values()
-                    .find(|entry| entry.name == name);
+                let plugin = self.plugin_command_named(name);
                 let description = if let Some(spec) = spec {
                     spec.description.to_owned()
                 } else if let Some(plugin) = plugin {
@@ -3998,6 +4007,7 @@ impl App {
             Command::OpenAllFilesPicker => self.open_all_files_picker()?,
             Command::OpenPathFilePicker => self.open_prompt(PromptKind::FinderPath),
             Command::OpenDirectoryFilePicker => self.open_directory_picker()?,
+            Command::OpenExplorerFinder => self.open_explorer_finder()?,
             Command::OpenFuzzyGrep => self.open_project_grep()?,
             Command::OpenDirectoryFuzzyGrep => self.open_directory_grep()?,
             Command::OpenSettings => self.open_settings_buffer(),
@@ -4780,6 +4790,7 @@ impl App {
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
         let hint = match id {
+            CommandId::Colon(ColonCommand::Pipe) => CommandOutcomeHint::Asynchronous,
             CommandId::Colon(ColonCommand::Format) => {
                 if self.has_language_server() {
                     CommandOutcomeHint::Asynchronous
@@ -5355,6 +5366,13 @@ impl App {
             }
             (Colon::Path, InvocationParameters::None) => {
                 self.open_path_popup();
+                Ok(())
+            }
+            (Colon::Pipe, InvocationParameters::OptionalText(Some(command))) => {
+                self.request_pipe(command)
+            }
+            (Colon::PipeCancel, InvocationParameters::None) => {
+                self.cancel_pipe();
                 Ok(())
             }
             (Colon::Plugins, InvocationParameters::None) => {

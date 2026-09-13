@@ -5,10 +5,10 @@ import threading
 from application import Application, PluginError
 
 app = Application('Preferences', [
-    {'name': 'open', 'description': 'Inspect configured and saved preferences', 'context': 'workspace'},
-    {'name': 'remember', 'description': 'Remember a nonsecret destination', 'context': 'workspace',
+    {'name': 'open', 'alias': 'preferences', 'description': 'Inspect configured and saved preferences', 'context': 'workspace'},
+    {'name': 'remember', 'alias': 'preferences-remember', 'description': 'Remember a nonsecret destination', 'context': 'workspace',
      'arguments': [{'name': 'destination', 'type': 'string'}]},
-    {'name': 'forget', 'description': 'Delete this plugin’s saved preferences', 'context': 'workspace'},
+    {'name': 'forget', 'alias': 'preferences-forget', 'description': 'Delete this plugin’s saved preferences', 'context': 'workspace'},
 ], ['settings', 'state', 'views'], settings_schema={'fields': [
     {'name': 'default_destination', 'type': 'string', 'max_length': 256},
 ]})

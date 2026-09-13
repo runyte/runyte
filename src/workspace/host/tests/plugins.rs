@@ -66,6 +66,7 @@ fn register(host: &mut WorkspaceHost, id: usize) -> Result<()> {
         ClientMessage::Register {
             version: plugin::VERSION.into(),
             commands: vec![Registration {
+                alias: None,
                 name: "upper".into(),
                 description: "Uppercase selections".into(),
             }],
@@ -609,6 +610,7 @@ fn invalid_registration_tokens_and_subscription_errors_are_structured() {
         ClientMessage::Register {
             version: plugin::VERSION.into(),
             commands: vec![Registration {
+                alias: None,
                 name: "stop".into(),
                 description: "reserved".into(),
             }],
@@ -616,6 +618,7 @@ fn invalid_registration_tokens_and_subscription_errors_are_structured() {
         ClientMessage::Register {
             version: plugin::VERSION.into(),
             commands: vec![Registration {
+                alias: None,
                 name: "upper".into(),
                 description: "bad\nlabel".into(),
             }],
@@ -845,6 +848,9 @@ fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
 
 #[path = "plugin_applications.rs"]
 mod applications;
+
+#[path = "plugin_aliases.rs"]
+mod aliases;
 
 #[path = "plugin_manager.rs"]
 mod manager;

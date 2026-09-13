@@ -15,6 +15,9 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeCommand {
+    pub alias: Option<String>,
+    /// Active palette spelling, including its second colon. Collisions clear it.
+    pub alias_name: Option<String>,
     pub arguments: Vec<plugin::arguments::Argument>,
     pub id: u64,
     pub plugin: usize,
@@ -24,6 +27,36 @@ pub(crate) struct RuntimeCommand {
     pub description: String,
     pub binding: Option<KeySequence>,
     pub context: plugin::application::CommandContext,
+}
+
+impl RuntimeCommand {
+    pub(crate) fn palette_name(&self) -> &str {
+        self.alias_name.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// Resolve all claimants together, so process startup order never picks a winner.
+pub(crate) fn resolve_aliases(
+    commands: &mut BTreeMap<u64, RuntimeCommand>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for command in commands.values() {
+        if let Some(alias) = &command.alias {
+            claims
+                .entry(alias.clone())
+                .or_default()
+                .push(command.name.clone());
+        }
+    }
+    for command in commands.values_mut() {
+        command.alias_name = command
+            .alias
+            .as_ref()
+            .filter(|alias| claims[*alias].len() == 1)
+            .map(|alias| format!(":{alias}"));
+    }
+    claims.retain(|_, names| names.len() > 1);
+    claims
 }
 
 pub(crate) struct Pending {
@@ -47,6 +80,7 @@ pub(crate) struct Instance {
 
 #[derive(Default)]
 pub(crate) struct Plugins {
+    pub alias_conflicts: BTreeMap<String, Vec<String>>,
     pub manager_entries: Vec<plugin::manager::Entry>,
     pub manager_intents: VecDeque<plugin::manager::Intent>,
     pub(super) manager_return: Option<super::plugin_manager::ManagerReturn>,
@@ -87,6 +121,34 @@ pub(crate) struct Plugins {
 }
 
 impl App {
+    pub(crate) fn plugin_alias_conflicts(&mut self, conflicts: BTreeMap<String, Vec<String>>) {
+        for (alias, names) in &conflicts {
+            if self.plugins.alias_conflicts.get(alias) != Some(names) {
+                self.push_background_notification(crate::notification::NotificationDraft::new(
+                    crate::notification::NotificationSeverity::Warning,
+                    "Plugins",
+                    format!("Plugin alias ::{alias} is ambiguous"),
+                    format!(
+                        "Short name disabled; use the full commands: {}",
+                        names
+                            .iter()
+                            .map(|name| format!(":{name}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ));
+            }
+        }
+        self.plugins.alias_conflicts = conflicts;
+    }
+
+    pub(crate) fn plugin_command_named(&self, name: &str) -> Option<&RuntimeCommand> {
+        self.plugins
+            .commands
+            .values()
+            .find(|command| command.name == name || command.alias_name.as_deref() == Some(name))
+    }
+
     pub(crate) fn plugin_keymaps(
         &self,
         commands: &BTreeMap<u64, RuntimeCommand>,
@@ -104,7 +166,7 @@ impl App {
                         binding.scope = crate::keymap::BindingScope::Plugin(command.plugin);
                     }
                     binding.description =
-                        format!("{} — {}", command.name, command.description).into();
+                        format!(":{} — {}", command.palette_name(), command.description).into();
                     binding
                 })
             })
@@ -130,9 +192,12 @@ impl App {
         &self,
         text: &str,
     ) -> Result<CommandInvocation, crate::command::CommandParseError> {
+        if matches!(text.split_whitespace().next(), Some("pipe" | "|")) {
+            return crate::command::parse_colon_command(text);
+        }
         let text = text.trim();
         let (name, arguments) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
-        if let Some(command) = self.plugins.commands.values().find(|c| c.name == name) {
+        if let Some(command) = self.plugin_command_named(name) {
             plugin::arguments::parse(&command.arguments, arguments).map_err(|_| {
                 crate::command::CommandParseError::InvalidArgument {
                     command: "plugin command",
@@ -523,11 +588,28 @@ impl App {
     }
 
     pub(super) fn plugin_command_matches(&self, query: &str) -> Vec<super::CommandMatch<'_>> {
+        let query = query.strip_prefix(':').unwrap_or(query);
+        let (word, _) = query.split_once(char::is_whitespace).unwrap_or((query, ""));
+        let exact = self.plugins.commands.values().find(|c| {
+            c.name == word
+                || c.alias_name
+                    .as_deref()
+                    .is_some_and(|name| name.strip_prefix(':') == Some(word))
+        });
         self.plugins
             .commands
             .values()
             .filter(|c| {
-                let haystack = format!("{} {} editing", c.name, c.description).to_lowercase();
+                if query.chars().any(char::is_whitespace) && exact.is_some() {
+                    return exact.is_some_and(|exact| exact.id == c.id);
+                }
+                let haystack = format!(
+                    "{} {} {} editing",
+                    c.name,
+                    c.alias_name.as_deref().unwrap_or(""),
+                    c.description
+                )
+                .to_lowercase();
                 query
                     .split_whitespace()
                     .all(|term| haystack.contains(&term.to_lowercase()))
@@ -547,7 +629,11 @@ impl App {
                         )
                     },
                 },
-                name: &command.name,
+                name: if word.starts_with("plugin.") {
+                    &command.name
+                } else {
+                    command.palette_name()
+                },
                 category: crate::command::CommandCategory::Editing,
                 availability: match self.plugin_command_preflight(command) {
                     Ok(()) => super::CommandAvailability::Available,

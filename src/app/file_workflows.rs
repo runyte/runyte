@@ -82,12 +82,24 @@ impl App {
     pub(super) fn goto_file_under_cursor(&mut self) -> Result<()> {
         let buffer = self.active().buffer;
         let range = self.active().selection.primary();
+        let source = self.buffers[buffer].markdown_render_source();
+        let directory = self.buffer_directory(source.unwrap_or(buffer));
         let requested_text = if range.is_empty() {
+            let markdown_link = if let Some(source) = source {
+                self.markdown_positions.get(&buffer).and_then(|positions| {
+                    self.markdown_link_at(source, positions.to_source(range.head))
+                })
+            } else if self.is_markdown_document(buffer) {
+                self.markdown_link_at(buffer, range.head)
+            } else {
+                None
+            };
             let row = self.buffers[buffer].offset_to_row(range.head);
             let start = self.buffers[buffer].line_to_offset(row);
             let line =
                 self.buffers[buffer].slice(start, start + self.buffers[buffer].line_len(row));
-            crate::navigation_target::under_cursor(&line, range.head - start)
+            markdown_link
+                .or_else(|| crate::navigation_target::under_cursor(&line, range.head - start))
         } else {
             let (from, to) = if matches!(
                 self.active().selection_semantics(),
@@ -99,7 +111,16 @@ impl App {
             };
             Some(self.buffers[buffer].slice(from, to))
         };
-        self.open_navigation_target(requested_text, self.buffer_directory(buffer))
+        self.open_navigation_target(requested_text, directory)
+    }
+
+    fn markdown_link_at(&self, buffer: usize, offset: usize) -> Option<String> {
+        let buffer = &self.buffers[buffer];
+        let offset = offset.min(buffer.len_chars());
+        let row = buffer.offset_to_row(offset);
+        let start = buffer.line_to_offset(row);
+        let line = buffer.slice(start, start + buffer.line_len(row));
+        crate::markdown::link_under_cursor(&line, offset - start)
     }
 
     pub(super) fn open_navigation_target(

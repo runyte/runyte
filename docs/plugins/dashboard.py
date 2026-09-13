@@ -4,12 +4,12 @@ import threading
 from application import Application, PluginError
 
 app = Application('Dashboard', [
-    {'name': 'open', 'description': 'Open the example dashboard', 'context': 'workspace'},
-    {'name': 'large', 'description': 'Open 8000 staged dashboard rows', 'context': 'workspace'},
-    {'name': 'toggle', 'description': 'Toggle selected rows', 'context': 'view', 'primary': True},
-    {'name': 'reverse', 'description': 'Reverse rows atomically', 'context': 'view'},
-    {'name': 'inspect', 'description': 'Show selected row detail', 'context': 'view'},
-    {'name': 'verify', 'description': 'Read and verify one immutable model', 'context': 'view'},
+    {'name': 'open', 'alias': 'dashboard', 'description': 'Open the example dashboard', 'context': 'workspace'},
+    {'name': 'large', 'alias': 'dashboard-large', 'description': 'Open 8000 staged dashboard rows', 'context': 'workspace'},
+    {'name': 'toggle', 'alias': 'dashboard-toggle', 'description': 'Toggle selected rows', 'context': 'view', 'primary': True},
+    {'name': 'reverse', 'alias': 'dashboard-reverse', 'description': 'Reverse rows atomically', 'context': 'view'},
+    {'name': 'inspect', 'alias': 'dashboard-inspect', 'description': 'Show selected row detail', 'context': 'view'},
+    {'name': 'verify', 'alias': 'dashboard-verify', 'description': 'Read and verify one immutable model', 'context': 'view'},
 ], ['views'])
 lock = threading.Lock()
 view = None

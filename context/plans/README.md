@@ -16,14 +16,12 @@ belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
 current sources take precedence.
 
-Active work:
-
-- [Plugin applications](active/PLAN_PLUGIN_APPLICATIONS.md): an epoch 2 API
-  for native application views, explicit editor operations, remote documents,
-  asynchronous jobs and managed backends. Implementation in progress.
-
 The retained completed records cover:
 
+- [Plugin applications](completed/PLAN_PLUGIN_APPLICATIONS.md): an experimental
+  epoch 2 API for native application views, explicit editor operations, remote
+  documents, asynchronous jobs and managed backends, with Linux performance
+  acceptance and Linux/macOS CI validation;
 - [Experimental process plugins](completed/PLAN_MINIMAL_PLUGINS.md): captured
   invoking context, namespaced runtime commands, revision-checked selected-text
   transactions, bounded observations, host ownership and explicit enablement;

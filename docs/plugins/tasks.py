@@ -4,9 +4,9 @@ import threading
 from application import Application, PluginError
 
 app = Application('Tasks', [
-    {'name': 'open', 'description': 'Open task list', 'context': 'workspace'},
-    {'name': 'toggle', 'description': 'Toggle selected tasks', 'context': 'view', 'primary': True},
-    {'name': 'filter', 'description': 'Toggle unfinished-only filter', 'context': 'view'},
+    {'name': 'open', 'alias': 'tasks', 'description': 'Open task list', 'context': 'workspace'},
+    {'name': 'toggle', 'alias': 'tasks-toggle', 'description': 'Toggle selected tasks', 'context': 'view', 'primary': True},
+    {'name': 'filter', 'alias': 'tasks-filter', 'description': 'Toggle unfinished-only filter', 'context': 'view'},
 ], ['views'])
 lock = threading.Lock()
 view = None

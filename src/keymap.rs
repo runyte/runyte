@@ -2096,7 +2096,7 @@ fn built_in_bindings() -> Vec<Binding> {
         unsupported(
             Key::char('|'),
             Command::ShellPipe,
-            "shell pipes are not available",
+            "use :pipe <shell-command>",
         ),
         modal([Key::char('m'), Key::char('m')], Command::MatchBracket),
         insert(Key::plain(KeyCode::Escape), Command::EnterNormalMode),
@@ -2419,6 +2419,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             Key::char('t'),
             "terminal",
             EditorCommand::OpenTerminalDirectoryRoot,
+        ),
+        ContextAction::buffer(
+            BindingScope::Directory,
+            Key::char('f'),
+            "finder",
+            EditorCommand::OpenExplorerFinder,
         ),
         // These explorer actions are the three settings that decide
         // how it shows a directory. They are buffer-wide because none of them

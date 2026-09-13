@@ -3,10 +3,10 @@
 from application import Application
 
 app = Application('Documents', [
-    {'name': 'create', 'description': 'Create a named unsaved document', 'context': 'workspace',
+    {'name': 'create', 'alias': 'documents-create', 'description': 'Create a named unsaved document', 'context': 'workspace',
      'arguments': [{'name': 'path', 'type': 'string'}, {'name': 'text', 'type': 'string'}]},
-    {'name': 'save', 'description': 'Save the invoking document asynchronously', 'context': 'buffer'},
-    {'name': 'close', 'description': 'Close the invoking clean document', 'context': 'buffer'},
+    {'name': 'save', 'alias': 'documents-save', 'description': 'Save the invoking document asynchronously', 'context': 'buffer'},
+    {'name': 'close', 'alias': 'documents-close', 'description': 'Close the invoking clean document', 'context': 'buffer'},
 ], ['documents', 'jobs'])
 
 def create(context):

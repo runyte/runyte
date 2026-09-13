@@ -43,6 +43,56 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-13 — plugin command aliases
+
+Measured on `x86_64-unknown-linux-gnu` for the alias implementation based on
+`3eea992`, using `cargo llvm-cov --locked --workspace`. Ordinary and instrumented
+suites pass 3,616 tests with 33 existing ignored tests. Formatting and
+warnings-as-errors Clippy pass, including the separate Rust todo example's
+format check.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 120,421 | 131,220 | 91.77% |
+| Functions | 10,863 | 11,839 | 91.76% |
+| Regions | 182,479 | 200,054 | 91.21% |
+
+Six host regressions in `src/workspace/host/tests/plugin_aliases.rs` cover both
+API epochs, double-colon discovery and presentation, quoted arguments, full-name
+compatibility, alias collisions and restoration, invalid registration rollback,
+and unchanged built-in command identity. All 27 Python conformance suites pass;
+eight optional real-mpv cases are skipped because mpv is unavailable locally.
+The shared todo suite includes freshly built Python, Rust and C examples.
+The separate ru-time plugin passes 35 tests, including real-editor short-command
+acceptance against the changed host. The enforced floor remains 89%; this local
+measurement does not establish native macOS coverage.
+
+## 2026-09-12 — plain shell filters
+
+Measured on `x86_64-unknown-linux-gnu` for the plain-pipe implementation based on
+`2e92262`, using the canonical `cargo llvm-cov --locked --workspace` command.
+Ordinary and instrumented suites each pass 3,608 tests with 33 existing ignored
+tests. Formatting and warnings-as-errors Clippy pass.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 120,312 | 131,130 | 91.75% |
+| Functions | 10,847 | 11,828 | 91.71% |
+| Regions | 182,297 | 199,906 | 91.19% |
+
+New regressions cover shell argument handling, bounded concurrent pipe I/O,
+timeouts and cancellation, atomic selection replacement, revision and focus
+fences, and a real persistent-host pipe completion while detached followed by
+reattachment and undo. Process and PTY checks ran outside the sandbox. The
+enforced floor remains 89%; this Linux measurement does not establish a native
+macOS result.
+
+The review follow-up adds explicit descendant-termination assertions and tests
+both sides of the selection-count and input-byte limits. Ordinary and canonical
+instrumented suites each pass 3,610 tests with 33 existing ignored tests; formatting
+and warnings-as-errors Clippy pass. The Linux canonical result is 91.77% total
+line coverage (120,339 of 131,130 lines). The enforced floor remains 89%.
+
 ## 2026-09-09 — plugin review fixes and dev integration
 
 Measured on `x86_64-unknown-linux-gnu` at `fc2d4d3`, following review fixes in

@@ -170,8 +170,9 @@ median (minimum–maximum).
 These are representative first-document-output and idle measurements. They do
 not establish full editing/plugin readiness, input-latency p95, statistical
 startup equivalence, large-view/flood performance, detached job cost or the
-provider/helper workload matrix. Native macOS evidence is still outstanding.
-The [application plan](../plans/active/PLAN_PLUGIN_APPLICATIONS.md) remains active.
+provider/helper workload matrix. Native macOS evidence was outstanding at this
+measurement; the [completed application plan](../plans/completed/PLAN_PLUGIN_APPLICATIONS.md)
+records the later full workload measurements and native-platform CI acceptance.
 
 The initial real-view check exposed an inherited palette bug: plugin commands
 were listed but Enter resolved only built-in names. The corrected implementation

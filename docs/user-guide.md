@@ -161,6 +161,8 @@ it into view. If the cursor is on markup removed by rendering, the page uses
 the nearest surviving text; toggling straight back restores the exact source
 position. Moving around the page before returning takes you to that new place
 in the source. `:render` (also `:markdown`) does the same from the command line.
+`g f` on a link or image label opens its destination, just as in the source.
+Relative paths resolve beside the source document and at the project root.
 The page is a generated read-only buffer beside the document rather than a mode
 the document is in, so both stay open and the source keeps every editing key.
 
@@ -685,8 +687,10 @@ Sessions carry a number from `1` to `9`, shown in the manager's first column.
 Pressing that digit in the manager attaches to its session directly, so
 `Space Space 1` reaches the first session as one gesture. In Normal and Select
 modes, `Space 1` through `Space 9` jump to the same numbered sessions without
-opening the manager. These bindings follow `keys.leader` and can be remapped
-as `session-1` through `session-9`. A missing number reports an error; numbered
+opening the manager. The key-hint popup groups them into one `Space 1-9` row.
+These bindings follow `keys.leader` and can be remapped as `session-1` through
+`session-9`; individually remapped shortcuts are listed separately in the popup.
+A missing number reports an error; numbered
 shortcuts never restart a stopped session or take over an occupied TUI.
 Inside the manager, the digit is a shortcut only while its filter is empty:
 Runyte's default names are `runyte`, `runyte-2`, `runyte-3`, and project paths
@@ -1699,7 +1703,7 @@ context; scoped explorer keys are documented under
 | `Ctrl-s` | Save |
 | `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
-| `\|` | Shell pipe (reserved but unsupported) |
+| `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
 | `<n>` before a command | Repeat a motion or countable command |
 | `<n>gg` / `<n>G` | Go to line `<n>` |
 | `"` then a register | Select a named register; uppercase appends and `_` discards |
@@ -1896,6 +1900,7 @@ search has to match case.
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |
@@ -1903,6 +1908,8 @@ search has to match case.
 
 The directory-scoped pickers have no key. `:file-picker-directory` and
 `:fuzzy-grep-directory` search below the active file or explorer directory.
+An explorer reaches the unified Finder at its own directory through `Tab f`,
+which is `:open-explorer-finder` elsewhere.
 
 The two workspace searches walk the project themselves and consult no ignore
 file: a gitignored path the Finder omits is still searched by `Space / s` and
@@ -2077,7 +2084,9 @@ cancellation keys.
 
 `g f` opens `https://`, `http://`, and `www.` links in the default browser;
 `www.` addresses use HTTPS. With a bare caret, surrounding Markdown wrappers
-and trailing prose punctuation are excluded. An explicit selection is used
+and trailing prose punctuation are excluded. In Markdown source and rendered
+`?` pages, a caret on an inline link or image label follows its destination,
+including paths wrapped in angle brackets. An explicit selection is used
 exactly. The same command works in terminal NORMAL/review mode, using the
 frozen review text and resolving relative paths against the terminal's latest
 validated directory (or its launch directory) and the project root. Multiple
@@ -2096,6 +2105,7 @@ targets stay within one buffer line or terminal review row.
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
@@ -2121,6 +2131,8 @@ targets stay within one buffer line or terminal review row.
 | `Space o t` | Preview and save a theme in `config.yaml`; `Tab` narrows to the dark or light ones |
 | `Space o s` | Inspect syntax, LSP, and Git service health |
 | `Ctrl-s`, `:write`, or `:save` | Save |
+| `:pipe <shell-command>` or `:| <shell-command>` | Replace each selection with the command’s stdout |
+| `:pipe-cancel` | Cancel the workspace’s running pipe job |
 | `:diff-disk` | Compare the active file buffer with a fresh immutable disk snapshot |
 | `:diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `:diff-this` (`:difft`, `:dt`) | Mark this buffer, or compare it with the one marked before it |
@@ -2136,6 +2148,31 @@ targets stay within one buffer line or terminal review row.
 | `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session and return to a previous running session, with unsaved-change protection |
 | `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
+
+`:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
+stdin and replaces it with stdout. Programs resolve through the inherited
+`PATH`; arguments, quotes and pipelines are interpreted by the shell. Runyte
+does not expand editor variables or interpolate selected text into the command.
+The working directory is the workspace root captured when the command starts.
+
+Selections run sequentially, with at most one pipe job per workspace and 256
+selections per job. Command text is limited to 16 KiB, selected input and combined
+stdout to 8 MiB each, and retained stderr to 16 KiB per invocation. The whole job
+has a 30-second deadline. Stdout must be UTF-8 and is preserved exactly, including
+trailing newlines; empty stdout deletes the selection. All replacements form one
+undo step. Any failed invocation discards every replacement and reports an error.
+Commands may have external side effects that undo and cancellation cannot reverse.
+
+Editing and rendering continue while a pipe runs. Results target the captured
+buffer even after switching panes, and are refused if it changed (including an
+edit followed by undo), closed, or became read-only. Moving selections does not
+retarget the result. `:pipe-cancel` cancels the job. The workspace host owns it in
+both modes, so detaching and reattaching a persistent session does not restart or
+cancel it. Host shutdown cancels outstanding work. Cancellation, timeout, failure
+and shell completion kill the owned process group and reap the shell; processes
+that deliberately leave that group are outside cleanup’s scope. Inherited output
+pipes cannot keep a completed shell’s job alive indefinitely. No default key
+binding is added; the bare `|` key remains reserved.
 
 Panes are reached from `Space w` or its `Ctrl-w` compatibility alias, both of
 which want two keystrokes before a direction. Setting `editor.fast_pane_keys`
@@ -2191,6 +2228,15 @@ same boundary before a confirmation opens.
 the explorer currently shows. The explorer remains available behind the terminal,
 including any unsaved edits. The directory under the cursor does not change where
 the terminal starts.
+
+`Tab f` opens the Finder rooted at the directory the explorer currently shows
+rather than at the project root, again independently of the row under the
+cursor. It is the same unified Finder `Space f` opens, with files, open
+buffers, and terminals in one list and `Tab` switching to content mode. An
+explorer inside the project keeps the ignore rules that apply from the project
+root down; one opened elsewhere reads the ignore files from its own directory
+down. Dotfiles follow `editor.show_hidden_files`, so a listing showing them
+opens a finder that offers them.
 
 Three settings decide how an explorer shows a directory, and `Tab` offers all
 of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
@@ -2326,9 +2372,17 @@ reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
 state directory, symlinks, and `editor.show_hidden_files` apply exactly as
 before. `Space / p` asks for a path first, completing entries as they are
 typed; `~` expands, a relative path resolves against the working directory,
-and `Tab` accepts the selected row. The path need not be inside the workspace,
-and the Finder's title names the root it was given. Both scopes survive the
-`Tab` into content mode, so an ignored file's lines are searchable too.
+and `Tab` accepts the selected row. The path need not be inside the workspace.
+Both scopes survive the `Tab` into content mode, so an ignored file's lines
+are searchable too.
+
+A Finder that is not the ordinary project one says so in its title, because a
+scope is two facts and either can differ: `all files` means the ignore rules
+were not consulted, and a path means the walk began somewhere other than the
+project root. `Space / a` therefore reads `all files`, the explorer's `Tab f`
+below or outside the project root reads that root's path, and `Space / p`
+reads `all files in <path>`. The label belongs to the Finder rather than to
+one scan, so it survives the switch into content mode.
 Type an ordered subsequence to rank paths; exact basenames, basename prefixes,
 consecutive characters, and path-component boundaries rank highest. Ending the
 query with `/` narrows the results to directories, matched without the slash
@@ -3042,6 +3096,13 @@ likewise ignored after their open document advances.
 
 ### Experimental plugins
 
+Type `::` for the plugin-only command palette, with completion and descriptions.
+Plugins can declare short names such as ru-time's `::time`, `::time-add`, and
+`::time-delete`. Full `:plugin.<id>.<command>` names remain available.
+Conflicting short names are disabled for all claimants and reported in
+`:notifications`; stopping a claimant restores a name when it becomes unique.
+Backspace over the second colon returns to the ordinary command palette.
+
 `:plugins` opens the native manager for configured, disabled and failed plugins.
 Select an entry to inspect its capabilities, jobs, activity, helpers and diagnostic
 summary; Enter offers lifecycle actions. `:plugin-stop <id>` stops an owner and
@@ -3082,7 +3143,7 @@ provider settlement before accepting a baseline. Each side may contain at most
 The runnable
 [SFTP browser and editor](plugins/applications.md#sftp-browser-and-editor) verifies
 SSH host keys, uses explicit identity files or an existing SSH agent, and opens
-remote UTF-8 documents up to 8 MiB. Run `:plugin.sftp.browse .` with its documented
+remote UTF-8 documents up to 8 MiB. Run `::sftp .` with its documented
 profile; Enter opens a selected file, and native `:write` confirms the remaining
 remote overwrite race. The [FTP/FTPS example](plugins/applications.md#ftp-and-ftps-browser-and-editor)
 shares the browser and editor workflow using standard-library transport. It
@@ -3098,6 +3159,8 @@ local files. The
 [application guide](plugins/applications.md) also includes runnable task-list,
 local file-manager, document, memory-provider and background-job examples and
 lists the remaining work.
+The [todo showcase](plugins/todo/README.md) provides matching Python, Rust and C
+applications with task creation, completion, removal and filtering.
 
 Applications can launch [managed helpers](plugins/applications.md#managed-helpers)
 with bounded binary input and retained output. Their output stays separate from
@@ -3192,6 +3255,7 @@ are enabled.
 :explorer [path]        open an editable directory explorer (alias: files)
 :file-picker            open the Finder over files, buffers, and terminals
 :file-picker-directory  fuzzy-find below the active file/explorer directory
+:open-explorer-finder   open the Finder at the active explorer's directory
 :fuzzy-grep             open the Finder in content mode
 :fuzzy-grep-directory   fuzzy-search contents below the active file/explorer directory
 :format                 format the active buffer (alias: fmt)
