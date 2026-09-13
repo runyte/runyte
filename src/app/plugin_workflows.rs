@@ -293,32 +293,12 @@ impl App {
                 });
             let (view_handle, model_revision, query_revision, rows) =
                 if let Some((handle, view)) = view {
-                    let query_pending = view.query.as_ref().is_some_and(|query| query.pending);
                     let primary = command.context == plugin::application::CommandContext::View
                         && self.plugins.instances[&command.plugin]
                             .application
                             .primary_commands
                             .contains(&command.local);
-                    let mut rows = std::collections::BTreeSet::new();
-                    for range in self
-                        .active()
-                        .selection
-                        .ranges()
-                        .iter()
-                        .filter(|_| !query_pending)
-                    {
-                        for row in self.buffers[view.buffer].offset_to_row(range.from())
-                            ..=self.buffers[view.buffer].offset_to_row(
-                                range.to().saturating_sub(usize::from(!range.is_empty())),
-                            )
-                        {
-                            if let Some(Some(index)) = view.projection.line_rows.get(row)
-                                && let Some(projected) = view.projection.rows.get(*index)
-                            {
-                                rows.insert(projected.id.clone());
-                            }
-                        }
-                    }
+                    let rows = self.plugin_view_selected_rows(view);
                     if primary {
                         ensure!(
                             !rows.is_empty(),
@@ -331,7 +311,7 @@ impl App {
                         view.query
                             .as_ref()
                             .map(|query| format!("qv:{}", query.revision)),
-                        rows.into_iter().collect(),
+                        rows,
                     )
                 } else {
                     (None, None, None, Vec::new())

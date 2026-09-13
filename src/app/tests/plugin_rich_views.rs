@@ -377,21 +377,98 @@ fn plugin_action_arguments_cancel_without_invoking_or_changing_selection() {
     assert!(receiver.try_recv().is_err());
 }
 
-#[test]
-fn plugin_action_arguments_stale_menu_is_refused_before_opening_palette() {
-    let (mut app, mut receiver) = argument_action_fixture(&["a"]);
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    let list = app.list.as_mut().unwrap();
+/// Commits a publication as the host does: the buffer text and the live view
+/// move to the new model together, and the next frame presents it.
+fn commit(app: &mut App, value: view::Model) {
+    let buffer = app.active().buffer;
+    let live = &app.plugins.instances[&0].application.views["v:1"];
+    let (old, revision) = (live.projection.clone(), live.revision);
+    let projection = publish(app, buffer, &old, value.clone());
+    let live = app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .views
+        .get_mut("v:1")
+        .unwrap();
+    live.model = Arc::new(value);
+    live.projection = projection;
+    live.revision = revision + 1;
+    app.plugins
+        .presented_views
+        .insert(app.active_pane, (buffer, revision + 1));
+}
+
+fn open_action(app: &mut App, label: &str) {
+    key(app, KeyCode::Tab, Modifiers::NONE);
+    let list = app.list.as_mut().expect("Tab opens application actions");
     list.selected = list
         .items
         .iter()
-        .position(|item| item.label == "add")
+        .position(|item| item.label == label)
         .unwrap();
-    let buffer = app.active().buffer;
-    let old = app.plugins.instances[&0].application.views["v:1"]
+}
+
+#[test]
+fn plugin_action_arguments_stale_menu_is_refused_before_opening_palette() {
+    let (mut app, mut receiver) = argument_action_fixture(&["a"]);
+    open_action(&mut app, "add");
+    commit(&mut app, model(&["b"]));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.status.contains("reopen the actions"));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn plugin_action_menu_survives_a_redraw_that_keeps_the_selected_rows() {
+    // A live counter republishes every second while the menu is open.
+    let counted = |seconds: u32| {
+        let mut value = model(&["a", "b"]);
+        for row in &mut value.rows {
+            row.text = format!("{} 00:00:{seconds:02}", row.id);
+        }
+        value
+    };
+    let (mut app, mut receiver) = argument_action_fixture(&["a", "b"]);
+    commit(&mut app, counted(1));
+    let row = app.plugins.instances[&0].application.views["v:1"]
         .projection
-        .clone();
-    publish(&mut app, buffer, &old, model(&["b"]));
+        .rows[1]
+        .from;
+    app.active_mut().replace_selection(Selection::point(row));
+    open_action(&mut app, "enter");
+    let buffer = app.active().buffer;
+    let revision = app.buffers[buffer].revision();
+    commit(&mut app, counted(2));
+    commit(&mut app, counted(3));
+    assert_ne!(app.buffers[buffer].revision(), revision);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!app.status.contains("reopen the actions"), "{}", app.status);
+    match receiver.try_recv().unwrap() {
+        plugin::HostMessage::Application(api::HostMessage::Request { params, .. }) => {
+            assert_eq!(params.command, "enter");
+            assert_eq!(params.rows, ["b"]);
+            assert_eq!(params.model_revision.as_deref(), Some("m:4"));
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn plugin_action_menu_is_refused_when_a_redraw_changes_the_selected_rows() {
+    let (mut app, mut receiver) = argument_action_fixture(&["a", "b"]);
+    let row = app.plugins.instances[&0].application.views["v:1"]
+        .projection
+        .rows[0]
+        .from;
+    app.active_mut().replace_selection(Selection::point(row));
+    open_action(&mut app, "hidden");
+    // The selected row disappears; the selection falls to its neighbor.
+    commit(&mut app, model(&["b"]));
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.status.contains("reopen the actions"));

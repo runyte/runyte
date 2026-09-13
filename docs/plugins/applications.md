@@ -407,7 +407,10 @@ Primary row actions are refused while a query is pending. Other view commands
 remain available with `rows: []`, allowing Filter and Refresh to replace or retry
 the query. Handlers for other row operations must continue to require selected
 IDs. Invocations include optional `query_revision`; action menus capture it and
-refuse entries from an older query. Matching publication still needs a prepared
+refuse entries from an older query. Menus also capture the row IDs the selection
+covers. A publication that keeps them, such as a counter redrawn every second,
+leaves an open menu usable; one that changes which rows the selection covers
+refuses its entries. Matching publication still needs a prepared
 frame before actions can use the new model. The SDK's `set_query`, `publish_model`
 and `patch_view` expose these preconditions without automatic retries.
 

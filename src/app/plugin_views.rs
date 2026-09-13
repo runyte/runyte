@@ -56,6 +56,47 @@ impl App {
             ));
     }
 
+    /// The row IDs the active selection covers in `view`, in ID order. A
+    /// pending query has not settled which rows exist, so it selects none.
+    pub(super) fn plugin_view_selected_rows(&self, view: &view::View) -> Vec<String> {
+        if view.query.as_ref().is_some_and(|query| query.pending) {
+            return Vec::new();
+        }
+        let buffer = &self.buffers[view.buffer];
+        let mut rows = std::collections::BTreeSet::new();
+        for range in self.active().selection.ranges() {
+            let last = range.to().saturating_sub(usize::from(!range.is_empty()));
+            for line in buffer.offset_to_row(range.from())..=buffer.offset_to_row(last) {
+                if let Some(Some(index)) = view.projection.line_rows.get(line)
+                    && let Some(projected) = view.projection.rows.get(*index)
+                {
+                    rows.insert(projected.id.clone());
+                }
+            }
+        }
+        rows.into_iter().collect()
+    }
+
+    /// The rows the active selection covers in the application view shown in
+    /// the active buffer, or `None` when that buffer is not one.
+    pub(super) fn plugin_view_menu_rows(&self, buffer: usize) -> Option<Vec<String>> {
+        let Some(GeneratedViewIdentity::Plugin { owner, view }) = self
+            .buffers
+            .get(buffer)
+            .and_then(Buffer::generated_view_identity)
+        else {
+            return None;
+        };
+        let view = self
+            .plugins
+            .instances
+            .get(owner)?
+            .application
+            .views
+            .get(view)?;
+        Some(self.plugin_view_selected_rows(view))
+    }
+
     pub(super) fn open_plugin_actions(&mut self) -> bool {
         let crate::keymap::BindingScope::Plugin(owner) = self.key_binding_scope() else {
             return false;
@@ -98,7 +139,7 @@ impl App {
             return false;
         }
         let buffer = self.active().buffer;
-        let revision = self.buffers[buffer].revision();
+        let rows = self.plugin_view_menu_rows(buffer);
         self.list = Some(super::ListPicker::fuzzy(
             "Application actions",
             commands
@@ -114,7 +155,7 @@ impl App {
             .map(|c| super::ListAction::PluginCommand {
                 command: c.id,
                 buffer,
-                revision,
+                rows: rows.clone(),
                 query_revision: self.plugin_view_query_revision(buffer),
             })
             .collect();

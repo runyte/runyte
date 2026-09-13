@@ -3585,10 +3585,13 @@ enum ListAction {
     PluginEntry(usize),
     PluginLifecycle(crate::plugin::manager::Intent),
     PluginManagerBack,
+    /// An application view action as the menu offered it. The view may redraw
+    /// while the menu is open; the choice stays valid while it would still
+    /// act on the same rows under the same query.
     PluginCommand {
         command: u64,
         buffer: usize,
-        revision: u64,
+        rows: Option<Vec<String>>,
         query_revision: Option<String>,
     },
     Destination(OpenDestination),

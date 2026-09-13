@@ -3763,11 +3763,13 @@ impl App {
             Some(ListAction::PluginCommand {
                 command,
                 buffer,
-                revision,
+                rows,
                 query_revision,
             }) => {
+                // A redraw that keeps the chosen rows does not invalidate the
+                // choice; which actions the view offers is checked on invoke.
                 if self.active().buffer != buffer
-                    || self.buffers[buffer].revision() != revision
+                    || self.plugin_view_menu_rows(buffer) != rows
                     || self.plugin_view_query_revision(buffer) != query_revision
                 {
                     self.action_failed("Application view changed; reopen the actions");
