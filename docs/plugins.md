@@ -2,8 +2,7 @@
 
 Runyte plugins are explicitly enabled programs speaking the stable `runyte-1`
 application protocol over stdin/stdout. Stable support starts with Runyte 0.3.0.
-Python, JavaScript, Rust, C and other languages use the same public contract;
-there is no Rust ABI to link against.
+Python, JavaScript, Rust, C and other languages use the same public contract.
 
 Start with the [authoring guide](plugins/authoring.md),
 [application contract](plugins/applications.md),

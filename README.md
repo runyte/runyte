@@ -170,7 +170,7 @@ Plugins can be written in **any programming language**. Each runs as an
 explicitly enabled external process and exchanges bounded, newline-delimited
 JSON with Runyte over stdin/stdout. The asynchronous host handles registered
 commands, native views and input, background work, and capability grants.
-There is no Rust ABI to link against. Type `::` to browse plugin commands;
+Type `::` to browse plugin commands;
 ru-time offers `::time`, `::time-add`, and `::time-delete`. Plugins can also
 provide configurable keybindings through the editor's regular help and hints.
 
