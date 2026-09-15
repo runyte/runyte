@@ -99,6 +99,22 @@ The runner discovers suites in filename order and stops at the first failure.
 `--require-backends` refuses missing mpv, Node or compiled todo variants instead of accepting backend
 skips. Without this option, individual suites report their own skips.
 
+Those suites supply host messages themselves. To start every example in a real
+persistent host instead, build the editor and run the ignored registration test:
+
+```sh
+RUNYTE_EXAMPLE_PYTHON="$plugin_python" \
+  cargo test --locked --test persistent_host plugin_examples -- --ignored
+```
+
+It configures each example with its documented capabilities, at most eight per
+host, and requires `:plugins` to report every one `Running` and still running a
+second later. It needs Paramiko in that Python environment, `node` on `PATH` or
+in `RUNYTE_EXAMPLE_NODE`, and the todo variants under `target/todo-showcase` or
+`RUNYTE_TODO_SHOWCASE`. It fails when a top-level example program is missing
+from its list. Registration proves the editor accepts the example; it exercises
+no command.
+
 For changes to Runyte, run the host and worker tests as well:
 
 ```sh
@@ -142,7 +158,7 @@ Companion review files add fault/race cases to several groups.
 
 | Group | Public/example checks | Host or App behavior checks |
 | --- | --- | --- |
-| Epoch negotiation, IDs, registration and bounded worker delivery | [check_schema.py](check_schema.py), [check_applications.py](check_applications.py), [check_node.py](check_node.py) | [worker tests](../../src/plugin/tests/worker.rs), [application tests](../../src/workspace/host/tests/plugin_applications.rs) |
+| Epoch negotiation, IDs, registration and bounded worker delivery | [check_schema.py](check_schema.py), [check_applications.py](check_applications.py), [check_node.py](check_node.py) | [worker tests](../../src/plugin/tests/worker.rs), [application tests](../../src/workspace/host/tests/plugin_applications.rs), [example registration](../../tests/persistent_host/plugin_examples.rs) |
 | SDK output backpressure, local deadlines, cancellation and EOF | [check_writer.py](check_writer.py) uses actual full/broken pipes and a live example process | [worker tests](../../src/plugin/tests/worker.rs) cover host-side bounded delivery |
 | Native views, staged models, patches and immutable reads | [check_models.py](check_models.py), [check_applications.py](check_applications.py) | [model tests](../../src/workspace/host/tests/plugin_models.rs), [model review](../../src/workspace/host/tests/plugin_model_review.rs) |
 | Queries, viewport metadata and accepted actions | [check_queries.py](check_queries.py) | [query tests](../../src/workspace/host/tests/plugin_view_queries.rs), [query review](../../src/workspace/host/tests/plugin_view_query_review.rs) |

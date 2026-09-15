@@ -2706,3 +2706,5 @@ tr 'a-z' 'A-Z'
 
 #[path = "persistent_host/plugin_epoch2.rs"]
 mod plugin_epoch2;
+#[path = "persistent_host/plugin_examples.rs"]
+mod plugin_examples;

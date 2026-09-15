@@ -61,7 +61,7 @@ jobs:
   plugin-conformance:
     name: Plugin conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +73,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: plugin-conformance-${{ matrix.os }}
 
       - name: Install Linux example backends
         if: runner.os == 'Linux'
@@ -97,6 +101,13 @@ jobs:
           plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
           "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
           "$plugin_schema_python" docs/plugins/check_all.py --require-backends
+
+      # The checks above play the host themselves. This starts every example in
+      # a real persistent host, using the same Python environment for Paramiko.
+      - name: Start every example in a real host
+        env:
+          RUNYTE_EXAMPLE_PYTHON: ${{ runner.temp }}/plugin-schema/bin/python
+        run: cargo test --locked --test persistent_host plugin_examples -- --ignored
 
   coverage:
     name: Coverage (${{ matrix.os }})
