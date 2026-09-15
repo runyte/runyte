@@ -118,6 +118,36 @@ exit deadlines, fresh registration evidence and cleanup ordering. All 14 Runyte
 gate-tool tests and immutable provenance checks passed. These are Linux results;
 the corrected macOS matrix still needs to run after both fixes are pushed.
 
+### Native presentation synchronization — 2026-09-15
+
+[Runyte run 34961866719](https://github.com/runyte/runyte/actions/runs/34961866719)
+failed only the frozen ru-time Ubuntu job; the same commit passed every job on
+`main`. `test_short_commands_and_space_pause_with_native_actions` sent
+`::time-add` a fixed 0.3 seconds after invoking `::time`. On a slow runner that
+input arrived before the plugin's `pane.show`, which the host correctly refuses
+once input has advanced the foreground generation. The view stayed in the
+background and the later `ggj` Enter reached the welcome buffer. Prompts,
+confirmations and provider note opens have the same foreground rule and the
+same unsynchronized keys. A 0.8-second delay injected before those plugin
+requests reproduced the failure locally at the same assertion.
+
+Fresh output could not serve as evidence: Ratatui redraws only changed cells,
+and reopening an already visible view writes nothing. The corrected harness
+keeps a standard-library model of the terminal's cells. Opening the view waits
+for its title and for this command's `Application command completed` feedback.
+Each key sequence that asks the plugin to present something waits until that
+prompt, confirmation or note is on screen. It first requires that the marker is
+absent.
+
+The frozen external revision advances from `cd5b9c04` to
+`4e586d9316a9a3d675818e0cc75ede0c19001e0d`. Its diff again contains only
+`tests/test_native.py` and `tests/test_native_harness.py`. Plugin runtime,
+vendored SDK, schema, host inventory and native assertions are unchanged. The
+isolated frozen lane passed all **65 tests with zero skips** on Linux. Both
+native tests also passed with 2-second injected plugin delays and in four
+concurrent runs. Three new standard-library regressions cover the cell model,
+stale completion feedback and presentation markers.
+
 The plan stays active for Stage F's remote CI and release-readiness evidence.
 Publishing/tagging and the two-file 0.3.0 version commit require a separate release
 request. A normal build of this checkout still reports 0.2.4, so native plugin
