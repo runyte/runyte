@@ -43,6 +43,27 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-15 — stable plugin compatibility
+
+Measured on `x86_64-unknown-linux-gnu` at `3fa28b0` with
+`cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 89`.
+The full instrumented workspace suite passed. Formatting and warnings-as-errors
+Clippy also passed. Local socket/process tests require unsandboxed execution;
+the sandbox denied a socket operation with `EPERM`.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 120,745 | 131,559 | 91.78% |
+| Functions | 10,917 | 11,896 | 91.77% |
+| Regions | 183,057 | 200,670 | 91.22% |
+
+Coverage includes stable range admission, atomic registration, duplicate-field
+rejection, features/grants, retained diagnostics, worker refusal/reaping and the
+ported detached edit/undo and persistent view/job tests. The 89% floor is
+unchanged. Native macOS coverage remains required in CI; this Linux run does not
+establish it. Python/native external acceptance is recorded in the transition
+plan and is outside Rust line coverage.
+
 ## 2026-09-13 — plugin command aliases
 
 Measured on `x86_64-unknown-linux-gnu` for the alias implementation based on

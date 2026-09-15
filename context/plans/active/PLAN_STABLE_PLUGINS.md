@@ -30,8 +30,65 @@ Follow [the plan lifecycle](../README.md).
   standard-library file. Other languages receive protocol documentation,
   schemas, runnable examples and conformance checks; additional packaged SDKs
   are outside this transition.
-- Independent host, SDK/schema, CI and external acceptance reviews are running;
-  validation results and immutable source identities are recorded below before handoff.
+- Independent host, SDK/schema, CI and external acceptance reviews completed.
+  Review fixes include atomic command-ID allocation, reliable bounded rejection
+  delivery, retained failure diagnostics, duplicate-field rejection, SDK limit
+  validation, schema event discrimination and fresh-interpreter external testing.
+
+
+### Implementation validation and source identities
+
+Runyte implementation/SDK source: `3fa28b0bf6bb418027265413745080505d798f09`.
+ru-time stable candidate: `6b4a31736ac6b1c38e83ea1729557dcee01e7a65`.
+The immutable inventory records both, with SDK/schema/fixture SHA-256 digests.
+ru-time's independent host inventory uses the implementation source above as
+both oldest/newest initial 0.3.0 candidate. Neither identity is labeled a
+published stable release. Source pins exist locally; push both repositories
+before requiring independent network fetch and exact-commit CI evidence.
+
+Linux validation on 2026-09-15:
+
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
+  `cargo test --locked` passed. The final instrumented workspace suite passed
+  **3,634 tests**, with 34 existing ignored/helper/performance tests.
+- Canonical `cargo llvm-cov --locked --workspace --summary-only
+  --fail-under-lines 89` passed at **91.78% lines**, recorded in the coverage
+  register. The 89% floor is unchanged. Sandbox socket denial was diagnosed
+  with `EPERM`; the complete suite passed with required local process/socket
+  access rather than skipping those assertions.
+- All **28 plugin conformance suites** passed after the final SDK changes.
+  Eight optional real-mpv cases were skipped because mpv is unavailable locally.
+  Required CI installs mpv and runs `--require-backends`; that full backend and
+  native macOS result remains CI evidence to obtain.
+- Node and Python/Rust/C todo protocol checks passed, including malformed
+  handshakes and range boundaries. Native example Rust format/Clippy/build checks
+  passed. The benchmark boundary suite passed 22 tests; no new performance
+  measurement is claimed.
+- All **19 examples** registered and stayed running under the actual staged
+  0.3.0 persistent host. Staging used `candidate.py`: only the package version
+  and Cargo-generated root lock entry differ, with no runtime version override.
+- ru-time's **57-test** standard-library suite passed, with its two native tests
+  skipped only when `RUNYTE_BIN` is absent. Both native tests passed separately
+  against the candidate: prompt cancellation followed by a command, retained
+  unsaved notes through stop/restart/rebind, and persistent detach/reattach with
+  timer and unsaved-note retention. Optional schema validation passed.
+- Immutable inventory validation checked actual Git source bytes, vendored
+  provenance and digests. Frozen profile checks accepted 91 retained plugin
+  frames and 61 current host frames, plus the unchanged SDK handshake.
+  An intentionally incompatible current hello fixture was rejected by the
+  retained schema. Gate-tool regressions reject missing/mutable pins, wrong
+  digests, missing native tests, skips and dependency drift during staging.
+- The final required frozen lane passed **all 57 ru-time tests with zero skips**,
+  including both native tests and actual wire validation against its pinned
+  schema. It runs in a fresh isolated Python interpreter and checks loaded SDK
+  origin before and after the suite. All **14 gate-tool tests** passed. This
+  closes the local immutable-client/external behavior acceptance loop.
+
+The plan stays active for Stage F's remote CI and release-readiness evidence.
+Publishing/tagging and the two-file 0.3.0 version commit require a separate release
+request. A normal build of this checkout still reports 0.2.4, so native plugin
+acceptance before that bump uses the explicitly staged 0.3.0 candidate. Retain
+these initial immutable profiles when adding the first published stable release.
 
 
 Migration decision: the only current user is the maintainer, so the transition

@@ -1,6 +1,56 @@
 {
   "version": 1,
   "stable_floor": "0.3.0",
-  "profiles": [],
-  "plugins": []
+  "profiles": [
+    {
+      "id": "python-v1",
+      "repository": "runyte/runyte",
+      "revision": "3fa28b0bf6bb418027265413745080505d798f09",
+      "release": "stable-v1-candidate",
+      "protocol": "runyte-1",
+      "runyte": ">=0.3.0, <0.4.0",
+      "features": [],
+      "files": {
+        "sdk": {
+          "path": "v1/application.py",
+          "sha256": "1efccca99c41066cb0f6700ad18b98f751a7aa22ac6d7ddc432d7e6120ce704f"
+        },
+        "schema": {
+          "path": "v1/runyte-1.schema.json",
+          "sha256": "4ed166f3ba4f062cd84a08304ffbd3d6ccf6c27ece6a262cabd127e1e84adf9e"
+        },
+        "fixtures": {
+          "path": "v1/stable-fixtures.json",
+          "sha256": "47562b9b0b66fb8831c121fb588897f5f082f6bac470e18b333ac2db721fb543"
+        }
+      }
+    }
+  ],
+  "plugins": [
+    {
+      "id": "ru-time-v1",
+      "repository": "runyte/ru-time",
+      "revision": "6b4a31736ac6b1c38e83ea1729557dcee01e7a65",
+      "release": "stable-v1-candidate",
+      "protocol": "runyte-1",
+      "runyte": ">=0.3.0, <0.4.0",
+      "features": [],
+      "files": {
+        "sdk": {
+          "path": "vendor/application.py",
+          "sha256": "1efccca99c41066cb0f6700ad18b98f751a7aa22ac6d7ddc432d7e6120ce704f"
+        },
+        "schema": {
+          "path": "tests/runyte-1.schema.json",
+          "sha256": "4ed166f3ba4f062cd84a08304ffbd3d6ccf6c27ece6a262cabd127e1e84adf9e"
+        }
+      },
+      "profile": "python-v1",
+      "sdk_revision": "3fa28b0bf6bb418027265413745080505d798f09",
+      "native_tests": [
+        "test_native.NativeTests.test_short_commands_and_space_pause_with_native_actions",
+        "test_native.NativeTests.test_persistent_detach_retains_timer_and_unsaved_note"
+      ]
+    }
+  ]
 }

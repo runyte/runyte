@@ -25,13 +25,13 @@ def keys(value, required, optional=()):
 
 
 def text(value, pattern, description):
-    if not isinstance(value, str) or pattern.fullmatch(value) is None or set(value) == {'0'}:
+    if not isinstance(value, str) or len(value) > 256 or pattern.fullmatch(value) is None or set(value) == {'0'}:
         raise ValueError('Invalid ' + description)
     return value
 
 
 def relative(value):
-    if not isinstance(value, str) or not value or '\\' in value or any(ord(c) < 32 for c in value):
+    if not isinstance(value, str) or not value or len(value.encode('utf-8')) > 256 or '\\' in value or any(ord(c) < 32 for c in value):
         raise ValueError('Invalid inventory file path')
     path = PurePosixPath(value)
     if not path.parts or path.is_absolute() or '..' in path.parts or '.' in path.parts or str(path) != value:
@@ -94,7 +94,7 @@ def load_inventory(path=DIRECTORY / 'hosts-and-clients.json'):
                 text(row['profile'], NAME, 'plugin client profile')
                 text(row['sdk_revision'], SHA, 'vendored SDK source revision')
                 tests = row['native_tests']
-                if not isinstance(tests, list) or not 1 <= len(tests) <= 64 or len(set(tests)) != len(tests) or any(not isinstance(name, str) or re.fullmatch(r'test_native\.[A-Za-z_][A-Za-z0-9_]*\.test_[A-Za-z0-9_]+', name) is None for name in tests):
+                if not isinstance(tests, list) or not 1 <= len(tests) <= 64 or len(set(tests)) != len(tests) or any(not isinstance(name, str) or len(name) > 256 or re.fullmatch(r'test_native\.[A-Za-z_][A-Za-z0-9_]*\.test_[A-Za-z0-9_]+', name) is None for name in tests):
                     raise ValueError('Plugin needs explicit native test identities')
     profiles = {row['id']: row for row in inventory['profiles']}
     for row in inventory['plugins']:

@@ -15,7 +15,8 @@ import sys
 import tempfile
 import unittest
 
-from check_inventory import DIRECTORY, load_inventory, verify_checkout, verify_files
+# The child suite branch must import no current SDK before external discovery.
+DIRECTORY = Path(__file__).resolve().parent
 
 
 def read_fixtures(path):
@@ -37,6 +38,15 @@ def validator(schema, direction):
     from jsonschema import Draft202012Validator
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator({**schema, 'anyOf': [{'$ref': '#/$defs/' + direction + 'Message'}]})
+
+
+def validate_frame(decoder, message, profile, direction, index):
+    error = next(decoder.iter_errors(message), None)
+    if error is not None:
+        # Instance values can contain large documents. Report the violated rule,
+        # direction and fixture index, never dump an unrestricted protocol body.
+        rule = str(error.validator)[:64]
+        raise ValueError(f'{profile}: incompatible {direction} fixture {index} ({rule})')
 
 
 def frozen_handshake(profile, sdk_path, fixtures):
@@ -72,6 +82,7 @@ def frozen_handshake(profile, sdk_path, fixtures):
 
 
 def check_profiles(inventory, root):
+    from check_inventory import verify_files
     current_schema = json.loads((DIRECTORY.parent / 'runyte-1.schema.json').read_text(encoding='utf-8'))
     current_fixtures = read_fixtures(DIRECTORY.parent / 'stable-fixtures.json')
     current_plugin = validator(current_schema, 'plugin')
@@ -82,17 +93,17 @@ def check_profiles(inventory, root):
         frozen_fixtures = read_fixtures(paths['fixtures'])
         old_host = validator(frozen_schema, 'host')
         old_plugin_count = new_host_count = 0
-        for fixture in frozen_fixtures:
+        for index, fixture in enumerate(frozen_fixtures):
             if fixture['direction'] == 'plugin':
-                current_plugin.validate(fixture['message'])
+                validate_frame(current_plugin, fixture['message'], profile['id'], 'old-plugin', index)
                 old_plugin_count += 1
-        for fixture in current_fixtures:
+        for index, fixture in enumerate(current_fixtures):
             if fixture['direction'] == 'host' and set(fixture.get('features', [])).issubset(profile['features']):
-                old_host.validate(fixture['message'])
+                validate_frame(old_host, fixture['message'], profile['id'], 'current-host', index)
                 new_host_count += 1
         if old_plugin_count == 0 or new_host_count == 0:
             raise ValueError('Frozen profile did not exercise both traffic directions')
-        current_plugin.validate(frozen_handshake(profile, paths['sdk'], frozen_fixtures))
+        validate_frame(current_plugin, frozen_handshake(profile, paths['sdk'], frozen_fixtures), profile['id'], 'handshake', 0)
         print(f"Frozen {profile['id']} ({profile['revision']}): {old_plugin_count} old plugin frames, {new_host_count} current host frames, SDK handshake", flush=True)
 
 
@@ -126,6 +137,7 @@ def check_test_result(result, required):
 
 
 def run_external(checkout, binary, row, expected_version):
+    from check_inventory import verify_checkout
     from application import ReleaseRange
     checkout, binary = checkout.resolve(), binary.resolve()
     verify_checkout(checkout, row)
@@ -135,6 +147,22 @@ def run_external(checkout, binary, row, expected_version):
     if not ReleaseRange(row['runyte']).contains(actual):
         raise ValueError('Frozen acceptance lane excludes host ' + actual + '; a breaking-release migration needs an explicit rejection scenario and a new accepted plugin profile')
     print(f"External {row['id']}={row['revision']} SDK={row['sdk_revision']} host={actual} expected=accept", flush=True)
+    # A fresh interpreter prevents an already-imported current application.py
+    # from replacing the external plugin's vendored application in sys.modules.
+    environment = {**os.environ, 'RU_TIME_VALIDATE_SCHEMA': '1'}
+    subprocess.run([sys.executable, '-I', '-B', str(Path(__file__).resolve()), '--external-suite',
+                    str(checkout), str(binary), str(checkout / row['files']['sdk']['path']),
+                    json.dumps(row['native_tests'])], cwd=checkout, env=environment, check=True)
+
+
+def verify_loaded_sdk(expected):
+    expected = Path(expected).resolve()
+    modules = [sys.modules[name] for name in ('application', 'vendor.application') if name in sys.modules]
+    if not modules or any(not getattr(module, '__file__', None) or Path(module.__file__).resolve() != expected for module in modules):
+        raise ValueError('External tests did not load the pinned vendored SDK exclusively')
+
+
+def execute_suite(checkout, binary, sdk, required):
     variables = ('RUNYTE_BIN', 'PYTHONDONTWRITEBYTECODE', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
                  'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR')
     previous = {name: os.environ.get(name) for name in variables}
@@ -152,9 +180,11 @@ def run_external(checkout, binary, row, expected_version):
             os.chdir(checkout)
             sys.path.insert(0, str(checkout))
             suite = unittest.TestLoader().discover(str(checkout / 'tests'))
-            require_native_tests(suite, row['native_tests'])
+            verify_loaded_sdk(sdk)
+            require_native_tests(suite, required)
             result = unittest.TextTestRunner(verbosity=2).run(suite)
-            check_test_result(result, row['native_tests'])
+            check_test_result(result, required)
+            verify_loaded_sdk(sdk)
     finally:
         os.chdir(previous_directory)
         sys.path[:] = previous_path
@@ -166,6 +196,7 @@ def run_external(checkout, binary, row, expected_version):
 
 
 def main():
+    from check_inventory import load_inventory
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inventory', type=Path, default=DIRECTORY / 'hosts-and-clients.json')
     parser.add_argument('--checkout', type=Path)
@@ -185,4 +216,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) == 6 and sys.argv[1] == '--external-suite':
+        execute_suite(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), json.loads(sys.argv[5]))
+    else:
+        main()

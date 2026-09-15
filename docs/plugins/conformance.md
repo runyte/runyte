@@ -122,8 +122,10 @@ Rust behavior and coverage checks. `plugin-inventory` verifies full source SHAs,
 file digests and vendored provenance in
 [`hosts-and-clients.json`](compatibility/hosts-and-clients.json). Each retained
 external plugin runs its standard suite and explicitly named native tests in a
-required matrix cell. A missing binary, missing test or skipped native test fails
-that cell. `check_frozen.py` also validates old plugin frames against the current
+required matrix cell. A fresh isolated interpreter prevents the current SDK
+from substituting for the vendored one; the runner checks the loaded SDK origin
+and enables ru-time’s pinned-schema wire checks only for this gate. A missing
+binary, missing test or skipped native test fails that cell. `check_frozen.py` also validates old plugin frames against the current
 schema and current base host frames against every retained schema, then exercises
 each immutable SDK's negotiation and ignored-field behavior.
 

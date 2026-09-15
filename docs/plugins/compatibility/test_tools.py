@@ -195,5 +195,56 @@ class InventoryTests(unittest.TestCase):
             check_frozen.check_test_result(unittest.TestResult(), [])
 
 
+class IsolationTests(unittest.TestCase):
+    def test_fresh_runner_imports_no_current_sdk_before_external_discovery(self):
+        import sys
+        script = Path(check_frozen.__file__).resolve()
+        subprocess.run([sys.executable, '-I', '-B', '-c',
+                        'import runpy, sys; runpy.run_path(sys.argv[1], run_name="runner_import_review"); assert "application" not in sys.modules; assert "vendor.application" not in sys.modules',
+                        str(script)], check=True, timeout=10)
+
+    def test_loaded_sdk_must_have_the_pinned_vendor_origin(self):
+        import sys
+        with tempfile.TemporaryDirectory(prefix='runyte-sdk-origin-') as temporary:
+            sdk = Path(temporary) / 'vendor' / 'application.py'
+            good = types.SimpleNamespace(__file__=str(sdk))
+            bad = types.SimpleNamespace(__file__=str(Path(temporary) / 'current' / 'application.py'))
+            with patch.dict(sys.modules, {'application': good, 'vendor.application': good}):
+                check_frozen.verify_loaded_sdk(sdk)
+            with patch.dict(sys.modules, {'application': bad, 'vendor.application': good}):
+                with self.assertRaisesRegex(ValueError, 'pinned vendored SDK'):
+                    check_frozen.verify_loaded_sdk(sdk)
+
+    def test_external_suite_is_launched_in_an_isolated_python_process(self):
+        import os
+        import sys
+        previous_schema = os.environ.get('RU_TIME_VALIDATE_SCHEMA')
+        with tempfile.TemporaryDirectory(prefix='runyte-process-isolation-') as temporary:
+            checkout = Path(temporary)
+            row = {'id': 'ru-time-v1', 'revision': 'review-fixture', 'sdk_revision': 'review-fixture',
+                   'runyte': '>=0.3.0, <0.4.0', 'files': {'sdk': {'path': 'vendor/application.py'}},
+                   'native_tests': ['test_native.NativeTests.test_required']}
+            with patch.object(check_inventory, 'verify_checkout'), patch.object(check_frozen, 'host_version', return_value='0.3.0'), patch.object(check_frozen.subprocess, 'run') as execute:
+                check_frozen.run_external(checkout, checkout / 'runyte', row, '0.3.0')
+            command = execute.call_args.args[0]
+            self.assertEqual(command[:3], [sys.executable, '-I', '-B'])
+            self.assertEqual(command[4], '--external-suite')
+            self.assertEqual(command[7], str(checkout / 'vendor/application.py'))
+            self.assertTrue(execute.call_args.kwargs['check'])
+            self.assertEqual(execute.call_args.kwargs['env']['RU_TIME_VALIDATE_SCHEMA'], '1')
+            self.assertEqual(os.environ.get('RU_TIME_VALIDATE_SCHEMA'), previous_schema)
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_incompatible_fixture_is_a_failure_without_logging_its_document(self):
+        class Decoder:
+            def iter_errors(self, message):
+                yield types.SimpleNamespace(validator='enum', instance=message)
+        with self.assertRaises(ValueError) as error:
+            check_frozen.validate_frame(Decoder(), {'text': 'document-canary' * 1000}, 'python-v1', 'current-host', 4)
+        self.assertEqual(str(error.exception), 'python-v1: incompatible current-host fixture 4 (enum)')
+        self.assertNotIn('document-canary', str(error.exception))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
