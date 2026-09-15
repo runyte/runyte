@@ -109,6 +109,45 @@ jobs:
           RUNYTE_EXAMPLE_PYTHON: ${{ runner.temp }}/plugin-schema/bin/python
         run: cargo test --locked --test persistent_host plugin_examples -- --ignored
 
+  ru-time:
+    name: ru-time against this commit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # ru-time is an external plugin on an experimental API that may still break
+    # deliberately. A failure is reported on the job without failing the run.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: runyte/ru-time
+          path: ru-time
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ru-time-${{ matrix.os }}
+
+      - name: Build Runyte
+        run: cargo build --locked
+
+      # RUNYTE_BIN enables ru-time's real-editor test, which is skipped otherwise.
+      - name: Test ru-time
+        working-directory: ru-time
+        env:
+          RUNYTE_BIN: ${{ github.workspace }}/target/debug/runyte
+        run: python3 -m unittest discover -s tests -v
+
   coverage:
     name: Coverage (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

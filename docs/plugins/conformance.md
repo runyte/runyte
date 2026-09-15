@@ -115,6 +115,11 @@ in `RUNYTE_EXAMPLE_NODE`, and the todo variants under `target/todo-showcase` or
 from its list. Registration proves the editor accepts the example; it exercises
 no command.
 
+CI also runs [ru-time](https://github.com/runyte/ru-time), an external plugin,
+against each commit, including its real-editor test. That job reports failures
+without failing the workflow, because the experimental API may still change
+incompatibly on purpose.
+
 For changes to Runyte, run the host and worker tests as well:
 
 ```sh
