@@ -283,11 +283,19 @@ the complete manual. `:log-open` and `:service-health` help diagnose failures.
 - [Diagnostics and logging](docs/user-guide.md#diagnostics-and-logging)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Status
+## Status and contributing
 
-Runyte is pre-1.0. Current development focuses on reliability, performance,
-and Linux/macOS support; Windows support is planned. Report bugs through
-[GitHub Issues](https://github.com/runyte/runyte/issues).
+Runyte is ready for general use on Linux and macOS. Windows is not supported
+yet.
+
+Contributions are welcome, especially:
+
+- Bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
+- New [plugins](docs/plugins/authoring.md), in any programming language.
+- Windows support.
+
+See the [contributing guide](CONTRIBUTING.md) for what makes a useful report,
+how to share a plugin, and where Windows work stands.
 
 ## The name
 
