@@ -30,7 +30,7 @@
     {
       "id": "ru-time-v1",
       "repository": "runyte/ru-time",
-      "revision": "6b4a31736ac6b1c38e83ea1729557dcee01e7a65",
+      "revision": "cd5b9c04d4ed8bcbc7d153a6b106d459a6c56d36",
       "release": "stable-v1-candidate",
       "protocol": "runyte-1",
       "runyte": ">=0.3.0, <0.4.0",

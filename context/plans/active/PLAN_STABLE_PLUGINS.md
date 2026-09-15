@@ -84,6 +84,40 @@ Linux validation on 2026-09-15:
   origin before and after the suite. All **14 gate-tool tests** passed. This
   closes the local immutable-client/external behavior acceptance loop.
 
+
+### Native CI harness correction — 2026-09-15
+
+[ru-time run 34954284268](https://github.com/runyte/ru-time/actions/runs/34954284268)
+failed both macOS native jobs during raw process waits after detach/quit.
+[Runyte run 34954302544](https://github.com/runyte/runyte/actions/runs/34954302544)
+failed its moving-head and frozen macOS ru-time jobs; the other 15 jobs passed.
+The frozen job also exposed startup input reaching the command palette before
+plugin registration was available.
+
+The harness had stopped draining the PTY while waiting for the editor to exit.
+That can block final terminal output on macOS; failure cleanup retained the same
+undrained master. Fixed-duration startup/restart sleeps also did not establish
+that Enter would select a registered command. The correction waits for fresh
+native Normal-mode output and the rendered `plugin.time.open` palette entry,
+drains the PTY during the unchanged five-second exit deadline, and closes the
+master before forced cleanup. Persistent-host shutdown runs even if frontend
+reaping raises an error.
+
+The frozen external revision advances from `6b4a317` to
+`cd5b9c04d4ed8bcbc7d153a6b106d459a6c56d36`. Its diff contains only
+`tests/test_native.py` and new `tests/test_native_harness.py`: plugin runtime,
+vendored SDK, schema, provenance, host inventory and declared support remain
+byte-identical. This corrects the test harness without replacing the frozen
+runtime/client contract or relaxing native assertions, skips or deadlines.
+Independent review confirmed that boundary.
+
+The corrected isolated frozen lane passed all **62 tests with zero skips**,
+including both native tests and pinned-schema wire validation. Five additional
+standard-library regressions cover real PTY backpressure, retained exit status,
+exit deadlines, fresh registration evidence and cleanup ordering. All 14 Runyte
+gate-tool tests and immutable provenance checks passed. These are Linux results;
+the corrected macOS matrix still needs to run after both fixes are pushed.
+
 The plan stays active for Stage F's remote CI and release-readiness evidence.
 Publishing/tagging and the two-file 0.3.0 version commit require a separate release
 request. A normal build of this checkout still reports 0.2.4, so native plugin
