@@ -5,17 +5,9 @@ use crate::input::KeyStroke;
 use crate::plugin::application as api;
 
 fn alias(host: &mut WorkspaceHost, owner: usize, local: &str, alias: &str) -> Result<()> {
-    host.plugin_message(
-        owner,
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![Registration {
-                name: local.into(),
-                alias: Some(alias.into()),
-                description: "Transform the selection".into(),
-            }],
-        },
-    )
+    let mut value = command(local);
+    value.alias = Some(alias.into());
+    host.application_message(owner, registration(vec![value]))
 }
 
 fn type_keys(host: &mut WorkspaceHost, text: &str) {
@@ -78,7 +70,7 @@ fn double_colon_completion_dispatch_help_and_backspace_use_registered_alias() {
         .handle_key(KeyStroke::parse("Enter").unwrap())
         .unwrap();
     assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::Invoke { command, .. } if command == "upper")
+        matches!(next(&mut receiver), api::HostMessage::Request { params, .. } if params.command == "upper")
     );
     type_keys(&mut host, "::");
     host.app
@@ -171,19 +163,18 @@ fn collisions_disable_all_claimants_keep_full_commands_and_restore_on_stop() {
 fn duplicate_aliases_within_one_registration_are_disabled_and_bad_aliases_are_atomic() {
     let (_root, mut host) = super::host();
     let _receiver = instance(&mut host, 0, config("case"));
-    host.plugin_message(
+    host.application_message(
         0,
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: ["first", "second"]
+        registration(
+            ["first", "second"]
                 .into_iter()
-                .map(|name| Registration {
-                    name: name.into(),
-                    alias: Some("shared".into()),
-                    description: "Shared spelling".into(),
+                .map(|name| {
+                    let mut value = command(name);
+                    value.alias = Some("shared".into());
+                    value
                 })
                 .collect(),
-        },
+        ),
     )
     .unwrap();
     assert!(host.app.parse_command(":shared").is_err());
@@ -211,16 +202,19 @@ fn failed_binding_registration_does_not_disable_an_existing_alias() {
 }
 
 #[test]
-fn epoch_two_alias_keeps_argument_usage_completion_and_wire_command_identity() {
+fn stable_alias_keeps_argument_usage_completion_and_wire_command_identity() {
     let (_root, mut host) = super::host();
     let mut cfg = config("different-id");
-    cfg.api = api::Api::Epoch2;
+    cfg.api = api::VERSION.to_owned();
     let mut receiver = instance(&mut host, 0, cfg);
     host.application_message(
         0,
         api::ClientMessage::Register {
             settings_schema: None,
             version: api::VERSION.into(),
+            runyte: format!("={}", plugin::compatibility::HOST_VERSION),
+            required_features: Default::default(),
+            optional_features: Default::default(),
             name: "Timer".into(),
             commands: vec![api::Registration {
                 name: "add".into(),
@@ -248,7 +242,7 @@ fn epoch_two_alias_keeps_argument_usage_completion_and_wire_command_identity() {
         .handle_key(KeyStroke::parse("Enter").unwrap())
         .unwrap();
     assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::Application(api::HostMessage::Request { params, .. })
+        matches!(next(&mut receiver), api::HostMessage::Request { params, .. }
         if params.command == "add" && matches!(&params.arguments["title"], plugin::arguments::Scalar::String(value) if value == "猫 task"))
     );
 }

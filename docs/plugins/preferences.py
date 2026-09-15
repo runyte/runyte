@@ -11,7 +11,7 @@ app = Application('Preferences', [
     {'name': 'forget', 'alias': 'preferences-forget', 'description': 'Delete this plugin’s saved preferences', 'context': 'workspace'},
 ], ['settings', 'state', 'views'], settings_schema={'fields': [
     {'name': 'default_destination', 'type': 'string', 'max_length': 256},
-]})
+]}, runyte='>=0.3.0, <0.4.0')
 lock = threading.Lock()
 view = revision = None
 opening = 0

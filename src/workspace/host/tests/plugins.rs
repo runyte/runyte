@@ -5,9 +5,11 @@ use crate::{
     app::{App, CommandOutcome, HostPorts},
     clipboard::SystemClipboard,
     command::{CommandExecutionContext, CommandInvocation, EditorCommand},
-    plugin::{PluginConfig, Registration},
+    plugin::{PluginConfig, application as api},
     selection::{Range, Selection},
     test_support::TestRuntimeRoot,
+    text::Transaction,
+    workspace::{BufferId, BufferRevision},
 };
 use tokio::sync::mpsc;
 
@@ -31,8 +33,9 @@ fn config(id: &str) -> PluginConfig {
     PluginConfig {
         settings: Default::default(),
         id: id.into(),
-        api: Default::default(),
-        capabilities: vec![],
+        api: api::VERSION.to_owned(),
+        runyte: format!("={}", plugin::compatibility::HOST_VERSION),
+        capabilities: vec!["text".into(), "selections".into(), "workspace".into()],
         enabled: true,
         executable: "/nonexistent/runyte-plugin".into(),
         args: vec![],
@@ -52,26 +55,70 @@ fn instance(
             sender: plugin::Sender::new(sender),
             registered: false,
             application: Default::default(),
-            pending: None,
-            issued: BTreeSet::new(),
-            subscriptions: Default::default(),
-            sequence: 0,
         },
     );
     receiver
 }
+fn registration(commands: Vec<api::Registration>) -> api::ClientMessage {
+    api::ClientMessage::Register {
+        version: api::VERSION.into(),
+        runyte: format!("={}", plugin::compatibility::HOST_VERSION),
+        settings_schema: None,
+        name: "Test plugin".into(),
+        commands,
+        required_capabilities: Default::default(),
+        optional_capabilities: ["text".into(), "selections".into(), "workspace".into()].into(),
+        required_features: Default::default(),
+        optional_features: Default::default(),
+    }
+}
+fn command(name: &str) -> api::Registration {
+    api::Registration {
+        alias: None,
+        arguments: vec![],
+        primary: false,
+        name: name.into(),
+        description: "Uppercase selections".into(),
+        context: api::CommandContext::Buffer,
+    }
+}
 fn register(host: &mut WorkspaceHost, id: usize) -> Result<()> {
-    host.plugin_message(
-        id,
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![Registration {
-                alias: None,
-                name: "upper".into(),
-                description: "Uppercase selections".into(),
-            }],
-        },
-    )
+    host.application_message(id, registration(vec![command("upper")]))
+}
+fn next(receiver: &mut mpsc::Receiver<HostMessage>) -> api::HostMessage {
+    loop {
+        match receiver.try_recv().unwrap() {
+            HostMessage::Application(message) => return message,
+            HostMessage::Deadline { .. } => {}
+        }
+    }
+}
+fn call(
+    host: &mut WorkspaceHost,
+    receiver: &mut mpsc::Receiver<HostMessage>,
+    n: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    host.handle_plugin_event(Event {
+        plugin: 0,
+        result: Ok(ClientMessage::Application(api::ClientMessage::Request {
+            id: format!("p:{n}"),
+            request: serde_json::from_value(serde_json::json!({"method":method,"params":params}))
+                .unwrap(),
+        })),
+    });
+    serde_json::to_value(next(receiver)).unwrap()
+}
+fn capture(
+    host: &mut WorkspaceHost,
+    receiver: &mut mpsc::Receiver<HostMessage>,
+) -> api::Invocation {
+    invoke(host, "plugin.case.upper");
+    let api::HostMessage::Request { params, .. } = next(receiver) else {
+        panic!("missing invocation")
+    };
+    params
 }
 fn seed(host: &mut WorkspaceHost, text: &str) {
     host.apply_expected_transaction(
@@ -86,21 +133,6 @@ fn invoke(host: &mut WorkspaceHost, name: &str) -> CommandOutcome {
     let command = host.app.parse_command(name).unwrap();
     host.app.execute(command).unwrap()
 }
-fn reply(host: &mut WorkspaceHost, replacements: &[&str]) {
-    let invocation = host.app.plugins.instances[&0]
-        .pending
-        .as_ref()
-        .unwrap()
-        .token
-        .clone();
-    host.handle_plugin_event(Event {
-        plugin: 0,
-        result: Ok(ClientMessage::Replace {
-            invocation,
-            replacements: replacements.iter().map(|s| (*s).to_owned()).collect(),
-        }),
-    });
-}
 fn undo(host: &mut WorkspaceHost) {
     host.app
         .execute(
@@ -108,118 +140,6 @@ fn undo(host: &mut WorkspaceHost) {
                 .unwrap(),
         )
         .unwrap();
-}
-
-#[test]
-fn unicode_multiselection_capture_focus_mapping_and_single_undo_without_frame() {
-    let (root, mut host) = host();
-    seed(&mut host, "éß 😀xy");
-    let mut receiver = instance(&mut host, 0, config("case"));
-    register(&mut host, 0).unwrap();
-    receiver.try_recv().unwrap();
-    host.app.panes.get_mut(&0).unwrap().selection =
-        Selection::new(vec![Range::new(1, 0), Range::new(3, 5)], 1);
-    assert!(matches!(
-        invoke(&mut host, "plugin.case.upper"),
-        CommandOutcome::AsynchronousRequest(_)
-    ));
-    let HostMessage::Invoke {
-        text,
-        selections,
-        primary,
-        buffer,
-        ..
-    } = receiver.try_recv().unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(text, "éß 😀xy");
-    assert_eq!(primary, 1);
-    assert_eq!(
-        (
-            selections[0].anchor,
-            selections[0].head,
-            selections[0].from,
-            selections[0].to
-        ),
-        (1, 0, 0, 2)
-    );
-    assert_eq!((selections[1].from, selections[1].to), (3, 6));
-    assert_eq!(buffer, "0");
-    assert!(host.current_frame_id().is_none());
-    host.app
-        .execute(crate::command::parse_colon_command("vsplit").unwrap())
-        .unwrap();
-    assert_ne!(host.app.active_pane, 0);
-    let path = root.join("other.txt");
-    std::fs::write(&path, "other").unwrap();
-    let other = host.open_buffer(path, true).unwrap();
-    reply(&mut host, &["ÉSS", "😀XY"]);
-    assert_eq!(host.app.buffers[0].to_string(), "ÉSS 😀XY");
-    assert_eq!(BufferId::from_index(host.app.active().buffer), other);
-    assert_eq!(host.app.active_buffer().to_string(), "other");
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        HostMessage::Complete {
-            status: "applied",
-            revision: Some(_),
-            ..
-        }
-    ));
-    assert_eq!(host.app.panes[&0].buffer, 0);
-    host.app.active_pane = 0;
-    undo(&mut host);
-    assert_eq!(host.app.buffers[0].to_string(), "éß 😀xy");
-    undo(&mut host);
-    assert_eq!(host.app.buffers[0].to_string(), "");
-}
-
-#[test]
-fn stale_after_edit_and_undo_closed_and_bad_replacements_are_atomic() {
-    for scenario in ["edit", "undo", "closed", "count", "readonly"] {
-        let (_root, mut host) = host();
-        seed(&mut host, "abc");
-        let mut receiver = instance(&mut host, 0, config("case"));
-        register(&mut host, 0).unwrap();
-        receiver.try_recv().unwrap();
-        invoke(&mut host, "plugin.case.upper");
-        receiver.try_recv().unwrap();
-        match scenario {
-            "edit" | "undo" => {
-                let revision = host.app.buffers[0].revision();
-                host.apply_expected_transaction(
-                    BufferId::from_index(0),
-                    BufferRevision::from_raw(revision),
-                    Transaction::insert(3, "!"),
-                )
-                .unwrap();
-                if scenario == "undo" {
-                    undo(&mut host);
-                }
-            }
-            "closed" => host.close_buffer(BufferId::from_index(0), true).unwrap(),
-            "readonly" => {
-                host.app.buffers[0].kind = crate::buffer::BufferKind::Help;
-            }
-            _ => {}
-        }
-        let before = host.app.buffers[0].to_string();
-        reply(&mut host, if scenario == "count" { &[] } else { &["X"] });
-        assert_eq!(host.app.buffers[0].to_string(), before, "{scenario}");
-        let HostMessage::Complete { status, .. } = receiver.try_recv().unwrap() else {
-            panic!()
-        };
-        assert_eq!(
-            status,
-            match scenario {
-                "edit" | "undo" => "stale",
-                "closed" => "closed",
-                "readonly" => "read_only",
-                _ => "invalid_replacements",
-            },
-            "{scenario}"
-        );
-    }
 }
 
 #[test]
@@ -243,11 +163,12 @@ fn registry_colon_binding_help_hints_collisions_cleanup_and_stop() {
         .unwrap();
     assert!(matches!(
         receiver.try_recv().unwrap(),
-        HostMessage::Invoke { .. }
+        HostMessage::Application(api::HostMessage::Request { .. })
     ));
+    // Stable applications may accept concurrent commands within their limit.
     assert!(matches!(
         invoke(&mut host, "plugin.case.upper"),
-        CommandOutcome::UserError(_)
+        CommandOutcome::AsynchronousRequest(_)
     ));
     let binding = host
         .app
@@ -287,89 +208,6 @@ fn registry_colon_binding_help_hints_collisions_cleanup_and_stop() {
     ));
 }
 
-#[test]
-fn subscriptions_order_revision_coalescing_unsubscribe_closure_and_slow_consumer() {
-    let (_root, mut host) = host();
-    seed(&mut host, "abc");
-    let mut receiver = instance(&mut host, 0, config("case"));
-    register(&mut host, 0).unwrap();
-    receiver.try_recv().unwrap();
-    invoke(&mut host, "plugin.case.upper");
-    receiver.try_recv().unwrap();
-    host.plugin_message(
-        0,
-        ClientMessage::Subscribe {
-            request: "s".into(),
-            buffer: "0".into(),
-        },
-    )
-    .unwrap();
-    assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::Subscribed { revision, .. } if revision == host.app.buffers[0].revision().to_string())
-    );
-    reply(&mut host, &["A"]);
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        HostMessage::Complete {
-            status: "applied",
-            ..
-        }
-    ));
-    assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::BufferState { sequence, revision, closed: false, .. } if sequence == "1" && revision == host.app.buffers[0].revision().to_string())
-    );
-    host.sync_plugin_observers();
-    assert!(receiver.try_recv().is_err());
-    undo(&mut host);
-    host.sync_plugin_observers();
-    assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::BufferState { sequence, revision, .. } if sequence == "2" && revision == host.app.buffers[0].revision().to_string())
-    );
-    host.plugin_message(
-        0,
-        ClientMessage::Unsubscribe {
-            request: "u".into(),
-            buffer: "0".into(),
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        HostMessage::Unsubscribed { .. }
-    ));
-    undo(&mut host);
-    host.sync_plugin_observers();
-    assert!(receiver.try_recv().is_err());
-    host.plugin_message(
-        0,
-        ClientMessage::Subscribe {
-            request: "s2".into(),
-            buffer: "0".into(),
-        },
-    )
-    .unwrap();
-    receiver.try_recv().unwrap();
-    host.close_buffer(BufferId::from_index(0), true).unwrap();
-    host.sync_plugin_observers();
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        HostMessage::BufferState { closed: true, .. }
-    ));
-    // Each response is bounded; the ninth unanswered control request fails the
-    // plugin instead of retaining an unbounded stream or blocking the editor.
-    for i in 0..9 {
-        host.handle_plugin_event(Event {
-            plugin: 0,
-            result: Ok(ClientMessage::Unsubscribe {
-                request: i.to_string(),
-                buffer: "0".into(),
-            }),
-        });
-    }
-    assert!(!host.app.plugins.instances.contains_key(&0));
-    assert!(host.app.plugins.commands.is_empty());
-}
-
 #[tokio::test]
 async fn disabled_spawn_failure_and_host_attachment_do_not_duplicate_instances() {
     let (_root, mut host) = host();
@@ -393,273 +231,6 @@ async fn disabled_spawn_failure_and_host_attachment_do_not_duplicate_instances()
     assert!(host.plugin_workers.is_empty());
     assert!(host.app.plugins.instances.is_empty());
     assert!(host.app.status.contains("could not start"));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn real_process_transforms_text_and_preserves_one_host_instance() {
-    let (root, mut host) = host();
-    seed(&mut host, "éß");
-    let program = root.join("case");
-    std::os::unix::fs::symlink(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
-        &program,
-    )
-    .unwrap();
-    std::fs::write(root.join("case.behavior"), r#"
-printf 'started\n' >> "$0.starts"
-read -r hello
-printf '%s\n' '{"type":"register","version":"runyte-experimental-1","commands":[{"name":"upper","description":"Uppercase selections"}]}'
-read -r registered
-while read -r request; do
-    case "$request" in
-        *'"type":"invoke"'*) printf '%s\n' '{"type":"replace","invocation":"1","replacements":["ÉSS"]}' ;;
-    esac
-done
-"#).unwrap();
-    let mut cfg = config("case");
-    cfg.executable = program;
-    host.app.config.plugins.push(cfg);
-    let mut events = host.start_plugins().unwrap();
-    let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    host.handle_plugin_event(event);
-    host.app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
-    invoke(&mut host, "plugin.case.upper");
-    host.app.note_frontend_attached();
-    assert!(host.start_plugins().is_none());
-    let event = tokio::time::timeout(std::time::Duration::from_secs(3), events.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    host.handle_plugin_event(event);
-    assert_eq!(host.app.buffers[0].to_string(), "ÉSS");
-    assert_eq!(
-        std::fs::read_to_string(root.join("case.starts")).unwrap(),
-        "started\n"
-    );
-    undo(&mut host);
-    assert_eq!(host.app.buffers[0].to_string(), "éß");
-}
-
-#[test]
-fn plugin_edit_splits_an_existing_insert_undo_group() {
-    let (_root, mut host) = host();
-    seed(&mut host, "abc");
-    host.app.buffers[0].begin_undo_group();
-    let revision = host.app.buffers[0].revision();
-    host.apply_expected_transaction(
-        BufferId::from_index(0),
-        BufferRevision::from_raw(revision),
-        Transaction::insert(3, "!"),
-    )
-    .unwrap();
-    let mut receiver = instance(&mut host, 0, config("case"));
-    register(&mut host, 0).unwrap();
-    receiver.try_recv().unwrap();
-    invoke(&mut host, "plugin.case.upper");
-    receiver.try_recv().unwrap();
-    reply(&mut host, &["A"]);
-    assert_eq!(host.app.buffers[0].to_string(), "Abc!");
-    undo(&mut host);
-    assert_eq!(host.app.buffers[0].to_string(), "abc!");
-    undo(&mut host);
-    assert_eq!(host.app.buffers[0].to_string(), "abc");
-}
-
-#[test]
-fn refused_plugin_results_preserve_the_in_progress_insert_undo_group() {
-    for scenario in ["stale", "count", "readonly", "range", "noop"] {
-        let (_root, mut host) = host();
-        seed(&mut host, "abc");
-        host.app.buffers[0].begin_undo_group();
-        let revision = host.app.buffers[0].revision();
-        host.apply_expected_transaction(
-            BufferId::from_index(0),
-            BufferRevision::from_raw(revision),
-            Transaction::insert(3, "!"),
-        )
-        .unwrap();
-        let mut receiver = instance(&mut host, 0, config("case"));
-        register(&mut host, 0).unwrap();
-        receiver.try_recv().unwrap();
-        invoke(&mut host, "plugin.case.upper");
-        receiver.try_recv().unwrap();
-        let kind = host.app.buffers[0].kind.clone();
-        match scenario {
-            "stale" => {
-                let revision = host.app.buffers[0].revision();
-                host.apply_expected_transaction(
-                    BufferId::from_index(0),
-                    BufferRevision::from_raw(revision),
-                    Transaction::insert(4, "+"),
-                )
-                .unwrap();
-            }
-            "readonly" => host.app.buffers[0].kind = crate::buffer::BufferKind::Help,
-            "range" | "noop" => {
-                let pending = host
-                    .app
-                    .plugins
-                    .instances
-                    .get_mut(&0)
-                    .unwrap()
-                    .pending
-                    .as_mut()
-                    .unwrap();
-                pending.selections[0].to = if scenario == "range" { 100 } else { 0 };
-            }
-            _ => {}
-        }
-        let before = host.app.buffers[0].to_string();
-        let history = host.app.buffers[0].history_len();
-        let revision = host.app.buffers[0].revision();
-        reply(
-            &mut host,
-            match scenario {
-                "count" => &[],
-                "noop" => &[""],
-                _ => &["A"],
-            },
-        );
-        let HostMessage::Complete { status, .. } = receiver.try_recv().unwrap() else {
-            panic!("plugin completion missing");
-        };
-        assert_eq!(
-            status,
-            match scenario {
-                "stale" => "stale",
-                "readonly" => "read_only",
-                "noop" => "applied",
-                _ => "invalid_replacements",
-            },
-            "{scenario}"
-        );
-        assert_eq!(host.app.buffers[0].to_string(), before, "{scenario}");
-        assert_eq!(host.app.buffers[0].revision(), revision, "{scenario}");
-        assert_eq!(host.app.buffers[0].history_len(), history, "{scenario}");
-        host.app.buffers[0].kind = kind;
-        host.apply_expected_transaction(
-            BufferId::from_index(0),
-            BufferRevision::from_raw(revision),
-            Transaction::insert(before.chars().count(), "?"),
-        )
-        .unwrap();
-        undo(&mut host);
-        assert_eq!(host.app.buffers[0].to_string(), "abc", "{scenario}");
-    }
-}
-
-#[test]
-fn subscription_buffer_identifier_limit_is_checked_before_decimal_parsing() {
-    let (_root, mut host) = host();
-    let mut receiver = instance(&mut host, 0, config("case"));
-    register(&mut host, 0).unwrap();
-    receiver.try_recv().unwrap();
-    host.app
-        .plugins
-        .instances
-        .get_mut(&0)
-        .unwrap()
-        .issued
-        .insert(0);
-    let accepted = "0".repeat(64);
-    host.plugin_message(
-        0,
-        ClientMessage::Subscribe {
-            request: "allowed".into(),
-            buffer: accepted.clone(),
-        },
-    )
-    .unwrap();
-    assert!(
-        matches!(receiver.try_recv().unwrap(), HostMessage::Subscribed { buffer, .. } if buffer == accepted)
-    );
-    let subscriptions = host.app.plugins.instances[&0].subscriptions.clone();
-    for size in [65, 1024 * 1024 - 128] {
-        let oversized = "0".repeat(size);
-        assert_eq!(oversized.parse::<usize>().unwrap(), 0);
-        let error = host
-            .plugin_message(
-                0,
-                ClientMessage::Subscribe {
-                    request: "oversized".into(),
-                    buffer: oversized,
-                },
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("buffer ID exceeds limit"));
-        assert_eq!(host.app.plugins.instances[&0].subscriptions, subscriptions);
-        assert!(receiver.try_recv().is_err());
-    }
-}
-
-#[test]
-fn invalid_registration_tokens_and_subscription_errors_are_structured() {
-    for registration in [
-        ClientMessage::Register {
-            version: "future".into(),
-            commands: vec![],
-        },
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![],
-        },
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![Registration {
-                alias: None,
-                name: "stop".into(),
-                description: "reserved".into(),
-            }],
-        },
-        ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![Registration {
-                alias: None,
-                name: "upper".into(),
-                description: "bad\nlabel".into(),
-            }],
-        },
-    ] {
-        let (_root, mut host) = host();
-        let _receiver = instance(&mut host, 0, config("case"));
-        host.handle_plugin_event(Event {
-            plugin: 0,
-            result: Ok(registration),
-        });
-        assert!(host.app.plugins.commands.is_empty());
-        assert!(host.app.plugins.instances.is_empty());
-    }
-    let (_root, mut host) = host();
-    let mut receiver = instance(&mut host, 0, config("case"));
-    register(&mut host, 0).unwrap();
-    receiver.try_recv().unwrap();
-    host.plugin_message(
-        0,
-        ClientMessage::Subscribe {
-            request: "q".into(),
-            buffer: "999".into(),
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        receiver.try_recv().unwrap(),
-        HostMessage::Error {
-            code: "unknown_buffer",
-            ..
-        }
-    ));
-    host.handle_plugin_event(Event {
-        plugin: 0,
-        result: Ok(ClientMessage::Replace {
-            invocation: "unknown".into(),
-            replacements: vec![],
-        }),
-    });
-    assert!(host.app.plugins.instances.is_empty());
 }
 
 #[tokio::test]
@@ -697,66 +268,6 @@ async fn process_malformed_output_exit_and_deadline_remove_commands() {
         host.handle_plugin_event(event);
         assert!(host.app.plugins.instances.is_empty(), "{expected}");
         assert!(host.app.status.contains(expected), "{}", host.app.status);
-    }
-}
-
-#[test]
-fn observer_overflow_or_queued_stop_can_retire_an_incoming_result() {
-    for stop in [false, true] {
-        let (_root, mut host) = host();
-        seed(&mut host, "abc");
-        let mut receiver = instance(&mut host, 0, config("case"));
-        register(&mut host, 0).unwrap();
-        receiver.try_recv().unwrap();
-        invoke(&mut host, "plugin.case.upper");
-        receiver.try_recv().unwrap();
-        let token = host.app.plugins.instances[&0]
-            .pending
-            .as_ref()
-            .unwrap()
-            .token
-            .clone();
-        if stop {
-            invoke(&mut host, "plugin.case.stop");
-        } else {
-            host.plugin_message(
-                0,
-                ClientMessage::Subscribe {
-                    request: "s".into(),
-                    buffer: "0".into(),
-                },
-            )
-            .unwrap();
-            receiver.try_recv().unwrap();
-            for _ in 0..8 {
-                host.plugin_send(
-                    0,
-                    HostMessage::Error {
-                        request: "q".into(),
-                        code: "unknown_buffer",
-                    },
-                )
-                .unwrap();
-            }
-            let revision = host.app.buffers[0].revision();
-            host.apply_expected_transaction(
-                BufferId::from_index(0),
-                BufferRevision::from_raw(revision),
-                Transaction::insert(3, "!"),
-            )
-            .unwrap();
-        }
-        let before = host.app.buffers[0].to_string();
-        host.handle_plugin_event(Event {
-            plugin: 0,
-            result: Ok(ClientMessage::Replace {
-                invocation: token,
-                replacements: vec!["X".into()],
-            }),
-        });
-        assert_eq!(host.app.buffers[0].to_string(), before);
-        assert!(host.app.plugins.instances.is_empty());
-        assert!(host.app.plugins.commands.is_empty());
     }
 }
 
@@ -800,41 +311,6 @@ fn prefixed_plugin_binding_hints_use_the_live_registration_and_cleanup() {
 }
 
 #[test]
-fn asynchronous_plugin_completion_updates_only_its_own_action_echo() {
-    for intervening_key in [false, true] {
-        let (_root, mut host) = host();
-        seed(&mut host, "abc");
-        let mut cfg = config("case");
-        cfg.bindings.insert("upper".into(), "F12".into());
-        let mut receiver = instance(&mut host, 0, cfg);
-        register(&mut host, 0).unwrap();
-        receiver.try_recv().unwrap();
-        host.app
-            .handle_input(crate::input::InputEvent::Key(
-                crate::input::KeyStroke::parse("F12").unwrap(),
-            ))
-            .unwrap();
-        receiver.try_recv().unwrap();
-        assert!(host.app.displayed_status_message().contains("accepted"));
-        if intervening_key {
-            host.app
-                .handle_input(crate::input::InputEvent::Key(
-                    crate::input::KeyStroke::char('l'),
-                ))
-                .unwrap();
-        }
-        let before = host.app.displayed_status_message().to_owned();
-        reply(&mut host, &["A"]);
-        if intervening_key {
-            assert_eq!(host.app.displayed_status_message(), before);
-        } else {
-            assert!(host.app.displayed_status_message().contains("applied"));
-        }
-        assert_eq!(host.app.buffers[0].to_string(), "Abc");
-    }
-}
-
-#[test]
 fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
     for sequence in ["1 a", "F12 Escape", "F12 Backspace", "Space"] {
         let (_root, mut host) = host();
@@ -844,6 +320,330 @@ fn plugin_bindings_cannot_claim_grammar_counts_or_prefix_cancellation() {
         assert!(register(&mut host, 0).is_err(), "{sequence}");
         assert!(host.app.parse_command("plugin.case.upper").is_err());
     }
+}
+
+#[test]
+fn unicode_multiselection_capture_focus_mapping_and_single_undo_without_frame() {
+    use serde_json::json;
+    let (root, mut host) = host();
+    seed(&mut host, "éß 😀xy");
+    let mut receiver = instance(&mut host, 0, config("case"));
+    register(&mut host, 0).unwrap();
+    next(&mut receiver);
+    host.app.panes.get_mut(&0).unwrap().selection =
+        Selection::new(vec![Range::new(1, 0), Range::new(3, 5)], 1);
+    let params = capture(&mut host, &mut receiver);
+    let selected = call(
+        &mut host,
+        &mut receiver,
+        1,
+        "selection.get",
+        json!({"pane":params.pane}),
+    );
+    assert_eq!(selected["result"]["primary"], 1);
+    assert_eq!(
+        selected["result"]["ranges"],
+        json!([{"anchor":1,"head":0},{"anchor":3,"head":5}])
+    );
+    assert_eq!(
+        selected["result"]["spans"],
+        json!([{"from":0,"to":2},{"from":3,"to":6}])
+    );
+    let read = call(
+        &mut host,
+        &mut receiver,
+        2,
+        "buffer.read",
+        json!({"buffer":params.buffer,"expected_revision":params.buffer_revision,"from":0,"to":6}),
+    );
+    assert_eq!(read["result"]["text"], "éß 😀xy");
+    assert!(host.current_frame_id().is_none());
+    host.app
+        .execute(crate::command::parse_colon_command("vsplit").unwrap())
+        .unwrap();
+    let path = root.join("other.txt");
+    std::fs::write(&path, "other").unwrap();
+    let other = host.open_buffer(path, true).unwrap();
+    let edited = call(
+        &mut host,
+        &mut receiver,
+        3,
+        "buffer.edit",
+        json!({"buffer":params.buffer,"expected_revision":params.buffer_revision,"changes":[{"from":0,"to":2,"text":"ÉSS"},{"from":3,"to":6,"text":"😀XY"}]}),
+    );
+    assert!(edited.get("error").is_none(), "{edited}");
+    assert_eq!(host.app.buffers[0].to_string(), "ÉSS 😀XY");
+    assert_eq!(BufferId::from_index(host.app.active().buffer), other);
+    host.app.active_pane = 0;
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "éß 😀xy");
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "");
+}
+
+#[test]
+fn stale_closed_readonly_and_invalid_edits_preserve_text_revision_and_undo_group() {
+    use serde_json::json;
+    for scenario in [
+        "edit", "undo", "closed", "readonly", "overlap", "range", "noop",
+    ] {
+        let (_root, mut host) = host();
+        seed(&mut host, "abc");
+        host.app.buffers[0].begin_undo_group();
+        let revision = host.app.buffers[0].revision();
+        host.apply_expected_transaction(
+            BufferId::from_index(0),
+            BufferRevision::from_raw(revision),
+            Transaction::insert(3, "!"),
+        )
+        .unwrap();
+        let mut receiver = instance(&mut host, 0, config("case"));
+        register(&mut host, 0).unwrap();
+        next(&mut receiver);
+        let params = capture(&mut host, &mut receiver);
+        let kind = host.app.buffers[0].kind.clone();
+        match scenario {
+            "edit" | "undo" => {
+                let revision = host.app.buffers[0].revision();
+                host.apply_expected_transaction(
+                    BufferId::from_index(0),
+                    BufferRevision::from_raw(revision),
+                    Transaction::insert(4, "+"),
+                )
+                .unwrap();
+                if scenario == "undo" {
+                    undo(&mut host);
+                }
+            }
+            "closed" => host.close_buffer(BufferId::from_index(0), true).unwrap(),
+            "readonly" => host.app.buffers[0].kind = crate::buffer::BufferKind::Help,
+            _ => {}
+        }
+        let before = host.app.buffers[0].to_string();
+        let revision = host.app.buffers[0].revision();
+        let history = host.app.buffers[0].history_len();
+        let changes = match scenario {
+            "overlap" => json!([{"from":0,"to":2,"text":"X"},{"from":1,"to":3,"text":"Y"}]),
+            "range" => json!([{"from":0,"to":100,"text":"X"}]),
+            "noop" => json!([]),
+            _ => json!([{"from":0,"to":1,"text":"A"}]),
+        };
+        let reply = call(
+            &mut host,
+            &mut receiver,
+            1,
+            "buffer.edit",
+            json!({"buffer":params.buffer,"expected_revision":params.buffer_revision,"changes":changes}),
+        );
+        if scenario == "noop" {
+            assert!(reply.get("error").is_none(), "{reply}");
+        } else {
+            let code = match scenario {
+                "edit" | "undo" => "stale",
+                "closed" => "closed",
+                "readonly" => "read_only",
+                _ => "invalid_argument",
+            };
+            assert_eq!(reply["error"]["code"], code, "{scenario}: {reply}");
+        }
+        assert_eq!(host.app.buffers[0].to_string(), before, "{scenario}");
+        assert_eq!(host.app.buffers[0].revision(), revision, "{scenario}");
+        assert_eq!(host.app.buffers[0].history_len(), history, "{scenario}");
+        host.app.buffers[0].kind = kind;
+        if matches!(scenario, "readonly" | "overlap" | "range" | "noop") {
+            host.apply_expected_transaction(
+                BufferId::from_index(0),
+                BufferRevision::from_raw(revision),
+                Transaction::insert(before.chars().count(), "?"),
+            )
+            .unwrap();
+            undo(&mut host);
+            assert_eq!(host.app.buffers[0].to_string(), "abc", "{scenario}");
+        }
+    }
+}
+
+#[test]
+fn plugin_edit_splits_an_existing_insert_undo_group() {
+    use serde_json::json;
+    let (_root, mut host) = host();
+    seed(&mut host, "abc");
+    host.app.buffers[0].begin_undo_group();
+    let revision = host.app.buffers[0].revision();
+    host.apply_expected_transaction(
+        BufferId::from_index(0),
+        BufferRevision::from_raw(revision),
+        Transaction::insert(3, "!"),
+    )
+    .unwrap();
+    let mut receiver = instance(&mut host, 0, config("case"));
+    register(&mut host, 0).unwrap();
+    next(&mut receiver);
+    let params = capture(&mut host, &mut receiver);
+    let reply = call(
+        &mut host,
+        &mut receiver,
+        1,
+        "buffer.edit",
+        json!({"buffer":params.buffer,"expected_revision":params.buffer_revision,"changes":[{"from":0,"to":1,"text":"A"}]}),
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(host.app.buffers[0].to_string(), "Abc!");
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "abc!");
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "abc");
+}
+
+#[test]
+fn subscriptions_order_coalescing_unsubscribe_and_closed_buffers_use_stable_events() {
+    use serde_json::json;
+    let (_root, mut host) = host();
+    seed(&mut host, "abc");
+    let mut receiver = instance(&mut host, 0, config("case"));
+    register(&mut host, 0).unwrap();
+    next(&mut receiver);
+    let (sender, replacement) = mpsc::channel(32);
+    host.app.plugins.instances.get_mut(&0).unwrap().sender = plugin::Sender::new(sender);
+    receiver = replacement;
+    let initial = call(
+        &mut host,
+        &mut receiver,
+        1,
+        "event.subscribe",
+        json!({"sources":[{"kind":"buffers"}]}),
+    );
+    let baseline = &initial["result"];
+    let buffer = baseline["sources"][0]["source"]["buffer"].clone();
+    let revision = baseline["sources"][0]["state"]["revision"].clone();
+    let response = call(
+        &mut host,
+        &mut receiver,
+        2,
+        "buffer.edit",
+        json!({"buffer":buffer,"expected_revision":revision,"changes":[{"from":0,"to":1,"text":"A"}]}),
+    );
+    assert!(response.get("error").is_none(), "{response}");
+    host.sync_plugin_observers();
+    let changed = serde_json::to_value(next(&mut receiver)).unwrap();
+    assert_eq!(changed["event"], "event.changed");
+    assert_eq!(changed["data"]["subscription"], baseline["subscription"]);
+    host.sync_plugin_observers();
+    assert!(receiver.try_recv().is_err());
+    undo(&mut host);
+    host.sync_plugin_observers();
+    assert!(matches!(
+        next(&mut receiver),
+        api::HostMessage::Event {
+            event: "event.changed",
+            ..
+        }
+    ));
+    let removed = call(
+        &mut host,
+        &mut receiver,
+        3,
+        "event.unsubscribe",
+        json!({"subscription":baseline["subscription"]}),
+    );
+    assert!(removed.get("error").is_none());
+    undo(&mut host);
+    host.sync_plugin_observers();
+    assert!(receiver.try_recv().is_err());
+    let renewed = call(
+        &mut host,
+        &mut receiver,
+        4,
+        "event.subscribe",
+        json!({"sources":[{"kind":"buffers"}]}),
+    );
+    assert!(renewed.get("error").is_none());
+    host.close_buffer(BufferId::from_index(0), true).unwrap();
+    host.sync_plugin_observers();
+    let closed = serde_json::to_value(next(&mut receiver)).unwrap();
+    assert_eq!(closed["event"], "event.closed");
+    assert_eq!(closed["data"]["sources"][0]["state"]["kind"], "closed");
+}
+
+#[test]
+fn failed_registration_leaves_all_negotiated_state_and_registry_unchanged() {
+    for failure in [
+        "protocol",
+        "range",
+        "feature",
+        "capability",
+        "capability_overlap",
+        "name",
+        "description",
+        "binding",
+        "queue",
+    ] {
+        let (_root, mut host) = host();
+        let mut cfg = config("case");
+        if failure == "binding" {
+            cfg.bindings.insert("upper".into(), "i".into());
+        }
+        let mut receiver = Some(instance(&mut host, 0, cfg));
+        let mut registration = registration(vec![command("upper")]);
+        let api::ClientMessage::Register {
+            version,
+            runyte,
+            required_features,
+            required_capabilities,
+            commands,
+            ..
+        } = &mut registration
+        else {
+            unreachable!()
+        };
+        match failure {
+            "protocol" => *version = "runyte-experimental-2".into(),
+            "range" => *runyte = "=99.0.0".into(),
+            "feature" => {
+                required_features.insert("future".into());
+            }
+            "capability" => {
+                required_capabilities.insert("jobs".into());
+            }
+            "capability_overlap" => {
+                required_capabilities.insert("text".into());
+            }
+            "name" => commands[0].name = "stop".into(),
+            "description" => commands[0].description = "bad\nlabel".into(),
+            _ => {}
+        }
+        if failure == "queue" {
+            drop(receiver.take());
+        }
+        let before = host.app.plugins.next_command;
+        assert!(
+            host.application_message(0, registration).is_err(),
+            "{failure}"
+        );
+        assert_eq!(host.app.plugins.next_command, before, "{failure}");
+        assert!(host.app.plugins.commands.is_empty());
+        let owner = &host.app.plugins.instances[&0];
+        assert!(!owner.registered);
+        assert!(owner.application.capabilities.is_empty());
+        assert!(owner.application.features.is_empty());
+        assert!(owner.application.command_contexts.is_empty());
+    }
+}
+
+#[test]
+fn retired_owner_rejects_queued_mutations_and_does_not_replay_commands() {
+    use serde_json::json;
+    let (_root, mut host) = host();
+    seed(&mut host, "abc");
+    let mut receiver = instance(&mut host, 0, config("case"));
+    register(&mut host, 0).unwrap();
+    next(&mut receiver);
+    let params = capture(&mut host, &mut receiver);
+    invoke(&mut host, "plugin.case.stop");
+    host.handle_plugin_event(Event{plugin:0,result:Ok(ClientMessage::Application(api::ClientMessage::Request{id:"p:late".into(),request:serde_json::from_value(json!({"method":"buffer.edit","params":{"buffer":params.buffer,"expected_revision":params.buffer_revision,"changes":[{"from":0,"to":1,"text":"X"}]}})).unwrap()}))});
+    assert_eq!(host.app.buffers[0].to_string(), "abc");
+    assert!(host.app.plugins.instances.is_empty());
+    assert!(host.app.plugins.commands.is_empty());
 }
 
 #[path = "plugin_applications.rs"]
@@ -856,3 +656,108 @@ mod aliases;
 mod manager;
 #[path = "plugin_manager_review.rs"]
 mod manager_review;
+
+#[test]
+fn asynchronous_plugin_completion_updates_only_its_own_action_echo() {
+    for intervening_key in [false, true] {
+        let (_root, mut host) = host();
+        seed(&mut host, "abc");
+        let mut cfg = config("case");
+        cfg.bindings.insert("upper".into(), "F12".into());
+        let mut receiver = instance(&mut host, 0, cfg);
+        register(&mut host, 0).unwrap();
+        next(&mut receiver);
+        host.app
+            .handle_input(crate::input::InputEvent::Key(
+                crate::input::KeyStroke::parse("F12").unwrap(),
+            ))
+            .unwrap();
+        let api::HostMessage::Request { id, .. } = next(&mut receiver) else {
+            panic!()
+        };
+        assert!(host.app.displayed_status_message().contains("accepted"));
+        if intervening_key {
+            host.app
+                .handle_input(crate::input::InputEvent::Key(
+                    crate::input::KeyStroke::char('l'),
+                ))
+                .unwrap();
+        }
+        let before = host.app.displayed_status_message().to_owned();
+        host.handle_plugin_event(Event {
+            plugin: 0,
+            result: Ok(ClientMessage::Application(api::ClientMessage::Response {
+                id,
+                outcome: api::CommandResponse::Success {
+                    result: api::CommandResult { job: None },
+                },
+            })),
+        });
+        if intervening_key {
+            assert_eq!(host.app.displayed_status_message(), before);
+        } else {
+            assert!(host.app.displayed_status_message().contains("completed"));
+        }
+        assert!(
+            host.app.plugins.instances[&0]
+                .application
+                .requests
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn real_process_transforms_text_and_preserves_one_host_instance() {
+    let (root, mut host) = host();
+    seed(&mut host, "éß");
+    let program = root.join("case");
+    std::os::unix::fs::symlink(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &program,
+    )
+    .unwrap();
+    let registration = serde_json::to_string(&registration(vec![command("upper")])).unwrap();
+    let behavior = r#"
+printf 'started\n' >> "$0.starts"
+read -r hello
+printf '%s\n' 'REGISTRATION'
+read -r registered
+while read -r request; do
+    case "$request" in
+        *'"method":"command.invoke"'*)
+            buffer=${request#*\"buffer\":\"}; buffer=${buffer%%\"*}
+            revision=${request#*\"buffer_revision\":\"}; revision=${revision%%\"*}
+            printf '{"type":"request","id":"p:1","method":"buffer.edit","params":{"buffer":"%s","expected_revision":"%s","changes":[{"from":0,"to":2,"text":"ÉSS"}]}}\n' "$buffer" "$revision"
+            ;;
+    esac
+done
+"#.replace("REGISTRATION", &registration);
+    std::fs::write(root.join("case.behavior"), behavior).unwrap();
+    let mut cfg = config("case");
+    cfg.executable = program;
+    host.app.config.plugins.push(cfg);
+    let mut events = host.start_plugins().unwrap();
+    manager::until(&mut host, &mut events, |host| {
+        host.app
+            .plugins
+            .instances
+            .values()
+            .any(|instance| instance.registered)
+    })
+    .await;
+    invoke(&mut host, "plugin.case.upper");
+    host.app.note_frontend_attached();
+    assert!(host.start_plugins().is_none());
+    manager::until(&mut host, &mut events, |host| {
+        host.app.buffers[0].to_string() == "ÉSS"
+    })
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(root.join("case.starts")).unwrap(),
+        "started\n"
+    );
+    undo(&mut host);
+    assert_eq!(host.app.buffers[0].to_string(), "éß");
+    host.shutdown_plugins().await.unwrap();
+}

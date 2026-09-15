@@ -49,7 +49,7 @@ class ModelPort:
 
 class ModelTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Models', [], ['views'])
+        self.app = Application('Models', [], ['views'], runyte='>=0.3.0, <0.4.0')
         self.model = {'title': 'Unicode', 'purpose': 'document', 'rows': [
             {'id': 'row', 'text': 'é猫' * 300000, 'role': 'ordinary'}]}
         self.port = ModelPort(self.model)
@@ -192,7 +192,7 @@ class DashboardTests(unittest.TestCase):
         import dashboard
         from pathlib import Path
         from jsonschema import Draft202012Validator
-        schema = json.loads(Path(__file__).with_name('runyte-experimental-2.schema.json').read_text())
+        schema = json.loads(Path(__file__).with_name('runyte-1.schema.json').read_text())
         def validator(name):
             return Draft202012Validator({'$defs': schema['$defs'], '$ref': f'#/$defs/{name}'})
         for count in (12, 8000):

@@ -11,7 +11,7 @@ from check_queries import shutdown
 
 class ActivitySdkTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Continuing work', [], ['activity'])
+        self.app = Application('Continuing work', [], ['activity'], runyte='>=0.3.0, <0.4.0')
         self.calls = []
         self.app.request = lambda method, **params: self.calls.append((method, params))
 
@@ -75,8 +75,8 @@ class ActivitySdkTests(unittest.TestCase):
     def test_all_lease_shapes_and_cancel_event_match_schema(self):
         from jsonschema import Draft202012Validator
         directory = Path(__file__).parent
-        schema = json.loads((directory / 'runyte-experimental-2.schema.json').read_text())
-        fixtures = json.loads((directory / 'epoch2-fixtures.json').read_text())
+        schema = json.loads((directory / 'runyte-1.schema.json').read_text())
+        fixtures = json.loads((directory / 'stable-fixtures.json').read_text())
         checked = 0
         for fixture in fixtures:
             message = fixture['message']
@@ -90,7 +90,7 @@ class ActivitySdkTests(unittest.TestCase):
 
     def test_schema_rejects_unbounded_or_spoofed_activity_requests(self):
         from jsonschema import Draft202012Validator
-        schema = json.loads(Path(__file__).with_name('runyte-experimental-2.schema.json').read_text())
+        schema = json.loads(Path(__file__).with_name('runyte-1.schema.json').read_text())
         validator = Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/activity.acquire'})
         message = {'type': 'request', 'id': 'p:1', 'method': 'activity.acquire',
                    'params': {'title': 'Playback'}}

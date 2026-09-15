@@ -12,6 +12,10 @@ from application import PluginError
 from media import MediaApplication, media_path
 
 
+TEST_LIMITS = next(f['message']['limits'] for f in json.loads(
+    Path(__file__).with_name('stable-fixtures.json').read_text())
+    if f['message']['type'] == 'hello')
+
 class Timer:
     def __init__(self, interval, callback):
         self.interval, self.callback = interval, callback
@@ -163,7 +167,7 @@ class MediaTests(unittest.TestCase):
         from application import VERSION
         from jsonschema import Draft202012Validator
         app = MediaApplication(workspace_root=self.root).app
-        inputs = iter([{'type': 'hello', 'version': VERSION}, {'type': 'registered'}])
+        inputs = iter([{'type': 'hello', 'version': VERSION, 'host_version': '0.3.0', 'features': [], 'capabilities': ['views', 'processes', 'activity', 'jobs'], 'limits': TEST_LIMITS}, {'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['views', 'processes', 'activity', 'jobs'], 'limits': TEST_LIMITS}])
         def read():
             try:
                 return next(inputs)
@@ -172,7 +176,7 @@ class MediaTests(unittest.TestCase):
         frames = []
         app._read, app._write = read, frames.append
         app.run()
-        schema = json.loads(Path(__file__).with_name('runyte-experimental-2.schema.json').read_text())
+        schema = json.loads(Path(__file__).with_name('runyte-1.schema.json').read_text())
         Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/register'}).validate(frames[0])
         names = [entry['name'] for entry in frames[0]['commands']]
         self.assertNotIn('stop', names)

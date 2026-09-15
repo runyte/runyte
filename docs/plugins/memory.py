@@ -17,7 +17,7 @@ app = Application('Memory provider', [
     {'name': 'save', 'alias': 'memory-save', 'description': 'Save the captured provider document', 'context': 'buffer'},
     {'name': 'rebind', 'alias': 'memory-rebind', 'description': 'Reconcile the provider document explicitly', 'context': 'buffer'},
     {'name': 'inspect', 'alias': 'memory-inspect', 'description': 'Compare fresh remote text with the provider document', 'context': 'buffer'},
-], ['providers', 'documents', 'jobs'])
+], ['providers', 'documents', 'jobs'], runyte='>=0.3.0, <0.4.0')
 registered = False
 registration_lock = threading.Lock()
 state_lock = threading.Lock()

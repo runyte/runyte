@@ -3097,7 +3097,7 @@ are guarded at the revisions from which a request was made, including targets
 other than the command's source buffer. Versioned diagnostic publications are
 likewise ignored after their open document advances.
 
-### Experimental plugins
+### Plugins
 
 Type `::` for the plugin-only command palette, with completion and descriptions.
 Plugins can declare short names such as ru-time's `::time`, `::time-add`, and
@@ -3117,7 +3117,7 @@ Explicitly enabled process plugins can register commands, read the invoking
 buffer's text and selections, and return replacements as one undoable edit.
 They run asynchronously; changing the invoking text rejects stale results.
 Persistent hosts retain their plugin processes across TUI detach and reattach.
-Opt-in epoch 2 applications also provide retained native views, typed commands,
+Application plugins also provide retained native views, typed commands,
 finite background jobs, explicit buffer/selection operations and bounded local
 filesystem operations with native confirmation, plus native prompts, filterable
 choices and forms with masked secret fields. Applications can also create named
@@ -3218,7 +3218,7 @@ be inspected before any retry. Existing remote documents keep their original
 identity and unsaved text. See the [remote operation guide](plugins/applications.md#confirmed-remote-directory-operations).
 
 The runnable example, installation and configuration, command bindings, errors,
-subscription behavior, limits and experimental API are in the
+subscription behavior, limits and stable API are in the
 [plugin guide](plugins.md). There is no package manager or automatic plugin
 discovery. Enabled programs run with your permissions; they are not sandboxed.
 

@@ -18,7 +18,7 @@ def shutdown(app):
 
 class QuerySdkTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Queries', [], ['views'])
+        self.app = Application('Queries', [], ['views'], runyte='>=0.3.0, <0.4.0')
         self.large = {'title': 'Large', 'purpose': 'list', 'rows': [
             {'id': 'row', 'text': 'é猫' * 300000, 'role': 'ordinary'}]}
         self.port = ModelPort(self.large)
@@ -90,8 +90,8 @@ class QuerySdkTests(unittest.TestCase):
 
     def test_schema_covers_query_viewport_and_reliable_action_fixtures(self):
         from jsonschema import Draft202012Validator
-        schema = json.loads(Path(__file__).with_name('runyte-experimental-2.schema.json').read_text())
-        fixtures = json.loads(Path(__file__).with_name('epoch2-fixtures.json').read_text())
+        schema = json.loads(Path(__file__).with_name('runyte-1.schema.json').read_text())
+        fixtures = json.loads(Path(__file__).with_name('stable-fixtures.json').read_text())
         for fixture in fixtures:
             message = fixture['message']
             if message.get('id') in ('p:950', 'p:951', 'p:952', 'p:953', 'p:954', 'h:950') or message.get('sequence') in ('e:950', 'e:951', 'e:952'):

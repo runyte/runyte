@@ -671,8 +671,7 @@ impl WorkspaceHost {
         self.protected_state().is_empty()
             && self.app.terminals.is_empty()
             && self.app.plugins.instances.values().all(|instance| {
-                instance.pending.is_none()
-                    && instance.application.local_requests.is_empty()
+                instance.application.local_requests.is_empty()
                     && instance.application.requests.is_empty()
                     && !instance
                         .application

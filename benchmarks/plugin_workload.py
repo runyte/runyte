@@ -54,10 +54,12 @@ class Workload:
         workload = self
         class ObservedApplication(Application):
             def _read(self):
-                value = super()._read()
-                if value.get('type') == 'registered':
+                # The next read begins only after Application has validated the
+                # acknowledgement. Raw receipt alone is not admission evidence.
+                if self.granted_capabilities and not getattr(self, '_registration_recorded', False):
                     workload.record('registered')
-                return value
+                    self._registration_recorded = True
+                return super()._read()
             def request(self, method, **params):
                 result = super().request(method, **params)
                 if method in ('view.publish', 'view.stage.commit'):
@@ -70,7 +72,7 @@ class Workload:
             ('publish', 'Publish maximum models during ordinary document edits'),
             ('checkpoint', 'Verify current benchmark workload admission'),
             ('probe', 'Respond from a quiet independent plugin'), ('end', 'Finish the benchmark workload'))]
-        self.app = ObservedApplication('Benchmark ' + owner, commands, ['views', 'jobs', 'processes'])
+        self.app = ObservedApplication('Benchmark ' + owner, commands, ['views', 'jobs', 'processes'], runyte='>=0.3.0, <0.4.0')
         self.app.handlers = {'visible': lambda context: self.show(context, False),
                              'large': lambda context: self.show(context, True),
                              'job': lambda context: self.start(context, 'job'),

@@ -81,7 +81,7 @@ class JobsTests(unittest.TestCase):
                 selector.register(child.stdout, selectors.EVENT_READ)
                 self.assertTrue(selector.select(2), 'Background job response stalled')
             return json.loads(child.stdout.readline(1048577))
-        fixtures = json.loads((DIRECTORY / 'epoch2-fixtures.json').read_text())
+        fixtures = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
         hello, registered, invocation = [item['message'] for item in fixtures if item['direction'] == 'host'][:3]
         try:
             send(hello)

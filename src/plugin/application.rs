@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Epoch 2 wire values. No editor or frontend types cross this boundary.
+//! Stable application wire values. No editor or frontend types cross this boundary.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const VERSION: &str = "runyte-experimental-2";
+pub const VERSION: &str = "runyte-1";
 pub const MAX_COMMANDS: usize = 64;
 pub const MAX_REQUESTS: usize = 16;
 pub const MAX_JOBS: usize = 4;
@@ -14,22 +14,39 @@ pub const MAX_VIEWS: usize = 16;
 pub const MAX_RETAINED_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_HOST_RETAINED_BYTES: usize = 160 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-pub enum Api {
-    #[default]
-    #[serde(rename = "runyte-experimental-1")]
-    Epoch1,
-    #[serde(rename = "runyte-experimental-2")]
-    Epoch2,
-}
-impl Api {
-    pub fn version(self) -> &'static str {
-        match self {
-            Self::Epoch1 => super::VERSION,
-            Self::Epoch2 => VERSION,
+fn unique_names<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeSet<String>, D::Error> {
+    let values = Vec::<String>::deserialize(deserializer)?;
+    if values.len() > 32 {
+        return Err(serde::de::Error::custom("too many negotiation names"));
+    }
+    let mut names = BTreeSet::new();
+    for value in values {
+        if value.len() > 64 || !names.insert(value) {
+            return Err(serde::de::Error::custom(
+                "invalid or duplicate negotiation name",
+            ));
         }
     }
+    Ok(names)
 }
+
+/// Optional wire extensions supported by this host. Capabilities grant authority;
+/// features only select understood message shapes and behavior.
+pub const FEATURES: &[&str] = &[];
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RegistrationFailure {
+    pub code: &'static str,
+    pub message: String,
+}
+impl std::fmt::Display for RegistrationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.message)
+    }
+}
+impl std::error::Error for RegistrationFailure {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -96,9 +113,16 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         settings_schema: Option<super::settings::Schema>,
         version: String,
+        runyte: String,
+        #[serde(deserialize_with = "unique_names")]
+        required_features: BTreeSet<String>,
+        #[serde(deserialize_with = "unique_names")]
+        optional_features: BTreeSet<String>,
         name: String,
         commands: Vec<Registration>,
+        #[serde(deserialize_with = "unique_names")]
         required_capabilities: BTreeSet<String>,
+        #[serde(deserialize_with = "unique_names")]
         optional_capabilities: BTreeSet<String>,
     },
     Request {
@@ -480,7 +504,7 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
-    /// Compatible addition: older epoch 2 hosts omit this resource inventory.
+    /// Resource inventory is part of the stable base profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<Box<ResourceLimits>>,
     pub state_document_bytes: usize,
@@ -604,10 +628,18 @@ pub enum HostMessage {
     },
     Hello {
         version: &'static str,
+        host_version: &'static str,
+        features: Vec<&'static str>,
         capabilities: Vec<&'static str>,
         limits: Limits,
     },
+    RegistrationError {
+        #[serde(flatten)]
+        error: RegistrationFailure,
+    },
     Registered {
+        runyte: String,
+        features: BTreeSet<String>,
         commands: Vec<String>,
         capabilities: BTreeSet<String>,
         limits: Limits,
@@ -750,6 +782,7 @@ pub enum ResultValue {
         buffer: String,
         revision: String,
         ranges: Vec<super::editor::Range>,
+        spans: Vec<super::editor::Span>,
         primary: usize,
     },
     Workspace {
@@ -814,6 +847,8 @@ pub(crate) struct Instance {
     pub staging_plans: BTreeMap<String, String>,
     pub local_requests: BTreeMap<String, super::filesystem::Pending>,
     pub capabilities: BTreeSet<String>,
+    pub features: BTreeSet<String>,
+    pub runyte: String,
     pub requests: BTreeMap<String, CapturedContext>,
     pub views: BTreeMap<String, super::view::View>,
     pub buffers: BTreeMap<String, usize>,
@@ -862,6 +897,8 @@ impl Default for Instance {
             staging_plans: Default::default(),
             local_requests: Default::default(),
             capabilities: Default::default(),
+            features: Default::default(),
+            runyte: String::new(),
             requests: Default::default(),
             views: Default::default(),
             buffers: Default::default(),
@@ -1053,9 +1090,14 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         if value.get("type").and_then(|v| v.as_str()) == Some("register") {
             let object = value.as_object().unwrap();
             anyhow::ensure!(
-                object.len() == 6 + usize::from(object.contains_key("settings_schema")),
+                object.len() == 9 + usize::from(object.contains_key("settings_schema")),
                 "invalid registration envelope"
             );
+            // Parse the original object, so duplicate registration/command fields
+            // cannot disappear through serde_json::Value's map conversion.
+            return Ok(super::ClientMessage::Application(serde_json::from_slice(
+                bytes,
+            )?));
         }
         if value.get("type").and_then(|v| v.as_str()) == Some("response") {
             let object = value.as_object().unwrap();
@@ -1064,8 +1106,8 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
                 "invalid response envelope"
             );
         }
-        Ok(super::ClientMessage::Application(serde_json::from_value(
-            value,
+        Ok(super::ClientMessage::Application(serde_json::from_slice(
+            bytes,
         )?))
     })();
     if settings_schema {
@@ -1078,7 +1120,39 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn resource_inventory_is_optional_for_older_epoch_two_handshakes() {
+    fn stable_requests_and_responses_reject_duplicate_fields() {
+        for invalid in [
+            r#"{"type":"request","id":"p:1","id":"p:2","method":"workspace.info","params":{}}"#,
+            r#"{"type":"request","id":"p:1","id":"p:2","method":"future.method","params":{}}"#,
+            r#"{"type":"request","id":"p:1","method":"job.get","params":{"job":"j:1","job":"j:2"}}"#,
+            r#"{"type":"response","id":"h:1","id":"h:2","result":{}}"#,
+            r#"{"type":"response","id":"h:1","result":{"job":"j:1","job":"j:2"}}"#,
+        ] {
+            assert!(decode(invalid.as_bytes()).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn stable_registration_rejects_duplicate_fields_and_negotiation_names() {
+        let valid = r#"{"type":"register","version":"runyte-1","runyte":"=0.3.0","name":"Test","commands":[],"required_capabilities":[],"optional_capabilities":[],"required_features":[],"optional_features":[]}"#;
+        assert!(decode(valid.as_bytes()).is_ok());
+        for invalid in [
+            valid.replace("\"name\":\"Test\"", "\"name\":\"Test\",\"name\":\"Again\""),
+            valid.replace(
+                "\"required_features\":[]",
+                "\"required_features\":[\"future\",\"future\"]",
+            ),
+            valid.replace(
+                "\"required_capabilities\":[]",
+                "\"required_capabilities\":[\"text\",\"text\"]",
+            ),
+        ] {
+            assert!(decode(invalid.as_bytes()).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn resource_inventory_is_optional_but_preserved_when_present() {
         let current = serde_json::to_value(super::Limits::default()).unwrap();
         assert_eq!(current["resources"]["views"], 16);
         assert_eq!(current["resources"]["retained_payload_bytes"], 50_331_648);
@@ -1097,7 +1171,7 @@ mod tests {
     fn schema_fixtures_round_trip_through_the_wire() {
         use super::super::{observation as observe, view};
         let fixtures: Vec<serde_json::Value> =
-            serde_json::from_str(include_str!("../../docs/plugins/epoch2-fixtures.json")).unwrap();
+            serde_json::from_str(include_str!("../../docs/plugins/stable-fixtures.json")).unwrap();
         for fixture in fixtures.iter().filter(|f| f["direction"] == "plugin") {
             let message = &fixture["message"];
             let super::super::ClientMessage::Application(decoded) =
@@ -1115,11 +1189,15 @@ mod tests {
         };
         let messages = [
             HostMessage::Hello {
+                host_version: "0.3.0",
+                features: vec![],
                 version: VERSION,
                 capabilities: CAPABILITIES.to_vec(),
                 limits: Limits::default(),
             },
             HostMessage::Registered {
+                runyte: crate::plugin::compatibility::STABLE_RANGE.into(),
+                features: Default::default(),
                 commands: vec!["plugin.tasks.open".into()],
                 capabilities: ["jobs".into()].into(),
                 limits: Limits::default(),
@@ -1876,7 +1954,7 @@ mod tests {
     #[test]
     fn staging_wire_requires_exact_request_fields_and_types() {
         let fixtures: Vec<serde_json::Value> =
-            serde_json::from_str(include_str!("../../docs/plugins/epoch2-fixtures.json")).unwrap();
+            serde_json::from_str(include_str!("../../docs/plugins/stable-fixtures.json")).unwrap();
         for fixture in fixtures.iter().filter(|fixture| {
             fixture["message"]["method"]
                 .as_str()

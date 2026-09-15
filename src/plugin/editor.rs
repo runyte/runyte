@@ -23,6 +23,11 @@ pub struct Range {
     pub head: usize,
 }
 #[derive(Clone, Debug, Serialize)]
+pub struct Span {
+    pub from: usize,
+    pub to: usize,
+}
+#[derive(Clone, Debug, Serialize)]
 pub struct Buffer {
     pub buffer: String,
     pub revision: String,

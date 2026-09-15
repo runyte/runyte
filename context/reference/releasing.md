@@ -38,6 +38,14 @@ bump the patch component: 0.2.0 becomes 0.2.1. A later minor-version change
 requires an explicit compatibility or scope decision rather than happening as
 part of an ordinary release.
 
+Stable plugin support begins at **0.3.0**, with the clean `runyte-1` cutover.
+Within a pre-1.0 `0.X` line, patch releases preserve the public plugin contract.
+A minor boundary may break it only after an explicit decision. After 1.0,
+minor/patch releases preserve compatibility and major releases may break it.
+See [the compatibility register](plugin-compatibility.md) for the behavioral
+promise, release-range rules, and frozen acceptance inventory. This strengthens
+the patch-release policy prospectively; it does not cover experimental releases.
+
 The version is written in one place, `[package] version` in `Cargo.toml`.
 `Cargo.lock` holds a copy that Cargo rewrites for you; never hand-edit it.
 
@@ -133,8 +141,17 @@ The example version below is 0.2.1. Substitute the real one.
 
 9. **Require green CI for the exact release commit.** Wait for the `CI`
    workflow triggered by step 8 and verify that its head SHA is exactly the
-   output of `git rev-parse HEAD`. Every job, including both lifecycle-stress
-   platforms, must complete successfully. A green run for an earlier commit
+   output of `git rev-parse HEAD`. Every required job, including both lifecycle-stress platforms, plugin
+   conformance, the immutable plugin inventory, and every frozen-plugin cell on
+   Linux/macOS, must complete successfully. The separately marked moving-head
+   external job is advisory and cannot replace immutable acceptance.
+
+   The compatibility jobs must report `mode: exact` and exercise the version in
+   this release commit. A temporary 0.3.0 bootstrap candidate is development
+   evidence only. No required native test may be skipped, and every referenced
+   repository SHA must be fetchable independently. Publish the reviewed source
+   pins before cutting this release; never rewrite a frozen client to repair a
+   within-range host regression. A green run for an earlier commit
    does not qualify, and a failed job must be diagnosed and fixed rather than
    rerun until it happens to pass. Do not publish or tag while this check is
    pending or failed.

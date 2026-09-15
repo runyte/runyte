@@ -19,8 +19,8 @@ plugin_python="$plugin_checks/venv/bin/python"
 "$plugin_python" docs/plugins/check_applications.py
 ```
 
-`check_schema.py` checks epoch 1 and its uppercase example.
-`check_applications.py` checks epoch 2 fixtures and actual example processes,
+`check_schema.py` checks the stable schema and the uppercase example.
+`check_applications.py` checks stable fixtures and actual example processes,
 including local file-manager requests and memory-provider messages. It supplies
 public host messages itself; it does not connect to a running editor. Keep the
 schema, SDK, examples and checks from the same checkout.
@@ -115,10 +115,52 @@ in `RUNYTE_EXAMPLE_NODE`, and the todo variants under `target/todo-showcase` or
 from its list. Registration proves the editor accepts the example; it exercises
 no command.
 
-CI also runs [ru-time](https://github.com/runyte/ru-time), an external plugin,
-against each commit, including its real-editor test. That job reports failures
-without failing the workflow, because the experimental API may still change
-incompatibly on purpose.
+### Immutable compatibility gates
+
+Required Linux/macOS jobs retain the existing conformance, real-example startup,
+Rust behavior and coverage checks. `plugin-inventory` verifies full source SHAs,
+file digests and vendored provenance in
+[`hosts-and-clients.json`](compatibility/hosts-and-clients.json). Each retained
+external plugin runs its standard suite and explicitly named native tests in a
+required matrix cell. A missing binary, missing test or skipped native test fails
+that cell. `check_frozen.py` also validates old plugin frames against the current
+schema and current base host frames against every retained schema, then exercises
+each immutable SDK's negotiation and ignored-field behavior.
+
+[ru-time](https://github.com/runyte/ru-time) supplies the first external baseline:
+commands, notes/provider save, prompt cancellation, timer activity, plugin restart,
+retained documents and persistent detach/reattach. Host tests additionally cover
+transactional edits/undo, stale revisions, observations/event barriers, command
+and job cancellation, bounded shutdown and rejection before registration.
+[`ranges.json`](compatibility/ranges.json) is shared by Rust, the SDK and ru-time
+for bounds, malformed declarations, prereleases, build metadata and subsets.
+Actual ru-time subprocess tests reject hosts outside its declared range.
+
+The separate moving-head ru-time job stays advisory. It can reveal future work;
+it cannot replace a retained profile or authorize a release. Adding a new release
+profile preserves older supported profiles. Runyte owns within-range host
+regressions, ru-time owns new plugin regressions and support-floor claims, and
+fetch/build failures are infrastructure failures rather than compatibility success.
+
+Before package version 0.3.0, `candidate.py` stages an isolated source tree and
+lets Cargo update only the root version to 0.3.0. It records this construction as
+`bootstrap-candidate`; on stable package versions it uses the exact checkout.
+To reproduce initial native acceptance, run the commands below in the candidate
+source directory printed by the tool, retaining an absolute `CARGO_TARGET_DIR`:
+
+```sh
+python3 docs/plugins/compatibility/candidate.py --destination /tmp/runyte-candidate
+python3 docs/plugins/compatibility/check_inventory.py --verify-upstream
+python3 docs/plugins/compatibility/check_frozen.py
+```
+
+The checker needs `jsonschema`; external execution additionally takes `--checkout`,
+`--host-bin` and `--host-version`. It verifies the external checkout before running
+it. Pins must be publicly fetchable before CI/release acceptance. First candidates
+are labeled honestly; no published older stable host exists at bootstrap. The
+first actual release and later compatible releases extend the plugin's independent
+oldest/newest host inventory. Exact-release-commit CI is required before publishing,
+as specified in [the release runbook](../../context/reference/releasing.md).
 
 For changes to Runyte, run the host and worker tests as well:
 
@@ -163,7 +205,7 @@ Companion review files add fault/race cases to several groups.
 
 | Group | Public/example checks | Host or App behavior checks |
 | --- | --- | --- |
-| Epoch negotiation, IDs, registration and bounded worker delivery | [check_schema.py](check_schema.py), [check_applications.py](check_applications.py), [check_node.py](check_node.py) | [worker tests](../../src/plugin/tests/worker.rs), [application tests](../../src/workspace/host/tests/plugin_applications.rs), [example registration](../../tests/persistent_host/plugin_examples.rs) |
+| Protocol negotiation, IDs, registration and bounded worker delivery | [check_schema.py](check_schema.py), [check_applications.py](check_applications.py), [check_node.py](check_node.py) | [worker tests](../../src/plugin/tests/worker.rs), [application tests](../../src/workspace/host/tests/plugin_applications.rs), [example registration](../../tests/persistent_host/plugin_examples.rs) |
 | SDK output backpressure, local deadlines, cancellation and EOF | [check_writer.py](check_writer.py) uses actual full/broken pipes and a live example process | [worker tests](../../src/plugin/tests/worker.rs) cover host-side bounded delivery |
 | Native views, staged models, patches and immutable reads | [check_models.py](check_models.py), [check_applications.py](check_applications.py) | [model tests](../../src/workspace/host/tests/plugin_models.rs), [model review](../../src/workspace/host/tests/plugin_model_review.rs) |
 | Queries, viewport metadata and accepted actions | [check_queries.py](check_queries.py) | [query tests](../../src/workspace/host/tests/plugin_view_queries.rs), [query review](../../src/workspace/host/tests/plugin_view_query_review.rs) |
@@ -179,7 +221,7 @@ Companion review files add fault/race cases to several groups.
 | Managed binary helpers and process-group lifetime | [check_processes.py](check_processes.py) | [host processes](../../src/workspace/host/tests/plugin_processes.rs), [runtime](../../src/plugin/tests/process_runtime.rs) |
 | Terminal/system handoffs and notifications | [check_handoffs.py](check_handoffs.py) | [handoffs](../../src/workspace/host/tests/plugin_handoffs.rs), [notifications](../../src/workspace/host/tests/plugin_notifications.rs) |
 | Finite jobs, activity leases and owner stop/restart | [check_jobs.py](check_jobs.py), [check_applications.py](check_applications.py), [check_activity.py](check_activity.py) | [activity](../../src/workspace/host/tests/plugin_activity.rs), [manager](../../src/workspace/host/tests/plugin_manager.rs), [worker-slot review](../../src/workspace/host/tests/plugin_manager_review.rs) |
-| Epoch 2 views and job completion across repeated real attachments | Checked-in stand-in behavior fixture; no Python/Node dependency | [persistent attachment regression](../../tests/persistent_host/plugin_epoch2.rs) |
+| Stable application views and job completion across repeated real attachments | Checked-in stand-in behavior fixture; no Python/Node dependency | [persistent attachment regression](../../tests/persistent_host/plugin_stable.rs) |
 | Settings schemas and conditional private state | [check_state.py](check_state.py) | [settings](../../src/workspace/host/tests/plugin_settings.rs), [state](../../src/workspace/host/tests/plugin_state.rs) |
 | Media playlist, controls, cancellation and paused quietness | [check_mpv_backend.py](check_mpv_backend.py), [check_media.py](check_media.py), [media review](check_media_review.py) | Reuses managed-helper/activity contracts; real mpv remains an external dependency |
 
@@ -223,7 +265,7 @@ records Linux application performance acceptance and passing Linux/macOS CI at
 `8b0000a`, including native macOS tests, lifecycle stress, all 26 plugin suites
 and canonical line coverage of 91.65%. This closes the implementation plan's
 validation gate; subsequent releases still require their own passing checks.
-The public API remains experimental. These results do not establish behavior
+The compatibility promise starts with the first stable release. These results do not establish behavior
 with every terminal backend or portable performance timings. Pure controller
 tests and null-output mpv fixtures also do not establish audible playback quality
 or behavior with every video/output device.

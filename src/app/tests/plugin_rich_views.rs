@@ -179,9 +179,10 @@ pub(super) fn commands(
         0,
         Instance {
             config: plugin::PluginConfig {
+                runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
                 settings: Default::default(),
                 id: "test".into(),
-                api: api::Api::Epoch2,
+                api: crate::plugin::application::VERSION.to_owned(),
                 capabilities: vec!["views".into()],
                 enabled: true,
                 executable: "/nonexistent/plugin".into(),
@@ -191,10 +192,6 @@ pub(super) fn commands(
             sender: plugin::Sender::new(sender),
             registered: true,
             application,
-            pending: None,
-            issued: Default::default(),
-            subscriptions: Default::default(),
-            sequence: 0,
         },
     );
     for (id, name) in [(1, "enter"), (2, "refresh"), (3, "hidden")] {

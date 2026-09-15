@@ -11,7 +11,7 @@ app = Application('Catalog', [
     {'name': 'refresh', 'alias': 'catalog-refresh', 'description': 'Retry the current catalog query', 'context': 'view'},
     {'name': 'inspect', 'alias': 'catalog-inspect', 'description': 'Inspect the selected record', 'context': 'view', 'primary': True},
     {'name': 'observations', 'alias': 'catalog-observations', 'description': 'Show the last viewport and accepted action', 'context': 'view'},
-], ['views', 'interaction'])
+], ['views', 'interaction'], runyte='>=0.3.0, <0.4.0')
 lock = threading.RLock()
 worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 records = tuple({'id': f'record-{i:04}', 'text': f'Record {i:04} · Topic {i % 37:02} · é猫',

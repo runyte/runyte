@@ -65,7 +65,6 @@ fn applications(output: &mut mpsc::Receiver<HostMessage>) -> Vec<api::HostMessag
         match message {
             HostMessage::Application(message) => messages.push(message),
             HostMessage::Deadline { .. } => {}
-            other => panic!("unexpected {other:?}"),
         }
     }
     messages

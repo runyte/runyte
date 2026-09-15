@@ -147,7 +147,6 @@ fn repeated_enter_keeps_one_flight_and_only_latest_intent_can_submit() {
         let message = match message {
             HostMessage::Application(value) => serde_json::to_value(value).unwrap(),
             HostMessage::Deadline { .. } => continue,
-            other => panic!("{other:?}"),
         };
         assert_eq!(message["event"], "ui.validation_cancelled", "{message}");
     }

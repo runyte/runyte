@@ -71,7 +71,7 @@ class RemoteApplication:
             command('delete', 'Prepare permanent deletion of a remote file or empty directory'),
             command('confirm-operation', 'Review the prepared remote operation', context='workspace'),
             command('cancel-operation', 'Cancel the pending remote operation', context='workspace'),
-        ], ['views', 'providers', 'documents', 'jobs', 'filesystem', 'interaction'])
+        ], ['views', 'providers', 'documents', 'jobs', 'filesystem', 'interaction'], runyte='>=0.3.0, <0.4.0')
         if app is None:
             for entry in self.app.commands:
                 entry['alias'] = alias_prefix if entry['name'] == 'browse' else alias_prefix + '-' + entry['name']

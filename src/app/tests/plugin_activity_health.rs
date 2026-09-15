@@ -27,9 +27,10 @@ fn with_activity(state: activity::State) -> App {
         7,
         Instance {
             config: plugin::PluginConfig {
+                runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
                 settings: Default::default(),
                 id: "remote-watch".into(),
-                api: api::Api::Epoch2,
+                api: crate::plugin::application::VERSION.to_owned(),
                 capabilities: vec!["activity".into()],
                 enabled: true,
                 executable: "/nonexistent/plugin".into(),
@@ -39,10 +40,6 @@ fn with_activity(state: activity::State) -> App {
             sender: plugin::Sender::new(sender),
             registered: true,
             application,
-            pending: None,
-            issued: Default::default(),
-            subscriptions: Default::default(),
-            sequence: 0,
         },
     );
     app

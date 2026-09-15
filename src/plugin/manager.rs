@@ -43,6 +43,7 @@ pub(crate) struct Entry {
     pub helpers: usize,
     pub cleanup: usize,
     pub diagnostic: Option<String>,
+    pub compatibility: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

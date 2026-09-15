@@ -7,7 +7,7 @@ async fn marker(path: &Path, label: &str) {
     while !path.exists() {
         assert!(
             Instant::now() < deadline,
-            "epoch 2 worker did not reach {label}"
+            "stable plugin worker did not reach {label}"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -15,7 +15,7 @@ async fn marker(path: &Path, label: &str) {
 
 async fn jobs(client: &mut LocalClient, expected: usize, attached: bool) {
     client.send(&ClientRequest::Health).await.unwrap();
-    match semantic_response_after(client, None, "checking epoch 2 protected work").await {
+    match semantic_response_after(client, None, "checking stable plugin protected work").await {
         HostResponse::Health {
             plugin_jobs,
             activity_leases,
@@ -28,12 +28,12 @@ async fn jobs(client: &mut LocalClient, expected: usize, attached: bool) {
             assert_eq!(interactive_attached, attached);
             assert_eq!(unsaved_buffers, 0);
         }
-        other => panic!("expected epoch 2 health, got {other:?}"),
+        other => panic!("expected stable plugin health, got {other:?}"),
     }
 }
 
 #[tokio::test]
-async fn epoch2_view_and_finite_job_survive_repeated_real_attachments() {
+async fn stable_view_and_finite_job_survive_repeated_real_attachments() {
     let sandbox = TestSandbox::new();
     let root = project();
     let program = sandbox.runtime.join("application-worker");
@@ -47,14 +47,14 @@ async fn epoch2_view_and_finite_job_survive_repeated_real_attachments() {
     fs::write(sandbox.runtime.join("application-worker.behavior"), r#"
 printf '%s\n' "$$" >> "$0.starts"
 read -r hello
-printf '%s\n' '{"type":"register","version":"runyte-experimental-2","name":"Attachment application","commands":[{"name":"open","description":"Open retained progress","context":"workspace"}],"required_capabilities":["views","jobs"],"optional_capabilities":[]}'
+printf '%s\n' '{"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","required_features":[],"optional_features":[],"name":"Attachment application","commands":[{"name":"open","description":"Open retained progress","context":"workspace"}],"required_capabilities":["views","jobs"],"optional_capabilities":[]}'
 read -r registered
 printf 'ready\n' > "$0.ready"
 while read -r message; do
     case "$message" in
         *'"method":"command.invoke"'*)
             invocation=$(printf '%s' "$message" | sed -n 's/.*"id":"\(h:[0-9]*\)".*/\1/p')
-            printf '%s\n' '{"type":"request","id":"p:1","method":"view.create","params":{"model":{"title":"Retained epoch two","purpose":"list","rows":[{"id":"stable","text":"Waiting for detached completion","role":"ordinary"}]}}}'
+            printf '%s\n' '{"type":"request","id":"p:1","method":"view.create","params":{"model":{"title":"Retained application","purpose":"list","rows":[{"id":"stable","text":"Waiting for detached completion","role":"ordinary"}]}}}'
             ;;
         *'"type":"response","id":"p:1"'*)
             view=$(printf '%s' "$message" | sed -n 's/.*"view":"\([^"]*\)".*/\1/p')
@@ -69,7 +69,7 @@ while read -r message; do
             printf '{"type":"response","id":"%s","result":{"job":"%s"}}\n' "$invocation" "$job"
             printf 'working\n' > "$0.working"
             while [ ! -e "$0.release" ]; do sleep 0.01; done
-            printf '{"type":"request","id":"p:4","method":"view.publish","params":{"view":"%s","expected_revision":"%s","model":{"title":"Retained epoch two","purpose":"list","rows":[{"id":"stable","text":"Completed while detached","role":"heading"}]}}}\n' "$view" "$revision"
+            printf '{"type":"request","id":"p:4","method":"view.publish","params":{"view":"%s","expected_revision":"%s","model":{"title":"Retained application","purpose":"list","rows":[{"id":"stable","text":"Completed while detached","role":"heading"}]}}}\n' "$view" "$revision"
             ;;
         *'"type":"response","id":"p:4"'*)
             case "$message" in *'"error"'*) exit 2;; esac
@@ -83,7 +83,7 @@ while read -r message; do
 done
 "#).unwrap();
     fs::write(sandbox.cache.join("runyte/config.yaml"), format!(
-        "lsp:\n  enable: false\nplugins:\n  - id: application\n    enabled: true\n    api: runyte-experimental-2\n    executable: {}\n    capabilities: [views, jobs]\n    bindings:\n      open: F12\n", program.display()
+        "lsp:\n  enable: false\nplugins:\n  - id: application\n    enabled: true\n    api: runyte-1\n    runyte: \">=0.0.0, <18446744073709551615.0.0\"\n    executable: {}\n    capabilities: [views, jobs]\n    bindings:\n      open: F12\n", program.display()
     )).unwrap();
     let child = sandbox
         .bundled_runyte()
@@ -121,7 +121,7 @@ done
     .await;
     let publish_after = Instant::now() + Duration::from_millis(110);
     jobs(&mut first, 1, true).await;
-    detach(&mut first, "detaching active epoch 2 work").await;
+    detach(&mut first, "detaching active stable plugin work").await;
 
     let mut control = LocalClient::connect(&endpoint, geometry(), false)
         .await
@@ -148,19 +148,27 @@ done
     )
     .await;
     jobs(&mut control, 0, false).await;
-    wait_for_session_preview(&mut control, "epoch 2 detached publication", |preview| {
-        preview.panes.iter().any(|pane| {
-            pane.lines
-                .iter()
-                .any(|line| line.contains("Completed while detached"))
-        })
-    })
+    wait_for_session_preview(
+        &mut control,
+        "stable plugin detached publication",
+        |preview| {
+            preview.panes.iter().any(|pane| {
+                pane.lines
+                    .iter()
+                    .any(|line| line.contains("Completed while detached"))
+            })
+        },
+    )
     .await;
     for _ in 0..2 {
         let (mut attached, _) = connect_interactive_when_available(&endpoint, geometry()).await;
         assert!(frame_text(&response(&mut attached).await).contains("Completed while detached"));
         jobs(&mut attached, 0, true).await;
-        detach(&mut attached, "reattaching the same completed epoch 2 view").await;
+        detach(
+            &mut attached,
+            "reattaching the same completed stable plugin view",
+        )
+        .await;
     }
     assert_eq!(
         fs::read_to_string(sandbox.runtime.join("application-worker.starts")).unwrap(),

@@ -36,7 +36,6 @@ struct Example {
     id: &'static str,
     runtime: Runtime,
     path: &'static str,
-    epoch2: bool,
     capabilities: &'static [&'static str],
 }
 
@@ -49,7 +48,6 @@ const fn python(
         id,
         runtime: Runtime::Python,
         path,
-        epoch2: true,
         capabilities,
     }
 }
@@ -59,8 +57,7 @@ const EXAMPLES: &[Example] = &[
         id: "case",
         runtime: Runtime::Python,
         path: "uppercase.py",
-        epoch2: false,
-        capabilities: &[],
+        capabilities: &["text", "selections"],
     },
     python("catalog", "catalog.py", &["views", "interaction"]),
     python("dashboard", "dashboard.py", &["views"]),
@@ -122,7 +119,6 @@ const EXAMPLES: &[Example] = &[
         id: "tasks-node",
         runtime: Runtime::Node,
         path: "tasks.mjs",
-        epoch2: true,
         capabilities: &["views"],
     },
     python("todo-python", "todo/python/todo.py", &["views"]),
@@ -130,14 +126,12 @@ const EXAMPLES: &[Example] = &[
         id: "todo-rust",
         runtime: Runtime::Built,
         path: "rust/release/runyte-todo-example",
-        epoch2: true,
         capabilities: &["views"],
     },
     Example {
         id: "todo-c",
         runtime: Runtime::Built,
         path: "todo-c",
-        epoch2: true,
         capabilities: &["views"],
     },
 ];
@@ -211,10 +205,9 @@ impl Programs {
             "executable": executable,
             "args": args,
         });
-        if example.epoch2 {
-            entry["api"] = "runyte-experimental-2".into();
-            entry["capabilities"] = example.capabilities.into();
-        }
+        entry["api"] = "runyte-1".into();
+        entry["runyte"] = ">=0.3.0, <0.4.0".into();
+        entry["capabilities"] = example.capabilities.into();
         entry
     }
 }

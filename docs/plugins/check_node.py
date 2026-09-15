@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Real Node epoch-2 conformance; Node uses no SDK or third-party dependencies."""
+"""Real Node stable-v1 conformance; Node uses no SDK or third-party dependencies."""
 import copy
 import json
 import os
@@ -13,8 +13,8 @@ import unittest
 from jsonschema import Draft202012Validator
 
 DIRECTORY = Path(__file__).resolve().parent
-SCHEMA = json.loads((DIRECTORY / 'runyte-experimental-2.schema.json').read_text())
-FIXTURES = json.loads((DIRECTORY / 'epoch2-fixtures.json').read_text())
+SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
+FIXTURES = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
 HOST = [fixture['message'] for fixture in FIXTURES if fixture['direction'] == 'host']
 VALIDATOR = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})
 NODE = os.environ.get('NODE') or shutil.which('node')
@@ -72,6 +72,63 @@ class NodeTasksTests(unittest.TestCase):
             self.assertGreater(serial, self.last_request)
             self.last_request = serial
         return result
+
+    def test_supported_host_release_boundaries_and_spelling(self):
+        cases = [
+            ('0.3.0', True), ('0.3.9', True), ('0.3.0+build.01-x', True),
+            ('0.3.18446744073709551615', True),
+            ('0.2.999', False), ('0.4.0', False), ('1.0.0', False),
+            ('0.3.0-rc.1', False), ('0.3.1-dev+build', False),
+            ('0.3.01', False), ('00.3.0', False), ('0.03.0', False),
+            ('0.3', False), ('0.3.0.1', False), ('0.3.-1', False),
+            ('0.3.18446744073709551616', False), ('0.3.0+', False),
+            ('0.3.0+a..b', False), ('0.3.0+a+b', False),
+            ('0.3.0+é', False), ('0.3.0\n', False), ('0.3.0\x00', False),
+            (None, False), (3, False),
+        ]
+        for version, accepted in cases:
+            with self.subTest(version=version):
+                child = subprocess.Popen([NODE, str(DIRECTORY / 'tasks.mjs')], stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+                try:
+                    child.stdin.write((json.dumps({**HOST[0], 'host_version': version}) + '\n').encode())
+                    child.stdin.flush()
+                    if accepted:
+                        with selectors.DefaultSelector() as selector:
+                            selector.register(child.stdout, selectors.EVENT_READ)
+                            self.assertTrue(selector.select(3), 'Registration timed out')
+                        line = child.stdout.readline(LIMIT + 1)
+                        self.assertTrue(line, 'Compatible host was refused')
+                        registration = json.loads(line)
+                        VALIDATOR.validate(registration)
+                        self.assertEqual(registration['runyte'], '>=0.3.0, <0.4.0')
+                        self.assertEqual(registration['required_features'], [])
+                        self.assertEqual(registration['optional_features'], [])
+                    else:
+                        self.assertNotEqual(child.wait(timeout=3), 0)
+                        self.assertEqual(child.stdout.read(), b'')
+                finally:
+                    child.stdin.close()
+                    try:
+                        child.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=3)
+                        self.fail('Plugin did not stop at EOF')
+                    child.stdout.close()
+                    child.stderr.close()
+
+    def test_unrequested_feature_acknowledgement_fails(self):
+        self.send(HOST[0])
+        self.read()
+        self.send({**HOST[1], 'capabilities': ['views'], 'features': ['unrequested']})
+        self.assertNotEqual(self.child.wait(timeout=3), 0)
+
+    def test_missing_required_capability_in_acknowledgement_fails(self):
+        self.send(HOST[0])
+        self.read()
+        self.send({**HOST[1], 'capabilities': [], 'features': []})
+        self.assertNotEqual(self.child.wait(timeout=3), 0)
 
     def handshake(self):
         self.send(HOST[0])

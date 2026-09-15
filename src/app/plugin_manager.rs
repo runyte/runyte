@@ -37,7 +37,7 @@ fn details(entry: &Entry) -> String {
         .take(256)
         .collect();
     format!(
-        "Plugin: {}\nState: {}\nEnabled: {}\nGeneration: {}\nGrants: {}\nJobs: {}\nActivities: {}\nHelpers: {}\nCleanup: {}\nDiagnostic: {}",
+        "Plugin: {}\nState: {}\nEnabled: {}\nGeneration: {}\nGrants: {}\nJobs: {}\nActivities: {}\nHelpers: {}\nCleanup: {}\nCompatibility: {}\nDiagnostic: {}",
         label(entry),
         entry.phase.label(),
         entry.enabled,
@@ -53,6 +53,7 @@ fn details(entry: &Entry) -> String {
         entry.activities,
         entry.helpers,
         entry.cleanup,
+        entry.compatibility,
         diagnostic,
     )
 }

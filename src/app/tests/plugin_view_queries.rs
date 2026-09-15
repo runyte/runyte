@@ -161,7 +161,7 @@ fn plugin_palette_preserves_workspace_readonly_buffer_and_native_stop_actions() 
 }
 
 #[test]
-fn plugin_palette_reports_epoch1_editability_busy_and_view_action_allowlist() {
+fn plugin_palette_reports_request_quota_and_view_action_allowlist() {
     let mut value = model(&["a"]);
     value.actions = vec!["enter".into(), "refresh".into()];
     let (mut app, _, _receiver) = application(value);
@@ -170,24 +170,22 @@ fn plugin_palette_reports_epoch1_editability_busy_and_view_action_allowlist() {
             .unwrap()
             .contains("does not offer this action")
     );
-    app.plugins.instances.get_mut(&0).unwrap().config.api = api::Api::Epoch1;
-    assert!(
-        palette_reason(&app, 1)
-            .unwrap()
-            .contains("live editable buffer")
+    app.plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .provider_requests = api::MAX_REQUESTS;
+    assert_eq!(
+        palette_reason(&app, 1).as_deref(),
+        Some("application request limit reached")
     );
-    app.switch_buffer(0);
-    assert_eq!(palette_reason(&app, 1), None);
-    app.plugins.instances.get_mut(&0).unwrap().pending =
-        Some(super::super::plugin_workflows::Pending {
-            action: None,
-            token: "1".into(),
-            buffer: 0,
-            revision: app.buffers[0].revision(),
-            selections: vec![],
-        });
-    assert_eq!(palette_reason(&app, 1).as_deref(), Some("plugin is busy"));
-    app.plugins.instances.get_mut(&0).unwrap().pending = None;
+    app.plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .provider_requests = 0;
     assert_eq!(palette_reason(&app, 1), None);
 }
 
@@ -564,4 +562,21 @@ fn oversized_escaped_row_selection_is_refused_without_stopping_owner_or_dispatch
     assert!(state.requests.is_empty());
     assert_eq!(state.views["v:1"].accepted_actions, 0);
     assert!(state.observations.peek_ready().is_none());
+}
+
+#[test]
+fn native_plugin_spans_preserve_half_open_ranges_and_empty_eof() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.buffers[0].apply(&crate::text::Transaction::insert(0, "éß xyz"));
+    let pane = app.panes.get_mut(&0).unwrap();
+    pane.selection = Selection::new(vec![Range::new(2, 0), Range::new(6, 6)], 0);
+    pane.mark_selection_semantics(SelectionSemantics::HalfOpen);
+    let spans = app.plugin_selection_spans(0);
+    assert_eq!(
+        spans
+            .iter()
+            .map(|span| (span.from, span.to))
+            .collect::<Vec<_>>(),
+        vec![(0, 2), (6, 6)]
+    );
 }

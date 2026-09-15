@@ -183,7 +183,7 @@ The repository includes examples to build on:
   [SFTP and FTP/FTPS browsers](docs/plugins/applications.md#sftp-browser-and-editor),
   and a [local media controller](docs/plugins/applications.md#local-media-controller).
 
-The API is experimental. Start with the [installation and protocol guide](docs/plugins.md)
+The stable plugin contract starts with Runyte 0.3.0. Start with the [installation and protocol guide](docs/plugins.md)
 or the [application authoring guide](docs/plugins/authoring.md).
 
 ## Installation

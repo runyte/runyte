@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Bounded transport-neutral epoch 2 text provider used by remote examples."""
+"""Bounded transport-neutral stable text provider used by remote examples."""
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import hashlib

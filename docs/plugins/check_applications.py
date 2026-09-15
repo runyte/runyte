@@ -12,8 +12,8 @@ from application import Application
 from jsonschema import Draft202012Validator
 
 DIRECTORY = Path(__file__).resolve().parent
-SCHEMA = json.loads((DIRECTORY / 'runyte-experimental-2.schema.json').read_text())
-FIXTURES = json.loads((DIRECTORY / 'epoch2-fixtures.json').read_text())
+SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
+FIXTURES = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
 
 class ApplicationSchemaTests(unittest.TestCase):
     def test_optional_alias_preserves_local_command_identity_and_bounds(self):
@@ -27,7 +27,7 @@ class ApplicationSchemaTests(unittest.TestCase):
             self.assertFalse(validator.is_valid({**command, 'alias': alias}), alias)
 
     def test_cancellation_dispatch_survives_waiting_command_workers(self):
-        app = Application('Test', [], [])
+        app = Application('Test', [], [], runyte='>=0.3.0, <0.4.0')
         requests = queue.Queue()
         cancelled = threading.Event()
         released = threading.Event()

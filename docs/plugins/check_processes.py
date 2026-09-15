@@ -13,7 +13,7 @@ from check_queries import shutdown, HeldWorker
 
 class ProcessSdkTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Helper test', [], ['processes'])
+        self.app = Application('Helper test', [], ['processes'], runyte='>=0.3.0, <0.4.0')
         self.calls = []
         self.result = {}
         def request(method, **params):
@@ -87,8 +87,8 @@ class ProcessSdkTests(unittest.TestCase):
     def test_process_fixtures_match_schema(self):
         from jsonschema import Draft202012Validator
         directory = Path(__file__).parent
-        schema = json.loads((directory / 'runyte-experimental-2.schema.json').read_text())
-        fixtures = json.loads((directory / 'epoch2-fixtures.json').read_text())
+        schema = json.loads((directory / 'runyte-1.schema.json').read_text())
+        fixtures = json.loads((directory / 'stable-fixtures.json').read_text())
         checked = 0
         for fixture in fixtures:
             if (fixture['message'].get('id') in {f'p:{i}' for i in range(1000, 1005)}

@@ -9,6 +9,8 @@ struct Probe<'a> {
     kind: Cow<'a, str>,
     #[serde(default, borrow)]
     method: Option<Cow<'a, str>>,
+    #[serde(default, borrow, rename = "id")]
+    _id: Option<&'a RawValue>,
     #[serde(default, borrow)]
     params: Option<&'a RawValue>,
     #[serde(default, borrow)]

@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Standalone epoch-2 todo showcase for Linux/macOS.
+//! Standalone stable-v1 todo showcase for Linux/macOS.
 use serde_json::{Value, json};
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
-const VERSION: &str = "runyte-experimental-2";
+const VERSION: &str = "runyte-1";
+const RUNYTE_RANGE: &str = ">=0.3.0, <0.4.0";
+
+// Fixed release-line check for this example, not a general range parser.
+fn supported_host(version: &str) -> bool {
+    if version.len() > 256 {
+        return false;
+    }
+    let (core, build) = version
+        .split_once('+')
+        .map_or((version, None), |(core, build)| (core, Some(build)));
+    if build.is_some_and(|build| {
+        build.split('.').any(|part| {
+            part.is_empty() || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+    }) {
+        return false;
+    }
+    core.strip_prefix("0.3.").is_some_and(|patch| {
+        !patch.is_empty()
+            && (patch == "0" || !patch.starts_with('0'))
+            && patch.bytes().all(|b| b.is_ascii_digit())
+            && patch.parse::<u64>().is_ok()
+    })
+}
 const LIMIT: usize = 1024 * 1024;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -259,11 +283,15 @@ impl Todo {
                 return Err("Invalid handshake".into());
             }
             if self.phase == 0 {
-                if message["version"] != VERSION {
-                    return Err("Wrong epoch".into());
+                if message["version"] != VERSION
+                    || !message["host_version"].as_str().is_some_and(supported_host)
+                    || !message["features"].is_array()
+                {
+                    return Err("Unsupported host".into());
                 }
                 send(
-                    json!({"type":"register", "version":VERSION, "name":"Todo · Rust",
+                    json!({"type":"register", "version":VERSION, "runyte":RUNYTE_RANGE,
+                    "required_features":[], "optional_features":[], "name":"Todo · Rust",
                     "required_capabilities":["views"], "optional_capabilities":[], "commands":[
                         {"name":"open","alias":"todo-rust", "description":"Open todo list", "context":"workspace"},
                         {"name":"add","alias":"todo-rust-add", "description":"Add a task", "context":"view", "arguments":[{"name":"title", "type":"string"}]},
@@ -273,6 +301,9 @@ impl Todo {
                     ]}),
                 )?;
             } else {
+                if message["capabilities"] != json!(["views"]) || message["features"] != json!([]) {
+                    return Err("Invalid negotiated profile".into());
+                }
                 self.deadline = None;
             }
             self.phase += 1;

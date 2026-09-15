@@ -174,7 +174,7 @@ and the order of the push. Do not infer any of those from the commit history.
   All JSON-RPC lives in one Tokio task; the editor holds a non-blocking
   handle and drains events from the main loop, so no language server can
   stall rendering or input.
-- `src/plugin.rs`: bounded experimental extension wire values and the external
+- `src/plugin.rs`: bounded stable extension wire values and the external
   process worker. `src/app/plugin_provider_overwrite.rs` owns native approval of captured
   best-effort remote saves; only physical frontend input can approve them.
   `src/app/plugin_workflows.rs` coordinates runtime command

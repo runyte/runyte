@@ -6,6 +6,9 @@ use serde_json::json;
 
 fn register(schema: Option<Schema>, capabilities: &[&str]) -> api::ClientMessage {
     api::ClientMessage::Register {
+        runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
+        required_features: Default::default(),
+        optional_features: Default::default(),
         settings_schema: schema,
         version: api::VERSION.into(),
         name: "Settings test".into(),
@@ -31,7 +34,7 @@ fn settings_schema_failure_precedes_command_capability_and_binding_side_effects(
     ] {
         let (_root, mut host) = host();
         let mut config = config("configured-owner");
-        config.api = api::Api::Epoch2;
+        config.api = crate::plugin::application::VERSION.to_owned();
         config.settings = Settings::from_value(settings).unwrap();
         let _receiver = instance(&mut host, 0, config);
         let schema = serde_json::from_value(
@@ -66,7 +69,7 @@ fn settings_get_requires_capability_and_reads_only_immutable_configured_owner_va
     let mut receivers = Vec::new();
     for owner in 0..2 {
         let mut config = config(&format!("owner-{owner}"));
-        config.api = api::Api::Epoch2;
+        config.api = crate::plugin::application::VERSION.to_owned();
         config.capabilities = vec!["settings".into()];
         config.settings =
             Settings::from_value(json!({"owner":owner,"nested":{"enabled":true}})).unwrap();
@@ -157,7 +160,7 @@ fn settings_wire_rejects_arguments_and_unknown_schema_keywords() {
 fn settings_schema_is_optional_on_wire_and_validates_even_without_settings_grant() {
     let (_root, mut host) = host();
     let mut config = config("typed-owner");
-    config.api = api::Api::Epoch2;
+    config.api = crate::plugin::application::VERSION.to_owned();
     config.settings = Settings::from_value(json!({"enabled":true})).unwrap();
     let mut receiver = instance(&mut host, 0, config);
     let schema = serde_json::from_value(
@@ -197,7 +200,7 @@ fn queued_settings_reads_share_canonical_payload_without_retaining_parsed_copies
             .unwrap();
     let expected = settings.encoded();
     let mut config = config("shared-settings");
-    config.api = api::Api::Epoch2;
+    config.api = crate::plugin::application::VERSION.to_owned();
     config.settings = settings;
     config.capabilities = vec!["settings".into()];
     drop(instance(&mut host, 0, config));

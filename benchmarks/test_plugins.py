@@ -109,14 +109,16 @@ class WorkloadTests(unittest.TestCase):
         # A plain list projects exactly one text line per row. No header or block.
         self.assertLess(len(('\n'.join(row['text'] for row in model['rows']) + '\n').encode()),
                         4 * 1024 * 1024)
-        schema = json.loads((plugins.REPO / 'docs/plugins/runyte-experimental-2.schema.json').read_text())
+        schema = json.loads((plugins.REPO / 'docs/plugins/runyte-1.schema.json').read_text())
         Draft202012Validator({'$defs': schema['$defs'], '$ref': '#/$defs/model'}).validate(model)
 
     def test_real_registration_metadata_and_checkpoint_order(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'evidence.jsonl'
             workload = plugin_workload.Workload(path)
-            messages = iter([{'type': 'hello', 'version': 'runyte-experimental-2'}, {'type': 'registered'}])
+            fixtures = json.loads((plugins.REPO / 'docs/plugins/stable-fixtures.json').read_text())
+            handshake = [entry['message'] for entry in fixtures if entry['direction'] == 'host'][:2]
+            messages = iter([{**message, 'capabilities': ['views', 'jobs', 'processes']} for message in handshake])
             output = []
             def read(_app):
                 try:
@@ -125,10 +127,23 @@ class WorkloadTests(unittest.TestCase):
                     raise EOFError
             with patch.object(Application, '_read', read), patch.object(Application, '_write', lambda _, message: output.append(message)):
                 workload.app.run()
-            schema = json.loads((plugins.REPO / 'docs/plugins/runyte-experimental-2.schema.json').read_text())
+            schema = json.loads((plugins.REPO / 'docs/plugins/runyte-1.schema.json').read_text())
             Draft202012Validator(schema).validate(output[0])
             self.assertEqual(plugins.newest(path, 'registered')['owner'], 'workload')
             self.assertNotIn('stop', [command['name'] for command in output[0]['commands']])
+
+    def test_refused_registration_never_records_admission_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'evidence.jsonl'
+            workload = plugin_workload.Workload(path)
+            fixtures = json.loads((plugins.REPO / 'docs/plugins/stable-fixtures.json').read_text())
+            hello, registered = [entry['message'] for entry in fixtures if entry['direction'] == 'host'][:2]
+            messages = iter([hello, {**registered, 'capabilities': []}])
+            with patch.object(Application, '_read', lambda _: next(messages)), \
+                 patch.object(Application, '_write', lambda *_: None):
+                with self.assertRaises(PluginError):
+                    workload.app.run()
+            self.assertIsNone(plugins.newest(path, 'registered'))
 
     def test_view_evidence_only_follows_successful_publication_and_presentation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -234,13 +249,15 @@ class CleanupTests(unittest.TestCase):
 
 
 class WindowTests(unittest.TestCase):
-    def test_legacy_epoch1_case_retains_the_original_uppercase_example(self):
+    def test_uppercase_case_uses_stable_contract_without_workload_process(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(plugins, 'spawn', return_value=(123, 4)), \
              patch.object(plugins.subprocess, 'run'):
-            editor = plugins.Session(Path('/unused'), Path(directory), 'short.txt', epoch1=True)
+            editor = plugins.Session(Path('/unused'), Path(directory), 'short.txt', uppercase=True)
             config = (Path(editor.env['XDG_CONFIG_HOME']) / 'runyte/config.yaml').read_text()
             self.assertIn('docs/plugins/uppercase.py', config)
-            self.assertNotIn('runyte-experimental-2', config)
+            self.assertIn('api: runyte-1', config)
+            self.assertIn('>=0.3.0, <0.4.0', config)
+            self.assertIn('capabilities: [text, selections]', config)
             self.assertNotIn('plugin_workload.py', config)
 
     def test_progress_outside_input_phase_is_not_latency_evidence(self):
@@ -294,7 +311,7 @@ class WindowTests(unittest.TestCase):
 
     def test_detached_window_requires_authoritative_live_job_after_reattachment(self):
         class Editor:
-            epoch1_proven = False
+            uppercase_proven = False
             bytes = read_chunks = 0
             now = 0
             evidence = Path('/unused')
@@ -337,7 +354,7 @@ class WindowTests(unittest.TestCase):
                         plugins.workload_sample(Path('/unused'), 'detached-job', 10, 20)
                 self.assertTrue(editor.reattached)
 
-    def test_epoch1_proof_cannot_pass_without_actual_result_and_undo(self):
+    def test_uppercase_proof_cannot_pass_without_actual_result_and_undo(self):
         class Terminal:
             def contains(self, _text):
                 return True
@@ -352,31 +369,31 @@ class WindowTests(unittest.TestCase):
             editor.project = Path(directory)
             editor.fd = 99
             editor.terminal = Terminal()
-            editor.epoch1_proven = False
+            editor.uppercase_proven = False
             editor.command = lambda _: None
             editor.return_document = lambda: None
             observations = []
             def until(predicate, description):
                 observations.append(description)
-                if description == 'Actual epoch 1 replacement':
+                if description == 'Actual uppercase replacement':
                     raise TimeoutError('No result')
                 assert predicate()
             editor.until = until
             with patch.object(plugins.os, 'write'):
                 with self.assertRaises(TimeoutError):
-                    editor.prove_epoch1()
-            self.assertFalse(editor.epoch1_proven)
-            self.assertNotIn('Epoch 1 single-step undo', observations)
+                    editor.prove_uppercase()
+            self.assertFalse(editor.uppercase_proven)
+            self.assertNotIn('Uppercase single-step undo', observations)
             editor.until = lambda predicate, description: observations.append(description) if predicate() else None
             with patch.object(plugins.os, 'write'):
-                editor.prove_epoch1()
-            self.assertTrue(editor.epoch1_proven)
-            self.assertIn('Epoch 1 single-step undo', observations)
+                editor.prove_uppercase()
+            self.assertTrue(editor.uppercase_proven)
+            self.assertIn('Uppercase single-step undo', observations)
 
     def test_latency_and_checkpoint_frames_do_not_pollute_idle_screen_totals(self):
         class Editor:
             pid = 1
-            epoch1_proven = False
+            uppercase_proven = False
             bytes = read_chunks = 0
             now = 0
             def prepare_workload(self, _kind):

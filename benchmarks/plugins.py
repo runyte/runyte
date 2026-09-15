@@ -238,7 +238,7 @@ class OwnedProcesses:
 
 
 class Session:
-    def __init__(self, binary, root, fixture, enabled=False, persistent=False, quiet=False, epoch1=False):
+    def __init__(self, binary, root, fixture, enabled=False, persistent=False, quiet=False, uppercase=False):
         self.binary, self.root = binary, root
         self.env = environment(root)
         self.project = root / 'project'
@@ -250,20 +250,23 @@ class Session:
         config_dir = Path(self.env['XDG_CONFIG_HOME']) / 'runyte'
         config_dir.mkdir()
         config = 'lsp:\n  enable: false\nworkspace:\n  session_strip: hidden\n'
-        if epoch1:
+        if uppercase:
             config += ('plugins:\n  - id: case\n    enabled: true\n'
+                       '    api: runyte-1\n    runyte: ">=0.3.0, <0.4.0"\n'
+                       '    capabilities: [text, selections]\n'
                        f'    executable: {json.dumps(sys.executable)}\n'
                        f'    args: [{json.dumps(str(REPO / "docs/plugins/uppercase.py"))}]\n')
         if enabled:
             config += 'plugins:\n'
             for owner in (['workload', 'quiet'] if quiet else ['workload']):
                 args = [str(HERE / 'plugin_workload.py'), '--evidence', str(self.evidence), '--owner', owner]
-                config += (f'  - id: {owner}\n    enabled: true\n    api: runyte-experimental-2\n'
+                config += (f'  - id: {owner}\n    enabled: true\n    api: runyte-1\n'
+                           '    runyte: ">=0.3.0, <0.4.0"\n'
                            '    capabilities: [views, jobs, processes]\n'
                            f'    executable: {json.dumps(sys.executable)}\n    args: {json.dumps(args)}\n')
         (config_dir / 'config.yaml').write_text(config)
         self.enabled, self.quiet, self.persistent = enabled, quiet, persistent
-        self.epoch1, self.epoch1_proven = epoch1, False
+        self.uppercase, self.uppercase_proven = uppercase, False
         self.terminal = Terminal()
         self.bytes = self.read_chunks = 0
         self.first_byte = None
@@ -321,26 +324,26 @@ class Session:
         self.until(lambda: self.terminal.contains(DOCUMENT), 'First complete document frame')
         return (time.perf_counter() - self.origin) * 1000
 
-    def prove_epoch1(self):
-        # Legacy invocations capture the whole document and cannot demonstrate
-        # readiness on maximum fixtures. Probe a tiny file outside timed input,
-        # then undo and restore the measured document before idle settlement.
-        text = 'legacy_registration_probe'
-        (self.project / 'epoch1-proof.txt').write_text(text + '\n')
-        self.command('open epoch1-proof.txt')
-        self.until(lambda: self.terminal.contains(text), 'Epoch 1 proof document')
+    def prove_uppercase(self):
+        # Prove registration with an actual edit and single-step undo in a tiny
+        # document outside timed input, then restore the measured document before
+        # idle settlement. This keeps admission work out of the idle window.
+        text = 'lowercase_registration_probe'
+        (self.project / 'uppercase-proof.txt').write_text(text + '\n')
+        self.command('open uppercase-proof.txt')
+        self.until(lambda: self.terminal.contains(text), 'Uppercase proof document')
         position = self.terminal.position(text)
         os.write(self.fd, b':plugin.case.')
         self.until(lambda: self.terminal.contains('plugin.case.uppercase'),
-                   'Accepted epoch 1 command metadata')
+                   'Accepted uppercase command metadata')
         os.write(self.fd, b'uppercase')
-        self.until(lambda: self.terminal.query('plugin.case.uppercase'), 'Epoch 1 command prompt')
+        self.until(lambda: self.terminal.query('plugin.case.uppercase'), 'Uppercase command prompt')
         os.write(self.fd, b'\r')
-        self.until(lambda: self.terminal.at(position, 'L' + text[1:]), 'Actual epoch 1 replacement')
+        self.until(lambda: self.terminal.at(position, 'L' + text[1:]), 'Actual uppercase replacement')
         os.write(self.fd, b'u')
-        self.until(lambda: self.terminal.at(position, text), 'Epoch 1 single-step undo')
+        self.until(lambda: self.terminal.at(position, text), 'Uppercase single-step undo')
         self.return_document()
-        self.epoch1_proven = True
+        self.uppercase_proven = True
 
     def plugin_ready(self):
         self.until(lambda: newest(self.evidence, 'registered') is not None, 'Accepted plugin registration')
@@ -353,8 +356,8 @@ class Session:
         self.document()
         if self.enabled:
             self.plugin_ready()
-        elif self.epoch1:
-            self.prove_epoch1()
+        elif self.uppercase:
+            self.prove_uppercase()
         if kind in ('visible', 'large', 'publish'):
             self.command('plugin.workload.' + ('large' if kind in ('large', 'publish') else 'visible'))
             self.until(lambda: newest(self.evidence, 'view') is not None, 'Accepted and presented native view')
@@ -487,9 +490,9 @@ class Session:
 
 
 @contextmanager
-def session(binary, fixture, enabled=False, persistent=False, quiet=False, epoch1=False):
+def session(binary, fixture, enabled=False, persistent=False, quiet=False, uppercase=False):
     with tempfile.TemporaryDirectory(prefix='runyte-plugin-bench-') as directory:
-        value = Session(binary, Path(directory), fixture, enabled, persistent, quiet, epoch1)
+        value = Session(binary, Path(directory), fixture, enabled, persistent, quiet, uppercase)
         try:
             yield value
         except BaseException as error:
@@ -504,19 +507,19 @@ def session(binary, fixture, enabled=False, persistent=False, quiet=False, epoch
             value.close()
 
 
-def startup_sample(binary, fixture, enabled, epoch1=False):
-    with session(binary, fixture, enabled, epoch1=epoch1) as editor:
+def startup_sample(binary, fixture, enabled, uppercase=False):
+    with session(binary, fixture, enabled, uppercase=uppercase) as editor:
         first_document = editor.document()
         position = editor.terminal.position(DOCUMENT)
         os.write(editor.fd, b'i ')
         editor.until(lambda: editor.terminal.at(position, ' ' + DOCUMENT), 'Demonstrated edited document')
         ready = (time.perf_counter() - editor.origin) * 1000
         registered = editor.plugin_ready() if enabled else None
-        if epoch1:
-            editor.prove_epoch1()
+        if uppercase:
+            editor.prove_uppercase()
         return {'complete': True, 'first_byte_ms': editor.first_byte, 'first_document_ms': first_document,
                 'ready_to_edit_ms': ready, 'plugin_registered_ms': registered,
-                'epoch1_proven': editor.epoch1_proven}
+                'uppercase_proven': editor.uppercase_proven}
 
 
 def startup_view_sample(binary, fixture):
@@ -571,9 +574,9 @@ def latency_samples(editor, count):
 def workload_sample(binary, kind, window, latency_count):
     persistent = kind == 'detached-job'
     actual = 'job' if persistent else kind
-    enabled = kind not in ('disabled', 'epoch1-quiescent')
+    enabled = kind not in ('disabled', 'uppercase-quiescent')
     with session(binary, 'medium.lua', enabled, persistent, quiet=kind in ('flood', 'publish'),
-                 epoch1=kind == 'epoch1-quiescent') as editor:
+                 uppercase=kind == 'uppercase-quiescent') as editor:
         before_checkpoint = editor.prepare_workload(actual)
         editor.drain(2.5)
         if persistent:
@@ -630,7 +633,7 @@ def workload_sample(binary, kind, window, latency_count):
                 'cpu_before': before, 'cpu_after': after,
                 'screen_bytes': None if persistent else window_bytes,
                 'pty_read_chunks': None if persistent else window_chunks,
-                'epoch1_proven': editor.epoch1_proven,
+                'uppercase_proven': editor.uppercase_proven,
                 'frontend': 'detached' if persistent else 'attached',
                 'latency_ms': values, 'latency_summary': summary(values, latency_count) if values else None,
                 'input_phase': phase, 'input_phase_progress': progress,
@@ -662,7 +665,7 @@ def main():
     artifact = {'complete': False, 'binaries': {'before': binary_info(before), 'after': binary_info(after)},
                 'parameters': {'startup_runs': args.runs, 'idle_runs': args.idle_runs,
                                'idle_seconds': args.window, 'latency_samples': args.latency_samples},
-                'contracts': {'startup': 'Process start to completed document frame and demonstrated first edit; registration receipt is separate. Epoch1 command/undo proof runs after captured startup times and before idle settlement.',
+                'contracts': {'startup': 'Process start to completed document frame and demonstrated first edit; registration receipt is separate. Uppercase command/undo proof runs after captured startup times and before idle settlement.',
                               'screen_activity': 'screen_bytes counts observed PTY output bytes; pty_read_chunks counts harness reads, not editor write syscalls.',
                               'first_usable_view': 'Separate fresh process; start to first completed native plugin view frame after explicit command and acknowledged presentation; no Escape delay in known Normal mode.',
                               'input_latency': 'Each key write to exact edited marker in a completed synchronized frame; deterministic 60–81 ms spacing excluded from timing; >=2 workload progress points inside the >=1 second phase.'},
@@ -673,13 +676,13 @@ def main():
     save()
     try:
         for label, binary, enabled in [('base-disabled', before, False), ('branch-disabled', after, False),
-                                        ('branch-quiescent', after, True), ('branch-epoch1-quiescent', after, False)]:
+                                        ('branch-quiescent', after, True), ('branch-uppercase-quiescent', after, False)]:
             artifact['startup'][label] = {}
             for name in names:
                 samples = []
                 artifact['startup'][label][name] = {'samples': samples}
                 for _ in range(args.runs):
-                    samples.append(startup_sample(binary, name, enabled, epoch1=label == 'branch-epoch1-quiescent'))
+                    samples.append(startup_sample(binary, name, enabled, uppercase=label == 'branch-uppercase-quiescent'))
                     save()
                 metrics = ['first_byte_ms', 'first_document_ms', 'ready_to_edit_ms']
                 if enabled:
@@ -699,7 +702,7 @@ def main():
             print('branch-first-usable-view', name, json.dumps(artifact['startup']['branch-first-usable-view'][name]['summary']), flush=True)
         cases = [('base-disabled', before, 'disabled'), ('branch-disabled', after, 'disabled'),
                  ('branch-quiescent', after, 'quiescent'),
-                 ('branch-epoch1-quiescent', after, 'epoch1-quiescent')]
+                 ('branch-uppercase-quiescent', after, 'uppercase-quiescent')]
         if args.applications:
             cases += [(kind, after, kind) for kind in ('visible', 'large', 'detached-job', 'flood', 'publish')]
         for label, binary, kind in cases:

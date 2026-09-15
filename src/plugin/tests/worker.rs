@@ -2,13 +2,17 @@
 
 use super::*;
 
+fn payload(id: String, message: String) -> HostMessage {
+    HostMessage::Application(application::HostMessage::Response {
+        id,
+        outcome: application::Response::Failure {
+            error: application::Error::new(application::ErrorCode::Unavailable, &message),
+        },
+    })
+}
+
 fn message(id: usize) -> HostMessage {
-    HostMessage::Complete {
-        invocation: id.to_string(),
-        status: "applied",
-        revision: None,
-        message: String::new(),
-    }
+    payload(id.to_string(), String::new())
 }
 
 fn drain(sender: &Sender, receiver: &mut mpsc::Receiver<HostMessage>) -> HostMessage {
@@ -42,7 +46,9 @@ fn states_reserve_control_slots_preserve_fifo_and_do_not_charge_refusals() {
     assert!(!sender.try_send_state(message(32)).unwrap());
     assert_eq!(sender.bytes.load(Ordering::Relaxed), charged);
     for id in 0..32 {
-        let HostMessage::Complete { invocation, .. } = drain(&sender, &mut receiver) else {
+        let HostMessage::Application(application::HostMessage::Response { id: invocation, .. }) =
+            drain(&sender, &mut receiver)
+        else {
             panic!("unexpected message");
         };
         assert_eq!(invocation, id.to_string());
@@ -56,12 +62,7 @@ fn states_reserve_control_slots_preserve_fifo_and_do_not_charge_refusals() {
 fn states_reserve_encoded_bytes_and_wait_for_enough_space() {
     let (tx, mut receiver) = mpsc::channel(32);
     let sender = Sender::new(tx);
-    let large = || HostMessage::Complete {
-        invocation: "large".into(),
-        status: "applied",
-        revision: None,
-        message: "x".repeat(950_000),
-    };
+    let large = || payload("large".into(), "x".repeat(950_000));
     for _ in 0..3 {
         assert!(sender.try_send_state(large()).unwrap());
     }
@@ -92,12 +93,7 @@ fn states_reserve_encoded_bytes_and_wait_for_enough_space() {
 fn state_closed_and_oversize_are_errors_without_retained_charge() {
     let (tx, receiver) = mpsc::channel(32);
     let sender = Sender::new(tx);
-    let huge = HostMessage::Complete {
-        invocation: "huge".into(),
-        status: "failed",
-        revision: None,
-        message: "x".repeat(MAX_BYTES),
-    };
+    let huge = payload("huge".into(), "x".repeat(MAX_BYTES));
     assert!(sender.try_send_state(huge).is_err());
     assert_eq!(sender.bytes.load(Ordering::Relaxed), 0);
     drop(receiver);
@@ -359,7 +355,8 @@ async fn actual_worker_delivers_final_capacity_notice_without_input_and_then_sta
     let config = PluginConfig {
         settings: Default::default(),
         id: "output-ready".into(),
-        api: application::Api::Epoch2,
+        api: application::VERSION.to_owned(),
+        runyte: format!("={}", super::super::compatibility::HOST_VERSION),
         capabilities: vec![],
         enabled: true,
         executable: program,
@@ -391,18 +388,12 @@ async fn actual_worker_delivers_final_capacity_notice_without_input_and_then_sta
 }
 
 #[test]
-fn epoch_one_cannot_construct_internal_admission_or_output_notifications() {
-    for kind in ["queued", "output_ready", "deadline"] {
+fn stable_wire_cannot_construct_internal_admission_or_output_notifications() {
+    for kind in ["queued", "output_ready", "deadline", "worker_stopped"] {
         let frame = format!("{{\"type\":\"{kind}\"}}");
-        assert!(serde_json::from_str::<ClientMessage>(&frame).is_err());
+        assert!(application::decode(frame.as_bytes()).is_err());
     }
-    assert!(matches!(
-        serde_json::from_str::<ClientMessage>(
-            r#"{"type":"register","version":"runyte-experimental-1","commands":[]}"#
-        )
-        .unwrap(),
-        ClientMessage::Register { .. }
-    ));
+    assert!(application::decode(br#"{"type":"subscribe","request":"old","buffer":"0"}"#).is_err());
 }
 
 #[tokio::test]
@@ -423,7 +414,8 @@ async fn simultaneous_host_deadlines_wait_for_owner_admission_without_stopping_w
     let config = PluginConfig {
         settings: Default::default(),
         id: "deadline-admission".into(),
-        api: application::Api::Epoch2,
+        api: application::VERSION.to_owned(),
+        runyte: format!("={}", super::super::compatibility::HOST_VERSION),
         capabilities: vec![],
         enabled: true,
         executable: program,
@@ -465,7 +457,15 @@ async fn simultaneous_host_deadlines_wait_for_owner_admission_without_stopping_w
     );
     // Outbound control still runs while timer delivery waits for owner capacity.
     sender
-        .try_send(HostMessage::Registered { commands: vec![] })
+        .try_send(HostMessage::Application(
+            application::HostMessage::Registered {
+                commands: vec![],
+                capabilities: Default::default(),
+                features: Default::default(),
+                runyte: format!("={}", super::super::compatibility::HOST_VERSION),
+                limits: Default::default(),
+            },
+        ))
         .unwrap();
     drop(batch);
     for _ in PRODUCER_EVENTS..20 {
@@ -504,7 +504,8 @@ fn managed_worker_config(
     PluginConfig {
         settings: Default::default(),
         id: "managed".into(),
-        api: application::Api::Epoch1,
+        api: application::VERSION.to_owned(),
+        runyte: format!("={}", super::super::compatibility::HOST_VERSION),
         capabilities: vec![],
         enabled: true,
         executable: program,
@@ -517,15 +518,10 @@ fn managed_worker_config(
 #[cfg(unix)]
 async fn managed_worker_final_follows_all_input_and_ready_notices_and_proves_reaping() {
     let root = crate::test_support::TestRuntimeRoot::new("plugin-settled").unwrap();
-    let mut config = managed_worker_config(
+    let config = managed_worker_config(
         &root,
-        "printf '%s\\n' \"$$\" > managed-worker.pid\nread -r hello\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"subscribe\",\"request\":\"%s\",\"buffer\":\"0\"}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n",
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nread -r hello\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"request\",\"id\":\"p:%s\",\"method\":\"settings.get\",\"params\":{}}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n",
     );
-    // Larger epoch2 outbound admission is useful here, while its inbound frames
-    // use epoch2 requests with the same sixteen-event admission bound.
-    config.api = application::Api::Epoch2;
-    std::fs::write(root.join("managed-worker.behavior"),
-        "printf '%s\\n' \"$$\" > managed-worker.pid\nread -r hello\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"request\",\"id\":\"p:%s\",\"method\":\"settings.get\",\"params\":{}}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n").unwrap();
     let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
     let (worker, sender) = spawn(config, root.path().to_path_buf(), 0, events);
     for index in 0..24 {
@@ -578,7 +574,7 @@ async fn managed_worker_stop_interrupts_blocked_stdin_write_before_final_reap() 
     let root = crate::test_support::TestRuntimeRoot::new("plugin-stop-write").unwrap();
     let config = managed_worker_config(
         &root,
-        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"subscribe\",\"request\":\"ready\",\"buffer\":\"0\"}\\n'\nexec sleep 30\n",
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"request\",\"id\":\"p:ready\",\"method\":\"settings.get\",\"params\":{}}\\n'\nexec sleep 30\n",
     );
     let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
     let (worker, sender) = spawn(config, root.path().to_path_buf(), 0, events);
@@ -588,12 +584,7 @@ async fn managed_worker_stop_interrupts_blocked_stdin_write_before_final_reap() 
         .unwrap();
     assert!(matches!(ready.result, Ok(ClientMessage::Queued { .. })));
     sender
-        .try_send(HostMessage::Complete {
-            invocation: "1".into(),
-            status: "failed",
-            revision: None,
-            message: "x".repeat(900_000),
-        })
+        .try_send(payload("1".into(), "x".repeat(900_000)))
         .unwrap();
     tokio::task::yield_now().await;
     worker.stop();
@@ -616,7 +607,7 @@ async fn shutdown_wait_reaps_worker_without_draining_a_full_event_queue() {
     let root = crate::test_support::TestRuntimeRoot::new("plugin-shutdown-wait").unwrap();
     let config = managed_worker_config(
         &root,
-        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"subscribe\",\"request\":\"ready\",\"buffer\":\"0\"}\\n'\nexec sleep 30\n",
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"request\",\"id\":\"p:ready\",\"method\":\"settings.get\",\"params\":{}}\\n'\nexec sleep 30\n",
     );
     let (events, mut receiver) = mpsc::channel(1);
     let (worker, _sender) = spawn(config, root.path().to_path_buf(), 0, events.clone());
@@ -681,4 +672,54 @@ async fn managed_worker_cancel_before_first_poll_starts_no_process() {
         })
     ));
     assert!(!root.join("should-not-exist").exists());
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn registration_rejection_reaps_even_when_the_plugin_never_reads_its_error() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-rejection-write").unwrap();
+    let config = managed_worker_config(
+        &root,
+        "printf '%s\\n' \"$$\" > managed-worker.pid\nprintf '{\"type\":\"request\",\"id\":\"p:1\",\"method\":\"settings.get\",\"params\":{}}\\n'\nexec sleep 30\n",
+    );
+    let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
+    let (worker, sender) = spawn(config, root.path().to_path_buf(), 0, events);
+    let ready = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ready.result, Ok(ClientMessage::Queued { .. })));
+    sender
+        .try_send(payload("large".into(), "x".repeat(900_000)))
+        .unwrap();
+    tokio::task::yield_now().await;
+    worker.reject(application::RegistrationFailure {
+        code: "unsupported_feature",
+        message: "Required feature is unavailable".into(),
+    });
+    tokio::time::timeout(Duration::from_secs(3), worker.wait_stopped())
+        .await
+        .expect("registration error delivery blocked child cleanup")
+        .unwrap();
+    let pid: i32 = std::fs::read_to_string(root.join("managed-worker.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+    let stopped = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        stopped.result,
+        Ok(ClientMessage::WorkerStopped {
+            failure: None,
+            reaped: true
+        })
+    ));
 }

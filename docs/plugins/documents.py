@@ -7,7 +7,7 @@ app = Application('Documents', [
      'arguments': [{'name': 'path', 'type': 'string'}, {'name': 'text', 'type': 'string'}]},
     {'name': 'save', 'alias': 'documents-save', 'description': 'Save the invoking document asynchronously', 'context': 'buffer'},
     {'name': 'close', 'alias': 'documents-close', 'description': 'Close the invoking clean document', 'context': 'buffer'},
-], ['documents', 'jobs'])
+], ['documents', 'jobs'], runyte='>=0.3.0, <0.4.0')
 
 def create(context):
     app.request('buffer.create', **context['arguments'], invocation=context['invocation'])

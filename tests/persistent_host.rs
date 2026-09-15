@@ -2506,21 +2506,28 @@ async fn plugin_completion_while_detached_and_reattachment_keep_one_process() {
     fs::write(sandbox.runtime.join("plugin-worker.behavior"), r#"
 printf 'started\n' >> "$0.starts"
 read -r hello
-printf '%s\n' '{"type":"register","version":"runyte-experimental-1","commands":[{"name":"upper","description":"Uppercase selections"}]}'
+printf '%s\n' '{"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","name":"Detached text edit","required_features":[],"optional_features":[],"required_capabilities":["text"],"optional_capabilities":[],"commands":[{"name":"upper","description":"Uppercase selections","context":"buffer"}]}'
 read -r registered
 printf 'ready\n' > "$0.ready"
 while read -r message; do
     case "$message" in
-        *'"type":"invoke"'*)
+        *'"method":"command.invoke"'*)
+            buffer=${message#*\"buffer\":\"}; buffer=${buffer%%\"*}
+            revision=${message#*\"buffer_revision\":\"}; revision=${revision%%\"*}
+            invocation=${message#*\"id\":\"}; invocation=${invocation%%\"*}
             printf 'invoked\n' > "$0.invoked"
             while [ ! -e "$0.release" ]; do sleep 0.01; done
-            printf '%s\n' '{"type":"replace","invocation":"1","replacements":["BASE\n"]}'
+            printf '{"type":"request","id":"p:1","method":"buffer.edit","params":{"buffer":"%s","expected_revision":"%s","changes":[{"from":0,"to":5,"text":"BASE\\n"}]}}\n' "$buffer" "$revision"
+            ;;
+        *'"type":"response","id":"p:1"'*)
+            case "$message" in *'"error"'*) exit 2;; esac
+            printf '{"type":"response","id":"%s","result":{}}\n' "$invocation"
             ;;
     esac
 done
 "#).unwrap();
     fs::write(sandbox.cache.join("runyte/config.yaml"), format!(
-        "lsp:\n  enable: false\nplugins:\n  - id: case\n    enabled: true\n    executable: {}\n    bindings:\n      upper: F12\n", program.display()
+        "lsp:\n  enable: false\nplugins:\n  - id: case\n    enabled: true\n    api: runyte-1\n    runyte: \">=0.0.0, <18446744073709551615.0.0\"\n    capabilities: [text]\n    executable: {}\n    bindings:\n      upper: F12\n", program.display()
     )).unwrap();
     let child = sandbox
         .bundled_runyte()
@@ -2704,7 +2711,7 @@ tr 'a-z' 'A-Z'
     fs::remove_dir_all(root).unwrap();
 }
 
-#[path = "persistent_host/plugin_epoch2.rs"]
-mod plugin_epoch2;
 #[path = "persistent_host/plugin_examples.rs"]
 mod plugin_examples;
+#[path = "persistent_host/plugin_stable.rs"]
+mod plugin_stable;

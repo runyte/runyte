@@ -6,7 +6,7 @@ from application import Application
 
 app = Application('Field validation', [
     {'name': 'open', 'alias': 'validation', 'description': 'Open the validation example', 'context': 'workspace'}
-], ['interaction'])
+], ['interaction'], runyte='>=0.3.0, <0.4.0')
 
 
 def open_form(context):

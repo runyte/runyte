@@ -316,10 +316,10 @@ class FtpTransportTests(UploadTransportChecks, OperationTransportChecks, Downloa
         (fixture.root / 'é.txt').write_bytes(contents)
         config = fixture.base / 'profile.json'
         config.write_text(json.dumps(fixture.config))
-        schema = json.loads((DIRECTORY / 'runyte-experimental-2.schema.json').read_text())
+        schema = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
         validator = Draft202012Validator({**schema, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})
         host = [entry['message'] for entry in
-                json.loads((DIRECTORY / 'epoch2-fixtures.json').read_text())
+                json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
                 if entry['direction'] == 'host']
         child = subprocess.Popen([sys.executable, str(DIRECTORY / 'ftp.py'), '--config', str(config)],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -346,7 +346,7 @@ class FtpTransportTests(UploadTransportChecks, OperationTransportChecks, Downloa
             send(host[0])
             registration = receive()
             self.assertIn('providers', registration['required_capabilities'])
-            send({**host[1], 'capabilities': ['views', 'providers', 'documents', 'jobs']})
+            send({**host[1], 'capabilities': registration['required_capabilities']})
             invocation = {**host[2], 'params': {**host[2]['params'], 'command': 'browse',
                                                 'arguments': {'path': '.'}}}
             send(invocation)

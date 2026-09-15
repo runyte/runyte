@@ -5,8 +5,9 @@
 pub mod activity;
 pub mod application;
 pub mod arguments;
+mod boundary;
+pub mod compatibility;
 pub mod editor;
-mod epoch1;
 pub mod filesystem;
 pub mod handoff;
 pub mod interaction;
@@ -20,5 +21,5 @@ pub(crate) mod staging;
 pub mod state;
 pub mod view;
 mod worker;
-pub use epoch1::*;
+pub use boundary::*;
 pub use worker::*;

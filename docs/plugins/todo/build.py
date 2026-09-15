@@ -40,7 +40,8 @@ def main():
         ('rust', output / 'rust' / 'release' / 'runyte-todo-example', []),
         ('c', output / 'todo-c', []),
     ]:
-        plugins.append({'id': f'todo-{language}', 'enabled': True, 'api': 'runyte-experimental-2',
+        plugins.append({'id': f'todo-{language}', 'enabled': True, 'api': 'runyte-1',
+                        'runyte': '>=0.3.0, <0.4.0',
                         'executable': str(executable), 'args': arguments, 'capabilities': ['views']})
     config = output / 'config.yaml'
     config.write_text(json.dumps({'plugins': plugins}, indent=2) + '\n', encoding='utf-8')

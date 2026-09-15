@@ -4,7 +4,7 @@ A Runyte application is an explicitly enabled program that exchanges bounded
 JSON messages with one workspace host. It can use native views, commands, input,
 jobs and document operations without implementing a terminal renderer or linking
 to Rust. Start with the public [application contract](applications.md),
-[epoch 2 schema](runyte-experimental-2.schema.json) and
+[stable schema](runyte-1.schema.json) and
 [conformance guide](conformance.md). The bundled frontend transport and testing
 facades are not extension APIs.
 
@@ -35,7 +35,7 @@ for name, capabilities in [
     ('jobs', ['jobs']),
 ]:
     plugins.append({
-        'id': name, 'enabled': True, 'api': 'runyte-experimental-2',
+        'id': name, 'enabled': True, 'api': 'runyte-1', 'runyte': '>=0.3.0, <0.4.0',
         'executable': python,
         'args': [str(checkout / 'docs' / 'plugins' / (name + '.py'))],
         'capabilities': capabilities,
@@ -90,7 +90,7 @@ from application import Application
 
 app = Application('Example', [
     {'name': 'show', 'alias': 'example', 'description': 'Show the example page', 'context': 'workspace'},
-], ['views'])
+], ['views'], runyte='>=0.3.0, <0.4.0')
 
 def show(context):
     result = app.request('view.create', model={
@@ -125,7 +125,7 @@ must succeed before a command becomes available.
 
 The independent [tasks.mjs](tasks.mjs) example uses Node.js 18+ built-ins without the
 Python client or an npm dependency. Configure it with ID `node-tasks`, an absolute
-Node executable, the absolute script path, epoch 2 and `capabilities: [views]`.
+Node executable, the absolute script path, `api: runyte-1`, its release range and `capabilities: [views]`.
 `::node-tasks` shows its checklist; Enter invokes `toggle` for the
 selected row. Its [public-wire check](check_node.py) exercises another language's
 reader and response correlation. An ambiguous model publication makes this
@@ -137,7 +137,7 @@ example unavailable until explicit plugin restart; it never retries the mutation
 sequenceDiagram
     participant Host as Workspace host
     participant App as Application
-    Host->>App: hello (exact epoch and supported capabilities)
+    Host->>App: hello (protocol, host release, capabilities and features)
     App->>Host: register (commands and requested capabilities)
     Host-->>App: registered (granted capabilities and limits)
     Host->>App: command.invoke (captured target and invocation)
@@ -230,7 +230,7 @@ callbacks `resource.stat/read/reconcile` and
 Read negotiated limits and the relevant operation section before retaining data.
 Current hosts include `limits.resources` in both handshake messages for model,
 snapshot, subscription, input and payload ceilings. That additive inventory is
-optional when connecting to an older epoch 2 host; use that epoch's documented
+required for stable hosts; use the documented
 defaults if it is absent. Its values share the constants used by host admission.
 Important ceilings are 1 MiB per encoded line including newline, 16 outstanding
 host control requests, four active finite jobs, sixteen views, and 48 MiB of
@@ -247,54 +247,43 @@ process's memory: cap its queues, workers, caches and response bodies yourself.
 An operation's temporary reservation can exceed its final data size, so a valid
 small message can still receive `busy` or `limit_exceeded` under load.
 
-The schema version is exactly `runyte-experimental-2`; epoch 1 remains separately
-supported and is the default when configuration omits `api`. Incompatible fields
-or semantics need another epoch. Ignore unknown host fields for compatible
-additions, but emit only documented plugin fields. Plugin request IDs increase
-in send order and responses may arrive out of order. Treat returned handles and revision tokens as opaque. After restart, reacquire
-live handles and current revisions instead of reusing saved authority. Restart
-registers afresh and does not replay old requests.
+The stable protocol is `runyte-1`. Explicit `api` and a bounded `runyte`
+release range are required in configuration and registration. Experimental epochs
+are no longer accepted. See [compatibility](compatibility.md) for release,
+feature and schema evolution rules. Request IDs increase in send order; responses
+may arrive out of order. Reacquire handles and revisions after restart; never
+replay uncertain mutations automatically.
 
-### Move an epoch 1 command to epoch 2
+### Write a selection transformation
 
-Keep the old program/configuration available while migrating; changing only its
-version string does not translate its messages. For a selection transformation
-such as [uppercase.py](uppercase.py):
+[uppercase.py](uppercase.py) is the minimal stable text example. Grant `text`
+and `selections`, register a buffer-context command, and declare the plugin's
+supported range. Its callback receives captured buffer/pane handles and revisions.
+Read `selection.get` for that pane and require its buffer and selection revision
+to match the invocation. Its `spans` array contains authoritative half-open
+operative ranges in the same order as `ranges`; anchor/head retain direction.
+Do not infer spans from min/max of the caret coordinates: native half-open,
+linewise and inclusive selections have different endpoint semantics.
 
-1. Set `api: runyte-experimental-2` and grant `text` and `selections` in the
-   configuration. Register the command with `context: buffer` and request those
-   same capabilities. The Python `Application` client handles the new handshake.
-2. Replace the `invoke` message loop with an `app.handlers` callback. Its context
-   contains the captured `buffer`, `buffer_revision`, `pane` and
-   `selection_revision`; the SDK also supplies `invocation`. Epoch 2 does not
-   include the whole document or selected text in each command.
-3. Call `selection.get` for that captured pane and refuse a returned revision
-   different from `selection_revision`. Read text from the captured buffer at
-   `buffer_revision`, using bounded `buffer.read` calls or a retained snapshot.
-   Do not rediscover the currently active buffer when an asynchronous read ends.
-4. Compute one sorted, non-overlapping `changes` array containing
-   `{from, to, text}`. Offsets count Unicode scalars. Preserve epoch 1's caret
-   behavior deliberately: a collapsed selection covers its character when one
-   exists, and the EOF caret is an empty insertion range. Normalize overlapping
-   ranges before sending the transaction; arbitrary overlapping edits are refused.
-5. Send `buffer.edit` with the captured buffer and revision. This replaces
-   epoch 1's `replace {invocation, replacements}` message. A successful response
-   gives the new text revision, and the host maps pane selections through the
-   single undoable transaction. Handle `stale` or `closed` without replaying the
-   transformation against newer text. Return from the command handler after its
-   work finishes; use an explicitly issued job if work outlives the command.
+Read each span against the captured buffer revision, then submit one sorted,
+non-overlapping `buffer.edit` changes array. The host applies one undoable
+transaction or nothing. Stale/closed targets, oversized reads and refused edits
+must not trigger automatic replay. The example tests cover reverse selections,
+Unicode expansion, empty spans and refusal before mutation.
 
-| Epoch 1 | Epoch 2 |
-| --- | --- |
-| `register {version, commands}` | Named application, contextual commands and explicit required/optional capabilities |
-| `invoke` carries text/selections | `command.invoke` carries captured handles/revisions; explicit reads fetch data |
-| `replace` plus `complete` | Correlated `buffer.edit` request/response plus the command's own response |
-| Buffer `subscribe` / `buffer_state` | `event.subscribe` with a buffer source, baseline, sequence and resynchronization |
-| Invocation token authorizes the replacement | Buffer revision fences the edit; invocation separately authorizes foreground presentation |
+### Client distribution and languages
 
-Run both epoch schema/example suites during migration. Add stale-revision,
-backward/multiple-selection, Unicode and single-step-undo cases for the migrated
-command; a schema-valid example alone does not preserve its editing semantics.
+For Python, vendor the unmodified maintained `application.py` alongside the
+plugin. Record its full upstream source SHA and checksums, and copy the matching
+schema and fixtures into development tests. Updates are deliberate; compatible
+host upgrades do not require replacing the pinned SDK. The file requires only
+Python 3.10+ standard library. SDK fixes belong upstream before re-vendoring.
+
+The independent Node, Rust and C examples demonstrate the same protocol without
+Python. They are maintained runnable examples, not full reusable SDK packages.
+The stable schema, behavioral contract and conformance fixtures are available to
+any language. Additional packaged SDKs can follow concrete plugin demand;
+PyPI/npm/Cargo SDK publication is not part of this transition.
 
 Use an application-defined numeric version inside `state.set` documents. Read
 the current revision, validate and migrate data in application code, then perform
@@ -305,6 +294,6 @@ are nonsecret; credentials belong in an established credential helper or platfor
 credential manager. Never persist secret fields, tokens or live resource handles.
 
 Run the [conformance checks](conformance.md) before distributing an application.
-Include tested Runyte epoch, Python/Node or helper versions, capability grants,
+Include tested Runyte release and protocol, Python/Node or helper versions, capability grants,
 dependency installation, stop/cancel behavior and any weaker remote-write
 guarantees with your own bundle.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://runyte.com/schemas/runyte-experimental-2.schema.json",
-  "title": "Runyte application API epoch 2 (implemented methods)",
+  "$id": "https://runyte.com/schemas/runyte-1.schema.json",
+  "title": "Runyte stable application protocol v1",
   "$defs": {
     "error": {
       "type": "object",
@@ -297,7 +297,7 @@
           "maxLength": 64
         },
         "model": {
-          "$ref": "#/$defs/model"
+          "$ref": "#/$defs/host_model"
         },
         "query": {
           "$ref": "#/$defs/viewQuery"
@@ -400,7 +400,7 @@
           "const": "register"
         },
         "version": {
-          "const": "runyte-experimental-2"
+          "const": "runyte-1"
         },
         "name": {
           "type": "string",
@@ -438,6 +438,33 @@
               "type": "null"
             }
           ]
+        },
+        "runyte": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "required_features": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
+        },
+        "optional_features": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
         }
       },
       "required": [
@@ -446,7 +473,10 @@
         "name",
         "commands",
         "required_capabilities",
-        "optional_capabilities"
+        "optional_capabilities",
+        "runyte",
+        "required_features",
+        "optional_features"
       ],
       "additionalProperties": false
     },
@@ -457,7 +487,7 @@
           "const": "hello"
         },
         "version": {
-          "const": "runyte-experimental-2"
+          "const": "runyte-1"
         },
         "capabilities": {
           "type": "array",
@@ -469,13 +499,31 @@
         },
         "limits": {
           "$ref": "#/$defs/limits"
+        },
+        "host_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
         }
       },
       "required": [
         "type",
         "version",
         "capabilities",
-        "limits"
+        "limits",
+        "host_version",
+        "features"
       ],
       "additionalProperties": true
     },
@@ -503,13 +551,31 @@
         },
         "limits": {
           "$ref": "#/$defs/limits"
+        },
+        "runyte": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.-]+$"
+          }
         }
       },
       "required": [
         "type",
         "commands",
         "capabilities",
-        "limits"
+        "limits",
+        "runyte",
+        "features"
       ],
       "additionalProperties": true
     },
@@ -720,7 +786,7 @@
       "additionalProperties": true
     },
     "editorResult": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "object",
           "properties": {
@@ -853,13 +919,36 @@
             "ranges": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/range"
+                "$ref": "#/$defs/host_range"
               },
               "maxItems": 1024
             },
             "primary": {
               "type": "integer",
               "minimum": 0
+            },
+            "spans": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1024,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "to": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": true
+              }
             }
           },
           "required": [
@@ -867,7 +956,8 @@
             "buffer",
             "revision",
             "ranges",
-            "primary"
+            "primary",
+            "spans"
           ],
           "additionalProperties": true
         }
@@ -1754,7 +1844,7 @@
           "maxLength": 64
         },
         "result": {
-          "oneOf": [
+          "anyOf": [
             {
               "$ref": "#/$defs/job"
             },
@@ -1831,7 +1921,8 @@
             {
               "$ref": "#/$defs/stateResult"
             }
-          ]
+          ],
+          "description": "Untagged results are interpreted using the originating request. This envelope validates known structural shapes, not request/result correlation. The empty acknowledgement remains exactly {} so arbitrary malformed results cannot match it."
         }
       },
       "required": [
@@ -1857,7 +1948,7 @@
           "maxLength": 64
         },
         "error": {
-          "$ref": "#/$defs/error"
+          "$ref": "#/$defs/host_error"
         }
       },
       "required": [
@@ -1902,61 +1993,7 @@
           ]
         },
         "data": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/job"
-            },
-            {
-              "type": "object",
-              "properties": {
-                "view": {
-                  "type": "string",
-                  "maxLength": 64
-                }
-              },
-              "required": [
-                "view"
-              ],
-              "additionalProperties": true
-            },
-            {
-              "$ref": "#/$defs/filesystemFinished"
-            },
-            {
-              "$ref": "#/$defs/filesystemStarted"
-            },
-            {
-              "$ref": "#/$defs/resourceFinished"
-            },
-            {
-              "type": "object",
-              "properties": {
-                "job": {
-                  "type": "string",
-                  "maxLength": 64
-                }
-              },
-              "required": [
-                "job"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "$ref": "#/$defs/observationChange"
-            },
-            {
-              "$ref": "#/$defs/observationResync"
-            },
-            {
-              "$ref": "#/$defs/validationCancelled"
-            },
-            {
-              "$ref": "#/$defs/viewActionEvent"
-            },
-            {
-              "$ref": "#/$defs/activityCancelled"
-            }
-          ]
+          "type": "object"
         }
       },
       "required": [
@@ -1971,12 +2008,164 @@
           "if": {
             "properties": {
               "event": {
-                "enum": [
-                  "event.changed",
-                  "event.closed"
-                ]
+                "const": "job.changed"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/job"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "job.cancel_requested"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/job"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "filesystem.finished"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/filesystemFinished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "filesystem.started"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/filesystemStarted"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "resource.opened"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/resourceFinished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "resource.saved"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/resourceFinished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "resource.inspected"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/resourceFinished"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "event.changed"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "$ref": "#/$defs/observationChange"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "event.closed"
+              }
+            },
+            "required": [
+              "event"
+            ]
           },
           "then": {
             "properties": {
@@ -1992,7 +2181,10 @@
               "event": {
                 "const": "event.resync_required"
               }
-            }
+            },
+            "required": [
+              "event"
+            ]
           },
           "then": {
             "properties": {
@@ -2008,7 +2200,10 @@
               "event": {
                 "const": "ui.validation_cancelled"
               }
-            }
+            },
+            "required": [
+              "event"
+            ]
           },
           "then": {
             "properties": {
@@ -2024,7 +2219,10 @@
               "event": {
                 "const": "event.action"
               }
-            }
+            },
+            "required": [
+              "event"
+            ]
           },
           "then": {
             "properties": {
@@ -2040,7 +2238,10 @@
               "event": {
                 "const": "activity.cancel_requested"
               }
-            }
+            },
+            "required": [
+              "event"
+            ]
           },
           "then": {
             "properties": {
@@ -2049,8 +2250,67 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "view.closed"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "view": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "view"
+                ],
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "resource.released"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "job": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "job"
+                ],
+                "additionalProperties": true
+              }
+            }
+          }
         }
-      ]
+      ],
+      "description": "The event name selects its payload schema. Extra host fields do not select another payload variant."
     },
     "pluginMessage": {
       "oneOf": [
@@ -2330,6 +2590,9 @@
         },
         {
           "$ref": "#/$defs/validationRequest"
+        },
+        {
+          "$ref": "#/$defs/registrationError"
         }
       ]
     },
@@ -2720,7 +2983,7 @@
       "additionalProperties": true
     },
     "localResult": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "object",
           "properties": {
@@ -3141,7 +3404,7 @@
       "required": [
         "surface"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "inputSubmission": {
       "type": "object",
@@ -3821,7 +4084,7 @@
             "provider",
             "key"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -3830,7 +4093,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.read": {
       "type": "object",
@@ -3883,7 +4146,7 @@
             "offset",
             "limit"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -3892,7 +4155,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resourceFinished": {
       "type": "object",
@@ -3918,7 +4181,7 @@
         "error": {
           "oneOf": [
             {
-              "$ref": "#/$defs/error"
+              "$ref": "#/$defs/host_error"
             },
             {
               "type": "null"
@@ -4013,7 +4276,7 @@
             "key",
             "previous_write"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4022,7 +4285,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.write.begin": {
       "type": "object",
@@ -4080,7 +4343,7 @@
             "encoding",
             "mode"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4089,7 +4352,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.write.chunk": {
       "type": "object",
@@ -4131,7 +4394,7 @@
             "offset",
             "text"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4140,7 +4403,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.write.commit": {
       "type": "object",
@@ -4183,7 +4446,7 @@
             "expected_version",
             "mode"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4192,7 +4455,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.write.abort": {
       "type": "object",
@@ -4226,7 +4489,7 @@
             "job",
             "upload"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -4235,7 +4498,7 @@
         "method",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "resource.inspect": {
       "type": "object",
@@ -4460,7 +4723,7 @@
             "kind",
             "buffer"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4478,7 +4741,7 @@
             "kind",
             "pane"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4496,7 +4759,7 @@
             "kind",
             "view"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4514,7 +4777,7 @@
             "kind",
             "job"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4526,7 +4789,7 @@
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4550,7 +4813,7 @@
             "view",
             "pane"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4568,7 +4831,7 @@
             "kind",
             "view"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4586,7 +4849,7 @@
             "kind",
             "process"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -4799,7 +5062,7 @@
             "read_only",
             "dirty"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4830,7 +5093,7 @@
             "buffer",
             "selection_revision"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4851,7 +5114,7 @@
             "kind",
             "revision"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4880,7 +5143,7 @@
             "state",
             "progress"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4902,7 +5165,7 @@
             "attached",
             "generation"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4914,7 +5177,7 @@
           "required": [
             "kind"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4969,7 +5232,7 @@
             "top",
             "bottom"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -4987,7 +5250,7 @@
             "kind",
             "accepted"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         {
           "type": "object",
@@ -5020,7 +5283,7 @@
                 "start",
                 "end"
               ],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "stderr": {
               "type": "object",
@@ -5040,7 +5303,7 @@
                 "start",
                 "end"
               ],
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "stdin_closed": {
               "type": "boolean"
@@ -5075,7 +5338,7 @@
             "signal",
             "output_truncated"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       ]
     },
@@ -5099,7 +5362,7 @@
         "revision",
         "state"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "observationBaseline": {
       "type": "object",
@@ -5127,7 +5390,7 @@
         "sequence",
         "sources"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "observationChange": {
       "type": "object",
@@ -5154,7 +5417,7 @@
         "sources",
         "coalesced"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "observationResync": {
       "type": "object",
@@ -5168,7 +5431,7 @@
       "required": [
         "subscription"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "event.subscribe": {
       "type": "object",
@@ -5340,7 +5603,7 @@
             "fields",
             "values"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
@@ -5452,7 +5715,7 @@
         "surface",
         "revision"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewColumn": {
       "type": "object",
@@ -6143,7 +6406,7 @@
         "bytes",
         "rows"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewStage": {
       "type": "object",
@@ -6163,7 +6426,7 @@
         "stage",
         "bytes"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewStageOffset": {
       "type": "object",
@@ -6177,7 +6440,7 @@
       "required": [
         "offset"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewReadSnapshot": {
       "type": "object",
@@ -6203,7 +6466,7 @@
         "revision",
         "bytes"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewSnapshotChunk": {
       "type": "object",
@@ -6226,7 +6489,7 @@
         "text",
         "eof"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewQuery": {
       "type": "object",
@@ -6249,7 +6512,7 @@
         "text",
         "pending"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewQueryResult": {
       "type": "object",
@@ -6273,7 +6536,7 @@
         "revision",
         "query"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "view.query.set": {
       "type": "object",
@@ -6381,7 +6644,7 @@
         "selection_revision",
         "selected_count"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "viewActionEvent": {
       "type": "object",
@@ -6407,7 +6670,7 @@
             "kind",
             "view"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "revision": {
           "type": "string",
@@ -6424,7 +6687,7 @@
         "revision",
         "action"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "processInfo": {
       "type": "object",
@@ -6464,7 +6727,7 @@
             "start",
             "end"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "stderr": {
           "type": "object",
@@ -6484,7 +6747,7 @@
             "start",
             "end"
           ],
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "capture_stderr": {
           "type": "boolean"
@@ -6524,7 +6787,7 @@
         "signal",
         "output_truncated"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "processRead": {
       "type": "object",
@@ -6567,7 +6830,7 @@
         "next",
         "eof"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "processWrite": {
       "type": "object",
@@ -6591,7 +6854,7 @@
         "written",
         "stdin_closed"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "process.start": {
       "type": "object",
@@ -7039,7 +7302,7 @@
       "required": [
         "terminal"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "activity.acquire": {
       "type": "object",
@@ -7269,7 +7532,7 @@
         "state",
         "duration_seconds"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "activityCancelled": {
       "type": "object",
@@ -7290,7 +7553,7 @@
         "lease",
         "reason"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "settingsValue": {
       "oneOf": [
@@ -7340,7 +7603,7 @@
       "required": [
         "settings"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "settingsField": {
       "oneOf": [
@@ -7545,7 +7808,7 @@
               "type": "null"
             },
             {
-              "$ref": "#/$defs/stateDocument"
+              "$ref": "#/$defs/host_stateDocument"
             }
           ]
         }
@@ -7554,7 +7817,7 @@
         "revision",
         "document"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "allOf": [
         {
           "if": {
@@ -7574,7 +7837,7 @@
           "else": {
             "properties": {
               "document": {
-                "$ref": "#/$defs/stateDocument"
+                "$ref": "#/$defs/host_stateDocument"
               }
             }
           }
@@ -7810,6 +8073,338 @@
         "observation_state_bytes",
         "input_surfaces",
         "input_fields"
+      ],
+      "additionalProperties": true
+    },
+    "registrationError": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "registration_error"
+        },
+        "code": {
+          "enum": [
+            "unsupported_protocol",
+            "invalid_range",
+            "unsupported_release",
+            "range_conflict",
+            "unsupported_capability",
+            "capability_denied",
+            "unsupported_feature",
+            "invalid_registration"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "type",
+        "code",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "host_viewStatus": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": true
+    },
+    "host_viewBlock": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": true
+    },
+    "host_stateDocument": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "data": {
+          "$ref": "#/$defs/host_stateValue"
+        }
+      },
+      "required": [
+        "version",
+        "data"
+      ],
+      "additionalProperties": true
+    },
+    "host_error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_argument",
+            "unsupported",
+            "capability_denied",
+            "not_found",
+            "closed",
+            "stale",
+            "conflict",
+            "read_only",
+            "busy",
+            "limit_exceeded",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "internal",
+            "outcome_unknown",
+            "no_frontend",
+            "context_changed"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "host_row": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        },
+        "cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/host_viewCell"
+          },
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "role"
+      ],
+      "additionalProperties": true
+    },
+    "host_viewCell": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 4194304
+        },
+        "role": {
+          "enum": [
+            "ordinary",
+            "muted",
+            "heading",
+            "warning",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "role"
+      ],
+      "additionalProperties": true
+    },
+    "host_stateValue": {
+      "description": "Host semantic limits additionally bound depth and total nodes. Integer literals must fit signed 64-bit minimum through unsigned 64-bit maximum; finite decimal/exponent numbers use IEEE 754 double precision. Larger exact identifiers must be strings.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "maxLength": 1044480
+        },
+        {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/host_stateValue"
+          }
+        },
+        {
+          "type": "object",
+          "maxProperties": 1024,
+          "additionalProperties": {
+            "$ref": "#/$defs/host_stateValue"
+          }
+        }
+      ]
+    },
+    "host_model": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "purpose": {
+          "enum": [
+            "document",
+            "list",
+            "dashboard"
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/host_row"
+          },
+          "maxItems": 10000
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/host_viewColumn"
+          },
+          "maxItems": 8
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/host_viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/host_viewBlock"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/host_viewStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,48}$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "title",
+        "purpose",
+        "rows"
+      ],
+      "additionalProperties": true
+    },
+    "host_viewColumn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "host_range": {
+      "type": "object",
+      "properties": {
+        "anchor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "anchor",
+        "head"
       ],
       "additionalProperties": true
     }

@@ -3,7 +3,6 @@
 use super::WorkspaceHost;
 use crate::plugin::{self, application as api};
 use anyhow::{Result, ensure};
-use std::collections::BTreeSet;
 
 impl WorkspaceHost {
     pub(super) fn application_message(
@@ -15,16 +14,66 @@ impl WorkspaceHost {
             api::ClientMessage::Register {
                 settings_schema,
                 version,
+                runyte,
+                required_features,
+                optional_features,
                 name,
                 commands,
                 required_capabilities,
                 optional_capabilities,
             } => {
-                ensure!(version == api::VERSION, "unsupported application epoch");
+                let failure = |code, message: String| {
+                    anyhow::Error::new(api::RegistrationFailure { code, message })
+                };
                 ensure!(
                     !self.app.plugins.instances[&id].registered,
                     "application already registered"
                 );
+                ensure!(
+                    version.len() <= 64 && !version.chars().any(char::is_control),
+                    "invalid protocol version"
+                );
+                if version != api::VERSION {
+                    return Err(failure(
+                        "unsupported_protocol",
+                        format!(
+                            "Plugin requires protocol {version}; host supports {}",
+                            api::VERSION
+                        ),
+                    ));
+                }
+                let authored =
+                    plugin::compatibility::ReleaseRange::parse(&runyte).map_err(|_| {
+                        failure(
+                            "invalid_range",
+                            "Plugin registration has an invalid Runyte range".into(),
+                        )
+                    })?;
+                let configured = plugin::compatibility::ReleaseRange::parse(
+                    &self.app.plugins.instances[&id].config.runyte,
+                )?;
+                let host =
+                    plugin::compatibility::Version::parse(plugin::compatibility::HOST_VERSION)?;
+                if !authored.contains(&host) {
+                    return Err(failure(
+                        "unsupported_release",
+                        format!(
+                            "Host {} is outside plugin Runyte range {}",
+                            plugin::compatibility::HOST_VERSION,
+                            authored.normalized()
+                        ),
+                    ));
+                }
+                if !configured.contains(&host) || !configured.is_subset_of(&authored) {
+                    return Err(failure(
+                        "range_conflict",
+                        format!(
+                            "Configured range {} exceeds plugin range {}; regenerate the entry or narrow its range",
+                            configured.normalized(),
+                            authored.normalized()
+                        ),
+                    ));
+                }
                 ensure!(safe_label(&name, 80), "invalid application name");
                 if let Some(schema) = settings_schema {
                     schema
@@ -35,18 +84,44 @@ impl WorkspaceHost {
                     required_capabilities.len() + optional_capabilities.len() <= 32,
                     "too many capabilities"
                 );
-                let configured = &self.app.plugins.instances[&id].config.capabilities;
+                ensure!(
+                    required_capabilities
+                        .union(&optional_capabilities)
+                        .all(|cap| plugin::valid_name(cap)),
+                    "invalid capability name"
+                );
+                ensure!(
+                    required_capabilities.is_disjoint(&optional_capabilities),
+                    "overlapping capability declarations"
+                );
+                let configured_grants = &self.app.plugins.instances[&id].config.capabilities;
+                for cap in &required_capabilities {
+                    if !api::CAPABILITIES.contains(&cap.as_str()) {
+                        return Err(failure(
+                            "unsupported_capability",
+                            format!("Host does not support required capability {cap}"),
+                        ));
+                    }
+                    if !configured_grants.contains(cap) {
+                        return Err(failure(
+                            "capability_denied",
+                            format!("Required capability {cap} is not granted in configuration"),
+                        ));
+                    }
+                }
                 let capabilities = required_capabilities
                     .union(&optional_capabilities)
                     .filter(|cap| {
-                        api::CAPABILITIES.contains(&cap.as_str()) && configured.contains(cap)
+                        api::CAPABILITIES.contains(&cap.as_str()) && configured_grants.contains(cap)
                     })
                     .cloned()
-                    .collect::<BTreeSet<_>>();
-                ensure!(
-                    required_capabilities.is_subset(&capabilities),
-                    "required application capability unavailable"
-                );
+                    .collect();
+                let features = plugin::compatibility::negotiate_features(
+                    &required_features,
+                    &optional_features,
+                    api::FEATURES,
+                )
+                .map_err(|message| failure("unsupported_feature", message))?;
                 ensure!(
                     commands.iter().filter(|c| c.primary).count() <= 1
                         && commands
@@ -58,80 +133,13 @@ impl WorkspaceHost {
                     crate::plugin::arguments::validate(&command.arguments)
                         .map_err(|error| anyhow::anyhow!(error.message))?;
                 }
-                let arguments = commands
-                    .iter()
-                    .map(|command| (command.name.clone(), command.arguments.clone()))
-                    .collect();
-                let primaries = commands
-                    .iter()
-                    .filter(|c| c.primary)
-                    .map(|c| c.name.clone())
-                    .collect();
-                // The existing atomic command/keymap installer remains the only registry.
-                let contexts = commands
-                    .iter()
-                    .map(|c| (c.name.clone(), c.context))
-                    .collect::<std::collections::BTreeMap<_, _>>();
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .capabilities = capabilities.clone();
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .command_contexts = contexts.clone();
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .primary_commands = primaries;
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .command_arguments = arguments;
-                self.plugin_message(
+                self.register_plugin_commands(
                     id,
-                    plugin::ClientMessage::Register {
-                        version: plugin::VERSION.into(),
-                        commands: commands
-                            .into_iter()
-                            .map(|c| plugin::Registration {
-                                alias: c.alias,
-                                name: c.name,
-                                description: c.description,
-                            })
-                            .collect(),
-                    },
+                    commands,
+                    capabilities,
+                    features,
+                    configured.normalized().to_owned(),
                 )?;
-                for command in self
-                    .app
-                    .plugins
-                    .commands
-                    .values_mut()
-                    .filter(|c| c.plugin == id)
-                {
-                    if let Some(context) = contexts.get(&command.local) {
-                        command.context = *context;
-                    }
-                }
-                self.app
-                    .plugins
-                    .instances
-                    .get_mut(&id)
-                    .unwrap()
-                    .application
-                    .capabilities = capabilities;
             }
             api::ClientMessage::Request {
                 id: request_id,

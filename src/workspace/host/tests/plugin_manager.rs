@@ -17,8 +17,8 @@ pub(super) fn configured(root: &TestRuntimeRoot, id: &str) -> PluginConfig {
         &program,
     )
     .unwrap();
-    std::fs::write(root.join(format!("manager-{id}.behavior")),
-        "printf '%s\\n' \"$$\" >> manager.starts\nread -r hello\nprintf '%s\\n' '{\"type\":\"register\",\"version\":\"runyte-experimental-1\",\"commands\":[{\"name\":\"upper\",\"description\":\"Uppercase selections\"}]}'\nwhile read -r line; do :; done\n").unwrap();
+    let register = serde_json::to_string(&registration(vec![command("upper")])).unwrap();
+    std::fs::write(root.join(format!("manager-{id}.behavior")), format!("printf '%s\\n' \"$$\" >> manager.starts\nread -r hello\nprintf '%s\\n' '{register}'\nwhile read -r line; do :; done\n")).unwrap();
     let mut config = config(id);
     config.executable = program;
     config
@@ -86,10 +86,7 @@ async fn manager_restart_waits_for_final_fifo_then_rejects_all_old_owner_events(
         Ok(ClientMessage::Deadline {
             token: "old-deadline".into(),
         }),
-        Ok(ClientMessage::Register {
-            version: plugin::VERSION.into(),
-            commands: vec![],
-        }),
+        Ok(ClientMessage::Application(registration(vec![]))),
     ] {
         host.handle_plugin_event(Event {
             plugin: old,
@@ -373,4 +370,110 @@ async fn manager_recovery_snapshot_survives_restart_without_blocking_it() {
     assert!(host.app.buffers[0].provider().unwrap().uncertain.is_some());
     assert_eq!(host.app.plugins.orphaned_payload, charge);
     assert_eq!(host.app.plugins.manager_entries[0].cleanup, 0);
+}
+
+#[tokio::test]
+async fn compatibility_preflight_is_entry_local_and_never_launches_rejected_programs() {
+    for (api_value, range, expected) in [
+        (api::VERSION, "", "range"),
+        (api::VERSION, "^0.3.0", "range"),
+        (api::VERSION, "=99.0.0", "outside"),
+        ("runyte-experimental-2", "=99.0.0", "api"),
+        ("", "=99.0.0", "api"),
+    ] {
+        let (root, mut host) = host();
+        let mut rejected = configured(&root, "rejected");
+        rejected.api = api_value.to_owned();
+        rejected.runyte = range.to_owned();
+        host.app.config.plugins.push(rejected);
+        host.app.config.plugins.push(configured(&root, "accepted"));
+        let mut events = host.start_plugins().unwrap();
+        until(&mut host, &mut events, |host| {
+            host.app.plugins.manager_entries[1].phase == Phase::Running
+        })
+        .await;
+        let entry = &host.app.plugins.manager_entries[0];
+        assert_eq!(entry.phase, Phase::Failed);
+        assert!(entry.owner.is_none());
+        assert!(
+            entry
+                .diagnostic
+                .as_deref()
+                .unwrap()
+                .to_lowercase()
+                .contains(expected),
+            "{:?}",
+            entry.diagnostic
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("manager.starts"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        assert_eq!(host.plugin_workers.len(), 1);
+        action(&mut host, 0, Action::Restart);
+        assert!(host.app.plugins.manager_entries[0].owner.is_none());
+        action(&mut host, 1, Action::Stop);
+        until(&mut host, &mut events, |host| {
+            host.app.plugins.manager_entries[1].phase == Phase::Stopped
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn registration_refusal_survives_worker_reaping_and_preserves_other_owners() {
+    let (root, mut host) = host();
+    let rejected = configured(&root, "rejected");
+    let mut message = registration(vec![command("upper")]);
+    let api::ClientMessage::Register {
+        required_features, ..
+    } = &mut message
+    else {
+        unreachable!()
+    };
+    required_features.insert("future.feature".into());
+    let wire = serde_json::to_string(&message).unwrap();
+    std::fs::write(
+        root.join("manager-rejected.behavior"),
+        format!("read -r hello\nprintf '%s\\n' '{wire}'\nwhile read -r line; do :; done\n"),
+    )
+    .unwrap();
+    host.app.config.plugins.push(rejected);
+    host.app.config.plugins.push(configured(&root, "accepted"));
+    let mut events = host.start_plugins().unwrap();
+    until(&mut host, &mut events, |host| {
+        host.app.plugins.manager_entries[0].phase == Phase::Failed
+            && host.app.plugins.manager_entries[0].cleanup == 0
+            && host.app.plugins.manager_entries[1].phase == Phase::Running
+    })
+    .await;
+    let entry = &host.app.plugins.manager_entries[0];
+    assert!(
+        entry
+            .diagnostic
+            .as_deref()
+            .unwrap()
+            .contains("future.feature"),
+        "{:?}",
+        entry.diagnostic
+    );
+    assert!(entry.granted.is_empty());
+    assert!(host.app.parse_command("plugin.rejected.upper").is_err());
+    assert!(host.app.parse_command("plugin.accepted.upper").is_ok());
+    assert_eq!(host.plugin_workers.len(), 1);
+    action(&mut host, 1, Action::Stop);
+    until(&mut host, &mut events, |host| {
+        host.app.plugins.manager_entries[1].phase == Phase::Stopped
+    })
+    .await;
+    assert!(
+        host.app.plugins.manager_entries[0]
+            .diagnostic
+            .as_deref()
+            .unwrap()
+            .contains("future.feature")
+    );
 }

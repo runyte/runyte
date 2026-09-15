@@ -514,7 +514,7 @@ about fuzzy matching.
 Those are assertions that fail in CI; the harnesses here are measurements that
 are run deliberately and whose results are recorded by hand.
 
-# Experimental plugin comparison
+# Plugin comparison
 
 `plugins.py` compares retained release binaries with plugins disabled and with
 quiescent plugins, then exercises the application workloads through actual
@@ -526,7 +526,10 @@ python3 benchmarks/plugins.py --before /path/to/retained/base/runyte \
 ```
 
 Build both binaries and finish tests before measuring. `--after` selects the
-current binary. The harness requires at least ten startup samples and three
+current binary. Enabled workloads now require stable `runyte-1` and a host in
+`>=0.3.0, <0.4.0`; during the pre-release cutover, use the explicitly versioned
+candidate described in [plugin conformance](../docs/plugins/conformance.md).
+Historical result files retain the protocol labels and measurements they recorded. The harness requires at least ten startup samples and three
 independent idle windows of at least ten seconds. Representative startup fixtures
 are `short.txt`, `medium.lua` and `long.lua`; workload windows use `medium.lua`.
 Linux `/proc` supplies CPU accounting, including live descendants and cumulative
@@ -546,7 +549,7 @@ ranges and p95; a failed setup or incomplete window fails the run and preserves
 its failure instead of reporting a zero-cost sample.
 `screen_bytes` counts observed output bytes; `pty_read_chunks` counts harness
 reads, not editor write syscalls. Zero bytes still proves a silent observation
-window. Epoch 1 samples additionally execute a tiny transformation probe, undo
+window. Uppercase samples additionally execute a tiny transformation probe, undo
 it and restore the measured document to prove that the shipped example is live.
 
 With `--applications`, the checked-in `plugin_workload.py` provides a visible view,

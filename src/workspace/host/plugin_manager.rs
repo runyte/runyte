@@ -10,7 +10,6 @@ use crate::{
         manager::{Action, Entry, Intent, Phase},
     },
 };
-use std::collections::BTreeSet;
 
 pub(super) struct Record {
     config: Option<PluginConfig>,
@@ -20,6 +19,22 @@ pub(super) struct Record {
     failed: bool,
 }
 impl WorkspaceHost {
+    pub(super) fn retain_plugin_failure(&mut self, owner: usize, reason: &str) {
+        if let Some(record) = self
+            .plugin_manager
+            .iter_mut()
+            .find(|record| record.entry.owner == Some(owner))
+        {
+            record.entry.diagnostic = Some(
+                reason
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(1024)
+                    .collect(),
+            );
+        }
+    }
+
     pub(super) fn initialize_plugin_manager(&mut self) {
         if self.app.config.plugins.len() > plugin::manager::MAX_CONFIGS {
             self.report_host_error("At most 128 plugins may be configured");
@@ -36,6 +51,7 @@ impl WorkspaceHost {
                 helpers: 0,
                 cleanup: 0,
                 diagnostic: Some("At most 128 plugins may be configured".into()),
+                compatibility: String::new(),
             }]);
             return;
         }
@@ -50,17 +66,14 @@ impl WorkspaceHost {
             .iter()
             .enumerate()
             .map(|(index, config)| {
-                let valid =
-                    valid_config(config) && ids[config.id.as_str()] == 1 && !excessive_enabled;
                 let diagnostic = if excessive_enabled {
-                    Some("At most 8 plugins may be enabled")
+                    Some("At most 8 plugins may be enabled".to_owned())
                 } else if ids[config.id.as_str()] != 1 {
-                    Some("Duplicate configured plugin ID")
-                } else if !valid {
-                    Some("Invalid plugin configuration")
+                    Some("Duplicate configured plugin ID".to_owned())
                 } else {
-                    None
+                    config_admission(config).err()
                 };
+                let valid = diagnostic.is_none();
                 Record {
                     config: (valid && config.enabled).then(|| config.clone()),
                     settled: true,
@@ -88,7 +101,18 @@ impl WorkspaceHost {
                         activities: 0,
                         helpers: 0,
                         cleanup: 0,
-                        diagnostic: diagnostic.map(str::to_owned),
+                        diagnostic,
+                        compatibility: plugin::compatibility::ReleaseRange::parse(&config.runyte)
+                            .map_or_else(
+                                |_| String::new(),
+                                |range| {
+                                    format!(
+                                        "Host {}; configured {}",
+                                        plugin::compatibility::HOST_VERSION,
+                                        range.normalized()
+                                    )
+                                },
+                            ),
                     },
                 }
             })
@@ -120,19 +144,22 @@ impl WorkspaceHost {
         let Some(config) = self.plugin_manager[index].config.clone() else {
             return;
         };
+        if let Err(reason) = config_admission(&config) {
+            let record = &mut self.plugin_manager[index];
+            record.entry.phase = Phase::Failed;
+            record.entry.diagnostic = Some(reason);
+            record.failed = true;
+            return;
+        }
         let (worker, sender) =
             plugin::spawn(config.clone(), self.app.project_root.clone(), owner, events);
-        let hello = if config.api == plugin::application::Api::Epoch2 {
-            HostMessage::Application(plugin::application::HostMessage::Hello {
-                version: plugin::application::VERSION,
-                capabilities: plugin::application::CAPABILITIES.to_vec(),
-                limits: Default::default(),
-            })
-        } else {
-            HostMessage::Hello {
-                version: plugin::VERSION,
-            }
-        };
+        let hello = HostMessage::Application(plugin::application::HostMessage::Hello {
+            version: plugin::application::VERSION,
+            host_version: plugin::compatibility::HOST_VERSION,
+            capabilities: plugin::application::CAPABILITIES.to_vec(),
+            features: plugin::application::FEATURES.to_vec(),
+            limits: Default::default(),
+        });
         let hello_failed = sender.try_send(hello).is_err();
         self.plugin_workers.insert(owner, worker);
         self.app.plugins.instances.insert(
@@ -142,10 +169,6 @@ impl WorkspaceHost {
                 sender,
                 registered: false,
                 application: Default::default(),
-                pending: None,
-                issued: BTreeSet::new(),
-                subscriptions: Default::default(),
-                sequence: 0,
             },
         );
         let record = &mut self.plugin_manager[index];
@@ -178,14 +201,16 @@ impl WorkspaceHost {
                 record.entry.phase = Phase::Stopping;
             }
             record.failed = !requested;
-            record.entry.diagnostic = Some(
-                if requested {
-                    "Stopped by user"
-                } else {
-                    "Plugin stopped after a protocol or service failure"
-                }
-                .into(),
-            );
+            if requested || record.entry.diagnostic.is_none() {
+                record.entry.diagnostic = Some(
+                    if requested {
+                        "Stopped by user"
+                    } else {
+                        "Plugin stopped after a protocol or service failure"
+                    }
+                    .into(),
+                );
+            }
         }
         if let Some(worker) = self.plugin_workers.get(&owner) {
             worker.stop();
@@ -218,7 +243,13 @@ impl WorkspaceHost {
                 if record.entry.phase != Phase::RestartPending {
                     record.failed = true;
                 }
-                record.entry.diagnostic = Some(failure);
+                if record.entry.diagnostic.is_none()
+                    || record.entry.diagnostic.as_deref()
+                        == Some("Plugin stopped after a protocol or service failure")
+                    || !reaped
+                {
+                    record.entry.diagnostic = Some(failure);
+                }
             }
             if !reaped {
                 record.entry.phase = Phase::Failed;
@@ -279,6 +310,25 @@ impl WorkspaceHost {
                     entry.phase = Phase::Running;
                 }
                 entry.granted = instance.application.capabilities.iter().cloned().collect();
+                if instance.registered {
+                    entry.compatibility = format!(
+                        "Host {}; {}; effective {}; features {}",
+                        plugin::compatibility::HOST_VERSION,
+                        plugin::VERSION,
+                        instance.application.runyte,
+                        if instance.application.features.is_empty() {
+                            "none".into()
+                        } else {
+                            instance
+                                .application
+                                .features
+                                .iter()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    );
+                }
                 entry.jobs = instance
                     .application
                     .jobs
@@ -382,15 +432,32 @@ fn valid_config(config: &PluginConfig) -> bool {
         && config.executable.is_absolute()
         && config.args.len() <= 32
         && config.args.iter().map(String::len).sum::<usize>() <= 8192
-        && config.bindings.len()
-            <= if config.api == plugin::application::Api::Epoch2 {
-                plugin::application::MAX_COMMANDS
-            } else {
-                plugin::MAX_COMMANDS
-            }
+        && config.bindings.len() <= plugin::application::MAX_COMMANDS
         && config.capabilities.len() <= 32
         && config
             .capabilities
             .iter()
             .all(|cap| plugin::valid_name(cap))
+}
+
+fn config_admission(config: &PluginConfig) -> Result<(), String> {
+    if !valid_config(config) {
+        return Err("Invalid plugin configuration".into());
+    }
+    if config.api != plugin::application::VERSION {
+        return Err("Plugin requires explicit api: runyte-1; regenerate its configuration".into());
+    }
+    let range = plugin::compatibility::ReleaseRange::parse(&config.runyte).map_err(|_| {
+        "Missing or invalid Runyte range; use runyte: \">=0.3.0, <0.4.0\"".to_owned()
+    })?;
+    let version = plugin::compatibility::Version::parse(plugin::compatibility::HOST_VERSION)
+        .map_err(|error| error.to_string())?;
+    if !range.contains(&version) {
+        return Err(format!(
+            "Host {} is outside configured Runyte range {}",
+            plugin::compatibility::HOST_VERSION,
+            range.normalized()
+        ));
+    }
+    Ok(())
 }

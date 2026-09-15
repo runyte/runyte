@@ -8,7 +8,7 @@ from application import Application, PluginError
 
 class ObservationTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Observations', [], ['workspace'])
+        self.app = Application('Observations', [], ['workspace'], runyte='>=0.3.0, <0.4.0')
         self.requests = queue.Queue()
         self.app._write = self.requests.put
         self.received = queue.Queue()

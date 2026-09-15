@@ -10,7 +10,7 @@ app = Application('Handoffs', [
      'context': 'workspace', 'arguments': [{'name': 'url', 'type': 'string'}]},
     {'name': 'file', 'alias': 'handoffs-file', 'description': 'Open a workspace file with its system handler',
      'context': 'workspace', 'arguments': [{'name': 'path', 'type': 'string'}]},
-], ['notifications', 'terminals', 'external'])
+], ['notifications', 'terminals', 'external'], runyte='>=0.3.0, <0.4.0')
 
 
 def notify(context):

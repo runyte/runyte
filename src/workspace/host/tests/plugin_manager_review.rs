@@ -25,11 +25,14 @@ async fn plugin_manager_eight_saturated_owners_keep_slots_until_final_fifo_consu
         .unwrap();
         // Registration is acknowledged before the sixteen producer permits are
         // saturated. The process then blocks on stdin until its owner stops it.
-        std::fs::write(
-            root.join(format!("{id}.behavior")),
-            "read -r hello\nprintf '%s\\n' '{\"type\":\"register\",\"version\":\"runyte-experimental-1\",\"commands\":[{\"name\":\"upper\",\"description\":\"Fixture command\"}]}'\nread -r registered\nn=0\nwhile [ \"$n\" -lt 16 ]; do printf '{\"type\":\"subscribe\",\"request\":\"%s\",\"buffer\":\"0\"}\\n' \"$n\"; n=$((n + 1)); done\nwhile read -r line; do :; done\n",
-        )
-        .unwrap();
+        let register = serde_json::to_string(&registration(vec![command("upper")])).unwrap();
+        std::fs::write(root.join(format!("{id}.behavior")), format!(r#"read -r hello
+printf '%s\n' '{register}'
+read -r registered
+n=0
+while [ "$n" -lt 16 ]; do printf '{{"type":"request","id":"p:%s","method":"settings.get","params":{{}}}}\n' "$n"; n=$((n + 1)); done
+while read -r line; do :; done
+"#)).unwrap();
         let mut configured = config(&id);
         configured.executable = program;
         host.app.config.plugins.push(configured);
@@ -50,10 +53,10 @@ async fn plugin_manager_eight_saturated_owners_keep_slots_until_final_fifo_consu
                 panic!("unexpected producer event: {:?}", event.result);
             };
             match message.as_ref() {
-                ClientMessage::Register { .. } => {
+                ClientMessage::Application(api::ClientMessage::Register { .. }) => {
                     host.handle_plugin_event(event);
                 }
-                ClientMessage::Subscribe { .. } => {
+                ClientMessage::Application(api::ClientMessage::Request { .. }) => {
                     *counts.entry(event.plugin).or_default() += 1;
                     held.push(event);
                 }

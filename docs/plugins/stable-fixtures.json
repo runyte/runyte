@@ -3,7 +3,7 @@
     "direction": "plugin",
     "message": {
       "type": "register",
-      "version": "runyte-experimental-2",
+      "version": "runyte-1",
       "name": "Tasks",
       "commands": [
         {
@@ -19,7 +19,10 @@
       ],
       "optional_capabilities": [
         "workspace"
-      ]
+      ],
+      "runyte": ">=0.3.0, <0.4.0",
+      "required_features": [],
+      "optional_features": []
     }
   },
   {
@@ -307,7 +310,7 @@
     "direction": "host",
     "message": {
       "type": "hello",
-      "version": "runyte-experimental-2",
+      "version": "runyte-1",
       "capabilities": [
         "state",
         "settings",
@@ -369,7 +372,9 @@
           "input_surfaces": 1,
           "input_fields": 16
         }
-      }
+      },
+      "host_version": "0.3.0",
+      "features": []
     }
   },
   {
@@ -425,7 +430,9 @@
           "input_surfaces": 1,
           "input_fields": 16
         }
-      }
+      },
+      "runyte": ">=0.3.0, <0.4.0",
+      "features": []
     }
   },
   {
@@ -2344,7 +2351,7 @@
     "direction": "plugin",
     "message": {
       "type": "register",
-      "version": "runyte-experimental-2",
+      "version": "runyte-1",
       "name": "Preferences",
       "commands": [
         {
@@ -2368,7 +2375,10 @@
             "max_length": 256
           }
         ]
-      }
+      },
+      "runyte": ">=0.3.0, <0.4.0",
+      "required_features": [],
+      "optional_features": []
     }
   }
 ]

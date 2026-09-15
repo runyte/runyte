@@ -317,6 +317,7 @@ impl WorkspaceHost {
                 Ok(ResultValue::Selection {
                     pane: handle,
                     buffer,
+                    spans: self.app.plugin_selection_spans(pane),
                     revision: format!("q:{}", self.app.plugin_selection_revision(pane)),
                     ranges: target
                         .selection

@@ -3,11 +3,10 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-pub const VERSION: &str = "runyte-experimental-1";
+pub const VERSION: &str = super::application::VERSION;
 pub const MAX_BYTES: usize = 1_048_576;
-pub const MAX_SELECTIONS: usize = 1024;
 pub const MAX_PLUGINS: usize = 8;
-pub const MAX_COMMANDS: usize = 16;
+pub const MAX_COMMANDS: usize = super::application::MAX_COMMANDS;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Deserialize)]
@@ -17,7 +16,9 @@ pub struct PluginConfig {
     #[serde(default)]
     pub settings: super::settings::Settings,
     #[serde(default)]
-    pub api: super::application::Api,
+    pub api: String,
+    #[serde(default)]
+    pub runyte: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
@@ -38,155 +39,65 @@ pub fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Registration {
-    /// Public spelling after `::`; independent of the configured plugin ID.
-    #[serde(default)]
-    pub alias: Option<String>,
-    pub name: String,
-    pub description: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug)]
 pub enum ClientMessage {
-    #[serde(skip)]
     ProviderReload(super::provider::ReloadEvent),
-    #[serde(skip)]
     WorkerStopped {
         failure: Option<String>,
         reaped: bool,
     },
-    #[serde(skip)]
     Process(super::process::runtime::Event),
-    #[serde(skip)]
     State(super::state::Event),
-    #[serde(skip)]
     Handoff(super::handoff::Event),
-    #[serde(skip)]
     ModelPrepared {
         generation: String,
         request: String,
         result: Result<super::view::Prepared, super::application::Error>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     },
-    #[serde(skip)]
     OutputReady {
         _notification: super::OutputReadyGuard,
     },
-    #[serde(skip)]
     FilesystemApplied {
         job: String,
         result: Result<super::filesystem::Applied, String>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     },
-    #[serde(skip)]
     DocumentSaved {
         job: String,
         result: Result<Option<crate::buffer::SavedDocument>, String>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     },
-    #[serde(skip)]
     Local {
         generation: String,
         request: String,
         result: Result<super::filesystem::Prepared, super::application::Error>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     },
-    #[serde(skip)]
     Queued {
         message: Box<ClientMessage>,
         _permit: tokio::sync::OwnedSemaphorePermit,
         _bytes: tokio::sync::OwnedSemaphorePermit,
     },
-    #[serde(skip)]
     Application(super::application::ClientMessage),
-    #[serde(skip)]
     Unsupported {
         id: String,
     },
-    #[serde(skip)]
     Deadline {
         token: String,
     },
-    Register {
-        version: String,
-        commands: Vec<Registration>,
-    },
-    Replace {
-        invocation: String,
-        replacements: Vec<String>,
-    },
-    Fail {
-        invocation: String,
-        message: String,
-    },
-    Subscribe {
-        request: String,
-        buffer: String,
-    },
-    Unsubscribe {
-        request: String,
-        buffer: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct Selection {
-    pub anchor: usize,
-    pub head: usize,
-    pub from: usize,
-    pub to: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// The bounded outbound queue predominantly carries application frames; avoid an
+// extra allocation for every ordinary frame just to shrink the timer variant.
+#[allow(clippy::large_enum_variant)]
 pub enum HostMessage {
     #[serde(skip)]
     Deadline {
         token: String,
         after_ms: Option<u64>,
-    },
-    Hello {
-        version: &'static str,
-    },
-    Registered {
-        commands: Vec<String>,
-    },
-    Invoke {
-        invocation: String,
-        command: String,
-        buffer: String,
-        revision: String,
-        text: String,
-        selections: Vec<Selection>,
-        primary: usize,
-    },
-    Complete {
-        invocation: String,
-        status: &'static str,
-        revision: Option<String>,
-        message: String,
-    },
-    Subscribed {
-        request: String,
-        buffer: String,
-        revision: String,
-    },
-    Unsubscribed {
-        request: String,
-        buffer: String,
-    },
-    Error {
-        request: String,
-        code: &'static str,
-    },
-    BufferState {
-        sequence: String,
-        buffer: String,
-        revision: String,
-        closed: bool,
     },
     #[serde(untagged)]
     Application(super::application::HostMessage),

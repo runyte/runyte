@@ -71,12 +71,15 @@ fn setup(
     capabilities: &[&str],
 ) -> mpsc::Receiver<HostMessage> {
     let mut cfg = config(&format!("app-{id}"));
-    cfg.api = api::Api::Epoch2;
+    cfg.api = crate::plugin::application::VERSION.to_owned();
     cfg.capabilities = capabilities.iter().map(|s| (*s).into()).collect();
     let receiver = instance(host, id, cfg);
     host.application_message(
         id,
         api::ClientMessage::Register {
+            runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
+            required_features: Default::default(),
+            optional_features: Default::default(),
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),
@@ -104,7 +107,6 @@ fn next(receiver: &mut mpsc::Receiver<HostMessage>) -> api::HostMessage {
             }) => {}
             HostMessage::Application(message) => return message,
             HostMessage::Deadline { .. } => {}
-            other => panic!("unexpected {other:?}"),
         }
     }
 }
@@ -149,7 +151,7 @@ fn application_command_palette_submits_both_epochs_on_enter() {
     type_command(&mut host, "plugin.case.upper");
     assert_eq!(host.app.mode, crate::app::Mode::Normal);
     assert!(
-        matches!(legacy.try_recv().unwrap(), HostMessage::Invoke { command, .. } if command == "upper")
+        matches!(legacy.try_recv().unwrap(), HostMessage::Application(api::HostMessage::Request { params, .. }) if params.command == "upper")
     );
 
     let mut application = setup(&mut host, 0, &["views"]);
@@ -166,11 +168,14 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
     use crate::input::KeyStroke;
     let (_root, mut host) = host();
     let mut cfg = config("args");
-    cfg.api = api::Api::Epoch2;
+    cfg.api = crate::plugin::application::VERSION.to_owned();
     let mut receiver = instance(&mut host, 0, cfg);
     host.application_message(
         0,
         api::ClientMessage::Register {
+            runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
+            required_features: Default::default(),
+            optional_features: Default::default(),
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Arguments".into(),
@@ -464,12 +469,15 @@ fn required_capabilities_registration_rollback_and_request_reuse_are_bounded() {
     request(&mut host, 0, 1, api::Request::WorkspaceInfo(api::Empty {}));
     assert!(!host.app.plugins.instances.contains_key(&0));
     let mut cfg = config("denied");
-    cfg.api = api::Api::Epoch2;
+    cfg.api = crate::plugin::application::VERSION.to_owned();
     let _receiver = instance(&mut host, 2, cfg);
     assert!(
         host.application_message(
             2,
             api::ClientMessage::Register {
+                runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
+                required_features: Default::default(),
+                optional_features: Default::default(),
                 settings_schema: None,
                 version: api::VERSION.into(),
                 name: "Denied".into(),
@@ -558,7 +566,7 @@ async fn real_application_job_outlives_control_timeout_and_attachment() {
     std::fs::write(root.join("jobs.behavior"), r#"
 printf 'started\n' >> "$0.starts"
 read -r hello
-printf '%s\n' '{"type":"register","version":"runyte-experimental-2","name":"Jobs","commands":[{"name":"open","description":"Start job","context":"workspace"}],"required_capabilities":["jobs"],"optional_capabilities":[]}'
+printf '%s\n' '{"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","required_features":[],"optional_features":[],"name":"Jobs","commands":[{"name":"open","description":"Start job","context":"workspace"}],"required_capabilities":["jobs"],"optional_capabilities":[]}'
 read -r registered
 read -r invocation
 printf '%s\n' '{"type":"request","id":"p:1","method":"job.create","params":{"title":"Long task","deadline_seconds":60}}'
@@ -570,7 +578,7 @@ printf '%s\n' '{"type":"request","id":"p:2","method":"job.create","params":{"tit
 while read -r message; do :; done
 "#).unwrap();
     let mut cfg = config("jobs");
-    cfg.api = api::Api::Epoch2;
+    cfg.api = crate::plugin::application::VERSION.to_owned();
     cfg.executable = program;
     cfg.capabilities = vec!["jobs".into()];
     host.app.config.plugins.push(cfg);
@@ -665,12 +673,15 @@ fn model(rows: &[(&str, &str)]) -> crate::plugin::view::Model {
 }
 fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
     let mut cfg = config("tasks");
-    cfg.api = api::Api::Epoch2;
+    cfg.api = crate::plugin::application::VERSION.to_owned();
     cfg.capabilities = vec!["views".into()];
     let mut receiver = instance(host, 0, cfg);
     host.application_message(
         0,
         api::ClientMessage::Register {
+            runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
+            required_features: Default::default(),
+            optional_features: Default::default(),
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),

@@ -6,7 +6,7 @@ from application import Application, PluginError
 app = Application('Background jobs', [
     {'name': 'start', 'alias': 'jobs-start', 'description': 'Run a twelve-second background job', 'context': 'workspace'},
     {'name': 'cancel', 'alias': 'jobs-cancel', 'description': 'Cancel the last background job', 'context': 'workspace'},
-], ['jobs'])
+], ['jobs'], runyte='>=0.3.0, <0.4.0')
 lock = threading.Lock()
 cancellations = {}
 early_cancellations = {}

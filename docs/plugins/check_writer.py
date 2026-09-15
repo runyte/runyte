@@ -15,11 +15,15 @@ from unittest.mock import patch
 from application import Application, LIMIT, PluginError, VERSION, _WireIO
 
 
+TEST_LIMITS = next(f['message']['limits'] for f in json.loads(
+    Path(__file__).with_name('stable-fixtures.json').read_text())
+    if f['message']['type'] == 'hello')
+
 class WriterTests(unittest.TestCase):
     def setUp(self):
         self.read_fd, self.write_fd = os.pipe()
         os.set_blocking(self.write_fd, False)
-        self.app = Application('Writer checks', [], ['jobs'])
+        self.app = Application('Writer checks', [], ['jobs'], runyte='>=0.3.0, <0.4.0')
         self.app._io = _WireIO(self.app._disconnect, self.write_fd)
         self.threads = []
 
@@ -125,8 +129,8 @@ class WriterTests(unittest.TestCase):
             runner = self.thread(self.app.run)
             # Deliberately supply the host handshake while registration output is
             # stalled; a full pipe must not make the reader acquire its writer lock.
-            os.write(input_write, (json.dumps({'type': 'hello', 'version': VERSION}) + '\n'
-                                  + json.dumps({'type': 'registered'}) + '\n').encode())
+            os.write(input_write, (json.dumps({'type': 'hello', 'version': VERSION, 'host_version': '0.3.0', 'features': [], 'capabilities': ['jobs'], 'limits': TEST_LIMITS}) + '\n'
+                                  + json.dumps({'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['jobs'], 'limits': TEST_LIMITS}) + '\n').encode())
             self.assertTrue(registered.wait(1))
             request = self.thread(lambda: self.app._request('workspace.info', {}, timeout=2))
             with self.app._io.condition:
@@ -236,9 +240,9 @@ class ActualWireTests(unittest.TestCase):
                 self.assertTrue(selector.select(2), 'SDK output stalled')
             return json.loads(child.stdout.readline(LIMIT + 1))
         try:
-            send({'type': 'hello', 'version': VERSION})
+            send({'type': 'hello', 'version': VERSION, 'host_version': '0.3.0', 'features': [], 'capabilities': ['jobs'], 'limits': TEST_LIMITS})
             self.assertEqual(read()['type'], 'register')
-            send({'type': 'registered'})
+            send({'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['jobs'], 'limits': TEST_LIMITS})
             send({'type': 'request', 'id': 'h:1', 'method': 'command.invoke', 'params': {'command': 'start'}})
             create = read()
             self.assertEqual(create['id'], 'p:1')

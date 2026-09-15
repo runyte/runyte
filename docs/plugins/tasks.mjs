@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
-// Epoch 2 without an SDK: Node built-ins, continuous bounded reader, async handlers.
+// Stable v1 without an SDK: Node built-ins, continuous bounded reader, async handlers.
 // Run with `node docs/plugins/tasks.mjs`; stdout belongs exclusively to the protocol.
-const VERSION = 'runyte-experimental-2';
+const VERSION = 'runyte-1';
+const RUNYTE_RANGE = '>=0.3.0, <0.4.0';
+// This example supports one release line; it does not implement a range language.
+function supportedHost(version) {
+  if (typeof version !== 'string' || version.length > 256) return false;
+  const match = /^0\.3\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+  return match !== null && match[0] === version && BigInt(match[1]) <= 18446744073709551615n;
+}
 const LIMIT = 1024 * 1024;
 const MAX_REQUESTS = 16;
 const decoder = new TextDecoder('utf-8', {fatal: true});
@@ -180,8 +187,10 @@ function receive(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error();
   if (phase === 'hello') {
     if (message.type !== 'hello' || message.version !== VERSION
+        || !supportedHost(message.host_version) || !Array.isArray(message.features)
         || !Array.isArray(message.capabilities) || !message.capabilities.includes('views')) throw new Error();
-    send({type: 'register', version: VERSION, name: 'Node tasks', commands: [
+    send({type: 'register', version: VERSION, runyte: RUNYTE_RANGE,
+      required_features: [], optional_features: [], name: 'Node tasks', commands: [
       {name: 'open', alias: 'node-tasks', description: 'Open task list', context: 'workspace'},
       {name: 'toggle', alias: 'node-tasks-toggle', description: 'Toggle selected tasks', context: 'view', primary: true},
     ], required_capabilities: ['views'], optional_capabilities: []});
@@ -190,7 +199,8 @@ function receive(message) {
   }
   if (phase === 'registering') {
     if (message.type !== 'registered' || !Array.isArray(message.capabilities)
-        || !message.capabilities.includes('views')) throw new Error();
+        || message.capabilities.length !== 1 || message.capabilities[0] !== 'views'
+        || !Array.isArray(message.features) || message.features.length !== 0) throw new Error();
     phase = 'ready';
     return;
   }

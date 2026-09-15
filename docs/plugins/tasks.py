@@ -7,7 +7,7 @@ app = Application('Tasks', [
     {'name': 'open', 'alias': 'tasks', 'description': 'Open task list', 'context': 'workspace'},
     {'name': 'toggle', 'alias': 'tasks-toggle', 'description': 'Toggle selected tasks', 'context': 'view', 'primary': True},
     {'name': 'filter', 'alias': 'tasks-filter', 'description': 'Toggle unfinished-only filter', 'context': 'view'},
-], ['views'])
+], ['views'], runyte='>=0.3.0, <0.4.0')
 lock = threading.Lock()
 view = None
 revision = None

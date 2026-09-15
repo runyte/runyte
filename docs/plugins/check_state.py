@@ -10,9 +10,13 @@ from application import Application, PluginError, STATE_LIMIT, VERSION
 from check_queries import shutdown
 
 
+TEST_LIMITS = next(f['message']['limits'] for f in json.loads(
+    Path(__file__).with_name('stable-fixtures.json').read_text())
+    if f['message']['type'] == 'hello')
+
 class StateSdkTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Preferences', [], ['settings', 'state'])
+        self.app = Application('Preferences', [], ['settings', 'state'], runyte='>=0.3.0, <0.4.0')
         self.calls = []
         self.result = {'revision': 's:missing', 'document': None}
         def request(method, **params):
@@ -87,8 +91,8 @@ class StateSdkTests(unittest.TestCase):
 
     def test_registration_includes_only_explicit_settings_schema(self):
         for schema in (None, {'fields': [{'name': 'limit', 'type': 'integer', 'min': 1, 'max': 20}]}):
-            app = Application('Settings schema', [], ['settings'], settings_schema=schema)
-            messages = iter([{'type': 'hello', 'version': VERSION}, {'type': 'registered'}])
+            app = Application('Settings schema', [], ['settings'], settings_schema=schema, runyte='>=0.3.0, <0.4.0')
+            messages = iter([{'type': 'hello', 'version': VERSION, 'host_version': '0.3.0', 'features': [], 'capabilities': ['settings'], 'limits': TEST_LIMITS}, {'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['settings'], 'limits': TEST_LIMITS}])
             def read():
                 try:
                     return next(messages)
@@ -107,8 +111,8 @@ class StateSdkTests(unittest.TestCase):
     def test_public_settings_state_shapes_and_schema_constraints(self):
         from jsonschema import Draft202012Validator
         directory = Path(__file__).parent
-        schema = json.loads((directory / 'runyte-experimental-2.schema.json').read_text())
-        fixtures = json.loads((directory / 'epoch2-fixtures.json').read_text())
+        schema = json.loads((directory / 'runyte-1.schema.json').read_text())
+        fixtures = json.loads((directory / 'stable-fixtures.json').read_text())
         checked = 0
         for fixture in fixtures:
             if fixture['message'].get('id') in {f'p:{i}' for i in range(1300, 1304)}:
@@ -255,10 +259,10 @@ class StateDisconnectTests(unittest.TestCase):
         import threading
         for method in ('state.get', 'state.set', 'state.delete'):
             with self.subTest(method=method):
-                app = Application('State disconnect', [], ['state'])
+                app = Application('State disconnect', [], ['state'], runyte='>=0.3.0, <0.4.0')
                 registered, sent = threading.Event(), threading.Event()
                 frames, errors = [], []
-                incoming = iter([{'type': 'hello', 'version': VERSION}, {'type': 'registered'}])
+                incoming = iter([{'type': 'hello', 'version': VERSION, 'host_version': '0.3.0', 'features': [], 'capabilities': ['state'], 'limits': TEST_LIMITS}, {'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['state'], 'limits': TEST_LIMITS}])
                 def read():
                     try:
                         message = next(incoming)
@@ -298,7 +302,7 @@ class StateDisconnectTests(unittest.TestCase):
         for method in ('state.set', 'state.delete'):
             for failure in ('closed', 'host', 'pipe', 'limit'):
                 with self.subTest(method=method, failure=failure):
-                    app = Application('State failure', [], ['state'])
+                    app = Application('State failure', [], ['state'], runyte='>=0.3.0, <0.4.0')
                     calls = []
                     def write(message):
                         calls.append(message)
@@ -326,7 +330,7 @@ class StateDisconnectTests(unittest.TestCase):
 
 class StateBoundsTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('State bounds', [], ['state'])
+        self.app = Application('State bounds', [], ['state'], runyte='>=0.3.0, <0.4.0')
         self.calls = []
         self.app.request = lambda method, **params: self.calls.append((method, params))
 

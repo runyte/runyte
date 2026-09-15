@@ -11,9 +11,13 @@ import unittest
 from application import Application, PluginError
 
 
+TEST_LIMITS = next(f['message']['limits'] for f in json.loads(
+    Path(__file__).with_name('stable-fixtures.json').read_text())
+    if f['message']['type'] == 'hello')
+
 class ValidationTests(unittest.TestCase):
     def setUp(self):
-        self.app = Application('Validation', [], ['interaction'])
+        self.app = Application('Validation', [], ['interaction'], runyte='>=0.3.0, <0.4.0')
         self.messages = queue.Queue()
         self.app._write = self.messages.put
         self.release = threading.Event()
@@ -115,9 +119,9 @@ class ValidationTests(unittest.TestCase):
                 self.assertTrue(selector.select(3), 'Example response timed out')
             return json.loads(child.stdout.readline(1048577))
         try:
-            send({'type': 'hello', 'version': 'runyte-experimental-2'})
+            send({'type': 'hello', 'version': 'runyte-1', 'host_version': '0.3.0', 'features': [], 'capabilities': ['interaction'], 'limits': TEST_LIMITS})
             self.assertEqual(receive()['required_capabilities'], ['interaction'])
-            send({'type': 'registered', 'capabilities': ['interaction']})
+            send({'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [], 'capabilities': ['interaction'], 'limits': TEST_LIMITS})
             send({'type': 'request', 'id': 'h:10', 'method': 'command.invoke',
                   'params': {'command': 'open', 'context': 'workspace'}})
             form = receive()

@@ -2,7 +2,7 @@
 
 Three independent implementations of the same native todo list demonstrate
 Runyte's [experimental application API](../applications.md). Each program speaks
-`runyte-experimental-2` over stdin/stdout and requests only `views`. No Runyte
+`runyte-1` over stdin/stdout and requests only `views`. No Runyte
 library, Python bridge, terminal renderer, account or network service is needed.
 
 | Variant | Source | Runtime/build dependencies |
@@ -64,7 +64,8 @@ omit `args`. No executable permission is needed on the Python script.
 plugins:
   - id: todo-python
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /absolute/path/to/python3
     args: [/absolute/path/to/runyte/docs/plugins/todo/python/todo.py]
     capabilities: [views]

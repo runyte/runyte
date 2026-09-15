@@ -5,7 +5,7 @@ use crate::input_grammar::InputGrammar;
 use crate::{
     command::{CommandId, CommandInvocation, InvocationParameters},
     keymap::{Binding, BindingTarget, KeySequence, Keymap},
-    plugin::{self, HostMessage, PluginConfig, Selection},
+    plugin::{self, HostMessage, PluginConfig},
 };
 use anyhow::{Result, ensure};
 use std::{
@@ -59,23 +59,11 @@ pub(crate) fn resolve_aliases(
     claims
 }
 
-pub(crate) struct Pending {
-    pub action: Option<u64>,
-    pub token: String,
-    pub buffer: usize,
-    pub revision: u64,
-    pub selections: Vec<Selection>,
-}
-
 pub(crate) struct Instance {
     pub config: PluginConfig,
     pub sender: plugin::Sender,
     pub registered: bool,
     pub application: plugin::application::Instance,
-    pub pending: Option<Pending>,
-    pub issued: BTreeSet<usize>,
-    pub subscriptions: BTreeMap<usize, (u64, bool)>,
-    pub sequence: u64,
 }
 
 #[derive(Default)]
@@ -121,6 +109,27 @@ pub(crate) struct Plugins {
 }
 
 impl App {
+    /// Native operative ranges for an explicit pane, including its retained
+    /// half-open/linewise selection semantics. Presentation does not retarget it.
+    pub(crate) fn plugin_selection_spans(&self, pane: usize) -> Vec<plugin::editor::Span> {
+        let pane = &self.panes[&pane];
+        pane.selection
+            .ranges()
+            .iter()
+            .map(|range| {
+                let (from, to) = if matches!(
+                    pane.selection_semantics(),
+                    super::SelectionSemantics::HalfOpen | super::SelectionSemantics::VimLinewise
+                ) {
+                    (range.from(), range.to())
+                } else {
+                    super::operative_span(&self.buffers[pane.buffer], range)
+                };
+                plugin::editor::Span { from, to }
+            })
+            .collect()
+    }
+
     pub(crate) fn plugin_alias_conflicts(&mut self, conflicts: BTreeMap<String, Vec<String>>) {
         for (alias, names) in &conflicts {
             if self.plugins.alias_conflicts.get(alias) != Some(names) {
@@ -274,214 +283,153 @@ impl App {
         self.plugin_command_preflight(&command)?;
         let arguments = plugin::arguments::parse(&command.arguments, arguments)
             .map_err(|error| anyhow::anyhow!(error.message))?;
-        if self.plugins.instances[&command.plugin].config.api == plugin::application::Api::Epoch2 {
-            let capture = plugin::application::CapturedContext {
-                foreground_allowed: true,
-                action: self.active_action_id,
-                pane: self.active_pane,
-                buffer: self.active().buffer,
-                terminal: self.active().terminal,
-                attachment: self.plugins.attachment_generation,
-                foreground: self.plugins.foreground_generation,
+        let capture = plugin::application::CapturedContext {
+            foreground_allowed: true,
+            action: self.active_action_id,
+            pane: self.active_pane,
+            buffer: self.active().buffer,
+            terminal: self.active().terminal,
+            attachment: self.plugins.attachment_generation,
+            foreground: self.plugins.foreground_generation,
+        };
+        let view = self.plugins.instances[&command.plugin]
+            .application
+            .views
+            .iter()
+            .find(|(_, view)| {
+                view.buffer == self.active().buffer && self.active_terminal().is_none()
+            });
+        let (view_handle, model_revision, query_revision, rows) = if let Some((handle, view)) = view
+        {
+            let primary = command.context == plugin::application::CommandContext::View
+                && self.plugins.instances[&command.plugin]
+                    .application
+                    .primary_commands
+                    .contains(&command.local);
+            let rows = self.plugin_view_selected_rows(view);
+            if primary {
+                ensure!(
+                    !rows.is_empty(),
+                    "Select an application row before invoking its primary action"
+                );
+            }
+            (
+                Some(handle.clone()),
+                Some(format!("m:{}", view.revision)),
+                view.query
+                    .as_ref()
+                    .map(|query| format!("qv:{}", query.revision)),
+                rows,
+            )
+        } else {
+            (None, None, None, Vec::new())
+        };
+        let selection_revision = format!("q:{}", self.plugin_selection_revision(capture.pane));
+        let buffer_revision = capture
+            .terminal
+            .is_none()
+            .then(|| format!("r:{}", self.buffers[capture.buffer].revision()));
+        let instance = self.plugins.instances.get_mut(&command.plugin).unwrap();
+        let pane = instance
+            .application
+            .pane_handle(capture.pane)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        let buffer = if capture.terminal.is_none() {
+            Some(
+                instance
+                    .application
+                    .buffer_handle(capture.buffer)
+                    .map_err(|error| anyhow::anyhow!(error.message))?,
+            )
+        } else {
+            None
+        };
+        self.plugins.next_invocation += 1;
+        let token = format!("h:{}", self.plugins.next_invocation);
+        let accepted_action = if command.context == plugin::application::CommandContext::View {
+            let handle = view_handle.as_ref().expect("owned view command");
+            let action = plugin::observation::Action {
+                id: format!(
+                    "a:{}",
+                    instance.application.views[handle]
+                        .accepted_actions
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow::anyhow!("View action identity exhausted"))?
+                ),
+                request: token.clone(),
+                command: command.local.clone(),
+                pane: pane.clone(),
+                model_revision: model_revision.clone().expect("owned view model"),
+                query_revision: query_revision.clone(),
+                selection_revision: selection_revision.clone(),
+                selected_count: rows.len(),
             };
-            let view = self.plugins.instances[&command.plugin]
+            let source = plugin::observation::Source::ViewActions {
+                view: handle.clone(),
+            };
+            instance
+                .application
+                .observations
+                .preflight_action(&source, &action)
+                .map_err(|error| anyhow::anyhow!(error.message))?;
+            Some((source, action))
+        } else {
+            None
+        };
+        let callback = HostMessage::Application(plugin::application::HostMessage::Request {
+            id: token.clone(),
+            method: "command.invoke",
+            params: plugin::application::Invocation {
+                arguments,
+                command: command.local,
+                context: command.context,
+                pane,
+                selection_revision,
+                buffer,
+                buffer_revision,
+                view: view_handle,
+                model_revision,
+                query_revision,
+                rows,
+            },
+        });
+        ensure!(
+            plugin::Sender::message_fits(&callback)?,
+            "Application action is too large; select fewer rows"
+        );
+        if let Err(error) = instance.sender.try_send(callback) {
+            self.plugins.cancellations.insert(command.plugin);
+            return Err(error);
+        }
+        if let Err(error) = instance.sender.try_send(HostMessage::Deadline {
+            token: token.clone(),
+            after_ms: Some(10000),
+        }) {
+            // The callback may already be visible to the child; retiring its
+            // owner prevents an untracked callback from gaining authority.
+            self.plugins.cancellations.insert(command.plugin);
+            return Err(error);
+        }
+        instance.application.requests.insert(token.clone(), capture);
+        if let Some((source, action)) = accepted_action {
+            let plugin::observation::Source::ViewActions { view } = &source else {
+                unreachable!()
+            };
+            instance
                 .application
                 .views
-                .iter()
-                .find(|(_, view)| {
-                    view.buffer == self.active().buffer && self.active_terminal().is_none()
-                });
-            let (view_handle, model_revision, query_revision, rows) =
-                if let Some((handle, view)) = view {
-                    let primary = command.context == plugin::application::CommandContext::View
-                        && self.plugins.instances[&command.plugin]
-                            .application
-                            .primary_commands
-                            .contains(&command.local);
-                    let rows = self.plugin_view_selected_rows(view);
-                    if primary {
-                        ensure!(
-                            !rows.is_empty(),
-                            "Select an application row before invoking its primary action"
-                        );
-                    }
-                    (
-                        Some(handle.clone()),
-                        Some(format!("m:{}", view.revision)),
-                        view.query
-                            .as_ref()
-                            .map(|query| format!("qv:{}", query.revision)),
-                        rows,
-                    )
-                } else {
-                    (None, None, None, Vec::new())
-                };
-            let selection_revision = format!("q:{}", self.plugin_selection_revision(capture.pane));
-            let buffer_revision = capture
-                .terminal
-                .is_none()
-                .then(|| format!("r:{}", self.buffers[capture.buffer].revision()));
-            let instance = self.plugins.instances.get_mut(&command.plugin).unwrap();
-            let pane = instance
+                .get_mut(view)
+                .unwrap()
+                .accepted_actions += 1;
+            if let Err(error) = instance
                 .application
-                .pane_handle(capture.pane)
-                .map_err(|error| anyhow::anyhow!(error.message))?;
-            let buffer = if capture.terminal.is_none() {
-                Some(
-                    instance
-                        .application
-                        .buffer_handle(capture.buffer)
-                        .map_err(|error| anyhow::anyhow!(error.message))?,
-                )
-            } else {
-                None
-            };
-            self.plugins.next_invocation += 1;
-            let token = format!("h:{}", self.plugins.next_invocation);
-            let accepted_action = if command.context == plugin::application::CommandContext::View {
-                let handle = view_handle.as_ref().expect("owned view command");
-                let action = plugin::observation::Action {
-                    id: format!(
-                        "a:{}",
-                        instance.application.views[handle]
-                            .accepted_actions
-                            .checked_add(1)
-                            .ok_or_else(|| anyhow::anyhow!("View action identity exhausted"))?
-                    ),
-                    request: token.clone(),
-                    command: command.local.clone(),
-                    pane: pane.clone(),
-                    model_revision: model_revision.clone().expect("owned view model"),
-                    query_revision: query_revision.clone(),
-                    selection_revision: selection_revision.clone(),
-                    selected_count: rows.len(),
-                };
-                let source = plugin::observation::Source::ViewActions {
-                    view: handle.clone(),
-                };
-                instance
-                    .application
-                    .observations
-                    .preflight_action(&source, &action)
-                    .map_err(|error| anyhow::anyhow!(error.message))?;
-                Some((source, action))
-            } else {
-                None
-            };
-            let callback = HostMessage::Application(plugin::application::HostMessage::Request {
-                id: token.clone(),
-                method: "command.invoke",
-                params: plugin::application::Invocation {
-                    arguments,
-                    command: command.local,
-                    context: command.context,
-                    pane,
-                    selection_revision,
-                    buffer,
-                    buffer_revision,
-                    view: view_handle,
-                    model_revision,
-                    query_revision,
-                    rows,
-                },
-            });
-            ensure!(
-                plugin::Sender::message_fits(&callback)?,
-                "Application action is too large; select fewer rows"
-            );
-            if let Err(error) = instance.sender.try_send(callback) {
+                .observations
+                .record_action(&source, action)
+            {
                 self.plugins.cancellations.insert(command.plugin);
-                return Err(error);
+                return Err(anyhow::anyhow!(error.message));
             }
-            if let Err(error) = instance.sender.try_send(HostMessage::Deadline {
-                token: token.clone(),
-                after_ms: Some(10000),
-            }) {
-                // The callback may already be visible to the child; retiring its
-                // owner prevents an untracked callback from gaining authority.
-                self.plugins.cancellations.insert(command.plugin);
-                return Err(error);
-            }
-            instance.application.requests.insert(token.clone(), capture);
-            if let Some((source, action)) = accepted_action {
-                let plugin::observation::Source::ViewActions { view } = &source else {
-                    unreachable!()
-                };
-                instance
-                    .application
-                    .views
-                    .get_mut(view)
-                    .unwrap()
-                    .accepted_actions += 1;
-                if let Err(error) = instance
-                    .application
-                    .observations
-                    .record_action(&source, action)
-                {
-                    self.plugins.cancellations.insert(command.plugin);
-                    return Err(anyhow::anyhow!(error.message));
-                }
-            }
-            return Ok(token);
         }
-        let buffer_id = self.active().buffer;
-        let buffer = &self.buffers[buffer_id];
-        let selections = self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .zip(self.operative_spans())
-            .map(|(range, (from, to))| Selection {
-                anchor: range.anchor,
-                head: range.head,
-                from,
-                to,
-            })
-            .collect::<Vec<_>>();
-        ensure!(
-            selections.windows(2).all(|pair| pair[0].to <= pair[1].from),
-            "plugin selection spans overlap"
-        );
-        let revision = buffer.revision();
-        let text = buffer.to_string();
-        let primary = self.active().selection.primary_index();
-        let instance = self
-            .plugins
-            .instances
-            .get_mut(&command.plugin)
-            .expect("registered instance");
-        ensure!(
-            instance.issued.contains(&buffer_id) || instance.issued.len() < 64,
-            "plugin buffer handle limit reached; restart the host"
-        );
-        self.plugins.next_invocation += 1;
-        let token = self.plugins.next_invocation.to_string();
-        let message = HostMessage::Invoke {
-            invocation: token.clone(),
-            command: command.local,
-            buffer: buffer_id.to_string(),
-            revision: revision.to_string(),
-            text,
-            selections: selections.clone(),
-            primary,
-        };
-        ensure!(
-            serde_json::to_vec(&message)?.len() < plugin::MAX_BYTES,
-            "encoded plugin snapshot exceeds limit"
-        );
-        instance
-            .sender
-            .try_send(message)
-            .map_err(|_| anyhow::anyhow!("plugin is unavailable or its queue is full"))?;
-        instance.issued.insert(buffer_id);
-        instance.pending = Some(Pending {
-            action: self.active_action_id,
-            token: token.clone(),
-            buffer: buffer_id,
-            revision,
-            selections,
-        });
         Ok(token)
     }
 }
@@ -503,7 +451,7 @@ impl App {
             !self.plugins.cancellations.contains(&command.plugin),
             "Plugin is stopping"
         );
-        if instance.config.api == plugin::application::Api::Epoch2 {
+        {
             use plugin::application::CommandContext;
             if command.context == CommandContext::Buffer {
                 ensure!(
@@ -544,25 +492,6 @@ impl App {
                     < plugin::application::MAX_REQUESTS,
                 "application request limit reached"
             );
-        } else {
-            ensure!(
-                self.active_terminal().is_none(),
-                "plugin commands require a document buffer"
-            );
-            let buffer = self.active_buffer();
-            ensure!(
-                !self.host_buffer_is_closed(self.active().buffer) && !buffer.is_read_only(),
-                "plugin commands require a live editable buffer"
-            );
-            ensure!(
-                buffer.len_bytes() <= plugin::MAX_BYTES / 4,
-                "plugin snapshot exceeds 256 KiB"
-            );
-            ensure!(
-                self.active().selection.ranges().len() <= plugin::MAX_SELECTIONS,
-                "too many plugin selections"
-            );
-            ensure!(instance.pending.is_none(), "plugin is busy");
         }
         Ok(())
     }

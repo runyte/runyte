@@ -1,12 +1,23 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Standalone epoch-2 todo showcase. Python standard library, Linux/macOS."""
+"""Standalone stable-v1 todo showcase. Python standard library, Linux/macOS."""
 import copy
 import json
 import os
+import re
 import select
 import time
 
-VERSION = 'runyte-experimental-2'
+VERSION = 'runyte-1'
+RUNYTE_RANGE = '>=0.3.0, <0.4.0'
+
+
+def supported_host(version):
+    # Fixed release-line check for this example, not a general range parser.
+    if not isinstance(version, str) or len(version) > 256:
+        return False
+    match = re.fullmatch(r'0\.3\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version)
+    return match is not None and int(match[1]) <= (1 << 64) - 1
+
 LIMIT = 1024 * 1024
 COMMANDS = [
     {'name': 'open', 'alias': 'todo-python', 'description': 'Open todo list', 'context': 'workspace'},
@@ -130,15 +141,20 @@ class Todo:
             raise ValueError('Expected object')
         if self.phase != 'ready':
             expected = 'hello' if self.phase == 'hello' else 'registered'
-            if message['type'] != expected or 'views' not in message['capabilities']:
+            if (message['type'] != expected or not isinstance(message.get('capabilities'), list)
+                    or 'views' not in message['capabilities']):
                 raise ValueError('Invalid handshake')
             if self.phase == 'hello':
-                if message['version'] != VERSION:
-                    raise ValueError('Wrong epoch')
-                send({'type': 'register', 'version': VERSION, 'name': 'Todo · Python',
+                if (message['version'] != VERSION or not supported_host(message.get('host_version'))
+                        or not isinstance(message.get('features'), list)):
+                    raise ValueError('Unsupported host')
+                send({'type': 'register', 'version': VERSION, 'runyte': RUNYTE_RANGE,
+                      'required_features': [], 'optional_features': [], 'name': 'Todo · Python',
                       'commands': COMMANDS, 'required_capabilities': ['views'], 'optional_capabilities': []})
                 self.phase = 'registering'
             else:
+                if message['capabilities'] != ['views'] or message.get('features') != []:
+                    raise ValueError('Invalid negotiated profile')
                 self.phase, self.deadline = 'ready', None
             return
         if message['type'] == 'request':

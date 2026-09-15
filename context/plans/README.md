@@ -11,6 +11,12 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
+Active work:
+
+- [Stable plugin compatibility](active/PLAN_STABLE_PLUGINS.md): release-range
+  declarations, a stable application contract, a clean experimental cutover and
+  reproducible compatibility gates using ru-time as an external plugin.
+
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the

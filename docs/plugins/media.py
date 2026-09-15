@@ -56,7 +56,7 @@ class MediaApplication:
             command('next', 'Select the next item, preserving pause'),
             command('previous', 'Select the previous item, preserving pause'),
             command('stop-playback', 'Stop and close the managed media helper'),
-        ], ['views', 'processes', 'activity', 'jobs'])
+        ], ['views', 'processes', 'activity', 'jobs'], runyte='>=0.3.0, <0.4.0')
         self.lock = threading.RLock()
         self.view_lock = threading.Lock()
         self.session = None

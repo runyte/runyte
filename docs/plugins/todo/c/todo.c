@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// Standalone epoch-2 todo showcase. C11, POSIX and json-c 0.15+.
+// Standalone stable-v1 todo showcase. C11, POSIX and json-c 0.15+.
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <fcntl.h>
@@ -15,7 +15,8 @@
 #include <unistd.h>
 
 #define LIMIT (1024 * 1024)
-#define VERSION "runyte-experimental-2"
+#define VERSION "runyte-1"
+#define RUNYTE_RANGE ">=0.3.0, <0.4.0"
 typedef struct json_object J;
 enum Stage { NONE, CREATE, SHOW, PUBLISH };
 static J *tasks, *candidate;
@@ -25,6 +26,32 @@ static uint64_t serial, next_task = 2;
 static int phase;
 static enum Stage stage;
 static double deadline;
+
+// Fixed release-line check for this example, not a general range parser.
+static bool supported_host(const char *version) {
+    if (strlen(version) > 256 || strncmp(version, "0.3.", 4)) return false;
+    const char *patch = version + 4;
+    if (*patch < '0' || *patch > '9' || (*patch == '0' && patch[1] >= '0' && patch[1] <= '9')) return false;
+    uint64_t value = 0;
+    while (*patch >= '0' && *patch <= '9') {
+        unsigned digit = (unsigned)(*patch++ - '0');
+        if (value > (UINT64_MAX - digit) / 10) return false;
+        value = value * 10 + digit;
+    }
+    if (!*patch) return true;
+    if (*patch++ != '+') return false;
+    bool identifier = false;
+    for (; *patch; patch++) {
+        unsigned char c = (unsigned char)*patch;
+        if (c == '.') {
+            if (!identifier) return false;
+            identifier = false;
+        } else if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                   (c >= 'a' && c <= 'z') || c == '-') identifier = true;
+        else return false;
+    }
+    return identifier;
+}
 
 static void fail(void) { exit(1); }
 static J *parse(const char *text, size_t length) {
@@ -231,15 +258,22 @@ static void receive(J *message) {
     if (phase < 2) {
         if (strcmp(type, phase ? "registered" : "hello") || !contains(get(message, "capabilities"), "views")) fail();
         if (!phase) {
-            if (strcmp(field(message, "version"), VERSION)) fail();
+            if (strcmp(field(message, "version"), VERSION) || !supported_host(field(message, "host_version"))
+                || !json_object_is_type(get(message, "features"), json_type_array)) fail();
             send(literal("{\"type\":\"register\",\"version\":\"" VERSION "\",\"name\":\"Todo · C\","
+                "\"runyte\":\"" RUNYTE_RANGE "\",\"required_features\":[],\"optional_features\":[],"
                 "\"required_capabilities\":[\"views\"],\"optional_capabilities\":[],\"commands\":["
                 "{\"name\":\"open\",\"alias\":\"todo-c\",\"description\":\"Open todo list\",\"context\":\"workspace\"},"
                 "{\"name\":\"add\",\"alias\":\"todo-c-add\",\"description\":\"Add a task\",\"context\":\"view\",\"arguments\":[{\"name\":\"title\",\"type\":\"string\"}]},"
                 "{\"name\":\"toggle\",\"alias\":\"todo-c-toggle\",\"description\":\"Toggle selected tasks\",\"context\":\"view\",\"primary\":true},"
                 "{\"name\":\"remove\",\"alias\":\"todo-c-remove\",\"description\":\"Remove selected tasks\",\"context\":\"view\"},"
                 "{\"name\":\"filter\",\"alias\":\"todo-c-filter\",\"description\":\"Toggle unfinished-only filter\",\"context\":\"view\"}]}"));
-        } else deadline = 0;
+        } else {
+            if (json_object_array_length(get(message, "capabilities")) != 1 ||
+                !json_object_is_type(get(message, "features"), json_type_array) ||
+                json_object_array_length(get(message, "features")) != 0) fail();
+            deadline = 0;
+        }
         phase++;
         return;
     }

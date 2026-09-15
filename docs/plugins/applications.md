@@ -1,7 +1,8 @@
 # Application API development
 
-Epoch 2 (`runyte-experimental-2`) is implemented and validated as recorded in the
-[completed application plan](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md).
+The stable `runyte-1` contract starts with Runyte 0.3.0. It derives from the
+application architecture recorded in the [completed application plan](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md).
+See [compatibility](compatibility.md) for release ranges and negotiation.
 The current implementation supports typed commands, finite background jobs,
 retained native views, explicit buffer reads/edits, immutable snapshots and
 pane selections, local metadata/browsing, document lifecycle operations, native
@@ -13,11 +14,11 @@ FTP/FTPS adapters share a native remote browser with explicit transport and
 overwrite guarantees. Metadata subscriptions provide consistent baselines,
 ordered changes and explicit resynchronization. Managed helpers, continuing
 activity leases, settings/state, a native manager and the local mpv controller
-support continuing applications. The API remains experimental.
-Epoch 1 remains the default and its uppercase example is unchanged.
+support continuing applications. The stable contract starts with Runyte 0.3.0.
+All plugins explicitly select `runyte-1` and declare their supported Runyte range.
 
 The [authoring guide](authoring.md) provides clean-checkout setup, method/event
-and capability indexes, lifetime rules and epoch migration. The
+and capability indexes, lifetime rules and client distribution. The
 [conformance guide](conformance.md) maps tests to their behavior boundaries.
 The dependency-free [Node checklist](tasks.mjs) demonstrates the same public
 protocol without the Python client.
@@ -28,7 +29,8 @@ Enable the runnable background-job example with absolute paths:
 plugins:
   - id: jobs
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/jobs.py]
     capabilities: [jobs]
@@ -104,7 +106,7 @@ Views are special buffers backed by bounded semantic models. Purposes are
 and an `ordinary`, `muted`, `heading`, `warning` or `error` role. Controls and
 ANSI sequences are rejected. Warning/error spans use the theme's diagnostic
 colors. The bundled frontend protocol is version 52, including application
-activity in persistent-session health; the extension epoch remains independent.
+activity in persistent-session health; the plugin protocol remains independent.
 
 Creation stays in the background. `pane.show` requires the ID of a still-pending
 invoking command, the same frontend attachment, pane target, and command/input
@@ -141,9 +143,8 @@ no shell evaluation. Boolean spellings are `true`/`false`; integers are signed
 Both `hello` and `registered` advertise effective control, job, helper, activity,
 settings and state limits. Their optional `limits.resources` inventory adds view,
 model, text/snapshot, subscription, input and retained-payload ceilings. Current
-hosts always provide it; older epoch 2 hosts may omit it. Use the documented epoch
-defaults when it is absent, and ignore unknown host fields for compatible
-additions. Counts are per owner except `plugin_instances` and
+stable hosts provide it. Ignore unknown host fields for compatible additions;
+new message kinds or closed enum values require explicit feature selection. Counts are per owner except `plugin_instances` and
 `host_retained_payload_bytes` (per host), and `input_surfaces` (per attached
 frontend). Byte fields count UTF-8 or encoded payload as specified by the relevant
 operation; the inventory does not override wire-envelope or temporary-reservation
@@ -151,9 +152,9 @@ limits and does not promise that all independently valid resources fit together.
 `watched_sources` bounds aggregate subscription/source pairs as well as the unique
 source table; `observation_state_bytes` bounds one captured source's metadata.
 
-UTF-8 newline-delimited JSON, one exact epoch per process. The
-[epoch 2 schema](runyte-experimental-2.schema.json) covers implemented messages;
-[fixtures](epoch2-fixtures.json) are checked by Python and Rust. Unknown host
+UTF-8 newline-delimited JSON, one stable protocol per process. The
+[stable schema](runyte-1.schema.json) covers implemented messages;
+[fixtures](stable-fixtures.json) are checked by Python and Rust. Unknown host
 fields may be ignored. Plugin envelope and parameter fields are strict. Unknown
 methods receive `unsupported`; malformed envelopes terminate the connection.
 Required capabilities must be supported **and** explicitly listed in config.
@@ -282,6 +283,9 @@ those require the Rust host/worker tests.
 ## Editor operations and memory
 
 Text offsets are Unicode scalar positions; changes use half-open ranges.
+`selection.get/set` results include `spans` in the same order as `ranges`: these
+authoritative operative spans account for the pane's native selection semantics.
+Anchor/head values preserve direction and must not be used to infer spans.
 Edits validate liveness, read-only state, revision, ordering, overlaps and size
 before one transaction. Each nonempty edit commits a preceding insert group
 and adds one undo step. Empty transactions are no-ops. An edit targets its
@@ -446,7 +450,8 @@ Enable the checked-in `files.py` beside `application.py`:
 plugins:
   - id: files
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/files.py]
     capabilities: [views, filesystem, documents, interaction, jobs]
@@ -696,7 +701,7 @@ and buffer management remain available.
 
 `memory.py` is a deterministic multi-chunk provider with no network or storage.
 Configure its plugin ID as `memory`, executable as `python3`, argument as the
-absolute path to `docs/plugins/memory.py`, epoch as `runyte-experimental-2` and
+absolute path to `docs/plugins/memory.py`, API as `runyte-1` and
 capabilities as `[providers, documents, jobs]`. Run `::memory notes`;
 `alias` resolves to the same live document. The document supports normal editing,
 search, selection, splits, undo and syntax highlighting. Newline bytes are
@@ -920,7 +925,7 @@ reading version-bound content. Matching the accepted baseline preserves local ed
 matching an uncertain uploaded snapshot establishes that snapshot as saved. Divergent
 content returns `conflict` without changing either text or baseline. Rebind guards
 baseline-changing operations while allowing live editing and rechecks the baseline
-epoch before adoption.
+protocol before adoption.
 
 For an uncertain write, an ordinary stat is insufficient: its commit could still
 be in flight. The host sends `resource.reconcile {job, provider, key, previous_write}`.
@@ -993,7 +998,8 @@ does not accept keys automatically. It does not invoke a shell or interpret
 plugins:
   - id: sftp
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /path/to/sftp-env/bin/python
     args:
       - /path/to/runyte/docs/plugins/sftp.py
@@ -1091,7 +1097,8 @@ binding from the other connection.
 plugins:
   - id: ftp
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /usr/bin/python3
     args:
       - /path/to/runyte/docs/plugins/ftp.py
@@ -1645,7 +1652,8 @@ the [media service guide](media-services.md).
 plugins:
   - id: media
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/media.py]
     capabilities: [views, processes, activity, jobs]
@@ -1790,7 +1798,8 @@ and saves one nonsecret destination:
 plugins:
   - id: preferences
     enabled: true
-    api: runyte-experimental-2
+    api: runyte-1
+    runyte: ">=0.3.0, <0.4.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/preferences.py]
     capabilities: [settings, state, views]

@@ -35,8 +35,16 @@ pub struct Event {
 pub struct Worker {
     cancelled: watch::Sender<bool>,
     settled: tokio::sync::oneshot::Receiver<bool>,
+    rejection: Arc<std::sync::Mutex<Option<application::RegistrationFailure>>>,
 }
 impl Worker {
+    /// The supervisor writes this small final frame after dropping ordinary IO,
+    /// with the existing two-second write bound, then kills and reaps the child.
+    pub(crate) fn reject(&self, error: application::RegistrationFailure) {
+        *self.rejection.lock().expect("rejection lock") = Some(error);
+        self.stop();
+    }
+
     pub fn stop(&self) {
         self.cancelled.send_replace(true);
     }
@@ -66,19 +74,8 @@ pub fn spawn(
     plugin: usize,
     events: mpsc::Sender<Event>,
 ) -> (Worker, Sender) {
-    let (sender, receiver) = mpsc::channel(if config.api == application::Api::Epoch2 {
-        32
-    } else {
-        8
-    });
-    let sender = Sender::bounded(
-        sender,
-        if config.api == application::Api::Epoch2 {
-            application::MAX_QUEUE_BYTES
-        } else {
-            MAX_BYTES * 8
-        },
-    );
+    let (sender, receiver) = mpsc::channel(32);
+    let sender = Sender::bounded(sender, application::MAX_QUEUE_BYTES);
     let admission = OutputAdmission {
         charge: Arc::clone(&sender.bytes),
         output: Arc::clone(&sender.output),
@@ -86,6 +83,8 @@ pub fn spawn(
     };
     let (cancelled, cancellation) = watch::channel(false);
     let (settled, completion) = tokio::sync::oneshot::channel();
+    let rejection = Arc::new(std::sync::Mutex::new(None));
+    let worker_rejection = Arc::clone(&rejection);
     tokio::spawn(async move {
         let (failure, reaped) = supervise(
             config,
@@ -94,7 +93,10 @@ pub fn spawn(
             &events,
             receiver,
             admission,
-            cancellation,
+            WorkerControl {
+                cancellation,
+                rejection: worker_rejection,
+            },
         )
         .await;
         let _ = settled.send(reaped);
@@ -114,6 +116,7 @@ pub fn spawn(
         Worker {
             cancelled,
             settled: completion,
+            rejection,
         },
         sender,
     )
@@ -121,7 +124,6 @@ pub fn spawn(
 
 async fn read_message(
     reader: &mut BufReader<tokio::process::ChildStdout>,
-    api: application::Api,
 ) -> Result<(ClientMessage, usize)> {
     let mut bytes = Vec::new();
     let n = reader
@@ -133,20 +135,20 @@ async fn read_message(
         n <= MAX_BYTES && bytes.last() == Some(&b'\n'),
         "plugin message exceeds limit or lacks newline"
     );
-    match api {
-        application::Api::Epoch1 => serde_json::from_slice(&bytes)
-            .map(|message| (message, n))
-            .context("invalid plugin message"),
-        application::Api::Epoch2 => application::decode(&bytes)
-            .map(|message| (message, n))
-            .context("invalid application message"),
-    }
+    application::decode(&bytes)
+        .map(|message| (message, n))
+        .context("invalid application message")
 }
 
 struct OutputAdmission {
     charge: Arc<AtomicUsize>,
     output: Arc<OutputWake>,
     limit: usize,
+}
+
+struct WorkerControl {
+    cancellation: watch::Receiver<bool>,
+    rejection: Arc<std::sync::Mutex<Option<application::RegistrationFailure>>>,
 }
 
 async fn supervise(
@@ -156,8 +158,12 @@ async fn supervise(
     events: &mpsc::Sender<Event>,
     input: mpsc::Receiver<HostMessage>,
     admission: OutputAdmission,
-    mut cancellation: watch::Receiver<bool>,
+    control: WorkerControl,
 ) -> (Option<&'static str>, bool) {
+    let WorkerControl {
+        mut cancellation,
+        rejection,
+    } = control;
     if *cancellation.borrow() {
         return (None, true);
     }
@@ -173,9 +179,15 @@ async fn supervise(
         Ok(child) => child,
         Err(_) => return (Some("Plugin process could not start"), true),
     };
+    let mut writer = child.stdin.take().expect("piped stdin");
     let result = {
         let io = std::panic::AssertUnwindSafe(run(
-            config.api, plugin, events, input, admission, &mut child,
+            plugin,
+            events,
+            input,
+            admission,
+            &mut child,
+            &mut writer,
         ))
         .catch_unwind();
         tokio::select! {
@@ -188,6 +200,14 @@ async fn supervise(
             result = io => result,
         }
     };
+    let rejected = rejection.lock().expect("rejection lock").take();
+    if let Some(error) = rejected {
+        let message = application::HostMessage::RegistrationError { error };
+        if let Ok(mut bytes) = serde_json::to_vec(&message) {
+            bytes.push(b'\n');
+            let _ = tokio::time::timeout(Duration::from_secs(2), writer.write_all(&bytes)).await;
+        }
+    }
     // Cancellation also interrupts a blocked stdin write. No new producer event
     // can appear after dropping the IO future, and cleanup never blocks input.
     let _ = child.start_kill();
@@ -212,19 +232,18 @@ async fn supervise(
 }
 
 async fn run(
-    api: application::Api,
     plugin: usize,
     events: &mpsc::Sender<Event>,
     mut input: mpsc::Receiver<HostMessage>,
     admission: OutputAdmission,
     child: &mut tokio::process::Child,
+    writer: &mut tokio::process::ChildStdin,
 ) -> Result<()> {
     let OutputAdmission {
         charge,
         output,
         limit,
     } = admission;
-    let mut writer = child.stdin.take().expect("piped stdin");
     let mut reader = BufReader::new(child.stdout.take().expect("piped stdout"));
     let mut deadline = Some(tokio::time::Instant::now() + TIMEOUT);
     let slots = Arc::new(tokio::sync::Semaphore::new(PRODUCER_EVENTS));
@@ -233,12 +252,12 @@ async fn run(
     // Keep the partially read message future across outbound messages: cancelling
     // read_until would lose bytes already consumed from the pipe.
     loop {
-        let mut reading = Box::pin(read_message(&mut reader, api));
+        let mut reading = Box::pin(read_message(&mut reader));
         loop {
             tokio::select! {
                 result = &mut reading => {
                     let (message, size) = result?;
-                    // Both epochs share producer admission. Internal deadlines
+                    // Internal deadlines share producer admission and
                     // consume these same permits rather than another owner's
                     // reserved space in the host channel.
                     let message = queued(message, size, &slots, &inbound_bytes)?;
@@ -254,11 +273,7 @@ async fn run(
                         else { deadlines.remove(&token); }
                         continue;
                     }
-                    match &message {
-                        HostMessage::Application(application::HostMessage::Registered { .. }) | HostMessage::Registered { .. } | HostMessage::Complete { .. } => deadline = None,
-                        HostMessage::Invoke { .. } => deadline = Some(tokio::time::Instant::now() + TIMEOUT),
-                        _ => {}
-                    }
+                    if let HostMessage::Application(application::HostMessage::Registered { .. }) = &message { deadline = None; }
                     let mut bytes = serde_json::to_vec(&message)?;
                     ensure!(bytes.len() < MAX_BYTES, "plugin outbound message exceeds limit");
                     bytes.push(b'\n');
@@ -484,11 +499,16 @@ mod tests {
     fn queue_counts_encoded_bytes_and_releases_failed_admission() {
         let (tx, _rx) = mpsc::channel(32);
         let sender = Sender::new(tx);
-        let large = || HostMessage::Complete {
-            invocation: "1".into(),
-            status: "failed",
-            revision: None,
-            message: "x".repeat(900_000),
+        let large = || {
+            HostMessage::Application(application::HostMessage::Response {
+                id: "p:1".into(),
+                outcome: application::Response::Failure {
+                    error: application::Error::new(
+                        application::ErrorCode::Internal,
+                        &"x".repeat(900_000),
+                    ),
+                },
+            })
         };
         for _ in 0..4 {
             sender.try_send(large()).unwrap();

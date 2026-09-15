@@ -399,7 +399,7 @@ import json,sys
 read=lambda: json.loads(sys.stdin.readline())
 def send(value): print(json.dumps(value),flush=True)
 read()
-send({"type":"register","version":"runyte-experimental-2","name":"Activity","commands":[{"name":"open","description":"Open activity","context":"workspace"}],"required_capabilities":["activity","processes"],"optional_capabilities":[]})
+send({"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","required_features":[],"optional_features":[],"name":"Activity","commands":[{"name":"open","description":"Open activity","context":"workspace"}],"required_capabilities":["activity","processes"],"optional_capabilities":[]})
 read()
 serial=1
 if sys.argv[1]=="ignore":
@@ -415,7 +415,7 @@ for line in sys.stdin:
 ' "$1"
 "#).unwrap();
         let mut cfg = config("activity-worker");
-        cfg.api = api::Api::Epoch2;
+        cfg.api = crate::plugin::application::VERSION.to_owned();
         cfg.executable = program;
         cfg.args = vec![mode.into()];
         cfg.capabilities = vec!["activity".into(), "processes".into()];

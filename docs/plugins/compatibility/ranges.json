@@ -1,0 +1,298 @@
+{
+  "ranges": [
+    {
+      "range": ">=0.5.2, <0.6.0",
+      "valid": true,
+      "accept": [
+        "0.5.2",
+        "0.5.3",
+        "0.5.99",
+        "0.5.2+build.01"
+      ],
+      "reject": [
+        "0.5.1",
+        "0.6.0",
+        "1.0.0",
+        "0.5.3-rc.1"
+      ]
+    },
+    {
+      "range": ">0.5.2, <=0.5.4",
+      "valid": true,
+      "accept": [
+        "0.5.3",
+        "0.5.4"
+      ],
+      "reject": [
+        "0.5.2",
+        "0.5.5"
+      ]
+    },
+    {
+      "range": "=0.5.2",
+      "valid": true,
+      "accept": [
+        "0.5.2",
+        "0.5.2+git.abc"
+      ],
+      "reject": [
+        "0.5.3",
+        "0.5.2-rc.1"
+      ]
+    },
+    {
+      "range": " = 0.5.2-rc.1 ",
+      "valid": true,
+      "accept": [
+        "0.5.2-rc.1",
+        "0.5.2-rc.1+build"
+      ],
+      "reject": [
+        "0.5.2",
+        "0.5.2-rc.2"
+      ],
+      "normalized": "=0.5.2-rc.1"
+    },
+    {
+      "range": ">=1.2.3, <2.0.0",
+      "valid": true,
+      "accept": [
+        "1.2.3",
+        "1.9.9"
+      ],
+      "reject": [
+        "1.2.2",
+        "2.0.0",
+        "1.5.0-dev"
+      ]
+    },
+    {
+      "range": ">=0.9.4, <2.0.0",
+      "valid": true,
+      "accept": [
+        "0.9.4",
+        "1.0.0"
+      ],
+      "reject": [
+        "0.9.3",
+        "2.0.0"
+      ]
+    },
+    {
+      "range": "\t< 0.6.0 , >= 0.5.2\t",
+      "valid": true,
+      "accept": [
+        "0.5.2"
+      ],
+      "reject": [],
+      "normalized": ">=0.5.2, <0.6.0"
+    },
+    {
+      "range": ">=0.0.0, <=0.0.0",
+      "valid": true,
+      "accept": [
+        "0.0.0"
+      ],
+      "reject": [
+        "0.0.1"
+      ]
+    },
+    {
+      "range": "=18446744073709551615.0.0",
+      "valid": true,
+      "accept": [
+        "18446744073709551615.0.0"
+      ],
+      "reject": []
+    },
+    {
+      "range": "",
+      "valid": false
+    },
+    {
+      "range": " ",
+      "valid": false
+    },
+    {
+      "range": "0.5",
+      "valid": false
+    },
+    {
+      "range": "0.5.2",
+      "valid": false
+    },
+    {
+      "range": "^0.5.2",
+      "valid": false
+    },
+    {
+      "range": "~0.5.2",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2",
+      "valid": false
+    },
+    {
+      "range": "<0.6.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2,",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2, <0.6.0, <0.7.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.4, <0.5.4",
+      "valid": false
+    },
+    {
+      "range": ">0.5.2, <0.5.3",
+      "valid": false
+    },
+    {
+      "range": ">=0.6.0, <0.5.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2, >=0.5.3",
+      "valid": false
+    },
+    {
+      "range": "<0.5.2, <=0.5.3",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2 || <0.6.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2 <0.6.0",
+      "valid": false
+    },
+    {
+      "range": "=01.2.3",
+      "valid": false
+    },
+    {
+      "range": "=0.02.3",
+      "valid": false
+    },
+    {
+      "range": "=0.2.03",
+      "valid": false
+    },
+    {
+      "range": "=0.2",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3.4",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3+build",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3-",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3-rc..1",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3-01",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3-rc.01",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3-rc.\u00e9",
+      "valid": false
+    },
+    {
+      "range": "=18446744073709551616.0.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2-rc.1, <0.6.0",
+      "valid": false
+    },
+    {
+      "range": ">=0.5.2, <0.6.0\n",
+      "valid": false
+    },
+    {
+      "range": "=0.2.3\u00a0",
+      "valid": false
+    },
+    {
+      "range": ">=0.0.0, <0.0.0",
+      "valid": false
+    },
+    {
+      "range": ">18446744073709551615.18446744073709551615.18446744073709551615, <=18446744073709551615.18446744073709551615.18446744073709551615",
+      "valid": false
+    },
+    {
+      "range": "=1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "valid": false
+    }
+  ],
+  "invalid_versions": [
+    "",
+    "0.3",
+    "01.3.0",
+    "0.3.0-",
+    "0.3.0-01",
+    "0.3.0+",
+    "0.3.0+bad+more",
+    "0.3.0+bad/",
+    "0.3.0\n",
+    "18446744073709551616.3.0"
+  ],
+  "subsets": [
+    {
+      "configured": ">=0.5.3, <0.6.0",
+      "authored": ">=0.5.2, <0.6.0",
+      "expected": true
+    },
+    {
+      "configured": ">=0.5.2, <0.6.0",
+      "authored": ">=0.5.3, <0.6.0",
+      "expected": false
+    },
+    {
+      "configured": "=0.5.3",
+      "authored": ">=0.5.2, <0.6.0",
+      "expected": true
+    },
+    {
+      "configured": "=0.5.3-rc.1",
+      "authored": ">=0.5.2, <0.6.0",
+      "expected": false
+    },
+    {
+      "configured": "=0.5.3-rc.1",
+      "authored": "=0.5.3-rc.1",
+      "expected": true
+    },
+    {
+      "configured": ">=0.5.3, <=0.5.3",
+      "authored": "=0.5.3",
+      "expected": true
+    },
+    {
+      "configured": ">0.5.2, <=0.5.3",
+      "authored": "=0.5.3",
+      "expected": true
+    }
+  ]
+}

@@ -17,6 +17,7 @@ fn entry(index: usize, id: &str, phase: Phase, owner: Option<usize>) -> Entry {
         helpers: 3,
         cleanup: 0,
         diagnostic: None,
+        compatibility: "Host 0.3.0; runyte-1; effective >=0.3.0, <0.4.0".into(),
     }
 }
 
