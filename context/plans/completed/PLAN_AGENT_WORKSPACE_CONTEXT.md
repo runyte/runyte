@@ -2,10 +2,11 @@
 
 ## Status and outcome
 
-Active, 2026-09-17, planned against source `178814a`. Implementation and
-subagent reviews are authorized. Release publication remains a separate action.
+Completed, 2026-09-18, by `4d3a442`, planned against source `178814a`.
+All nine implementation steps and independent reviews are complete. Release
+publication remains a separate action.
 Extends
-[the open issue](../../issues/agent_workspace_context.md). Cross-workspace
+[the resolved issue](../../issues/resolved/agent_workspace_context.md). Cross-workspace
 reading is part of the intended delivery, not an optional future broker.
 
 A person can run Claude and Codex in two Runyte terminal panes and ask either
@@ -30,7 +31,7 @@ in the editor core.
 The approved plan is committed as `80eceb5`; `0999b82` introduced the internal
 terminal read and proposal-validation primitives. All nine planned areas are
 implemented and reviewed. Final Linux validation and measurements are recorded
-below; the issue-resolution commit follows the implementation commit.
+below. This completion record accompanies the separate issue-resolution commit.
 
 | Step | Implementation | Independent review |
 | --- | --- | --- |
