@@ -149,8 +149,7 @@ workflows do not need a syntax tree.
 Completed trees are applied between frames only when their parse generation,
 language, and target text revision match the live document. Parse failures leave
 the document editable as plain text and can be inspected with `:service-health`.
-There is no separate line or byte refusal for syntax highlighting. Documents
-past the former 200,000-line and 8 MB limits are parsed; a slow parse delays the
+There is no line or byte limit on syntax highlighting; a slow parse delays the
 new tree, not the keystroke that requested it.
 
 ### Rendered Markdown
@@ -281,16 +280,15 @@ available keys are `rust`, `python`, `swift`, `c`, `cpp`, `javascript`,
 `typescript`, `tsx`, `html`, `css`, `go`, `bash`, `java`, `kotlin`, `json`,
 `sql`, `lua`, `c-sharp`, `zig`, `cmake`, `proto`, `make`, `ini`, `toml`,
 `yaml`, and `markdown`. Other keys below `lsp` are rejected, apart from the
-reserved `enable` setting and legacy `servers` wrapper. Use `:lsp-status`
+reserved `enable` setting and the `servers` wrapper. Use `:lsp-status`
 to see servers that have started or failed, `:lsp-restart <language>` to bring
 back a loaded server that stopped, and `:service-health` to see whether the
 active document has a configured and attached server. A process-launch error
 appears in `:lsp-status` after the first start attempt and in the notification
 center. `:help lsp` keeps this setup sequence inside the editor.
 
-The older `lsp.servers.<language>` shape remains accepted for existing files,
-but `servers` carried no separate behavior and is now only a compatibility
-wrapper. New configurations should use `lsp.<language>` as above. Copy-ready
+`lsp.servers.<language>` is accepted as a compatibility wrapper with the same
+meaning as `lsp.<language>`, which is the preferred shape. Copy-ready
 examples for the servers covered by Runyte's real-server compatibility tests
 live in [docs/lsp/](lsp/README.md).
 
@@ -642,9 +640,8 @@ While the manager remains open, it asks each compatible running host for this
 bounded health information at most once every five seconds. It never fetches terminal
 contents or derives activity from the selected row's preview. When a row is too
 wide beside the preview, Runyte clips its middle identity columns while
-preserving `Last active` and `Status` together. A history entry written by an
-older Runyte has no timestamp and reads `-` until that workspace is visited
-again.
+preserving `Last active` and `Status` together. A history entry with no
+recorded visit time reads `-` until that workspace is visited again.
 
 The selected session's preview, shown in the picker's right column and toggled
 with `Ctrl-t`, states the session as a fixed set of fields. That visibility
@@ -714,9 +711,8 @@ the gap in their existing order, and a newly started session takes the lowest
 remaining digit: with three ordinary running sessions, the next one is `4`
 even when stopped history used to occupy it. A number chosen explicitly through
 Renumber is pinned while that session remains running and is reserved before
-automatic assignments. A catalog written before Runyte numbered sessions has
-no creation order left to recover, and is numbered most-recently-visited first
-on the next listing. Only nine sessions are numbered at a time; a tenth is
+automatic assignments. Sessions with no recorded creation order are numbered
+most-recently-visited first. Only nine sessions are numbered at a time; a tenth is
 reached by name or path.
 
 Renumber in the manager menu opens an empty prompt ready for one digit and sets
@@ -1489,9 +1485,6 @@ Git is not installed or the current project is not inside a Git repository.
 
 `:grammar` reports the active Runyte grammar. `helix` remains accepted as a
 configuration and command alias for `runyte`.
-The former `vim` grammar has been removed; configurations that still set
-`editor.grammar: vim` are rejected with an invalid-value error and should use
-`runyte` or remove the setting.
 
 ## Key bindings
 
@@ -3693,11 +3686,7 @@ workspace is found without asking again on later launches. Because discovery
 walks upward, confirming your home directory makes every directory below it
 with no Git repository and no state directory of its own part of that one
 workspace; the prompt says so before asking to confirm that particular
-location.
-
-The key was previously spelled `workspace.root`, which read as the workspace's
-own root while naming the state directory nested inside it. The old spelling is
-still accepted.
+location. `workspace.root` is accepted as an alias for `workspace.state`.
 
 ### Key remapping
 
@@ -3706,7 +3695,7 @@ Key remapping moves bindings Runyte already ships. Plugin commands use the separ
 `keys.rebind` cannot unbind a command,
 bind a command that has no default, or move most direct single-key editing
 bindings. The left side of each `rebind` entry is always a default spelling;
-Runyte reports it at startup if a later release no longer has that default.
+an entry whose left side is not a default spelling is reported at startup.
 
 ```yaml
 keys:
@@ -3925,7 +3914,7 @@ one-key label in `jump_label_immediate`; farther targets receive two characters
 in `jump_label_primary` and `jump_label_secondary`. After the first key of a
 two-key label, only matching second keys remain and they move to the target cell
 in `jump_label_immediate`. Omitting `jump_label_immediate` uses the theme's
-`error` colour, preserving older custom themes. Built-in themes use one
+`error` colour. Built-in themes use one
 neon-cyan hue for both two-key characters: the second is darker on dark
 backgrounds and lighter on light backgrounds. The Zenbones light palettes use
 a darker pair, while the mid-gray `seoulbones-dark` and `zenburned-dark` use a
@@ -3951,8 +3940,7 @@ the text readable. The built-in themes deliberately give added, removed, and
 changed rows distinct green, red, and purple grounds instead of blending them
 quietly into each palette; custom themes can still choose their own. A theme
 that omits them leaves those lines unfilled and lets the gutter marks carry the
-comparison on their own, so the feature still works on a theme written before
-it existed.
+comparison on their own.
 
 `error`, `warning`, and `info` colour notification headings and unread status
 counts. Custom themes that omit `warning` use `change_modified` (then terminal
@@ -3983,12 +3971,12 @@ rather than either, as the Zenbones variants do.
 `fuzzy_match_secondary` colours the individual characters of a non-contiguous
 fuzzy-grep match, while `fuzzy_match_primary` colours a direct, contiguous
 substring. They fall back to `selection` and `selection_primary` respectively,
-so existing and built-in themes highlight matches in the same two colours their
-selections already use for `Space s`.
+so a theme that omits them highlights matches in the same two colours its
+selections use for `Space s`.
 
 `command` colours the command names the command palette lists. It falls back
-to `accent`, which is also what pane and overlay borders use, so a theme
-written before the two roles were separated keeps one colour for both; naming
+to `accent`, which is also what pane and overlay borders use, so a theme that
+omits it keeps one colour for both; naming
 `command` is what lets a palette and a pane border differ.
 
 `directory` colours directory entries in explorer buffers; ordinary files
