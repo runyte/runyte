@@ -2110,7 +2110,7 @@ impl App {
                 Some(surface.selected),
                 surface
                     .error
-                    .then(|| "Complete the selected field within its declared limits".into())
+                    .map(super::plugin_interaction::InputError::feedback)
                     .or_else(|| surface.validation_feedback()),
             );
             snapshot.layout = OverlayLayout::Standard;

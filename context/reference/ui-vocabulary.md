@@ -507,7 +507,12 @@ only its editing line and Enter/Escape hints; its label is not repeated as a lis
 row. Forms show labelled fields and a current editing line, with Tab/Shift-Tab or
 arrows moving between fields. Choice hints appear only for a selected choice or
 boolean field.
-Secret fields are masked before snapshot production. Application pickers display
-filterable candidate rows using the shared matcher. Opening competing native
-input cancels the application surface, as do detach and owner/source closure.
+Secret fields are masked before snapshot production. Plugin text and secret
+fields reject control characters and over-limit insertions atomically. Feedback
+distinguishes controls, byte limits, character limits, and submission constraints
+without echoing rejected input. Successful edits and field navigation clear the
+feedback; submission checks the current values again.
+Application pickers display filterable candidate rows using the shared matcher.
+Opening competing native input cancels the application surface, as do detach and
+owner/source closure.
 Cancelled callbacks cannot reopen presentation without another foreground command.

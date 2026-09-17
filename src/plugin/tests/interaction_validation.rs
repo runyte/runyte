@@ -3,6 +3,71 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn value_validation_preserves_acceptance_and_distinguishes_failures() {
+    let mut text = Field::text("text", "Text".into());
+    text.minimum_length = 2;
+    text.maximum_length = 3;
+    let mut optional = text.clone();
+    optional.required = false;
+    let mut secret = Field::text("secret", "Secret".into());
+    secret.kind = Kind::Secret;
+    let mut choice = Field::text("choice", "Choice".into());
+    choice.kind = Kind::Choice;
+    choice.choices = vec!["yes".into()];
+    let mut boolean = Field::text("boolean", "Boolean".into());
+    boolean.kind = Kind::Boolean;
+    for (field, value, expected) in [
+        (&text, Value::Text("".into()), Err(ValueError::Required)),
+        (
+            &optional,
+            Value::Text("".into()),
+            Err(ValueError::TooShort { minimum: 2 }),
+        ),
+        (
+            &text,
+            Value::Text("é".into()),
+            Err(ValueError::TooShort { minimum: 2 }),
+        ),
+        (&text, Value::Text("é猫a".into()), Ok(())),
+        (
+            &text,
+            Value::Text("é猫ab".into()),
+            Err(ValueError::TooManyCharacters { maximum: 3 }),
+        ),
+        (&secret, Value::Text("é".repeat(2048)), Ok(())),
+        (
+            &secret,
+            Value::Text("é".repeat(2049)),
+            Err(ValueError::TooManyBytes),
+        ),
+        (
+            &secret,
+            Value::Text("secret\n".into()),
+            Err(ValueError::ControlCharacter),
+        ),
+        (&choice, Value::Text("yes".into()), Ok(())),
+        (
+            &choice,
+            Value::Text("no".into()),
+            Err(ValueError::InvalidChoice),
+        ),
+        (&choice, Value::Boolean(true), Err(ValueError::WrongType)),
+        (&boolean, Value::Boolean(false), Ok(())),
+        (
+            &boolean,
+            Value::Text("false".into()),
+            Err(ValueError::WrongType),
+        ),
+        (&text, Value::Boolean(true), Err(ValueError::WrongType)),
+    ] {
+        assert_eq!(field.validate_value(&value), expected);
+        assert_eq!(field.accepts(&value), expected.is_ok());
+    }
+    optional.minimum_length = 0;
+    assert!(optional.accepts(&Value::Text(String::new())));
+}
+
+#[test]
 fn typed_validation_result_round_trips_with_a_strict_discriminator() {
     let result = json!({"kind":"validation","surface":"u:1","revision":"i:2",
         "fields":[{"field":"name","status":"valid"}]});

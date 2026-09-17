@@ -35,7 +35,7 @@ fn fixture(fields: Vec<Field>) -> App {
         fields,
         selected: 0,
         cursor: 0,
-        error: false,
+        error: None,
         picker: None,
         confirmation: false,
         validation: Default::default(),
@@ -52,6 +52,162 @@ fn form_snapshot(app: &App) -> crate::snapshot::OverlaySnapshot {
 
 fn type_text(app: &mut App, value: &str) {
     app.handle_input(InputEvent::Text(value.into())).unwrap();
+}
+
+#[test]
+fn control_pastes_preserve_value_cursor_and_secret_masking() {
+    for kind in [Kind::Text, Kind::Secret] {
+        for pasted in ["/tmp/file.db\n", "path\r\n", "a\tb", "a\0b", "a\u{85}b"] {
+            let mut app = fixture(vec![field("path", kind, false)]);
+            type_text(&mut app, "kept");
+            key(&mut app, KeyCode::Left, Modifiers::NONE);
+            type_text(&mut app, pasted);
+            let surface = app.plugins.input.as_ref().unwrap();
+            assert_eq!(surface.values, vec![Value::Text("kept".into())]);
+            assert_eq!(surface.cursor, 3);
+            let snapshot = form_snapshot(&app);
+            assert_eq!(
+                snapshot.message.as_deref(),
+                Some("Control characters are not allowed; nothing was inserted")
+            );
+            if kind == Kind::Secret {
+                assert_eq!(snapshot.query, "••••");
+                assert!(!format!("{snapshot:?}").contains("kept"));
+            }
+            assert!(!format!("{snapshot:?}").contains(pasted));
+            type_text(&mut app, "Z");
+            assert!(form_snapshot(&app).message.is_none());
+            key(&mut app, KeyCode::Enter, Modifiers::NONE);
+            let submission = &app.plugins.input_finished[0].2;
+            assert!(submission.accepted);
+            assert_eq!(submission.values["path"], Value::Text("kepZt".into()));
+        }
+    }
+}
+
+#[test]
+fn rejected_paste_does_not_hide_submission_validation_feedback() {
+    let mut app = fixture(vec![field("account", Kind::Text, true)]);
+    type_text(&mut app, "kept");
+    type_text(&mut app, "rejected\n");
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("Control characters are not allowed; nothing was inserted")
+    );
+    let intent = pending(&mut app);
+    assert_eq!(intent.values["account"], Value::Text("kept".into()));
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("Checking fields…")
+    );
+    assert!(respond(&mut app, &intent, ValidationStatus::Invalid));
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("account: Use a registered account")
+    );
+}
+
+#[test]
+fn byte_and_character_limits_report_separately_and_accept_exact_bounds() {
+    for (maximum, initial, pasted, message) in [
+        (
+            4096,
+            "é".repeat(2047),
+            "éé",
+            "This field allows at most 4096 bytes; nothing was inserted",
+        ),
+        (
+            3,
+            "é猫".into(),
+            "ab",
+            "This field allows at most 3 characters; nothing was inserted",
+        ),
+    ] {
+        let mut field = field("value", Kind::Text, false);
+        field.maximum_length = maximum;
+        let mut app = fixture(vec![field]);
+        type_text(&mut app, &initial);
+        type_text(&mut app, pasted);
+        let surface = app.plugins.input.as_ref().unwrap();
+        assert_eq!(surface.values[0], Value::Text(initial.clone()));
+        assert_eq!(surface.cursor, initial.chars().count());
+        assert_eq!(form_snapshot(&app).message.as_deref(), Some(message));
+        type_text(&mut app, "é");
+        assert!(form_snapshot(&app).message.is_none());
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(
+            app.plugins.input_finished[0].2.values["value"],
+            Value::Text(format!("{initial}é"))
+        );
+    }
+}
+
+#[test]
+fn required_and_minimum_lengths_apply_on_submit_and_select_the_invalid_field() {
+    let mut second = field("second", Kind::Text, false);
+    second.minimum_length = 2;
+    let mut app = fixture(vec![field("first", Kind::Text, false), second]);
+    type_text(&mut app, "ready");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.plugins.input.as_ref().unwrap().selected, 1);
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("This field is required")
+    );
+    type_text(&mut app, "é");
+    assert!(form_snapshot(&app).message.is_none());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("This field requires at least 2 characters")
+    );
+    assert!(app.plugins.input_finished.is_empty());
+    type_text(&mut app, "猫");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input_finished[0].2.values["second"],
+        Value::Text("é猫".into())
+    );
+}
+
+#[test]
+fn deletion_clears_rejection_and_enter_revalidates_the_remaining_value() {
+    for deletion in [KeyCode::Backspace, KeyCode::Delete] {
+        let mut app = fixture(vec![field("value", Kind::Text, false)]);
+        type_text(&mut app, "a");
+        if deletion == KeyCode::Delete {
+            key(&mut app, KeyCode::Home, Modifiers::NONE);
+        }
+        type_text(&mut app, "bad\n");
+        assert!(form_snapshot(&app).message.is_some());
+        key(&mut app, deletion, Modifiers::NONE);
+        assert!(form_snapshot(&app).message.is_none());
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(
+            form_snapshot(&app).message.as_deref(),
+            Some("This field is required")
+        );
+        assert!(app.plugins.input_finished.is_empty());
+    }
+}
+
+#[test]
+fn moving_between_fields_clears_feedback_but_moving_the_cursor_keeps_it() {
+    let mut app = fixture(vec![
+        field("first", Kind::Text, false),
+        field("second", Kind::Text, false),
+    ]);
+    type_text(&mut app, "bad\n");
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert!(form_snapshot(&app).message.is_some());
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(form_snapshot(&app).message.is_none());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.plugins.input.as_ref().unwrap().selected, 0);
+    assert_eq!(
+        form_snapshot(&app).message.as_deref(),
+        Some("This field is required")
+    );
 }
 
 fn pending(app: &mut App) -> ValidationIntent {
@@ -83,7 +239,7 @@ fn validation_requires_declarative_validity_and_physical_unmodified_enter() {
     let mut app = fixture(vec![field("account", Kind::Text, true)]);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.peek_plugin_validation().is_none());
-    assert!(app.plugins.input.as_ref().unwrap().error);
+    assert!(app.plugins.input.as_ref().unwrap().error.is_some());
     type_text(&mut app, "name");
     for modifiers in [Modifiers::SHIFT, Modifiers::CONTROL, Modifiers::ALT] {
         key(&mut app, KeyCode::Enter, modifiers);

@@ -114,7 +114,7 @@ impl WorkspaceHost {
             fields,
             selected: 0,
             cursor: 0,
-            error: false,
+            error: None,
         });
         self.app.plugins.presentation_dirty = true;
         Ok(api::ResultValue::Surface { surface: handle })

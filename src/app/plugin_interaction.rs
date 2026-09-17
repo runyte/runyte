@@ -5,7 +5,10 @@ use crate::{
     input::{InputEvent, KeyCode, Modifiers},
     plugin::{
         application::CapturedContext,
-        interaction::{Field, FieldValidation, Kind, Submission, ValidationStatus, Value},
+        interaction::{
+            Field, FieldValidation, Kind, MAX_VALUE_BYTES, Submission, ValidationStatus, Value,
+            ValueError,
+        },
     },
 };
 
@@ -18,11 +21,44 @@ pub(crate) struct Surface {
     pub values: Vec<Value>,
     pub selected: usize,
     pub cursor: usize,
-    pub error: bool,
+    pub error: Option<InputError>,
     pub picker: Option<crate::picker::ListPicker>,
     pub confirmation: bool,
     pub validation: ValidationState,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InputError {
+    Insertion(ValueError),
+    Submission(ValueError),
+}
+
+impl InputError {
+    pub fn feedback(self) -> String {
+        let (Self::Insertion(reason) | Self::Submission(reason)) = self;
+        let message = match reason {
+            ValueError::ControlCharacter => "Control characters are not allowed".into(),
+            ValueError::TooManyBytes => {
+                format!("This field allows at most {MAX_VALUE_BYTES} bytes")
+            }
+            ValueError::TooManyCharacters { maximum } => {
+                format!("This field allows at most {maximum} characters")
+            }
+            ValueError::Required => "This field is required".into(),
+            ValueError::TooShort { minimum } => {
+                format!("This field requires at least {minimum} characters")
+            }
+            ValueError::InvalidChoice => "Choose one of the listed values".into(),
+            ValueError::WrongType => "This field has an invalid value type".into(),
+        };
+        if matches!(self, Self::Insertion(_)) {
+            format!("{message}; nothing was inserted")
+        } else {
+            message
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ValidationIntent {
     pub owner: usize,
@@ -244,14 +280,18 @@ impl App {
                 self.finish_plugin_input(false)
             }
             InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers.is_empty() => {
-                if let Some(index) = surface
+                surface.error = None;
+                if let Some((index, reason)) = surface
                     .fields
                     .iter()
                     .zip(&surface.values)
-                    .position(|(f, v)| !f.accepts(v))
+                    .enumerate()
+                    .find_map(|(index, (f, v))| {
+                        f.validate_value(v).err().map(|reason| (index, reason))
+                    })
                 {
                     surface.selected = index;
-                    surface.error = true;
+                    surface.error = Some(InputError::Submission(reason));
                     surface.cursor = match &surface.values[index] {
                         Value::Text(v) => v.chars().count(),
                         _ => 0,
@@ -296,7 +336,7 @@ impl App {
                     Value::Text(v) => v.chars().count(),
                     _ => 0,
                 };
-                surface.error = false;
+                surface.error = None;
             }
             input => {
                 let field = &surface.fields[i];
@@ -361,18 +401,17 @@ impl App {
                         _ => None,
                     };
                     if let Some(text) = text {
-                        if value.len().saturating_add(text.len())
-                            <= crate::plugin::interaction::MAX_VALUE_BYTES
-                            && value.chars().count() + text.chars().count() <= field.maximum_length
-                            && !text.chars().any(char::is_control)
-                        {
-                            for c in text.chars() {
-                                prompt_insert(value, surface.cursor, c);
-                                surface.cursor += 1;
+                        match field.validate_text_insertion(value, &text) {
+                            Ok(()) => {
+                                for c in text.chars() {
+                                    prompt_insert(value, surface.cursor, c);
+                                    surface.cursor += 1;
+                                }
+                                surface.error = None;
                             }
-                            surface.error = false;
-                        } else {
-                            surface.error = true;
+                            Err(reason) => {
+                                surface.error = Some(InputError::Insertion(reason));
+                            }
                         }
                     }
                 }
@@ -381,6 +420,7 @@ impl App {
         if let Some(surface) = &mut self.plugins.input
             && surface.values[i] != before
         {
+            surface.error = None;
             surface.validation.revision += 1;
             surface.validation.results.clear();
             surface.validation.unavailable = false;

@@ -569,6 +569,12 @@ input acquisition. Each retained surface reserves 512 KiB in the shared payload
 ledger until completion or cancellation. Forms have at most sixteen uniquely named fields: `text`,
 `secret`, `boolean` or `choice`. Text fields support `required`, `minimum_length`
 and `maximum_length` (Unicode scalars), with an additional 4,096-byte value limit.
+Text and secret fields reject control characters, including pasted line endings.
+An insertion that contains a control character or exceeds either upper bound is
+rejected whole, preserving the value and cursor. Native feedback identifies the
+cause without echoing the rejected input. Required and minimum-length checks run
+on submission, allowing incomplete values while editing. No pasted characters
+are stripped or truncated.
 Choices contain at most 64 distinct bounded labels. Titles/labels are plain text
 without controls. Values start empty, false, or at the first choice.
 

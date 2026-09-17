@@ -72,7 +72,7 @@ fn form_masks_secrets_in_private_frames_and_returns_unicode_only_to_owner() {
         vec![Field::text("name", "Name".into()), secret, choice],
     );
     key(&mut host, "Enter");
-    assert!(host.app.plugins.input.as_ref().unwrap().error);
+    assert!(host.app.plugins.input.as_ref().unwrap().error.is_some());
     host.app
         .handle_input(InputEvent::Text("é猫".into()))
         .unwrap();
@@ -80,10 +80,18 @@ fn form_masks_secrets_in_private_frames_and_returns_unicode_only_to_owner() {
     host.app
         .handle_input(InputEvent::Text("test-secret-🔑".into()))
         .unwrap();
+    host.app
+        .handle_input(InputEvent::Text("rejected-secret\n".into()))
+        .unwrap();
     let geometry = crate::ui::frame_geometry(ratatui::layout::Rect::new(0, 0, 40, 12));
     let wire: crate::protocol::HostFrame = host.prepare_frame(geometry).into();
     let bytes = serde_json::to_vec(&wire).unwrap();
     assert!(!String::from_utf8_lossy(&bytes).contains("test-secret"));
+    assert!(!String::from_utf8_lossy(&bytes).contains("rejected-secret"));
+    assert!(
+        String::from_utf8_lossy(&bytes)
+            .contains("Control characters are not allowed; nothing was inserted")
+    );
     let restored: crate::protocol::HostFrame = serde_json::from_slice(&bytes).unwrap();
     let frame: crate::workspace::HostFrame = restored.try_into().unwrap();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 12)).unwrap();

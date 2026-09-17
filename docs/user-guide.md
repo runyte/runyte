@@ -3120,9 +3120,15 @@ Persistent hosts retain their plugin processes across TUI detach and reattach.
 Application plugins also provide retained native views, typed commands,
 finite background jobs, explicit buffer/selection operations and bounded local
 filesystem operations with native confirmation, plus native prompts, filterable
-choices and forms with masked secret fields. Applications can also create named
-unsaved documents and save them asynchronously: later edits stay dirty, and
-pending or uncertain writes cannot silently complete a close or `--wait` request.
+choices and forms with masked secret fields. Plugin text and secret fields reject
+an entire paste if it contains control characters (including a trailing newline)
+or exceeds the field's byte or character limit. Feedback identifies the cause;
+the existing value and cursor stay unchanged. Required fields and minimum lengths
+are checked when submitting the form.
+
+Applications can also create named unsaved documents and save them asynchronously:
+later edits stay dirty, and pending or uncertain writes cannot silently complete
+a close or `--wait` request.
 Applications can subscribe to buffer, pane, owned view/job and attachment metadata
 with consistent baselines and bounded ordered delivery. New-buffer discovery
 needs no polling; slow consumers receive an explicit resynchronization marker.

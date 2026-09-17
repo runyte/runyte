@@ -25,6 +25,18 @@ pub enum Kind {
     Choice,
 }
 
+/// Native validation feedback carries no input text, including for secrets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueError {
+    ControlCharacter,
+    TooManyBytes,
+    TooManyCharacters { maximum: usize },
+    Required,
+    TooShort { minimum: usize },
+    InvalidChoice,
+    WrongType,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Field {
@@ -72,18 +84,51 @@ impl Field {
         }
     }
     pub fn accepts(&self, value: &Value) -> bool {
+        self.validate_value(value).is_ok()
+    }
+
+    pub(crate) fn validate_value(&self, value: &Value) -> Result<(), ValueError> {
         match (self.kind, value) {
-            (Kind::Boolean, Value::Boolean(_)) => true,
-            (Kind::Choice, Value::Text(value)) => self.choices.contains(value),
+            (Kind::Boolean, Value::Boolean(_)) => Ok(()),
+            (Kind::Choice, Value::Text(value)) => self
+                .choices
+                .contains(value)
+                .then_some(())
+                .ok_or(ValueError::InvalidChoice),
             (Kind::Text | Kind::Secret, Value::Text(value)) => {
+                self.validate_text_insertion(value, "")?;
                 let n = value.chars().count();
-                value.len() <= MAX_VALUE_BYTES
-                    && !value.chars().any(char::is_control)
-                    && n >= self.minimum_length
-                    && n <= self.maximum_length
-                    && (!self.required || n > 0)
+                if self.required && n == 0 {
+                    Err(ValueError::Required)
+                } else if n < self.minimum_length {
+                    Err(ValueError::TooShort {
+                        minimum: self.minimum_length,
+                    })
+                } else {
+                    Ok(())
+                }
             }
-            _ => false,
+            _ => Err(ValueError::WrongType),
+        }
+    }
+
+    /// Check the complete insertion before editing. Lower bounds apply only
+    /// on submission so an incomplete value can still be entered and corrected.
+    pub(crate) fn validate_text_insertion(
+        &self,
+        value: &str,
+        text: &str,
+    ) -> Result<(), ValueError> {
+        if value.len().saturating_add(text.len()) > MAX_VALUE_BYTES {
+            Err(ValueError::TooManyBytes)
+        } else if value.chars().chain(text.chars()).any(char::is_control) {
+            Err(ValueError::ControlCharacter)
+        } else if value.chars().count().saturating_add(text.chars().count()) > self.maximum_length {
+            Err(ValueError::TooManyCharacters {
+                maximum: self.maximum_length,
+            })
+        } else {
+            Ok(())
         }
     }
 }
