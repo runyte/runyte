@@ -64,6 +64,17 @@ address for a caller that does not already know the root.
 
 ## Desired behavior
 
+The approved implementation plan is recorded in
+[Agent workspace context](../plans/active/PLAN_AGENT_WORKSPACE_CONTEXT.md).
+It includes agents reading each other's terminal output in adjacent panes and
+across multiple authorized live workspaces. The issue remains open.
+
+Agents may edit buffers, including inserting newlines, with an explicit edit
+grant. For terminal input, agents propose text for individual native approval
+in an overlay showing the destination and exact text. The current proposal
+recommends approval to insert text without Enter, preserving the requirement
+that agents cannot submit commands. Approval to execute has not been authorized.
+
 An agent process can obtain, on request, the set of panes and what each shows,
 the text of a named buffer at a stated revision, the focused pane's selection,
 and a bounded tail of a named terminal session, without the person copying any
@@ -96,6 +107,12 @@ returning an unbounded scrollback.
 Nothing in this work writes runtime state under `context/`, and the bridge's own
 state, if any, belongs beside other runtime state.
 
+Terminal proposals send no input before approval. Approved insertion must not
+include Enter, pasted line breaks, or control-sequence alternatives that submit
+input. Buffer newlines remain allowed. Generic terminal programs may act on
+ordinary characters; a no-Enter contract must not claim to prevent all child
+actions. Buffer edits do not implicitly save or complete external-editor waits.
+
 ## Open questions
 
 Whether terminal reads are a new capability or an extension of `terminals`, and
@@ -105,10 +122,10 @@ Whether the visible-region read is a separate operation or a parameter on an
 existing buffer read, given that `src/content_alignment.rs` keeps presentation
 offsets out of the buffer and a row means the same thing at every pane size.
 
-Whether a bridge runs inside the workspace it observes, with the agent
-connecting to it, or whether a broker may reach several workspaces on one
-machine. The second is a materially larger surface with its own authorization
-model and is not required by the arrangement above.
+Cross-workspace access is required as well as reads within one workspace.
+The proposal recommends an external bridge connecting to separately authorized
+scoped endpoints, with explicit live-host identity and discovery. Its
+admission and authorization contract must be finalized before implementation.
 
 Whether an agent-visible read should be observable by the person, for example as
 a notification or an indicator, so that external reads are not silent.

@@ -17,6 +17,11 @@ Active work:
   declarations, a stable application contract, a clean experimental cutover and
   reproducible compatibility gates using ru-time as an external plugin.
 
+- [Agent workspace context](active/PLAN_AGENT_WORKSPACE_CONTEXT.md): bounded
+  context reads, separately granted buffer edits, and individually approved
+  terminal text proposals across authorized live workspaces. Terminal insertion
+  does not submit commands.
+
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
