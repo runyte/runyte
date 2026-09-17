@@ -513,6 +513,7 @@ impl App {
         self.sync_provider_overwrite();
         self.sync_plugin_input();
         if !matches!(input, InputEvent::Pointer(_)) {
+            self.prompt_input_error = None;
             self.plugins.foreground_generation += 1;
             self.cancel_pointer_drag();
         }
@@ -550,6 +551,7 @@ impl App {
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
+        self.prompt_input_error = None;
         if self.plugins.provider_reload.is_some()
             || self.plugins.provider_overwrite.is_some()
             || self.plugins.input.is_some()
@@ -1351,6 +1353,12 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        if let KeyCode::Char(character) = key.code
+            && character.is_control()
+            && self.has_single_line_text_input()
+        {
+            return self.handle_text(&character.to_string());
+        }
         if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
             return Ok(());
         }
@@ -1537,7 +1545,61 @@ impl App {
             .unwrap_or(HOVER_PEEK_ROWS)
     }
 
+    /// Follow the same ownership order as literal text dispatch. A covered
+    /// list or an untyped confirmation must not acquire input from this guard.
+    pub(super) fn has_single_line_text_input(&self) -> bool {
+        if self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+        {
+            return false;
+        }
+        if self.git_branch_switch.is_some() {
+            return true;
+        }
+        if let Some(confirmation) = &self.git_branch_deletion {
+            return confirmation.typed();
+        }
+        if let Some(confirmation) = &self.git_worktree_removal {
+            return confirmation.typed();
+        }
+        if self.fs_confirmation.is_some()
+            || self.directory_reload_confirmation.is_some()
+            || self.buffer_discard_confirmation.is_some()
+            || self.context_action_menu.is_some()
+            || self.program_action_menu.is_some()
+        {
+            return false;
+        }
+        if self.picker.is_some() || self.session_directory_chooser_open() {
+            return true;
+        }
+        if let Some(list) = &self.list {
+            return self.buffer_action_menu.is_none()
+                && self.terminal_action_menu.is_none()
+                && list.accepts_filter_input();
+        }
+        self.jump.is_none() && self.mode == Mode::Command
+    }
+
+    fn reject_prompt_controls(&mut self, text: &str, message: &'static str) -> bool {
+        if !text.chars().any(char::is_control) {
+            return false;
+        }
+        self.prompt_input_error = Some(message);
+        self.action_failed(message);
+        true
+    }
+
     fn handle_text(&mut self, text: &str) -> Result<()> {
+        if self.has_single_line_text_input()
+            && self.reject_prompt_controls(
+                text,
+                "Control characters are not allowed; nothing was inserted",
+            )
+        {
+            return Ok(());
+        }
         if self.plugins.provider_reload.is_some() || self.plugins.provider_overwrite.is_some() {
             return Ok(());
         }
@@ -3220,6 +3282,14 @@ impl App {
                 self.close_prompt();
             }
             KeyCode::Enter => {
+                // Completion or a prefilled prompt may supply text without a
+                // paste event. Never execute an undisplayed control suffix.
+                if self.reject_prompt_controls(
+                    &self.command.clone(),
+                    "Control characters are not allowed; input was not submitted",
+                ) {
+                    return Ok(());
+                }
                 let command =
                     if matches!(self.command.split_whitespace().next(), Some("pipe" | "|")) {
                         self.command.trim_start()
@@ -4202,6 +4272,12 @@ impl App {
                 } else {
                     self.command.clone()
                 };
+                if self.reject_prompt_controls(
+                    &value,
+                    "Control characters are not allowed; input was not submitted",
+                ) {
+                    return Ok(());
+                }
                 if let PromptKind::SettingValue(setting) = kind {
                     let value = match setting.descriptor().value_type {
                         SettingType::Integer { minimum, maximum } => {
@@ -4604,6 +4680,7 @@ impl App {
     }
 
     pub(super) fn open_prompt(&mut self, kind: PromptKind) {
+        self.prompt_input_error = None;
         if self.mode != Mode::Command {
             self.prompt_origin_mode = self.mode;
         }
@@ -4624,6 +4701,7 @@ impl App {
     }
 
     pub(super) fn close_prompt(&mut self) {
+        self.prompt_input_error = None;
         #[cfg(unix)]
         let session_manager_return_target = self.session_manager_return_target.take();
         // Still set only when the prompt is being abandoned: a submitted

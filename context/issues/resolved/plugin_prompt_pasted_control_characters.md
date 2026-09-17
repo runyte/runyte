@@ -68,9 +68,12 @@ coverage used an empty temporary `XDG_CONFIG_HOME` because the existing
 diagnostic-log host fixture otherwise inherited user configuration and
 failed its shutdown assertion. Native macOS coverage remains a CI check.
 
-Known limitation: The native command line, Git confirmations and filterable-list
-paste paths described in the report retain their existing control-character
-behavior. This change is scoped to plugin text and secret fields.
+The native command line previously accepted a newline-containing paste while
+displaying only its first line, so it could execute a filename suffix the user
+could not see. The native input follow-up is recorded separately in
+`native_prompt_hidden_control_characters.md`; it extends atomic rejection to
+native single-line surfaces. Subprocess fixtures inheriting user configuration
+are tracked separately in `subprocess_tests_inherit_user_configuration.md`.
 
 ## Report
 

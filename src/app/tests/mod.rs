@@ -193,6 +193,8 @@ mod plugin_terminal_handoffs;
 mod plugin_validation;
 mod plugin_view_queries;
 mod presentation_and_settings;
+#[cfg(unix)]
+mod prompt_input;
 mod provider_documents;
 mod search_and_pickers;
 mod session_navigation;

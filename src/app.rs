@@ -2715,6 +2715,8 @@ pub struct App {
     pub command_cursor: usize,
     pub command_selection: usize,
     pub prompt_kind: PromptKind,
+    /// Static native input feedback; rejected text never enters presentation.
+    prompt_input_error: Option<&'static str>,
     /// The binary file waiting for a program to open it, set while
     /// `PromptKind::ExternalProgram` is collecting one.
     pub external_target: Option<PathBuf>,
@@ -3350,6 +3352,7 @@ impl App {
             command_cursor: 0,
             command_selection: 0,
             prompt_kind: PromptKind::Command,
+            prompt_input_error: None,
             picker: None,
             finder: None,
             finder_content_scan: None,

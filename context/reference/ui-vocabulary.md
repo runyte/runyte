@@ -267,6 +267,15 @@ their existing cancellation paths. Exact-text confirmations keep the space bar
 as literal input, because the durable path they ask for may contain one.
 Interaction-line prompts are not overlays and retain ordinary space entry.
 
+Native single-line input rejects control-containing literal text atomically.
+The rejection preserves text, cursor and selected result. Feedback appears in
+the existing overlay or completion guidance without removing confirmation
+context; an interaction-line prompt with no overlay gets a small feedback panel
+above the interaction line. Feedback never replaces the editable prompt text or
+echoes the rejected value, and the next input clears it. Command and search
+submission also rejects controls in prefilled values. Multiline buffer and
+terminal input retain their literal-text behavior.
+
 The `:plugins` surface is a manager for configured owners. Its filtered rows
 retain disabled and failed entries; the selected row's preview reports lifecycle,
 grants, work and diagnostics. Enter or Tab opens a finite lifecycle action list,

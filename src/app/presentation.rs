@@ -1077,6 +1077,10 @@ impl App {
             })
     }
 
+    pub(crate) fn native_prompt_input_rejected(&self) -> bool {
+        self.prompt_input_error.is_some() && self.has_single_line_text_input()
+    }
+
     /// Captures every application overlay without leaking live application
     /// state to a frontend. The rows are bounded so a client snapshot cannot
     /// grow with an unbounded result set.
@@ -2000,6 +2004,33 @@ impl App {
                 );
                 snapshot.query_cursor = Some(self.command_cursor);
                 overlays.push(snapshot);
+            }
+        }
+        if let Some(message) = self.prompt_input_error
+            && self.has_single_line_text_input()
+        {
+            if let Some(overlay) = overlays.last_mut() {
+                // Keep confirmation context and completion guidance visible.
+                overlay.message = Some(match overlay.message.take() {
+                    Some(previous) if previous != message => format!("{message}\n{previous}"),
+                    _ => message.into(),
+                });
+            } else {
+                // Search and rename prompts normally own only the interaction
+                // line. Feedback must not replace their editable text.
+                let mut overlay = bounded(
+                    OverlayKind::Prompt,
+                    "Input rejected",
+                    "",
+                    Vec::new(),
+                    None,
+                    Some(message.into()),
+                );
+                overlay.purpose = OverlayPurpose::Context;
+                overlay.input = OverlayInput::None;
+                overlay.layout = OverlayLayout::Bottom;
+                overlay.actions.clear();
+                overlays.push(overlay);
             }
         }
         if let Some(completion) = &self.completion {

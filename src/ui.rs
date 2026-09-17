@@ -608,7 +608,14 @@ fn render_editor_frame(
         global_status_line_area,
         interaction_line_area,
     );
-    if app.plugins.input.is_some() {
+    if app.native_prompt_input_rejected() {
+        // Native legacy draw helpers do not carry overlay feedback. Use the
+        // same complete snapshots as the attached frontend while it is shown.
+        for overlay in &overlays {
+            draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+        }
+        place_prompt_cursor(frame, &snapshot.status, interaction_line_area);
+    } else if app.plugins.input.is_some() {
         if let Some(overlay) = overlays.iter().find(|o| o.kind == OverlayKind::Prompt) {
             draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
         }
@@ -875,6 +882,9 @@ fn draw_snapshot_overlay(
         to_tui_rect(centered(editor_area, 90, 85, 28, 8))
     } else {
         match overlay.kind {
+            OverlayKind::Prompt if overlay.layout == OverlayLayout::Bottom => {
+                to_tui_rect(path_completion_area(editor_area, overlay))
+            }
             OverlayKind::Prompt => to_tui_rect(plugin_input_area(editor, overlay)),
             OverlayKind::Confirmation => {
                 to_tui_rect(confirmation_overlay_area(editor_area, overlay))
@@ -912,6 +922,23 @@ fn draw_snapshot_overlay(
             _ => to_tui_rect(centered(editor_area, 80, 75, 28, 7)),
         }
     };
+    let content_width = area.width.saturating_sub(2);
+    let message_width = if overlay.layout == OverlayLayout::Preview
+        && overlay.show_preview
+        && content_width >= 72
+    {
+        TuiLayout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+            .split(TuiRect::new(0, 0, content_width, 1))[0]
+            .width
+    } else {
+        content_width
+    };
+    let message_height = overlay
+        .message
+        .as_deref()
+        .map_or(0, |message| wrapped_text_rows(message, message_width));
     let row_capacity = usize::from(area.height)
         .saturating_sub(2 + query_height + header_height + message_height)
         .max(1);
@@ -1473,7 +1500,9 @@ fn path_completion_area(editor_area: Rect, overlay: &OverlaySnapshot) -> Rect {
         .rows
         .len()
         .min(MAX_ROWS)
-        .saturating_add(usize::from(overlay.message.is_some()))
+        .saturating_add(overlay.message.as_deref().map_or(0, |message| {
+            wrapped_text_rows(message, width.saturating_sub(2))
+        }))
         .max(1);
     let height = u16::try_from(content_rows.saturating_add(2))
         .unwrap_or(u16::MAX)

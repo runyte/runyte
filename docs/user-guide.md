@@ -1508,6 +1508,15 @@ keeps the untruncated, complete text regardless. A prompt still typing on
 the line is never cut this way, since its cursor position depends on the
 untruncated text.
 
+Native single-line prompts and filters reject an entire paste containing control
+characters, including a trailing newline or tab. The existing text, cursor and
+selected result stay unchanged, and the prompt's overlay or completion guidance
+shows `Control characters are not allowed; nothing was inserted`. The next input
+clears this feedback. This applies to the command line, search and rename prompts,
+Finder and list queries, session-directory queries, and typed Git confirmations.
+Literal backslash sequences such as `\n` remain ordinary prompt text. Buffers and
+terminal sessions continue to accept multiline paste.
+
 `:notifications` (alias `:not`) opens `[notifications]`, a single searchable,
 read-only buffer containing the retained history newest first. Each entry has
 a local `YYYY-MM-DD HH:MM:SS` timestamp, Runyte-assigned `ERROR`, `WARNING`, or

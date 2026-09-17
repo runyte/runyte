@@ -267,6 +267,29 @@ fn a_child_runs_in_the_pane_and_its_output_is_drawn() {
 }
 
 #[test]
+fn multiline_text_paste_reaches_the_terminal_without_prompt_validation() {
+    let mut session = Session::start(
+        "/bin/sh -c 'stty raw -echo; printf ready-for-paste; od -An -tx1 -N12; cat'",
+    );
+    assert!(session.settle(|app| terminal_text(app).contains("ready-for-paste")));
+    session
+        .app
+        .handle_input(InputEvent::Text("alpha\nbeta\t!".into()))
+        .unwrap();
+    assert!(
+        session.settle(|app| {
+            terminal_text(app)
+                .split_whitespace()
+                .collect::<String>()
+                // Ordinary terminal paste translates LF to CR for the child.
+                .contains("616c7068610d626574610921")
+        }),
+        "terminal did not receive the paste with its normal LF-to-CR translation: {:?}",
+        terminal_text(&session.app)
+    );
+}
+
+#[test]
 fn standalone_terminal_parent_requests_refuse_without_nesting_and_return_to_shell() {
     let sandbox = TestRuntimeRoot::new("standalone-parent-refusal").unwrap();
     let project = sandbox.create_private_dir("project").unwrap();
