@@ -321,6 +321,7 @@ fn cwd_file_option_still_works_though_undocumented() {
         .args(["--cwd-file", cwd_file.to_str().unwrap(), "--session-list"])
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("XDG_CACHE_HOME", &cache_dir)
+        .env("XDG_CONFIG_HOME", &cache_dir)
         .output()
         .unwrap();
     assert!(

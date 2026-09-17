@@ -114,12 +114,50 @@ fn bundled_runyte(root: &Path) -> Command {
     // integrated terminal belonging to another Runyte instance.
     command
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        // Fixture defaults must not start plugins or apply settings from the
+        // developer's configuration. Explicit --config arguments still win.
+        .env("XDG_CONFIG_HOME", test_process_dir(root, "config"))
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir(root).join("runyte/all-hosts"),
         )
         .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string());
     command
+}
+
+#[test]
+fn diagnostic_fixture_ignores_parent_config_and_honors_explicit_config() {
+    let root = project("config-isolation");
+    let parent_config = test_process_dir(&root, "parent-config");
+    fs::create_dir_all(parent_config.join("runyte")).unwrap();
+    let invalid = parent_config.join("runyte/config.yaml");
+    fs::write(&invalid, "editor: [\n").unwrap();
+
+    // Only the child runner inherits the poison configuration. Changing the
+    // process-wide environment here would race every other integration test.
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "rotation_bounds_the_host_log_across_a_restart",
+            "--nocapture",
+        ])
+        .env("XDG_CONFIG_HOME", &parent_config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "isolated host fixture failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let explicit = runyte(
+        &root,
+        &["--config", invalid.to_str().unwrap(), "--session-list"],
+    );
+    assert!(!explicit.status.success());
+    assert!(String::from_utf8_lossy(&explicit.stderr).contains("invalid YAML"));
+    assert_eq!(fs::read_to_string(invalid).unwrap(), "editor: [\n");
 }
 
 fn runyte(root: &Path, arguments: &[&str]) -> std::process::Output {

@@ -295,7 +295,7 @@ fn standalone_terminal_parent_requests_refuse_without_nesting_and_return_to_shel
     git(&["checkout", "-q", "main"]);
     let runyte = env!("CARGO_BIN_EXE_runyte");
     let command = format!(
-        "/bin/sh -c 'cd {project}; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} GIT_EDITOR=\"{runyte} --wait\" git merge --no-ff side; printf \"git-merge-finished:%s\\r\\n\" \"$?\"; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} {runyte} -a; printf \"parent-attach-finished:%s\\r\\n\" \"$?\"; cat'",
+        "/bin/sh -c 'cd {project}; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} XDG_CONFIG_HOME={cache} GIT_EDITOR=\"{runyte} --wait\" git merge --no-ff side; printf \"git-merge-finished:%s\\r\\n\" \"$?\"; XDG_RUNTIME_DIR={runtime} XDG_CACHE_HOME={cache} XDG_CONFIG_HOME={cache} {runyte} -a; printf \"parent-attach-finished:%s\\r\\n\" \"$?\"; cat'",
         runtime = sandbox.display(),
         cache = cache.display(),
         project = project.display(),

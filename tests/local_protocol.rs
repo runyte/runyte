@@ -744,6 +744,7 @@ fn wait_parent_process_helper() {
         .arg("note.txt")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", runtime)
+        .env("XDG_CONFIG_HOME", &cache)
         .env("XDG_CACHE_HOME", cache)
         .env("RUNYTE_ALL_HOSTS_DIR", inventory)
         .spawn()

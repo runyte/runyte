@@ -32,6 +32,29 @@ fn sandbox() -> TestRuntimeRoot {
     TestRuntimeRoot::new("bulk").unwrap()
 }
 
+#[test]
+fn bulk_fixtures_ignore_parent_configuration_for_hosts_and_cli() {
+    let root = sandbox();
+    let parent_config = root.create_private_dir("parent-config").unwrap();
+    fs::create_dir_all(parent_config.join("runyte")).unwrap();
+    fs::write(parent_config.join("runyte/config.yaml"), "editor: [\n").unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "stop_all_then_clean_manages_the_complete_workspace_inventory",
+            "--nocapture",
+        ])
+        .env("XDG_CONFIG_HOME", parent_config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "isolated bulk fixtures failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn inventory_registrations(root: &Path) -> Vec<PathBuf> {
     fs::read_dir(root.join("all-hosts"))
         .unwrap()
@@ -64,6 +87,7 @@ fn cli_command(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) ->
         .current_dir(directory)
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", cache)
+        .env("XDG_CONFIG_HOME", cache)
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             cache.parent().unwrap().join("all-hosts"),
@@ -80,16 +104,7 @@ fn run_cli(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) -> Out
 
 fn spawn_host(project: &Path, runtime: &Path, cache: &Path) -> ChildGuard {
     ChildGuard(Some(
-        Command::new(env!("CARGO_BIN_EXE_runyte"))
-            .arg("--serve")
-            .current_dir(project)
-            .env("XDG_RUNTIME_DIR", runtime)
-            .env("XDG_CACHE_HOME", cache)
-            .env(
-                "RUNYTE_ALL_HOSTS_DIR",
-                cache.parent().unwrap().join("all-hosts"),
-            )
-            .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
+        cli_command(project, runtime, cache, &["--serve"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

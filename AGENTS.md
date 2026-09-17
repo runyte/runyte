@@ -300,6 +300,12 @@ registry.
   through `note_loaded_config`; one that answers an "open with" prompt must
   point `app.programs` at a temporary directory, as `tests/key_hints.rs`
   already does. Keep environment-derived paths injectable for that reason.
+- Every subprocess fixture that launches an editor or persistent-session host
+  must set `XDG_CONFIG_HOME` to fixture-owned temporary storage in its command
+  builder, including launches through shells or helper test processes. Pass an
+  explicit temporary `--config` when a test needs particular settings. Do not
+  rely on the test runner's environment or change process-global environment
+  variables in a concurrent test binary.
 - Never run a file a test wrote. Writing an executable leaves a descriptor
   open, a concurrent fork elsewhere in the binary inherits it, and the exec is
   then refused with `ETXTBSY` on a loaded machine and nowhere else. Sleeping,
