@@ -194,6 +194,7 @@ impl TerminalPreparation {
                 bell: false,
                 history_truncated: false,
                 content_revision: 1,
+                read_revision: 1,
                 review: None,
                 emulator,
                 pty: Some(child),

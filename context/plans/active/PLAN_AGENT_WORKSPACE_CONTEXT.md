@@ -3,7 +3,8 @@
 ## Status and outcome
 
 Active, 2026-09-17, planned against source `178814a`. Implementation and
-subagent reviews are authorized. Release publication remains a separate action. Extends
+subagent reviews are authorized. Release publication remains a separate action.
+Extends
 [the open issue](../../issues/agent_workspace_context.md). Cross-workspace
 reading is part of the intended delivery, not an optional future broker.
 
@@ -15,15 +16,93 @@ context when asked; they do not continuously receive other agents' output.
 
 Agents may also edit buffers, including inserting newlines, under a separate
 grant. Terminal text is proposed for individual native approval in an overlay;
-no proposal writes to the PTY before approval. The recommendation is that
-approval inserts text without Enter, preserving the explicit no-submission
-boundary. Approval to execute is not assumed from approval to insert.
+no proposal writes to the PTY before approval. Approval inserts text without
+Enter, preserving the explicit no-submission boundary. Approval to execute is not assumed from approval to insert.
 
 The recommended design is an external MCP bridge with scoped connections to
 Runyte hosts. Runyte owns discovery, authorization, bounded reads, and resource
 identity. The bridge owns agent tools and protocol adaptation and is released
 separately. No agent-specific API, conversation parser, or MCP dependency belongs
 in the editor core.
+
+## Implementation progress
+
+The approved plan is committed as `80eceb5`. The first implementation slice
+adds internal terminal primitives; the external feature is not yet available:
+
+- `src/terminal/read.rs` captures bounded, owned screen/tail text, with separate
+  row, UTF-8 byte and visited-cell limits. Returned rows identify their source
+  and clipping, and preserve Unicode base/combining sequences and blank rows.
+- A dedicated terminal read revision covers output, resize, exit and shared
+  history eviction without invalidation from native review or scrolling.
+  History-loss counts describe the active grid rather than review eviction.
+- `src/terminal/proposal.rs` validates bounded, single-line literal text and
+  rejects submit/control characters and injected escape framing. It provides
+  no send operation and grants no approval or input authority.
+- Eighteen tests in `src/terminal/tests/read.rs` and `proposal.rs` exercise
+  these primitives without processes, sockets, configuration or runtime files.
+
+Shared external ownership, authentication, capability admission, native grants,
+discovery, the bridge, buffer edit admission, proposal overlays and cancellable
+PTY delivery remain to be implemented. No external protocol has changed in
+this slice. Freeze the admission contract before exposing these primitives.
+
+### Subagent review comments and disposition
+
+Two independent reviews examined the design and first implementation slice.
+The retained comments below are technical findings, not unrestricted transcripts.
+
+- **PTY acceptance is not delivery:** `Pty::write` currently acknowledges queue
+  admission; its writer does not implement cancellable proposal ownership or
+  completion acknowledgments. Keep validated text disconnected from sending in
+  this slice. The proposal delivery stage must add both before reporting
+  `delivered` or promising revocation of queued input.
+- **Read revision gaps:** feed-only revisions miss resize and shared-history
+  eviction. Added a dedicated revision and tests for both, including history
+  evicted because another terminal produces output.
+- **History-loss mismatch:** native `history_truncated` can mean review-only
+  eviction and does not track normal capacity eviction. Derive active-grid
+  loss from retired rows minus retained history, with tests for both eviction
+  paths, explicit scrollback clear, alternate screen, and emulator reset.
+- **Whole-row decoding is insufficiently bounded:** decode cells directly,
+  including blank and continuation cells in the work budget. Preserve retained
+  combining marks and clip whole base/combining sequences. Review suggested a
+  space-plus-combining fixture, but the emulator currently discards those marks
+  before decoding; this slice preserves that existing emulation behavior. The
+  decoder trims only plain blanks. A wide-cell boundary fix ensures an exhausted
+  cell budget never represents half a glyph.
+- **Weak truncation assertion:** the final review caught an OR condition that
+  could accept incorrect byte/cell flags. Replaced it with checks that both
+  flags are false in the row-limit-only case.
+- **Allocation accounting:** future retained-snapshot quotas must include
+  String/Vec capacity and row metadata, not only decoded text lengths.
+- **Invisible Unicode:** proposal text may contain bidi or zero-width Unicode;
+  the future approval overlay must display it explicitly. Validation alone
+  does not establish display safety or prove that arbitrary PTYs have no
+  reaction to ordinary characters.
+- **Compatibility and authority:** keep frozen protocol fixtures unchanged.
+  Internal reads and validation do not establish external permissions, native
+  approval or PTY delivery; those stages need their own independent reviews.
+
+The implementation review found no remaining production correctness defect in
+this slice after the wide-cell fix.
+
+### First-slice validation — Linux, 2026-09-17
+
+Validated on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and cargo-llvm-cov 0.9.0:
+
+- `cargo fmt --check` passed.
+- `cargo clippy --all-targets -- -D warnings` passed.
+- `cargo test` passed: 3,672 tests, no failures, 34 existing ignored tests.
+- `cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 89`
+  passed: 121,179 of 131,908 lines covered (**91.87%**). The 89% floor is unchanged.
+- Local Markdown links and `git diff --check` passed.
+
+The complete suites ran with the local socket and PTY access required by the
+existing fixtures. The new tests themselves need neither. No native macOS
+result is claimed; CI must validate that first-class target before merging.
+No startup/idle performance result or end-to-end agent workflow is claimed for
+these internal primitives.
 
 ## Scope and user experience
 

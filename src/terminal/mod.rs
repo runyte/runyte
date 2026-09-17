@@ -25,6 +25,8 @@ pub mod keys;
 pub mod parser;
 #[cfg(unix)]
 mod pending;
+pub mod proposal;
+pub mod read;
 #[cfg(all(unix, test))]
 pub(crate) use pending::pending_test_guard;
 #[cfg(unix)]
@@ -470,6 +472,8 @@ pub struct TerminalSession {
     bell: bool,
     history_truncated: bool,
     content_revision: u64,
+    /// Live output identity, independent of scrolling and frozen review state.
+    read_revision: u64,
     review: Option<TerminalReview>,
     emulator: Emulator,
     #[cfg(unix)]
@@ -1404,6 +1408,7 @@ impl TerminalSession {
         }
         self.unread_activity = true;
         self.content_revision = self.content_revision.wrapping_add(1);
+        self.read_revision = self.read_revision.wrapping_add(1);
         // A reader scrolled back into history is holding a position in the
         // text, not a distance from the bottom. Every line the child pushes off
         // the top moves the bottom away, so the distance has to grow by the
@@ -1584,6 +1589,7 @@ impl TerminalSession {
             return false;
         }
         self.emulator.resize(columns, rows);
+        self.read_revision = self.read_revision.wrapping_add(1);
         #[cfg(unix)]
         if let Some(pty) = self.pty.as_ref() {
             let _ = pty.resize(columns as u16, rows as u16);
@@ -2460,6 +2466,7 @@ impl TerminalSessions {
                 bell: false,
                 history_truncated: false,
                 content_revision: 1,
+                read_revision: 1,
                 review: None,
                 emulator,
                 pty: Some(child),
@@ -2504,6 +2511,7 @@ impl TerminalSessions {
                     };
                     session.exit = Some(code);
                     session.content_revision = session.content_revision.wrapping_add(1);
+                    session.read_revision = session.read_revision.wrapping_add(1);
                     session.last_activity = SystemTime::now();
                     session.unread_activity = true;
                     #[cfg(unix)]
@@ -2552,6 +2560,7 @@ impl TerminalSessions {
             let session = self.sessions.get_mut(&id).expect("candidate is live");
             let width = session.emulator.grid().columns();
             if session.emulator.grid_mut().drop_oldest_scrollback() {
+                session.read_revision = session.read_revision.wrapping_add(1);
                 cells = cells.saturating_sub(width);
                 session.scroll = session.scroll.min(session.emulator.grid().scrollback_len());
                 session.history_truncated = true;
@@ -2655,7 +2664,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn session(columns: usize, rows: usize) -> TerminalSession {
+    pub(super) fn session(columns: usize, rows: usize) -> TerminalSession {
         TerminalSession {
             id: TerminalId(1),
             label: "test".to_owned(),
@@ -2670,6 +2679,7 @@ mod tests {
             bell: false,
             history_truncated: false,
             content_revision: 1,
+            read_revision: 1,
             review: None,
             emulator: Emulator::new(columns, rows),
             #[cfg(unix)]

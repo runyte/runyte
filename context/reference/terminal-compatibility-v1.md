@@ -82,6 +82,36 @@ Deliberate limits:
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.
 
+## Internal context reads and proposed input text
+
+`TerminalSession::read_output` captures owned text from the live emulator screen
+or the newest retained rows. It does not change the terminal's native review,
+scroll position, input, attention, or child lifetime. It applies separate row,
+UTF-8 text-byte and visited-cell bounds before decoding; text-byte accounting
+excludes protocol framing and metadata. Tail reads give newest rows first use
+of the budgets and return them in source order. At most one returned row is a
+clipped prefix. Plain trailing spaces are omitted, blank rows and combining
+marks remain, and a wide glyph or base-plus-combining sequence is not split.
+
+The dedicated read revision changes conservatively on output chunks, resize,
+exit and shared history eviction. Native review/scroll changes do not change
+it. Lost-history counts refer to retired rows missing from the active grid,
+not eviction of a frozen review. Alternate screens return only their current
+screen; a full emulator reset begins a new history-loss baseline. Owned results
+remain unchanged after subsequent output or terminal destruction.
+
+`terminal::proposal::Text` admits at most 4 KiB of nonempty, single-line literal
+text. It rejects C0/C1 controls, DEL, CR/LF and Unicode line/paragraph separators,
+including escape sequences and injected paste terminators. It does not grant
+permission to send text and exposes no PTY operation. Future native approval
+must still display invisible characters and acknowledge that arbitrary child
+programs may react to printable input without Enter.
+
+The internal boundary is covered by `terminal::read::tests` in
+`src/terminal/tests/read.rs` and `terminal::proposal::tests` in
+`src/terminal/tests/proposal.rs`. These primitives do not yet expose an agent
+transport, a plugin capability, or a native proposal overlay.
+
 The window prefix is `Ctrl-w` by default and may be moved by `keys.window`.
 Terminal Insert reserves the effective prefix for Runyte's complete window
 grammar and hands the old `Ctrl-w` back to the child. The trade is exact: a
