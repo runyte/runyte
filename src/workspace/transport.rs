@@ -4107,6 +4107,7 @@ mod tests {
         client.send(&ClientRequest::Health).await.unwrap();
         client
             .send(&ClientRequest::Input {
+                presented_frame: None,
                 event: crate::protocol::InputEvent::Text("not control input".to_owned()),
                 repeated: false,
             })

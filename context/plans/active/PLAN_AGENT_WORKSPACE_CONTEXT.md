@@ -27,25 +27,120 @@ in the editor core.
 
 ## Implementation progress
 
-The approved plan is committed as `80eceb5`. The first implementation slice
-adds internal terminal primitives; the external feature is not yet available:
+The approved plan is committed as `80eceb5`; `0999b82` introduced the internal
+terminal read and proposal-validation primitives. All nine planned areas are
+implemented and reviewed. Final Linux validation and measurements are recorded
+below; the issue-resolution commit follows the implementation commit.
 
-- `src/terminal/read.rs` captures bounded, owned screen/tail text, with separate
-  row, UTF-8 byte and visited-cell limits. Returned rows identify their source
-  and clipping, and preserve Unicode base/combining sequences and blank rows.
-- A dedicated terminal read revision covers output, resize, exit and shared
-  history eviction without invalidation from native review or scrolling.
-  History-loss counts describe the active grid rather than review eviction.
-- `src/terminal/proposal.rs` validates bounded, single-line literal text and
-  rejects submit/control characters and injected escape framing. It provides
-  no send operation and grants no approval or input authority.
-- Eighteen tests in `src/terminal/tests/read.rs` and `proposal.rs` exercise
-  these primitives without processes, sockets, configuration or runtime files.
+| Step | Implementation | Independent review |
+| --- | --- | --- |
+| 1 — profile | Strict authenticated `runyte.context.v1` profile, scope dependencies, bounded parser, current schema and SDK | `design_review`: terminal viewport requires terminal scope; exhaustive admission match added |
+| 2 — terminal reads | Bounded emulator reads, dedicated revisions, immutable captures and host dispatch | First-slice reviews plus `design_review`: cell/byte accounting, revision gaps and snapshot capacity charging corrected |
+| 3 — native grants | Private identities, exact-root grants, owner-private listener, cancellation leases, inspection and revocation | `design_review` and `context_storage`: explicit inventory saturation, read-only startup/discovery and unique connection lifetimes verified |
+| 4 — persistent discovery | Versioned metadata CLI, bounded exact-incarnation probes, hidden-environment opt-in and per-host deadlines | `context_contract`: removed project filesystem canonicalization from discovery probes; concurrent unavailable/live-host regression added |
+| 5 — MCP bridge | Independently packaged Python bridge, bounded lazy connections, explicit workspace/resource routing, fake two-client tests and client setup examples | `context_contract`: strict response shapes, bounded MCP IDs, optional reason and bounded authentication paging corrected |
+| 6 — editor context | Unsaved Unicode reads, selections, native viewports and atomic revision-checked multiline edits without save/wait completion | `design_review`: pane A→B→A handle resurrection and late snapshot prefix scans fixed; file-backed wait regression added |
+| 7 — terminal proposals | Native paged review, default Reject, physical one-shot insertion, no Enter, cancellation and actual-write acknowledgment | `context_storage`: queued exit cancellation, displayed-page acknowledgment and stalled-delivery expiry corrected |
+| 8 — standalone | Same opt-in listener and grants, ephemeral endpoint registration removed with host lifetime | `context_contract`: same discovery validation, private storage and no-attachment contract verified |
+| 9 — validation/docs | User guide, contract/schema/SDK, command registry, vocabulary, compatibility, CI and benchmark harness | `context_contract` reviewed documentation; `design_review` reviewed benchmark evidence and timing boundaries |
 
-Shared external ownership, authentication, capability admission, native grants,
-discovery, the bridge, buffer edit admission, proposal overlays and cancellable
-PTY delivery remain to be implemented. No external protocol has changed in
-this slice. Freeze the admission contract before exposing these primitives.
+### Full implementation review findings and disposition
+
+- Terminal viewports could otherwise disclose terminal text under editor-read
+  permission. Both live and frozen terminal viewports now additionally require
+  `terminal_read`, with denial tests.
+- A terminal exit retained its session while releasing the PTY, allowing queued
+  proposals to outlive the exit event. Exit now cancels unclaimed delivery
+  records immediately; a retained-exit regression covers this.
+- Mixed inventory scans previously stopped silently after a fixed entry count.
+  Storage now reports saturation explicitly, caps identity creation and admits
+  writes under the private inventory lock. Read-only discovery neither creates
+  directories nor repairs permissions.
+- Canonicalizing each stored project root before probing could block discovery
+  on an unavailable mount. Publication validates canonical roots; discovery
+  validates stored identity structurally and probes the exact live endpoint
+  without visiting the project filesystem.
+- Tuple-only pane handles could become valid again after A→B→A navigation.
+  Binding generations now invalidate them permanently. Sparse scalar indices
+  prevent a late immutable-buffer range from rescanning its entire prefix.
+- Context snapshots charge allocated capacity and metadata against reader and
+  shared terminal retention budgets. Reads cannot force eviction of native
+  terminal content; later ordinary terminal activity observes the reservation.
+- Reusing socket connection numbers after regrant could let delayed close
+  events disconnect a new reader. Connection IDs are checked, process-wide
+  monotonic values, and delayed-event regressions exercise regrant.
+- Preparing a proposal page was insufficient proof of display because persistent
+  transport can drop frames. Bundled protocol 53 carries the physical frontend's
+  last successfully rendered frame with input. The current overlay accepts only
+  its bounded prepared-frame/page identity, and navigation cannot advance an
+  unacknowledged page. Dropped frames, stale frames, small viewports, macros,
+  paste and repeated input cannot approve.
+- A blocked delivery could poll forever after expiry. Unclaimed input now
+  cancels; already-started input becomes `outcome_unknown`, stops delivery
+  polling and remains a bounded temporary status record. No retry occurs.
+- Literal backslashes and escaped Unicode could otherwise look identical.
+  The review doubles backslashes, spells spaces visibly and escapes non-ASCII
+  scalars, including bidi and zero-width characters. Labels, reason and recent
+  output are separate from the immutable proposed value.
+- Bridge listings previously admitted a serial backlog of authentication probes.
+  A page now admits only available bounded parallel slots, with an absolute
+  handshake deadline and pagination. Closed connections lose cached scopes;
+  uncertain mutations are never replayed. Strict result/error and negotiation
+  shapes, bounded JSON-RPC IDs and standard `_meta` handling are tested.
+- Benchmark reader counts could advance outside the measured typing interval.
+  Retained timestamped evidence now proves changing output was read inside each
+  exact idle and native-input interval; negative CPU deltas fail the sample.
+  The first real run also exposed an overlong command-display wait and a
+  missing transition out of terminal input. The harness now uses a short
+  equivalent noise command, checks its display bound and leaves terminal input
+  explicitly before restoring the measured document. Its cleanup also ends the
+  fixture shell before quitting all panes; ordinary `q!` can uncover a retained
+  terminal instead of exiting. Failed setup/cleanup attempts are not accepted
+  as performance samples.
+- Cancelling a rejected registration's lease before publishing its final error
+  hid the public denial behind EOF. The transport now sends the bounded
+  close-only denial before closing, while revocation still cancels replies
+  before publication. Real socket tests cover both paths; `design_review`
+  independently reviewed the final transport changes.
+- The real editor/MCP workflow caught a missing native command-parser arm:
+  `context-access` had metadata and execution but could not leave the command
+  prompt. The parser now accepts named and default identities, and a physical
+  prompt regression covers both without granting access. `design_review`
+  reviewed and cleared this fix.
+- Final real-process fixture review by `design_review` required exact child
+  environments, cleanup after constructor failure, directly owned persistent
+  host cleanup, and assertions for two distinct terminal panes. All comments
+  were addressed before retaining the integration test.
+
+### Full implementation validation — Linux, 2026-09-18
+
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`: pass.
+- `cargo test`: 3,740 passed, 34 existing ignored, no failures.
+- Canonical `cargo llvm-cov --locked --workspace`: pass, 123,895 of 134,916
+  lines covered (91.83%); the 89% floor is unchanged.
+- `docs/plugins/check_all.py`: all 29 conformance suites pass; eight existing
+  real-mpv cases skip because mpv is unavailable locally. Native backends remain
+  required in Linux/macOS CI.
+- The bridge suite passes all 18 tests, including two real MCP stdio clients
+  against a standalone editor with two terminal panes and a detached persistent
+  host. Both clients read across workspaces, observe unsaved multiline edits,
+  and enforce native per-identity, per-workspace revocation. No agent account or
+  network service is required. CI runs this actual-editor test on Linux/macOS.
+- Four pure benchmark-harness tests pass. Performance measurements are retained
+  in the [startup/idle register](../../reference/startup-performance.md) and its
+  linked artifact: nine complete samples and 360 input latencies, no quiet
+  screen output, 0% median quiet CPU, and input p95 below 3.1 ms in every case.
+  The noisy workload combines terminal output and two bounded readers; it is
+  not an isolated read-cost measurement.
+- `context_contract`'s final documentation review is clear; its clarification
+  that buffer and terminal snapshots share retention limits was incorporated.
+- `design_review` independently recomputed the retained performance aggregates
+  and checked both reader streams inside every measured phase. Its correction
+  to distinguish steady-state typing latency from startup first-input latency
+  was incorporated; no review blockers remain.
+
+Native macOS execution is not available in this environment. Its tests and
+coverage floor remain CI gates; these local results establish Linux only.
 
 ### Subagent review comments and disposition
 

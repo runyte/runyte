@@ -483,10 +483,18 @@ pub struct TerminalSession {
     /// The last text Runyte itself put into this child's input, kept only for
     /// as long as it is still the last thing the child received.
     sent_text: Option<SentText>,
+    input_generation: u64,
+    proposal_deliveries: Vec<proposal::Delivery>,
     /// Lines above the live screen the reader has scrolled to.
     scroll: usize,
     /// Bumped whenever anything a frame would draw has changed.
     revision: u64,
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        self.cancel_queued_proposals();
+    }
 }
 
 impl TerminalSession {
@@ -1199,6 +1207,12 @@ impl TerminalSession {
         self.revision
     }
 
+    /// Content revision from which the current frozen review was captured.
+    /// This is distinct from the live-output read revision and drawing revision.
+    pub fn review_source_revision(&self) -> Option<u64> {
+        self.review.as_ref().map(|review| review.source_revision)
+    }
+
     pub fn live(&self) -> bool {
         self.exit.is_none()
     }
@@ -1235,6 +1249,7 @@ impl TerminalSession {
         row: u16,
         repetitions: u16,
     ) -> bool {
+        self.note_input_intent();
         if !self.sgr_mouse_reporting() {
             return false;
         }
@@ -1394,7 +1409,11 @@ impl TerminalSession {
     /// Applies bytes the child wrote, answering any query they contained.
     fn feed(&mut self, bytes: &[u8]) {
         let retired = self.emulator.grid().retired();
+        let signature = self.proposal_input_signature();
         let completed_lines = self.emulator.feed(bytes);
+        if self.proposal_input_signature() != signature {
+            self.cancel_queued_proposals();
+        }
         if let Some(report) = self.emulator.take_directory_report()
             && let Some(directory) = validated_osc7_directory(&report)
         {
@@ -1439,11 +1458,64 @@ impl TerminalSession {
         false
     }
 
+    pub fn input_generation(&self) -> u64 {
+        self.input_generation
+    }
+
+    pub fn proposal_input_signature(&self) -> proposal::InputSignature {
+        proposal::InputSignature {
+            generation: self.input_generation,
+            modes: self.emulator.modes,
+            alternate_screen: self.alternate_screen(),
+        }
+    }
+
+    fn cancel_queued_proposals(&mut self) {
+        for delivery in &self.proposal_deliveries {
+            delivery.cancel();
+        }
+        self.proposal_deliveries
+            .retain(|delivery| delivery.state() == proposal::DeliveryState::Writing);
+    }
+
+    fn note_input_intent(&mut self) {
+        self.cancel_queued_proposals();
+        self.input_generation = self.input_generation.wrapping_add(1);
+    }
+
+    /// Native approval alone may call this after checking the captured target,
+    /// grant, and input signature. It does not change native presentation state.
+    pub(crate) fn enqueue_proposal(
+        &mut self,
+        text: &proposal::Text,
+    ) -> std::io::Result<proposal::Delivery> {
+        self.note_input_intent();
+        self.sent_text = None;
+        if !self.live() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "Terminal has exited",
+            ));
+        }
+        #[cfg(unix)]
+        if let Some(pty) = &self.pty {
+            let delivery = pty.enqueue_proposal(text, self.emulator.modes.bracketed_paste)?;
+            self.proposal_deliveries.push(delivery.clone());
+            return Ok(delivery);
+        }
+        let _ = text;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "Terminal has no input writer",
+        ))
+    }
+
     /// Sends one keystroke to the child, reporting whether it had an encoding.
     ///
     /// Scrolled-back views jump to the live screen first: typing at history is
     /// a request to be back where the typing will appear.
     pub fn send_key(&mut self, key: KeyStroke) -> bool {
+        self.note_input_intent();
         let Some(bytes) = keys::encode(key, self.emulator.modes) else {
             return false;
         };
@@ -1458,6 +1530,7 @@ impl TerminalSession {
 
     /// Sends literal text, bracketed when the child asked for that.
     pub fn send_text(&mut self, text: &str) -> bool {
+        self.note_input_intent();
         if text.is_empty() {
             return true;
         }
@@ -1489,6 +1562,7 @@ impl TerminalSession {
     /// exactly the paste, and it is offered only while that paste is still the
     /// last input the child received.
     pub fn undo_sent_text(&mut self) -> SentTextUndo {
+        self.note_input_intent();
         const DELETE: u8 = 0x7f;
 
         let Some(sent) = self.sent_text else {
@@ -2244,6 +2318,7 @@ pub struct TerminalSessions {
     sessions: BTreeMap<TerminalId, TerminalSession>,
     next: u64,
     cell_budget: usize,
+    external_retained_bytes: usize,
     events: TerminalEventSender,
     receiver: Option<TerminalEvents>,
     default_colors: DefaultColors,
@@ -2268,6 +2343,16 @@ impl Drop for TerminalSessions {
 }
 
 impl TerminalSessions {
+    #[cfg(test)]
+    pub(crate) fn insert_test_session(&mut self, columns: usize, rows: usize) -> TerminalId {
+        let id = TerminalId(self.next);
+        self.next += 1;
+        let mut session = tests::session(columns, rows);
+        session.id = id;
+        self.sessions.insert(id, session);
+        id
+    }
+
     pub fn new() -> Self {
         let shared = Arc::new(OutputShared {
             state: Mutex::new(OutputState::default()),
@@ -2278,6 +2363,7 @@ impl TerminalSessions {
             sessions: BTreeMap::new(),
             next: 1,
             cell_budget: WORKSPACE_SCROLLBACK_CELLS,
+            external_retained_bytes: 0,
             events: TerminalEventSender(Arc::clone(&shared)),
             receiver: Some(TerminalEvents(shared)),
             default_colors: DefaultColors::default(),
@@ -2472,6 +2558,8 @@ impl TerminalSessions {
                 pty: Some(child),
                 exit: None,
                 sent_text: None,
+                input_generation: 0,
+                proposal_deliveries: Vec::new(),
                 scroll: 0,
                 revision: 1,
             },
@@ -2509,6 +2597,7 @@ impl TerminalSessions {
                         Some(code) => Some(code),
                         None => session.pty.as_mut().and_then(pty::Pty::finished).flatten(),
                     };
+                    session.cancel_queued_proposals();
                     session.exit = Some(code);
                     session.content_revision = session.content_revision.wrapping_add(1);
                     session.read_revision = session.read_revision.wrapping_add(1);
@@ -2525,13 +2614,36 @@ impl TerminalSessions {
         self.enforce_memory_budget();
     }
 
+    /// Shared history/review allocation charge, excluding live screen cells.
+    pub fn retained_payload_bytes(&self) -> usize {
+        self.sessions
+            .values()
+            .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
+            .sum::<usize>()
+            .saturating_mul(std::mem::size_of::<Cell>())
+    }
+
+    pub fn retained_payload_limit(&self) -> usize {
+        self.cell_budget.saturating_mul(std::mem::size_of::<Cell>())
+    }
+
+    /// Reserve context captures without changing terminal presentation. Future
+    /// native/output budget enforcement accounts for these immutable captures.
+    pub fn set_external_retained_bytes(&mut self, bytes: usize) {
+        self.external_retained_bytes = bytes;
+    }
+
     pub fn enforce_memory_budget(&mut self) {
         let mut cells = self
             .sessions
             .values()
             .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
             .sum::<usize>();
-        while cells > self.cell_budget {
+        let available_cells = self.cell_budget.saturating_sub(
+            self.external_retained_bytes
+                .div_ceil(std::mem::size_of::<Cell>()),
+        );
+        while cells > available_cells {
             // Review snapshots are reproducible convenience state and retain
             // a second copy of cells. Evict the least-recently-active one as a
             // unit before discarding the sole retained scrollback copy.
@@ -2686,6 +2798,8 @@ mod tests {
             pty: None,
             exit: None,
             sent_text: None,
+            input_generation: 0,
+            proposal_deliveries: Vec::new(),
             scroll: 0,
             revision: 1,
         }

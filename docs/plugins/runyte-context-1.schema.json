@@ -1,0 +1,1167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://runyte.com/schemas/runyte-context-1.schema.json",
+  "title": "Runyte context v1 scoped Unix transport profile",
+  "$comment": "Strict client profile requires native grants. UTF-8 byte limits, duplicate members, scalar ordering and scope dependencies are enforced by runtime validators. This feature does not broaden ordinary plugin capabilities.",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:_.-]{1,256}$",
+      "not": {
+        "pattern": "[^A-Za-z0-9:_.-]"
+      }
+    },
+    "scope": {
+      "enum": [
+        "buffer_edit",
+        "editor_context_read",
+        "terminal_propose",
+        "terminal_read"
+      ]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scope"
+      },
+      "maxItems": 4,
+      "uniqueItems": true
+    },
+    "names": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_argument",
+            "unsupported",
+            "capability_denied",
+            "not_found",
+            "closed",
+            "stale",
+            "conflict",
+            "read_only",
+            "busy",
+            "limit_exceeded",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "internal",
+            "outcome_unknown",
+            "no_frontend",
+            "context_changed"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "authentication": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "authenticate"
+        },
+        "credential": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "not": {
+            "pattern": "[^0-9a-f]"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "credential"
+      ],
+      "additionalProperties": false
+    },
+    "change": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "registration": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "register"
+        },
+        "version": {
+          "const": "runyte-1"
+        },
+        "runyte": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\u007f-\\u009f]"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_features": {
+          "$ref": "#/$defs/names",
+          "contains": {
+            "const": "runyte.context.v1"
+          }
+        },
+        "optional_features": {
+          "$ref": "#/$defs/names"
+        },
+        "required_capabilities": {
+          "$ref": "#/$defs/scopes"
+        },
+        "optional_capabilities": {
+          "$ref": "#/$defs/scopes"
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "runyte",
+        "name",
+        "commands",
+        "required_features",
+        "optional_features",
+        "required_capabilities",
+        "optional_capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.list"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                }
+              },
+              "required": [
+                "offset",
+                "limit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.read"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "buffer": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "expected_revision": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "from": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "to": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              },
+              "required": [
+                "buffer",
+                "expected_revision",
+                "from",
+                "to"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.edit"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "buffer": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "expected_revision": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "changes": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/change"
+                  },
+                  "minItems": 1,
+                  "maxItems": 1024
+                }
+              },
+              "required": [
+                "buffer",
+                "expected_revision",
+                "changes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.snapshot.open"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "buffer": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "expected_revision": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "buffer",
+                "expected_revision"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.snapshot.read"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "from": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "to": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                }
+              },
+              "required": [
+                "snapshot",
+                "from",
+                "to"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "buffer.snapshot.close"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "snapshot"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "selection.get"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "pane": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "pane"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "pane.context.list"
+            },
+            "params": {
+              "type": "object",
+              "properties": {},
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "pane.viewport.read"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "pane": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "max_cells": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/identifier"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "pane",
+                "max_rows",
+                "max_bytes",
+                "max_cells"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.list"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 256
+                }
+              },
+              "required": [
+                "offset",
+                "limit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.read"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "terminal": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "region": {
+                  "enum": [
+                    "screen",
+                    "tail"
+                  ]
+                },
+                "max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "max_cells": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/identifier"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "terminal",
+                "region",
+                "max_rows",
+                "max_bytes",
+                "max_cells"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.snapshot.open"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "terminal": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "region": {
+                  "enum": [
+                    "screen",
+                    "tail"
+                  ]
+                },
+                "max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "max_cells": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 262144
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/identifier"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "terminal",
+                "region",
+                "max_rows",
+                "max_bytes",
+                "max_cells"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.snapshot.read"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 18446744073709551615
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                }
+              },
+              "required": [
+                "snapshot",
+                "offset",
+                "limit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.snapshot.close"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "snapshot": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "snapshot"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.input.propose"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "terminal": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "not": {
+                    "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                  }
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 256,
+                      "not": {
+                        "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "terminal",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.input.status"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "proposal": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "proposal"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
+              "const": "terminal.input.cancel"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "proposal": {
+                  "$ref": "#/$defs/identifier"
+                }
+              },
+              "required": [
+                "proposal"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "clientMessage": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/authentication"
+        },
+        {
+          "$ref": "#/$defs/registration"
+        },
+        {
+          "$ref": "#/$defs/request"
+        }
+      ]
+    },
+    "hello": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "hello"
+        },
+        "version": {
+          "const": "runyte-1"
+        },
+        "host_version": {
+          "type": "string"
+        },
+        "features": {
+          "$ref": "#/$defs/names"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/names"
+        },
+        "limits": {
+          "type": "object"
+        },
+        "workspace": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "version",
+        "host_version",
+        "features",
+        "capabilities",
+        "limits",
+        "workspace"
+      ],
+      "additionalProperties": true
+    },
+    "registered": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "registered"
+        },
+        "runyte": {
+          "type": "string"
+        },
+        "features": {
+          "$ref": "#/$defs/names"
+        },
+        "commands": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "capabilities": {
+          "$ref": "#/$defs/scopes"
+        },
+        "limits": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "runyte",
+        "features",
+        "commands",
+        "capabilities",
+        "limits"
+      ],
+      "additionalProperties": true
+    },
+    "response": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "response"
+            },
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "result": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "result"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "response"
+            },
+            "id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "error": {
+              "$ref": "#/$defs/error"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "error"
+          ],
+          "additionalProperties": true
+        }
+      ]
+    },
+    "registrationError": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "registration_error"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "code",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "hostMessage": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/hello"
+        },
+        {
+          "$ref": "#/$defs/registered"
+        },
+        {
+          "$ref": "#/$defs/response"
+        },
+        {
+          "$ref": "#/$defs/registrationError"
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/clientMessage"
+    },
+    {
+      "$ref": "#/$defs/hostMessage"
+    }
+  ]
+}

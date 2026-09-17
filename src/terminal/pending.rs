@@ -200,6 +200,8 @@ impl TerminalPreparation {
                 pty: Some(child),
                 exit: None,
                 sent_text: None,
+                input_generation: 0,
+                proposal_deliveries: Vec::new(),
                 scroll: 0,
                 revision: 1,
             }),

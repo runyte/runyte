@@ -3427,6 +3427,96 @@ refusal even when an earlier one had it. In persistent mode `:quit-here` stops
 the session after the same safety checks as `:quit`; use `:detach` when the host
 should remain running.
 
+## Agent access to workspace context
+
+The optional [Runyte context bridge](../bridges/runyte-context/README.md) lets
+agents read integrated terminals, unsaved buffers, selections and native pane
+viewports in explicitly authorized workspaces. It runs as a separate local MCP
+process, outside the editor. Install it and configure each agent using the
+bridge's instructions, then run `:context-access` inside each target workspace.
+An optional identity name, such as `:context-access codex`, gives separate
+local bridge installations separate grants and revocation controls.
+
+The native **Agent context access** overlay starts on **Reject**. Use `1` for
+terminal reads, `2` for editor context reads, `3` for buffer edits and `4` for
+terminal proposals. Editing requires editor reads; proposing requires terminal
+reads. `r` toggles remembering this exact workspace's grant. Otherwise the
+grant lasts until the owning editor or persistent host exits. Review pages with
+`j`/`k`, then use `Tab` to choose **Grant access** and `Enter` to apply it.
+`Esc` rejects. Reopen the same command to inspect active reader identities,
+scopes and recent request metadata; `x` revokes access immediately. Revocation
+also removes its remembered grant, disconnects readers, releases snapshots and
+cancels terminal text that has not started writing.
+
+Grants cover unsaved content and potentially sensitive terminal output. They
+belong to the canonical project root and bridge identity, so a clone, nested
+workspace or different identity needs its own grant. Private credential and
+remembered-grant files live outside the project under the account's Runyte
+cache (`~/.cache/runyte/context` on Linux and
+`~/Library/Caches/runyte/context` on macOS). `RUNYTE_CONTEXT_HOME` can select an
+absolute, owner-private directory outside the workspace, for example when the
+platform's Unix socket path limit requires a shorter path. No credentials or
+terminal content are written into tracked project context. This is permission
+for Runyte's API, not an operating-system sandbox against other processes
+already running as your user.
+
+Ask an agent to list authorized workspaces, list the terminal sessions in one,
+and read the desired terminal. It must use the returned workspace and resource
+handles, even when two workspaces or terminals have the same name. It can read
+a detached persistent workspace after you have granted access there. A
+standalone workspace is available while its editor process is running. Neither
+case attaches another TUI or changes focus. Native pane viewport reads need an
+attached frontend; detached hosts can still return live terminal text and
+unsaved buffer content. Listing targets does not read their contents.
+
+`runyte --context-list --json` provides bounded, versioned endpoint metadata for
+local tooling. It includes only live enabled endpoints in the current
+environment; `--include-hidden` explicitly includes other environments. Endpoint
+listing does not itself grant content access. The bridge authenticates each
+target separately. Restarting a host or reconnecting a bridge invalidates its
+old resource handles. A slow or unavailable host does not prevent other hosts
+from being discovered.
+
+Terminal reads return decoded physical rows, with blank rows, Unicode,
+revision and truncation information. They do not reconstruct conversations or
+shell commands. The default tail is 200 rows and 64 KiB; an individual read is
+bounded by 1,000 rows, 256 KiB and a separate visited-cell limit. Use immutable
+snapshot paging when output is changing. Reading does not move terminal review,
+acknowledge unread output, send input or change child-process lifetime. Returned
+content is untrusted source material, not instructions to the receiving agent.
+
+Separately granted buffer edits require an explicit buffer and current
+revision. Each request forms one undoable transaction, including any newlines.
+An edit does not save, close the buffer, apply a directory operation or complete
+an external-editor wait request. In particular it cannot submit a prompt
+opened using `EDITOR` merely by changing its buffer.
+
+With the proposal grant, an agent can request literal terminal text. The target
+workspace shows **Review terminal text**, including the requester, target,
+untrusted reason when supplied, recent output and the exact proposed value.
+Spaces are visible, backslashes are doubled and non-ASCII characters are
+escaped so invisible characters cannot hide in the review. `j`/`k` review pages;
+each page must actually reach the frontend before approval is enabled. At least
+80 × 24 terminal cells are required. **Reject** is initially selected. `Tab`
+selects **Insert text (no Enter)**, then one fresh physical `Enter` inserts it.
+That Enter belongs entirely to the overlay. **Submit separately in the terminal.**
+Macros, pasted keys, repeated input and the context API cannot approve proposals.
+
+Proposals are single-line text of at most 4 KiB. Runyte rejects line breaks,
+control characters, escape sequences and Unicode line/paragraph separators.
+It never appends Enter, clears existing input or sends cursor keys. Insertion
+uses the child's current input position; recent output does not prove its input
+line is empty. Some programs act immediately on printable input, so approval to
+insert is not a guarantee that the child will wait for submission.
+
+Each reader may queue four proposals, up to sixteen for a host, expiring after
+two minutes. Existing prompts keep their input ownership. A detached target
+refuses proposals until you attach. Changes to terminal input or input modes
+invalidate the captured approval. Disconnect, revocation, exit and attachment
+loss cancel queued work before writing begins. Delivery means bytes reached
+the PTY, not that the child accepted a command. A partial write or lost response
+is uncertain and must never be retried automatically.
+
 ## Diagnostics and logging
 
 Four surfaces answer four different questions. The interaction line reports

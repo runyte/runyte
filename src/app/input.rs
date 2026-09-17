@@ -506,6 +506,10 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        if self.context_overlay_active() {
+            self.handle_context_input(input);
+            return Ok(());
+        }
         self.cancel_plugin_validation_intent();
         let reload_owned_input = self.plugins.provider_reload.is_some();
         self.sync_provider_reload();
@@ -551,6 +555,9 @@ impl App {
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
+        if self.context_overlay_active() {
+            return Ok(());
+        }
         self.prompt_input_error = None;
         if self.plugins.provider_reload.is_some()
             || self.plugins.provider_overwrite.is_some()
@@ -643,6 +650,9 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        if self.context_overlay_active() {
+            return Ok(PointerOutcome::Unchanged);
+        }
         self.cancel_plugin_validation_intent();
         let reload_owned_input = self.plugins.provider_reload.is_some();
         self.sync_provider_reload();
@@ -5421,6 +5431,10 @@ impl App {
             }
             (Colon::LspTrust, InvocationParameters::None) => {
                 self.open_lsp_trust();
+                Ok(())
+            }
+            (Colon::ContextAccess, InvocationParameters::OptionalText(identity)) => {
+                self.request_context_access(identity);
                 Ok(())
             }
             (Colon::LspRestart, InvocationParameters::OptionalText(language)) => {

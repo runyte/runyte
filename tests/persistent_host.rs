@@ -299,6 +299,7 @@ async fn send_input(client: &mut LocalClient, event: impl Into<InputEvent>) -> H
     let event: InputEvent = event.into();
     client
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: event.into(),
             repeated: false,
         })
@@ -811,6 +812,7 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('b'))).await;
     first
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::from(KeyStroke::plain(KeyCode::Char('*'))).into(),
             repeated: false,
         })
@@ -1126,6 +1128,7 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
 
     reattached
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Text("hello\n".to_owned()).into(),
             repeated: false,
         })

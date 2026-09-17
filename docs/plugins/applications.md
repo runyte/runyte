@@ -105,7 +105,7 @@ Views are special buffers backed by bounded semantic models. Purposes are
 `document`, `list` and `dashboard`; each row has a stable ID, one line of text
 and an `ordinary`, `muted`, `heading`, `warning` or `error` role. Controls and
 ANSI sequences are rejected. Warning/error spans use the theme's diagnostic
-colors. The bundled frontend protocol is version 52, including application
+colors. The bundled frontend protocol is version 53, including application
 activity in persistent-session health; the plugin protocol remains independent.
 
 Creation stays in the background. `pane.show` requires the ID of a still-pending

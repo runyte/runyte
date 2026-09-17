@@ -237,6 +237,10 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
+#[cfg(unix)]
+mod context;
+#[cfg(unix)]
+mod context_reads;
 mod pipe;
 mod plugin_activity;
 mod plugin_applications;
@@ -264,6 +268,8 @@ mod plugin_validation;
 mod plugins;
 
 pub struct WorkspaceHost {
+    #[cfg(unix)]
+    context: context::State,
     provider_writes: std::collections::BTreeMap<String, plugin_provider_writes::PendingWrite>,
     provider_uncertain: std::collections::BTreeMap<usize, (String, usize, String)>,
     provider_reads: std::collections::BTreeMap<String, plugin_providers::PendingRead>,
@@ -375,6 +381,8 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
+            #[cfg(unix)]
+            context: Default::default(),
             provider_writes: Default::default(),
             provider_uncertain: Default::default(),
             provider_reads: Default::default(),
@@ -1173,7 +1181,45 @@ impl WorkspaceHost {
             // owner, bounding this loop by the eight-owner admission limit.
             view = self.app.prepare_view(geometry);
         }
+        self.app
+            .note_context_frame(geometry.editor.width, geometry.editor.height, id.0);
         let editor = self.app.snapshot(&view);
+        #[cfg(unix)]
+        if self.context_enabled() {
+            self.context.frame = Some(editor.clone());
+            self.context.frame_id = id.0;
+            self.context.frame_foreground = self.app.plugins.foreground_generation;
+            self.context.frame_attachment = self.app.plugins.attachment_generation;
+            self.context.frame_review_sources = self
+                .app
+                .panes
+                .iter()
+                .filter_map(|(id, pane)| {
+                    let terminal = self.app.terminals.get(pane.terminal?)?;
+                    Some((*id, terminal.review_source_revision()?))
+                })
+                .collect();
+            self.context.frame_sources = self
+                .app
+                .panes
+                .iter()
+                .map(|(id, pane)| {
+                    (
+                        *id,
+                        (
+                            pane.buffer,
+                            self.app.buffers[pane.buffer].revision(),
+                            pane.terminal.and_then(|terminal| {
+                                self.app
+                                    .terminals
+                                    .get(terminal)
+                                    .map(|t| (terminal, t.read_revision()))
+                            }),
+                        ),
+                    )
+                })
+                .collect();
+        }
         let mut overlays = self.app.overlay_snapshots();
         if let Some(key_hints) = key_hints
             && key_hints.is_visible()
@@ -1291,6 +1337,10 @@ impl WorkspaceHost {
             editor,
             overlays,
         }
+    }
+
+    pub fn context_frame_presented(&mut self, frame: FrameId) {
+        self.app.note_context_presented(frame.0);
     }
 
     pub fn current_frame_id(&self) -> Option<FrameId> {

@@ -91,6 +91,7 @@ pub enum ColonCommand {
     Grammar,
     LogOpen,
     LspTrust,
+    ContextAccess,
     LspRestart,
     LspStatus,
     Notifications,
@@ -257,6 +258,7 @@ impl ColonCommand {
         Self::GitWorktrees,
         Self::Grammar,
         Self::LspTrust,
+        Self::ContextAccess,
         Self::LspRestart,
         Self::LogOpen,
         Self::LspStatus,
@@ -344,6 +346,7 @@ impl ColonCommand {
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
             Self::Grammar
+            | Self::ContextAccess
             | Self::LogOpen
             | Self::ServiceHealth
             | Self::Plugins
@@ -2026,6 +2029,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::ContextAccess),
+        "context-access",
+        [],
+        "context-access [identity]",
+        "Review workspace agent permissions",
+        Optional(FreeText)
+    ),
+    spec!(
         ColonId(Colon::LspRestart),
         "lsp-restart",
         [],
@@ -2608,7 +2619,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::PluginStop | Colon::PluginRestart,
             InvocationParameters::OptionalText(Some(value)),
         ) => crate::plugin::valid_name(value),
-        (Colon::LspRestart, InvocationParameters::OptionalText(value)) => {
+        (Colon::LspRestart | Colon::ContextAccess, InvocationParameters::OptionalText(value)) => {
             value.as_ref().is_none_or(|value| !value.is_empty())
         }
         (Colon::Pipe, InvocationParameters::OptionalText(Some(value))) => !value.trim().is_empty(),
@@ -2902,125 +2913,128 @@ fn invocation_from_parts(
             )),
             _ => Err(invalid()),
         },
-        CommandId::Colon(command) => {
-            match (command, argument) {
-                (
-                    ColonCommand::ChangeDirectory | ColonCommand::SessionAttach,
-                    ParsedArgument::Path(Some(path)),
-                ) => Ok(CommandInvocation::new(id, InvocationParameters::Path(path))),
-                (
-                    ColonCommand::CloseBuffer
-                    | ColonCommand::DiffDisk
-                    | ColonCommand::DiffRemote
-                    | ColonCommand::DiffOff
-                    | ColonCommand::DiffThis
-                    | ColonCommand::ForceCloseBuffer
-                    | ColonCommand::Format
-                    | ColonCommand::GitBranches
-                    | ColonCommand::GitBlame
-                    | ColonCommand::GitBlameFile
-                    | ColonCommand::GitCancel
-                    | ColonCommand::GitCommit
-                    | ColonCommand::GitDiff
-                    | ColonCommand::GitDiffSideBySide
-                    | ColonCommand::GitDiscard
-                    | ColonCommand::GitIndex
-                    | ColonCommand::GitLog
-                    | ColonCommand::GitSearchCommits
-                    | ColonCommand::GitRefresh
-                    | ColonCommand::GitStage
-                    | ColonCommand::GitStatus
-                    | ColonCommand::GitStashes
-                    | ColonCommand::GitStashApply
-                    | ColonCommand::GitStashDrop
-                    | ColonCommand::GitStageHunk
-                    | ColonCommand::GitUnstageHunk
-                    | ColonCommand::GitStageLines
-                    | ColonCommand::GitUnstage
-                    | ColonCommand::GitWorktrees
-                    | ColonCommand::LogOpen
-                    | ColonCommand::LspStatus
-                    | ColonCommand::LspTrust
-                    | ColonCommand::Notifications
-                    | ColonCommand::Path
-                    | ColonCommand::ServiceHealth
-                    | ColonCommand::PipeCancel
-                    | ColonCommand::Plugins
-                    | ColonCommand::Detach
-                    | ColonCommand::Quit
-                    | ColonCommand::ForceQuit
-                    | ColonCommand::QuitAll
-                    | ColonCommand::ForceQuitAll
-                    | ColonCommand::QuitHere
-                    | ColonCommand::ForceQuitHere
-                    | ColonCommand::Reload
-                    | ColonCommand::WriteQuit
-                    | ColonCommand::WriteBufferClose
-                    | ColonCommand::SessionList,
-                    ParsedArgument::None,
-                ) => Ok(CommandInvocation::new(id, InvocationParameters::None)),
-                (
-                    ColonCommand::GitStashTracked
-                    | ColonCommand::GitStashAll
-                    | ColonCommand::GitStashUntracked,
-                    ParsedArgument::Text(value),
-                ) => Ok(CommandInvocation::new(
-                    id,
-                    InvocationParameters::OptionalText(value),
-                )),
-                (ColonCommand::Open, ParsedArgument::Path(Some(path))) => {
-                    Ok(CommandInvocation::new(id, InvocationParameters::Path(path)))
-                }
-                (ColonCommand::SessionRename, ParsedArgument::Text(Some(value))) => {
-                    let (workspace, name) = parse_session_rename(command, &value)?;
-                    Ok(CommandInvocation::new(
-                        id,
-                        InvocationParameters::SessionRename { workspace, name },
-                    ))
-                }
-                (
-                    ColonCommand::ResizeRight
-                    | ColonCommand::ResizeLeft
-                    | ColonCommand::ResizeTop
-                    | ColonCommand::ResizeBottom,
-                    ParsedArgument::Text(Some(value)),
-                ) => Ok(CommandInvocation::new(
-                    id,
-                    InvocationParameters::PaneResize(parse_pane_resize(command, &value)?),
-                )),
-                (
-                    ColonCommand::PluginStop | ColonCommand::PluginRestart,
-                    ParsedArgument::Text(Some(value)),
-                ) if crate::plugin::valid_name(&value) => Ok(CommandInvocation::new(
-                    id,
-                    InvocationParameters::OptionalText(Some(value)),
-                )),
-                (ColonCommand::Pipe, ParsedArgument::Text(Some(value))) => Ok(
-                    CommandInvocation::new(id, InvocationParameters::OptionalText(Some(value))),
-                ),
-                (ColonCommand::LspRestart, ParsedArgument::Text(value)) => Ok(
-                    CommandInvocation::new(id, InvocationParameters::OptionalText(value)),
-                ),
-                (ColonCommand::Grammar, ParsedArgument::Text(value)) => {
-                    let grammar = value
-                        .map(|value| {
-                            value
-                                .parse()
-                                .map_err(|()| CommandParseError::InvalidArgument {
-                                    command: "grammar",
-                                    value,
-                                    expected: "runyte",
-                                })
-                        })
-                        .transpose()?;
-                    Ok(CommandInvocation::new(
-                        id,
-                        InvocationParameters::Grammar(grammar),
-                    ))
-                }
-                _ => Err(invalid()),
+        CommandId::Colon(command) => match (command, argument) {
+            (
+                ColonCommand::ChangeDirectory | ColonCommand::SessionAttach,
+                ParsedArgument::Path(Some(path)),
+            ) => Ok(CommandInvocation::new(id, InvocationParameters::Path(path))),
+            (
+                ColonCommand::CloseBuffer
+                | ColonCommand::DiffDisk
+                | ColonCommand::DiffRemote
+                | ColonCommand::DiffOff
+                | ColonCommand::DiffThis
+                | ColonCommand::ForceCloseBuffer
+                | ColonCommand::Format
+                | ColonCommand::GitBranches
+                | ColonCommand::GitBlame
+                | ColonCommand::GitBlameFile
+                | ColonCommand::GitCancel
+                | ColonCommand::GitCommit
+                | ColonCommand::GitDiff
+                | ColonCommand::GitDiffSideBySide
+                | ColonCommand::GitDiscard
+                | ColonCommand::GitIndex
+                | ColonCommand::GitLog
+                | ColonCommand::GitSearchCommits
+                | ColonCommand::GitRefresh
+                | ColonCommand::GitStage
+                | ColonCommand::GitStatus
+                | ColonCommand::GitStashes
+                | ColonCommand::GitStashApply
+                | ColonCommand::GitStashDrop
+                | ColonCommand::GitStageHunk
+                | ColonCommand::GitUnstageHunk
+                | ColonCommand::GitStageLines
+                | ColonCommand::GitUnstage
+                | ColonCommand::GitWorktrees
+                | ColonCommand::LogOpen
+                | ColonCommand::LspStatus
+                | ColonCommand::LspTrust
+                | ColonCommand::Notifications
+                | ColonCommand::Path
+                | ColonCommand::ServiceHealth
+                | ColonCommand::PipeCancel
+                | ColonCommand::Plugins
+                | ColonCommand::Detach
+                | ColonCommand::Quit
+                | ColonCommand::ForceQuit
+                | ColonCommand::QuitAll
+                | ColonCommand::ForceQuitAll
+                | ColonCommand::QuitHere
+                | ColonCommand::ForceQuitHere
+                | ColonCommand::Reload
+                | ColonCommand::WriteQuit
+                | ColonCommand::WriteBufferClose
+                | ColonCommand::SessionList,
+                ParsedArgument::None,
+            ) => Ok(CommandInvocation::new(id, InvocationParameters::None)),
+            (
+                ColonCommand::GitStashTracked
+                | ColonCommand::GitStashAll
+                | ColonCommand::GitStashUntracked,
+                ParsedArgument::Text(value),
+            ) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(value),
+            )),
+            (ColonCommand::Open, ParsedArgument::Path(Some(path))) => {
+                Ok(CommandInvocation::new(id, InvocationParameters::Path(path)))
             }
-        }
+            (ColonCommand::SessionRename, ParsedArgument::Text(Some(value))) => {
+                let (workspace, name) = parse_session_rename(command, &value)?;
+                Ok(CommandInvocation::new(
+                    id,
+                    InvocationParameters::SessionRename { workspace, name },
+                ))
+            }
+            (
+                ColonCommand::ResizeRight
+                | ColonCommand::ResizeLeft
+                | ColonCommand::ResizeTop
+                | ColonCommand::ResizeBottom,
+                ParsedArgument::Text(Some(value)),
+            ) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::PaneResize(parse_pane_resize(command, &value)?),
+            )),
+            (
+                ColonCommand::PluginStop | ColonCommand::PluginRestart,
+                ParsedArgument::Text(Some(value)),
+            ) if crate::plugin::valid_name(&value) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(Some(value)),
+            )),
+            (ColonCommand::Pipe, ParsedArgument::Text(Some(value))) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(Some(value)),
+            )),
+            (
+                ColonCommand::LspRestart | ColonCommand::ContextAccess,
+                ParsedArgument::Text(value),
+            ) => Ok(CommandInvocation::new(
+                id,
+                InvocationParameters::OptionalText(value),
+            )),
+            (ColonCommand::Grammar, ParsedArgument::Text(value)) => {
+                let grammar = value
+                    .map(|value| {
+                        value
+                            .parse()
+                            .map_err(|()| CommandParseError::InvalidArgument {
+                                command: "grammar",
+                                value,
+                                expected: "runyte",
+                            })
+                    })
+                    .transpose()?;
+                Ok(CommandInvocation::new(
+                    id,
+                    InvocationParameters::Grammar(grammar),
+                ))
+            }
+            _ => Err(invalid()),
+        },
     }
 }
 

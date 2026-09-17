@@ -17,6 +17,46 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-18 — scoped agent context access
+
+Measured the completed agent-context implementation based on `0999b82`, built
+with `cargo build --release --locked`, after builds, tests and coverage finished.
+Machine: Linux x86_64, `7.1.13-200.fc44.x86_64`, AMD Ryzen AI 9 365,
+20 logical CPUs, approximately 27.2 GiB RAM, Rust 1.97.1 and Python 3.14.7.
+The binary is 53,124,576 bytes, SHA-256
+`2b36a473b78b4bc14bc1182bb13e00f33e01559ec2d480658b0e8afe2d4128ff`.
+
+`benchmarks/context_access.py --runs 3 --window 10 --latency-count 40`
+rotates three cases through fresh standalone processes with isolated runtime
+storage and configuration, disabled LSP, `short.lua`, and a 120×40 PTY. The
+[raw artifact](../../benchmarks/results/context-access-2026-09-18.json) retains
+all nine complete samples, 360 native-input latencies and timestamped reader
+revision evidence. Failed harness setup/cleanup attempts were diagnosed and
+fixed before this complete matrix; no successful sample in the matrix is dropped.
+
+Startup requires a displayed document, an acknowledged native edit and a later
+full-file verification of that edit. Readers and noisy output start after this
+startup interval. Each idle CPU window lasts ten seconds after warmup; latency
+measures input through rendered acknowledgment with a later full-file check.
+The noisy case runs one hidden terminal producing roughly 50 wide lines/second
+and two independent context readers polling at up to 20 Hz each. Both readers
+must observe changing revisions inside each CPU and input interval. The fixture
+stops its child process and verifies shutdown after measurement.
+
+| Case | Startup median (range), ms | Editor CPU median (range), % | Input median / p95 / max, ms | Screen bytes per idle window |
+| --- | ---: | ---: | ---: | --- |
+| Access disabled | 12.11 (10.73–12.17) | 0.00 (0.00–0.10) | 1.96 / 2.75 / 3.66 | 0, 0, 0 |
+| Enabled, no readers | 13.61 (9.86–14.67) | 0.00 (0.00–0.10) | 2.19 / 3.10 / 3.75 | 0, 0, 0 |
+| Noisy terminal, two readers | 11.45 (10.94–11.65) | 7.00 (6.80–7.20) | 1.62 / 2.22 / 3.20 | 8,816; 8,778; 8,759 |
+
+CPU percentages use one core as 100%. The noisy process-tree CPU range is
+13.80–13.90%; it includes the shell and its children. This measures combined
+terminal activity and context reads, not the isolated cost of reading. Quiet
+enabled access produces no screen traffic and shows no measurable median idle
+CPU increase at this sampling resolution. All 360 steady-state typing latencies
+stay below 4 ms. Three startup samples per case do not establish statistical
+equivalence, a historical regression comparison, or a macOS result.
+
 ## 2026-09-09 — complete Linux application workload matrix
 
 Application implementation `f67289c`, measured with harness `104b31f` against

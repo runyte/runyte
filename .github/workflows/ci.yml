@@ -111,6 +111,7 @@ jobs:
           plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
           "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
           "$plugin_schema_python" docs/plugins/check_all.py --require-backends
+          (cd bridges/runyte-context && "$plugin_schema_python" -m unittest discover -s tests -v)
 
       # The checks above play the host themselves. This starts every example in
       # a real persistent host, using the same Python environment for Paramiko.
@@ -122,6 +123,15 @@ jobs:
           set -o pipefail
           cargo test --locked --test persistent_host plugin_examples::every_example_plugin_registers_and_stays_running_in_a_real_host -- --ignored --exact | tee "$RUNNER_TEMP/plugin-examples.log"
           python3 -c 'import pathlib, sys; text = pathlib.Path(sys.argv[1]).read_text(); assert "test plugin_examples::every_example_plugin_registers_and_stays_running_in_a_real_host ... ok" in text, "required native example test did not run"' "$RUNNER_TEMP/plugin-examples.log"
+
+      - name: Exercise two MCP clients against real editor hosts
+        working-directory: ${{ steps.candidate.outputs.source }}
+        env:
+          RUNYTE_CONTEXT_TEST_BINARY: ${{ github.workspace }}/target/debug/runyte
+        run: |
+          test -x "$RUNYTE_CONTEXT_TEST_BINARY"
+          cd bridges/runyte-context
+          "$RUNNER_TEMP/plugin-schema/bin/python" -m unittest discover -s tests -p test_runyte.py -v
 
   ru-time:
     name: ru-time moving head against this commit (${{ matrix.os }})

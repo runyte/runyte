@@ -51,8 +51,38 @@ pub(super) struct PendingActivation {
 /// A child process attached to a pseudoterminal.
 pub struct Pty {
     master: Option<OwnedFd>,
-    input: mpsc::SyncSender<Vec<u8>>,
+    input: mpsc::SyncSender<Input>,
     child: Child,
+}
+
+/// Owns cancellation while queued and conservative failure reporting if a
+/// writer exits or unwinds before acknowledging every byte.
+struct Input {
+    bytes: Vec<u8>,
+    delivery: Option<super::proposal::Delivery>,
+}
+impl Input {
+    fn deliver(&self, mut write: impl FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
+        if let Some(delivery) = &self.delivery
+            && !delivery.claim()
+        {
+            return Ok(());
+        }
+        for chunk in self.bytes.chunks(WRITE_CHUNK) {
+            write(chunk)?;
+        }
+        if let Some(delivery) = &self.delivery {
+            delivery.complete();
+        }
+        Ok(())
+    }
+}
+impl Drop for Input {
+    fn drop(&mut self) {
+        if let Some(delivery) = &self.delivery {
+            delivery.abandoned();
+        }
+    }
 }
 
 /// Owns a spawned child until every fallible PTY setup step has succeeded.
@@ -255,7 +285,7 @@ impl Pty {
         // the child and all of its descendants finally close theirs.
         drop(slave);
 
-        let (input, pending) = mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE);
+        let (input, pending) = mpsc::sync_channel::<Input>(INPUT_QUEUE);
         let reader = duplicate(master.as_raw_fd())?;
         checkpoint(SpawnCheckpoint::ReaderDuplicated, child.id())?;
         let writer = duplicate(master.as_raw_fd())?;
@@ -278,11 +308,12 @@ impl Pty {
                     }
                     drop(activation.lifetime);
                 }
-                while let Ok(bytes) = pending.recv() {
-                    for chunk in bytes.chunks(WRITE_CHUNK) {
-                        if write_all(writer.as_raw_fd(), chunk).is_err() {
-                            return;
-                        }
+                while let Ok(input) = pending.recv() {
+                    if input
+                        .deliver(|chunk| write_all(writer.as_raw_fd(), chunk))
+                        .is_err()
+                    {
+                        return;
                     }
                 }
             })?;
@@ -341,7 +372,43 @@ impl Pty {
         if bytes.len() > MAX_INPUT_BYTES {
             return false;
         }
-        self.input.try_send(bytes).is_ok()
+        self.input
+            .try_send(Input {
+                bytes,
+                delivery: None,
+            })
+            .is_ok()
+    }
+
+    /// Admits only validated literal text; paste framing is generated here.
+    pub(super) fn enqueue_proposal(
+        &self,
+        text: &super::proposal::Text,
+        bracketed: bool,
+    ) -> io::Result<super::proposal::Delivery> {
+        let mut bytes = Vec::with_capacity(text.as_str().len() + 12);
+        if bracketed {
+            bytes.extend_from_slice(b"\x1b[200~");
+        }
+        bytes.extend_from_slice(text.as_str().as_bytes());
+        if bracketed {
+            bytes.extend_from_slice(b"\x1b[201~");
+        }
+        let delivery = super::proposal::Delivery::queued();
+        self.input
+            .try_send(Input {
+                bytes,
+                delivery: Some(delivery.clone()),
+            })
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => {
+                    io::Error::new(io::ErrorKind::WouldBlock, "Terminal input queue is full")
+                }
+                mpsc::TrySendError::Disconnected(_) => {
+                    io::Error::new(io::ErrorKind::BrokenPipe, "Terminal input writer is closed")
+                }
+            })?;
+        Ok(delivery)
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
@@ -770,3 +837,7 @@ mod tests {
         }));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/proposal_delivery.rs"]
+mod proposal_delivery;

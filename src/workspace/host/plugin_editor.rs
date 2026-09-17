@@ -336,7 +336,7 @@ impl WorkspaceHost {
     }
 }
 
-fn read(
+pub(super) fn read(
     text: &crate::text::Text,
     revision: String,
     from: usize,

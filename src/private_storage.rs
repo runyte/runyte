@@ -63,12 +63,16 @@ mod platform {
         /// private from creation. Only an explicitly private leaf is chmodded;
         /// an explicit log in /tmp must never change /tmp's permissions.
         pub fn open(path: &Path, private: bool) -> io::Result<Self> {
-            Self::open_inner(path, private, false)
+            Self::open_inner(path, private, false, true)
         }
         pub(crate) fn open_durable(path: &Path, private: bool) -> io::Result<Self> {
-            Self::open_inner(path, private, true)
+            Self::open_inner(path, private, true, true)
         }
-        fn open_inner(path: &Path, private: bool, durable: bool) -> io::Result<Self> {
+        /// Opens existing private storage without creating or chmodding anything.
+        pub(crate) fn open_existing(path: &Path, private: bool) -> io::Result<Self> {
+            Self::open_inner(path, private, false, false)
+        }
+        fn open_inner(path: &Path, private: bool, durable: bool, create: bool) -> io::Result<Self> {
             let absolute = if path.is_absolute() {
                 path.to_owned()
             } else {
@@ -106,7 +110,8 @@ mod platform {
                         libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
                     )
                 };
-                if fd < 0 && io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+                if create && fd < 0 && io::Error::last_os_error().kind() == io::ErrorKind::NotFound
+                {
                     let created =
                         unsafe { libc::mkdirat(directory.0.as_raw_fd(), name.as_ptr(), 0o700) };
                     if created < 0
@@ -140,9 +145,13 @@ mod platform {
                         "runtime storage directory is owned by another user",
                     ));
                 }
-                directory
-                    .0
-                    .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+                if create {
+                    directory
+                        .0
+                        .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+                } else if metadata.mode() & 0o077 != 0 {
+                    return Err(io::Error::other("runtime storage directory is not private"));
+                }
             }
             Ok(directory)
         }
@@ -355,6 +364,9 @@ mod platform {
             unsupported()
         }
         pub(crate) fn open_durable(_: &Path, _: bool) -> io::Result<Self> {
+            unsupported()
+        }
+        pub(crate) fn open_existing(_: &Path, _: bool) -> io::Result<Self> {
             unsupported()
         }
         pub(crate) fn child(&self, _: &OsStr) -> io::Result<Self> {

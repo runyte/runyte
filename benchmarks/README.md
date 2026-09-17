@@ -20,6 +20,10 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   document's first output. These are presentation timings, not editing-readiness
   or syntax-completion measurements. Run after builds/tests finish:
   `python3 benchmarks/session_navigation.py --runs 3 --json /tmp/session-navigation.json`.
+- **`context_access.py`** — disabled context access, remembered access with no
+  readers, and a noisy integrated terminal with two concurrent bounded readers.
+  Measures demonstrated startup editing, 10-second idle/activity CPU and output,
+  and individual native edits while reads continue. See [context access](#context-access).
 - **`fuzzy.py`** — what the picker's fuzzy path ranking costs and whether it
   puts the same candidates at the top of the list as fzf, on the same
   candidates. Recorded in
@@ -572,3 +576,56 @@ quiet work. These are measurements on the
 recorded machine, including harness decoding, not portable absolute CI limits
 or physical display/audio timings. The target is below 16 ms p95, with any
 miss requiring investigation before the application plan's release gate closes.
+
+## Context access
+
+Builds and tests must finish before this serial measurement begins:
+
+```sh
+cargo build --release --locked
+python3 benchmarks/context_access.py --runs 3 --window 10 --latency-count 40 \
+  --json /tmp/context-access.json
+```
+
+The Python interpreter needs `benchmarks/requirements.txt`. CPU measurement
+currently requires Linux `/proc`. Pure fixture and isolation checks run with:
+
+```sh
+python3 -m unittest discover -s benchmarks -p test_context_access.py
+```
+
+Each sample owns a short temporary workspace and all configuration, cache,
+runtime, home, and context-storage paths. Enabled samples seed a private bridge
+identity and an exact canonical-root read grant using the documented storage
+encoding; they never change a person's grants. Disabled samples assert that
+context storage was not created. No sample grants buffer edits or terminal
+proposals. The noisy program is a fixed `/bin/sh` command, never a generated
+executable. Native editor shutdown and exact process identity checks clean up
+its terminal child.
+
+The three cases rotate order across rounds. All successful samples, including
+slow ones, are retained. `demonstrated_startup_ms` runs from the PTY fork through
+one leading space appearing in the document's completed synchronized frame;
+the complete saved file must match afterward. `first_document_ms` is a separate
+presentation observation, not syntax readiness. The fixed short Lua fixture
+matches the other startup harnesses. These are warm-cache launches.
+
+After a 2.5-second settling period, each case measures at least ten seconds.
+`editor_cpu_percent` counts Runyte itself; `tree_cpu_percent` additionally counts
+its PTY child and descendants. Python reader and harness CPU are excluded.
+`screen_bytes` and `pty_read_chunks` measure TUI output, not system-call counts.
+The noisy case keeps its terminal running while the editor document is visible;
+two separately authenticated readers each request bounded terminal tails about
+20 times per second. Read counts and changing revisions prove progress during
+both the exact observation window and exact native input phase; successful-read
+timestamps and revisions are retained for each phase, excluding warm-up and
+saved-file verification. Negative CPU deltas invalidate a sample. This is a controlled
+load, not a maximum-throughput claim.
+
+Every case measures 40 individual insertions by default, with deterministic
+60–81 ms spacing outside the timed intervals. Each latency ends only when the
+exact edited marker appears in a completed synchronized frame. A final saved
+file must equal the complete original plus all insertions. The JSON retains
+all timings, output totals, read-progress counts, geometry, and binary hash;
+it contains no credentials, fixture paths, or terminal contents. An incomplete
+sample makes the command fail and leaves `complete: false` in its output.

@@ -18,6 +18,7 @@ pub enum LaunchMode {
     Persistent,
     Wait,
     ListSessions,
+    ListContext,
     StopAllSessions,
     CleanSessions,
     RenameSession,
@@ -70,6 +71,7 @@ pub struct LaunchArguments {
     pub project_root: Option<PathBuf>,
     pub help: bool,
     pub version: bool,
+    pub json: bool,
     pub mode: LaunchMode,
     /// Whether the command line, rather than configuration, selected a mode.
     pub mode_explicit: bool,
@@ -169,6 +171,15 @@ impl LaunchArguments {
                 // rather than a launch followed by an editor switch.
                 "-a" | "--persistent" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Persistent)?
+                }
+                "--context-list" => set_mode(
+                    &mut parsed.mode,
+                    &mut mode_explicit,
+                    LaunchMode::ListContext,
+                )?,
+                "--json" => {
+                    ensure!(!parsed.json, "--json may only be specified once");
+                    parsed.json = true;
                 }
                 "--wait" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Wait)?,
                 "-l" | "--session-list" => set_mode(
@@ -310,9 +321,27 @@ impl LaunchArguments {
             !parsed.include_hidden
                 || matches!(
                     parsed.mode,
-                    LaunchMode::ListSessions | LaunchMode::StopAllSessions
+                    LaunchMode::ListSessions
+                        | LaunchMode::StopAllSessions
+                        | LaunchMode::ListContext
                 ),
-            "--include-hidden is available only with --session-list or --session-stop-all"
+            "--include-hidden is available only with --session-list, --session-stop-all, or --context-list"
+        );
+        ensure!(
+            !parsed.json || parsed.mode == LaunchMode::ListContext,
+            "--json is available only with --context-list"
+        );
+        ensure!(
+            parsed.mode != LaunchMode::ListContext || parsed.json || parsed.help,
+            "--context-list requires --json"
+        );
+        ensure!(
+            parsed.mode != LaunchMode::ListContext
+                || (parsed.init.is_none()
+                    && parsed.project_root.is_none()
+                    && parsed.config.is_none()
+                    && !parsed.requests_logging()),
+            "--context-list does not accept configuration, project, initialization, or logging options"
         );
         ensure!(
             !parsed.detached_host || parsed.mode == LaunchMode::Serve,
@@ -362,6 +391,7 @@ impl LaunchArguments {
             !matches!(
                 parsed.mode,
                 LaunchMode::ListSessions
+                    | LaunchMode::ListContext
                     | LaunchMode::StopAllSessions
                     | LaunchMode::CleanSessions
                     | LaunchMode::RenameSession
@@ -430,6 +460,38 @@ mod tests {
             line: NonZeroUsize::new(line).unwrap(),
             column: column.map(|column| NonZeroUsize::new(column).unwrap()),
         }
+    }
+
+    #[test]
+    fn context_discovery_requires_json_and_explicit_environment_expansion() {
+        let parsed = LaunchArguments::parse_from([
+            "--context-list".into(),
+            "--json".into(),
+            "--include-hidden".into(),
+        ])
+        .unwrap();
+        assert_eq!(parsed.mode, LaunchMode::ListContext);
+        assert!(parsed.json && parsed.include_hidden && parsed.mode_explicit);
+        for args in [
+            vec!["--context-list"],
+            vec!["--json"],
+            vec!["--context-list", "--json", "file"],
+            vec!["--context-list", "--json", "--standalone"],
+            vec!["--context-list", "--json", "--json"],
+            vec!["--context-list", "--json", "--config", "unused.yaml"],
+            vec!["--context-list", "--json", "--project-root", "/tmp"],
+            vec!["--context-list", "--json", "--log", "/tmp/unused.log"],
+        ] {
+            assert!(LaunchArguments::parse_from(args.into_iter().map(Into::into)).is_err());
+        }
+        assert!(
+            LaunchArguments::parse_from(["--context-list".into(), "--help".into()])
+                .unwrap()
+                .help
+        );
+        let literal = LaunchArguments::parse_from(["--".into(), "--context-list".into()]).unwrap();
+        assert_eq!(literal.mode, LaunchMode::Standalone);
+        assert_eq!(literal.targets[0].path, PathBuf::from("--context-list"));
     }
 
     #[test]

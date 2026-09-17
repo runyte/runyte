@@ -10,6 +10,11 @@ Start with the [authoring guide](plugins/authoring.md),
 [conformance checks](plugins/conformance.md). The private bundled frontend
 transport and headless testing facade are not plugin APIs.
 
+External agents use the separately paired [workspace context profile](plugins/context.md).
+It provides scoped reads, buffer edits and individually approved terminal text
+proposals over a private Unix socket; ordinary plugin capabilities do not grant
+access to that transport.
+
 ## Install and enable the example
 
 Copy [uppercase.py](plugins/uppercase.py) and the maintained

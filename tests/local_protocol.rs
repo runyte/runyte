@@ -622,6 +622,7 @@ async fn invoke_when_current(
 async fn send_input_expect_frame(client: &mut LocalClient, event: InputEvent) {
     client
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: event.into(),
             repeated: false,
         })
@@ -1696,6 +1697,7 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
     };
     interactive
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Key(KeyStroke::char('u')).into(),
             repeated: false,
         })
@@ -2306,6 +2308,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     send_input_expect_frame(&mut interactive, InputEvent::Text("wbc".to_owned())).await;
     interactive
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)).into(),
             repeated: false,
         })
@@ -2679,6 +2682,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
     .await;
     interactive
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Key(KeyStroke::char('j')).into(),
             repeated: false,
         })
@@ -2703,6 +2707,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
     .await;
     interactive
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)).into(),
             repeated: false,
         })
@@ -3133,6 +3138,7 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
     .await;
     interactive
         .send(&ClientRequest::Input {
+            presented_frame: None,
             event: InputEvent::Key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE)).into(),
             repeated: false,
         })

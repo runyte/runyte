@@ -182,8 +182,11 @@ impl TerminalLineId {
         Self { generation, local }
     }
 
-    pub(super) const fn local(self) -> u64 {
+    pub const fn local(self) -> u64 {
         self.local
+    }
+    pub const fn generation(self) -> u64 {
+        self.generation
     }
 }
 

@@ -30,3 +30,12 @@ and add meaningful regression coverage at its behavior boundary.
 Implementation and initial validation are tracked in
 [the active transition plan](../plans/active/PLAN_STABLE_PLUGINS.md). This register
 does not claim that 0.3.0 has already been published or certified.
+
+The external agent context transport adds the negotiated
+`runyte.context.v1` profile on a separate, natively granted Unix socket.
+Its schema and independently vendorable Python client live in
+`docs/plugins/runyte-context-1.schema.json` and `docs/plugins/context_client.py`.
+`docs/plugins/check_context.py` verifies closed request shapes, old-transport
+denial, scoped admission, response identity and uncertain mutation outcomes.
+No frozen `compatibility/v1/` artifact or immutable inventory pin changes for
+this addition; those continue to test ordinary stable process applications.

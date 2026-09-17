@@ -23,6 +23,12 @@ Share the clipboard with the editor. With [Runyte set as their editor](#editing-
 opens your prompt in the same persistent workspace. Save it and return to
 the agent.
 
+With the optional [context bridge](bridges/runyte-context/README.md), agents can
+read terminals and unsaved editor content in workspaces you authorize. Buffer
+edits have a separate grant. Proposed terminal text needs individual approval
+in Runyte and never includes Enter; you submit it yourself. Start with
+`:context-access` in each workspace.
+
 Press `?` to read Markdown as a **formatted page**, including tables.
 
 **Paste images** with `Ctrl+V`. Runyte saves them in the project's temporary cache

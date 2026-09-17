@@ -927,7 +927,8 @@ impl App {
     }
 
     pub(crate) fn has_native_input_overlay(&self) -> bool {
-        self.plugins.provider_reload.is_some()
+        self.context_overlay_active()
+            || self.plugins.provider_reload.is_some()
             || self.plugins.provider_overwrite.is_some()
             || self.picker.is_some()
             || self.fs_confirmation.is_some()
@@ -1318,6 +1319,9 @@ impl App {
         }
 
         let mut overlays = Vec::new();
+        if let Some(overlay) = self.context_overlay() {
+            return vec![overlay];
+        }
         if let Some(reload) = &self.plugins.provider_reload {
             let mut overlay = bounded(
                 OverlayKind::ResultList,

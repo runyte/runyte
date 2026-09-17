@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runyte-context"
+version = "0.1.0"
+description = "Scoped local Runyte workspace context over MCP stdio"
+requires-python = ">=3.11"
+license = {text = "MPL-2.0"}
+readme = "README.md"
+dependencies = []
+
+[project.scripts]
+runyte-context = "runyte_context.server:main"
+
+[tool.setuptools]
+packages = ["runyte_context"]

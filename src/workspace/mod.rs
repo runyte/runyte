@@ -9,6 +9,7 @@
 mod buffers;
 #[cfg(unix)]
 mod catalog;
+pub mod context;
 mod host;
 mod identity;
 #[cfg(unix)]

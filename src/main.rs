@@ -1002,6 +1002,27 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         return Ok(());
     }
 
+    if arguments.mode == LaunchMode::ListContext {
+        #[cfg(unix)]
+        {
+            use runyte::workspace::context::{
+                discovery,
+                storage::{Storage, environment_fingerprint},
+            };
+            let result = discovery::discover(
+                Storage::default_root(),
+                &environment_fingerprint(),
+                arguments.include_hidden,
+            )
+            .await?;
+            serde_json::to_writer(stdout().lock(), &result)?;
+            println!();
+            return Ok(());
+        }
+        #[cfg(not(unix))]
+        anyhow::bail!("context discovery is supported only on Unix");
+    }
+
     #[cfg(unix)]
     if matches!(arguments.mode, LaunchMode::Persistent | LaunchMode::Wait)
         && let Some(context) = runyte::workspace::parent::ParentContext::from_environment()?
@@ -1492,7 +1513,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
 
     // Optional services start only after the standalone editor is usable.
     // Their initialization must never hide first-frame latency.
-    let mut services = start_host_services(&mut app, startup, config_path.as_deref())?;
+    let mut services = start_host_services(&mut app, startup, config_path.as_deref(), false)?;
     if let Err(error) = startup.write_requested() {
         app.report_host_error(format!("failed to write startup timing report: {error}"));
     }
@@ -1532,7 +1553,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
         app.note_plugin_frontend(true);
         app.sync_plugin_observers();
+        app.sync_context();
+        let context_delay = app.context_delay();
         tokio::select! {
+            Some(event) = services.context_events.recv() => { app.handle_context_event(event); if !app.plugin_presentation_pending() { continue; } }
+            _ = context_timeout(context_delay) => { app.sync_context(); if !app.plugin_presentation_pending() { continue; } }
             _ = std::future::ready(()), if app.plugin_presentation_pending() => { app.take_plugin_presentation_change(); }
             Some(event) = services.pipe_events.recv() => { app.handle_pipe_completion(event); }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
@@ -1563,6 +1588,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             Some(&input),
                             Instant::now(),
                         );
+                        if repeated && app.context_overlay_active() { continue; }
+                        if let Some(frame)=app.current_frame_id() { app.context_frame_presented(frame); }
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
                             if frame_publication_ready(
@@ -1978,7 +2005,7 @@ async fn run_host_server(
         "workspace" => endpoint.id(),
         "socket" => endpoint.socket().display()
     );
-    let mut services = start_host_services(&mut host, startup, config_path)?;
+    let mut services = start_host_services(&mut host, startup, config_path, true)?;
     let mut last_detached = Instant::now();
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2018,7 +2045,11 @@ async fn run_host_server(
         let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
         host.note_plugin_frontend(active.is_some());
         host.sync_plugin_observers();
+        host.sync_context();
+        let context_delay = host.context_delay();
         tokio::select! {
+            Some(event) = services.context_events.recv() => { host.handle_context_event(event); changed |= host.plugin_presentation_pending(); }
+            _ = context_timeout(context_delay) => { host.sync_context(); changed |= host.plugin_presentation_pending(); }
             _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }
             Some(event) = services.pipe_events.recv() => { host.handle_pipe_completion(event); changed = true; }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
@@ -2241,7 +2272,8 @@ async fn run_host_server(
                             }
                         } else {
                             match request {
-                            ClientRequest::Input { event, repeated } => {
+                            ClientRequest::Input { event, repeated, presented_frame } => {
+                                if !repeated && let Some(frame) = presented_frame { host.context_frame_presented(frame.into()); }
                                 dispatch_host_key_or_text(
                                     &mut host,
                                     &mut key_hints,
@@ -2785,6 +2817,9 @@ fn dispatch_host_key_or_text(
     input: InputEvent,
     repeated: bool,
 ) {
+    if repeated && host.context_overlay_active() {
+        return;
+    }
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
         return;
@@ -4177,6 +4212,7 @@ async fn run_attached(
                             .send(&ClientRequest::Input {
                                 event: event.into(),
                                 repeated,
+                                presented_frame: Some(current_frame.id.into()),
                             })
                             .await?
                     }
@@ -4988,7 +5024,15 @@ async fn recover_wait_after_lifecycle_loss(
     }
 }
 
+async fn context_timeout(delay: Option<Duration>) {
+    match delay {
+        Some(delay) => tokio::time::sleep(delay).await,
+        None => std::future::pending().await,
+    }
+}
+
 struct HostServices {
+    context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::transport::Event>,
     pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
     plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
     syntax_events: SyntaxEvents,
@@ -5024,6 +5068,7 @@ fn start_host_services(
     app: &mut WorkspaceHost,
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
+    persistent: bool,
 ) -> Result<HostServices> {
     let git_events = if let Some(provider) = GitCliProvider::from_environment() {
         let (service, events) = GitService::spawn(provider);
@@ -5072,7 +5117,13 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = app.start_plugins();
     let pipe_events = app.start_pipe_service();
+    let context_events = app.start_context(if persistent {
+        runyte::workspace::context::storage::HostMode::Persistent
+    } else {
+        runyte::workspace::context::storage::HostMode::Standalone
+    });
     Ok(HostServices {
+        context_events,
         pipe_events,
         plugin_events,
         syntax_events,
@@ -5636,6 +5687,12 @@ MODES:
                          if needed. If WORKSPACE is omitted, use the workspace
                          found from the current directory, or make that
                          directory a workspace when none is found
+
+AGENT CONTEXT:
+        --context-list --json
+                         List live context-enabled workspaces as versioned JSON
+                         without attaching; --include-hidden includes isolated
+                         environments. Does not imply content permission.
 
 PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state

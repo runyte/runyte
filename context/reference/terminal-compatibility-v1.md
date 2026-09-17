@@ -82,7 +82,7 @@ Deliberate limits:
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.
 
-## Internal context reads and proposed input text
+## Agent context reads and approved input text
 
 `TerminalSession::read_output` captures owned text from the live emulator screen
 or the newest retained rows. It does not change the terminal's native review,
@@ -103,14 +103,23 @@ remain unchanged after subsequent output or terminal destruction.
 `terminal::proposal::Text` admits at most 4 KiB of nonempty, single-line literal
 text. It rejects C0/C1 controls, DEL, CR/LF and Unicode line/paragraph separators,
 including escape sequences and injected paste terminators. It does not grant
-permission to send text and exposes no PTY operation. Future native approval
-must still display invisible characters and acknowledge that arbitrary child
-programs may react to printable input without Enter.
+permission to send text. The context host captures a proposal and requires a
+fresh native approval before the dedicated PTY queue accepts it. The overlay
+spells whitespace, backslashes and Unicode visibly, and requires acknowledged
+frontend display of every page. Arbitrary child programs may react to printable
+input without Enter; the overlay states this limitation.
 
 The internal boundary is covered by `terminal::read::tests` in
 `src/terminal/tests/read.rs` and `terminal::proposal::tests` in
-`src/terminal/tests/proposal.rs`. These primitives do not yet expose an agent
-transport, a plugin capability, or a native proposal overlay.
+`src/terminal/tests/proposal.rs`. Cancellable delivery, full-write acknowledgments
+and real-PTY manual submission are covered in
+`src/terminal/tests/proposal_delivery.rs` and
+`src/workspace/host/tests/context_access.rs`. The separately authenticated
+[context profile](../../docs/plugins/context.md) exposes bounded reads and
+proposals; it never exposes a terminal submit, raw-input or approval operation.
+Queued delivery is cancelled on native input, mode changes, terminal exit,
+revocation or expiry. Started partial writes have an uncertain outcome and are
+never replayed. Context snapshots share the existing terminal retention budget.
 
 The window prefix is `Ctrl-w` by default and may be moved by `keys.window`.
 Terminal Insert reserves the effective prefix for Runyte's complete window

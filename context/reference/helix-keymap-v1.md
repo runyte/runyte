@@ -536,3 +536,11 @@ intent. Typing never triggers validation. Text fields
 retain character movement, Home/End, Backspace/Delete and literal paste. Application
 pickers use typed filtering, Up/Down, Enter and Escape. These keys belong to the
 transient surface and do not add a second editor command registry.
+
+### Agent context permission command
+
+`:context-access [identity]` is Runyte-specific and opens native workspace
+permissions for the external context bridge. It adds no default editor key
+binding. Grant and terminal-text confirmation keys are owned by their overlay,
+as described in the UI vocabulary; they do not change the Helix-derived
+selection-first editing keys.

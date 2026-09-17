@@ -327,6 +327,7 @@ async fn type_command(client: &mut LocalClient, command: &str) {
     ] {
         client
             .send(&ClientRequest::Input {
+                presented_frame: None,
                 event: event.into(),
                 repeated: false,
             })
@@ -364,6 +365,7 @@ async fn wait_for_git_discovery(endpoint: &LocalEndpoint) {
     ] {
         client
             .send(&ClientRequest::Input {
+                presented_frame: None,
                 event: event.into(),
                 repeated: false,
             })
@@ -1050,6 +1052,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     ] {
         client
             .send(&ClientRequest::Input {
+                presented_frame: None,
                 event: event.into(),
                 repeated: false,
             })
@@ -1068,6 +1071,7 @@ async fn no_document_clipboard_terminal_or_environment_value_reaches_a_record() 
     for key in ['%', 'y'] {
         client
             .send(&ClientRequest::Input {
+                presented_frame: None,
                 event: InputEvent::from(runyte::input::KeyStroke::new(
                     runyte::input::KeyCode::Char(key),
                     runyte::input::Modifiers::NONE,

@@ -262,6 +262,7 @@ mod completion_support;
 mod editing;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
+pub(crate) mod context_access;
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -501,6 +502,8 @@ pub struct Pane {
     /// Coordinate mapping through a text transaction deliberately does not
     /// bump this revision.
     selection_revision: u64,
+    /// Monotonic source binding, independent of selection and scroll changes.
+    pub(crate) binding_generation: u64,
     pub scroll_row: usize,
     /// Wrapped sub-row within `scroll_row`; always zero when wrapping is off.
     pub scroll_wrap: usize,
@@ -545,6 +548,7 @@ impl Pane {
             markdown_origin: None,
             selection_semantics: SelectionSemantics::Runyte,
             selection_revision: 0,
+            binding_generation: 0,
             scroll_row: 0,
             scroll_wrap: 0,
             scroll_col: 0,
@@ -591,6 +595,7 @@ impl Pane {
     fn remember_destination(&mut self, next: OpenDestination) {
         let current = self.destination();
         if current != next {
+            self.binding_generation = self.binding_generation.wrapping_add(1);
             self.destination_history.retain(|item| *item != current);
             self.destination_history.push(current);
         }
@@ -605,6 +610,9 @@ impl Pane {
     /// or adding the retired identity back to history.
     fn replace_closed_buffer(&mut self, buffer: usize) {
         self.markdown_origin = None;
+        if self.buffer != buffer {
+            self.binding_generation = self.binding_generation.wrapping_add(1);
+        }
         self.buffer = buffer;
         self.selection_semantics = SelectionSemantics::Runyte;
         self.selection_revision = self.selection_revision.wrapping_add(1);
@@ -2995,6 +3003,7 @@ pub struct App {
     /// needs that distinction so it can refuse rather than silently fall back.
     previously_focused_pane: Option<usize>,
     lsp_trust: Option<crate::lsp_trust::TrustStore>,
+    pub(crate) context_ui: context_access::ContextUi,
     lsp_workspace_allowed: bool,
     lsp_servers: HashMap<String, ServerState>,
     lsp_documents: HashMap<usize, DocumentState>,
@@ -3485,6 +3494,7 @@ impl App {
             pane_activated_at: HashMap::from([(0, 1)]),
             previously_focused_pane: None,
             lsp_trust: None,
+            context_ui: Default::default(),
             lsp_workspace_allowed: false,
             lsp_servers: HashMap::new(),
             lsp_documents: HashMap::new(),

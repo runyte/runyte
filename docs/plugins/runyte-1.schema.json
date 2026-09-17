@@ -8407,6 +8407,10 @@
         "head"
       ],
       "additionalProperties": true
+    },
+    "contextProfile": {
+      "$ref": "runyte-context-1.schema.json",
+      "$comment": "Separate authenticated Unix socket profile requiring runyte.context.v1; not admitted on the ordinary process plugin transport."
     }
   },
   "anyOf": [

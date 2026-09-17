@@ -525,3 +525,21 @@ Application pickers display filterable candidate rows using the shared matcher.
 Opening competing native input cancels the application surface, as do detach and
 owner/source closure.
 Cancelled callbacks cannot reopen presentation without another foreground command.
+
+## Agent context confirmations
+
+`:context-access [identity]` opens a native confirmation for one bridge identity
+and workspace. It shows read/edit/proposal scopes, active readers and recent
+metadata, with Reject selected. Scope keys `1`–`4`, remember key `r`, revoke key `x`,
+page keys `j`/`k`, `Tab` choice and `Enter` apply are local overlay input rather
+than new editor bindings. Esc rejects.
+
+A terminal proposal uses **Review terminal text**, an immutable paged native
+confirmation. The affirmative label is **Insert text (no Enter)**. Literal
+spaces, doubled backslashes and escaped Unicode make every character visible;
+labels and an optional untrusted reason are separate from proposed text. Every
+page must be acknowledged from an actually displayed frontend frame before a
+fresh physical action can approve. Prepared or dropped frames do not count.
+The bundled protocol 53 carries the frontend's presented frame with physical
+input. Repeats, macros, pointer input, paste and semantic commands cannot
+approve. The overlay consumes Enter; the terminal receives no submit key.

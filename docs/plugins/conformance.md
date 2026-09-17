@@ -25,6 +25,14 @@ including local file-manager requests and memory-provider messages. It supplies
 public host messages itself; it does not connect to a running editor. Keep the
 schema, SDK, examples and checks from the same checkout.
 
+The separate external context profile has its own schema and standard-library
+client. Run `python3 docs/plugins/check_context.py` with the same development
+environment. Its fake Unix hosts cover admission, ownership, scope denial,
+strict requests, response identity, deadlines and uncertain writes without an
+agent account or network access. Local Unix socket access is required. The
+ordinary schema rejects context authentication and terminal-read requests;
+the frozen stable process-plugin fixtures remain unchanged.
+
 Run the remaining SDK/controller checks:
 
 ```sh

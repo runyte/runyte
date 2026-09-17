@@ -274,6 +274,13 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/ui.rs`: Ratatui rendering.
 - `src/workspace/`: workspace identity and state plus the optional persistent
   session host, bounded local protocol, attachment transport, and lifecycle.
+- `src/workspace/context/`: the separately authenticated, bounded external
+  context profile, private grants, local transport and live endpoint discovery.
+  `src/workspace/host/context.rs` owns admission and proposal lifetime;
+  `context_reads.rs` owns connection-scoped reads and revision-checked edits.
+  `src/app/context_access.rs` owns native grants and terminal-text approval.
+  `bridges/runyte-context/` is a separately versioned MCP adapter; the editor
+  has no MCP runtime dependency. Terminal insertion never submits Enter.
 - `src/main.rs`: CLI, Crossterm lifecycle, and event loop.
 
 Key dispatch, help, and hints must continue to read from the same keymap

@@ -43,6 +43,25 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-18 — scoped agent workspace context
+
+Measured on `x86_64-unknown-linux-gnu` for the agent-context implementation
+based on `0999b82`, using the canonical `cargo llvm-cov --locked --workspace`.
+The ordinary suite passes 3,740 tests with 34 existing ignored tests; the
+instrumented suite, formatting and warnings-as-errors Clippy also pass.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 123,895 | 134,916 | 91.83% |
+| Functions | 11,208 | 12,210 | 91.79% |
+| Regions | 188,017 | 205,997 | 91.27% |
+
+Coverage includes context admission, grants and revocation, bounded reads,
+revision-checked edits, native proposal review, cancellable PTY delivery and
+real local transport. Python bridge/conformance and external editor acceptance
+are separate from Rust line coverage. The 89% floor is unchanged. Native macOS
+validation remains in CI; this Linux run does not establish a macOS baseline.
+
 ## 2026-09-15 — stable plugin compatibility
 
 Measured on `x86_64-unknown-linux-gnu` at `3fa28b0` with

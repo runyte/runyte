@@ -169,7 +169,9 @@ use crate::workspace::{
 /// Version 51 adds semantic diagnostic scopes used by application projections.
 /// Version 52 reports protected plugin jobs and activity leases, including
 /// bounded lease ownership and cancellation state, in session health.
-pub const VERSION: u32 = 52;
+/// Version 53 binds context review input to the last frame actually rendered
+/// by its physical frontend; prepared or dropped pages cannot authorize input.
+pub const VERSION: u32 = 53;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -439,6 +441,8 @@ pub enum ClientRequest {
     Input {
         event: InputEvent,
         repeated: bool,
+        /// Last frame successfully rendered by the physical frontend.
+        presented_frame: Option<FrameId>,
     },
     Invoke {
         command: CommandRequest,
@@ -1139,7 +1143,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 52);
+        assert_eq!(VERSION, 53);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
