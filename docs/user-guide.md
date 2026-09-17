@@ -2243,6 +2243,11 @@ root down; one opened elsewhere reads the ignore files from its own directory
 down. Dotfiles follow `editor.show_hidden_files`, so a listing showing them
 opens a finder that offers them.
 
+`Tab e` opens the directory the explorer currently shows in the system's
+preferred file manager (`:open-explorer-system`), independently of the selected
+row. It uses `xdg-open` on Linux and `open` on macOS. Unapplied explorer edits
+remain in Runyte; the file manager sees the directory as it exists on disk.
+
 Three settings decide how an explorer shows a directory, and `Tab` offers all
 of them: `editor.show_hidden_files` lists dotfiles or leaves them out,
 `editor.explorer_details` shows the detail columns described above, and

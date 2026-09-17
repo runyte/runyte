@@ -700,6 +700,7 @@ editor_commands! {
     ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles in the explorer"),
     ToggleDirectoryDetails => ("toggle-directory-details", "Show or hide file details in the explorer"),
     ChooseExplorerOrder => ("choose-explorer-order", "Choose the order the explorer lists entries in"),
+    OpenExplorerSystem => ("open-explorer-system", "Open in system file manager"),
     OpenExplorerFinder => ("open-explorer-finder", "Open finder in the current directory"),
     OpenChangedFile => ("open-changed-file", "Open the file on this line"),
     StageAllChangedFiles => ("stage-all-changed-files", "Stage every changed file"),
@@ -1142,6 +1143,7 @@ impl EditorCommand {
             | Self::ToggleHiddenFiles
             | Self::ToggleDirectoryDetails
             | Self::ChooseExplorerOrder
+            | Self::OpenExplorerSystem
             | Self::OpenExplorerFinder
             | Self::Save
             | Self::ForceSave
@@ -1439,6 +1441,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         "open-explorer-session",
         [],
         "open-explorer-session",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenExplorerSystem,
+        "open-explorer-system",
+        [],
+        "open-explorer-system",
         NoArguments
     ),
     editor_spec!(
@@ -2770,6 +2779,7 @@ fn invocation_from_parts(
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFilePicker, ParsedArgument::None)
+            | (EditorCommand::OpenExplorerSystem, ParsedArgument::None)
             | (EditorCommand::OpenExplorerFinder, ParsedArgument::None)
             | (EditorCommand::OpenFuzzyGrep, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFuzzyGrep, ParsedArgument::None)

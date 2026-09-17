@@ -3228,3 +3228,72 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
+    let root = temporary("explorer-system");
+    let directory = root.join("space and 界");
+    let child = directory.join("child");
+    fs::create_dir_all(&child).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&opened);
+    app.ports.directory_opener = Box::new(move |path| {
+        recorded.lock().unwrap().push(path.to_owned());
+        Ok(())
+    });
+    app.open_explorer(Some(directory.clone())).unwrap();
+    app.focus_directory_entry(&child);
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "pending\n"));
+    let text = app.active_buffer().text().to_string();
+    let selection = app.active().selection.clone();
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 'e');
+    app.execute_command("open-explorer-system").unwrap();
+
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            directory.canonicalize().unwrap(),
+            directory.canonicalize().unwrap()
+        ]
+    );
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.active_buffer().text().to_string(), text);
+    assert_eq!(app.active().selection, selection);
+    assert!(!directory.join("pending").exists());
+    assert!(child.is_dir());
+    assert!(app.external_target.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
+    let root = temporary("explorer-system-errors");
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("file.txt");
+    fs::write(&file, "text").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_explorer(Some(root.clone())).unwrap();
+    app.ports.directory_opener = Box::new(|_| bail!("test opener unavailable"));
+    app.execute_command("open-explorer-system").unwrap();
+    assert_eq!(app.unread_notification_counts().errors, 1);
+    assert!(
+        app.status.contains("test opener unavailable"),
+        "{}",
+        app.status
+    );
+    app.open_file(file).unwrap();
+    app.ports.directory_opener = Box::new(|_| panic!("must not open a file buffer"));
+    app.execute_command("open-explorer-system").unwrap();
+    assert!(app.status.contains("not a directory buffer"));
+    fs::remove_dir_all(root).unwrap();
+}

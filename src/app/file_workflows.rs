@@ -193,6 +193,29 @@ impl App {
         self.open_file(root)
     }
 
+    pub(super) fn open_explorer_system(&mut self) {
+        if !self.active_buffer().is_directory() {
+            self.action_failed("the active view is not a directory buffer");
+            return;
+        }
+        let directory = self
+            .active_buffer()
+            .path
+            .as_ref()
+            .expect("directory buffers have paths");
+        match (self.ports.directory_opener)(directory) {
+            Ok(()) => self.status(format!(
+                "opened {} in the system file manager",
+                directory.display()
+            )),
+            Err(error) => self.error_from(
+                "File manager",
+                "System file manager launch failed",
+                error.to_string(),
+            ),
+        }
+    }
+
     pub(super) fn open_active_directory_explorer(&mut self) -> Result<()> {
         let file = if matches!(self.active_buffer().kind, BufferKind::File) {
             self.active_buffer().path.clone()

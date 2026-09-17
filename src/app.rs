@@ -2397,6 +2397,8 @@ impl CommandMatch<'_> {
     }
 }
 
+type DirectoryOpener = Box<dyn Fn(&Path) -> Result<()> + Send + Sync>;
+
 type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 
 /// Host-owned capabilities and outbound service work used by the editor.
@@ -2407,6 +2409,7 @@ type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 /// choose isolated ports; its fields and operations remain narrow.
 pub(crate) struct HostPorts {
     browser: BrowserOpener,
+    directory_opener: DirectoryOpener,
     clipboard: Box<dyn SystemClipboard>,
     trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
@@ -2423,6 +2426,7 @@ impl HostPorts {
     fn live() -> Self {
         let mut ports = Self::isolated(Box::new(CommandClipboard));
         ports.browser = Box::new(external_open::launch_browser);
+        ports.directory_opener = Box::new(|path| external_open::launch("", path));
         ports
     }
 
@@ -2430,6 +2434,9 @@ impl HostPorts {
         Self {
             clipboard,
             browser: Box::new(|_| bail!("browser opening is unavailable in an isolated editor")),
+            directory_opener: Box::new(|_| {
+                bail!("system file manager opening is unavailable in an isolated editor")
+            }),
             trash: std::sync::Arc::new(SystemTrash),
             lsp: None,
             git: None,

@@ -4007,6 +4007,7 @@ impl App {
             Command::OpenAllFilesPicker => self.open_all_files_picker()?,
             Command::OpenPathFilePicker => self.open_prompt(PromptKind::FinderPath),
             Command::OpenDirectoryFilePicker => self.open_directory_picker()?,
+            Command::OpenExplorerSystem => self.open_explorer_system(),
             Command::OpenExplorerFinder => self.open_explorer_finder()?,
             Command::OpenFuzzyGrep => self.open_project_grep()?,
             Command::OpenDirectoryFuzzyGrep => self.open_directory_grep()?,
