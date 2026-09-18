@@ -530,14 +530,19 @@ Cancelled callbacks cannot reopen presentation without another foreground comman
 
 `:context-access [identity]` opens a native confirmation for one bridge identity
 and workspace. It shows read/edit/proposal scopes, active readers and recent
-metadata, with Reject selected. Scope keys `1`–`4`, remember key `r`, revoke key `x`,
-page keys `j`/`k`, `Tab` choice and `Enter` apply are local overlay input rather
-than new editor bindings. Esc rejects.
+metadata, with Reject selected. Scope keys `1`–`4`, remember key `r`, revoke
+key `x`, page keys `j`/`k`, `Up`/`Down` or `Tab` choice and `Enter` apply are
+local overlay input rather than new editor bindings. Esc rejects.
 
 A terminal proposal uses **Review terminal text**, an immutable paged native
-confirmation. The affirmative label is **Insert text (no Enter)**. Literal
-spaces, doubled backslashes and escaped Unicode make every character visible;
-labels and an optional untrusted reason are separate from proposed text. Every
+confirmation. The affirmative label is **Insert text (no Enter)**. The
+proposed text comes first, emphasized; labelled context and muted notes follow,
+wrapped between words to the overlay width, and the two choices are rows with
+the selection on the current one. Literal spaces, doubled backslashes and
+escaped Unicode make every character of the proposed text visible; labels and
+an optional untrusted reason are separate from it and keep printable Unicode
+while escaping invisible and space-like characters. While Insert is chosen
+before every page has been shown, the overlay names the next unread page. Every
 page must be acknowledged from an actually displayed frontend frame before a
 fresh physical action can approve. Prepared or dropped frames do not count.
 The bundled protocol 53 carries the frontend's presented frame with physical

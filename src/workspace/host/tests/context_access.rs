@@ -88,15 +88,24 @@ fn key(host: &mut WorkspaceHost, code: KeyCode) {
         .unwrap();
 }
 fn review_all(host: &mut WorkspaceHost) {
-    loop {
+    // Bounded, so a review that can never complete fails instead of hanging.
+    let pages = host.app.context_ui.surface.as_ref().unwrap().last_page() + 1;
+    for _ in 0..pages {
         host.app.note_context_frame(80, 22, 1);
         host.app.note_context_presented(1);
-        let surface = host.app.context_ui.surface.as_ref().unwrap();
-        if surface.reviewed_through == Some(surface.lines.len().saturating_sub(1) / 6) {
-            break;
+        if host
+            .app
+            .context_ui
+            .surface
+            .as_ref()
+            .unwrap()
+            .fully_reviewed()
+        {
+            return;
         }
-        key(host, KeyCode::Down);
+        key(host, KeyCode::Char('j'));
     }
+    panic!("review did not complete within {pages} pages");
 }
 
 #[tokio::test]
@@ -328,14 +337,14 @@ async fn approval_requires_every_page_to_be_painted_and_consumes_enter() {
     assert!(host.app.context_ui.decision.is_none());
     // Skipping pages without a frame must not make them reviewed.
     for _ in 0..20 {
-        key(&mut host, KeyCode::Down);
+        key(&mut host, KeyCode::Char('j'));
     }
     host.app.note_context_frame(80, 22, 1);
     host.app.note_context_presented(1);
     key(&mut host, KeyCode::Enter);
     assert!(host.app.context_ui.decision.is_none());
     for _ in 0..20 {
-        key(&mut host, KeyCode::Up);
+        key(&mut host, KeyCode::Char('k'));
     }
     review_all(&mut host);
     key(&mut host, KeyCode::Enter);
@@ -496,14 +505,14 @@ async fn prepared_but_unpainted_pages_cannot_be_skipped_or_approved() {
         .unwrap();
     host.sync_context();
     host.app.note_context_frame(80, 22, 10);
-    key(&mut host, KeyCode::Down);
+    key(&mut host, KeyCode::Char('j'));
     assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 0);
     host.app.note_context_presented(10);
-    key(&mut host, KeyCode::Down);
+    key(&mut host, KeyCode::Char('j'));
     assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);
     host.app.note_context_frame(80, 22, 11); // dropped/backpressured frame
     host.app.note_context_presented(10); // frontend still displays page zero
-    key(&mut host, KeyCode::Down);
+    key(&mut host, KeyCode::Char('j'));
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
     assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);

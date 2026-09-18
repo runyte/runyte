@@ -3492,13 +3492,18 @@ an external-editor wait request. In particular it cannot submit a prompt
 opened using `EDITOR` merely by changing its buffer.
 
 With the proposal grant, an agent can request literal terminal text. The target
-workspace shows **Review terminal text**, including the requester, target,
-untrusted reason when supplied, recent output and the exact proposed value.
-Spaces are visible, backslashes are doubled and non-ASCII characters are
-escaped so invisible characters cannot hide in the review. `j`/`k` review pages;
-each page must actually reach the frontend before approval is enabled. At least
-80 × 24 terminal cells are required. **Reject** is initially selected. `Tab`
-selects **Insert text (no Enter)**, then one fresh physical `Enter` inserts it.
+workspace shows **Review terminal text**, opening with the exact proposed value
+and followed by the requester, target terminal, workspace, untrusted reason when
+supplied and recent output. In the proposed value, spaces show as `·`,
+backslashes are doubled and non-ASCII characters are escaped so invisible
+characters cannot hide in it. The descriptive labels keep printable Unicode and
+spaces but escape control, zero-width, bidirectional and space-like characters.
+A short proposal fits on one page. A longer one pages with `j`/`k`, and each
+page must actually reach the frontend before approval is enabled; until then,
+choosing **Insert text (no Enter)** names the page still to read. At least
+80 × 24 terminal cells are required. **Reject** is initially selected. `Down`
+or `Tab` selects **Insert text (no Enter)** and `Up` returns to **Reject**; then
+one fresh physical `Enter` inserts it.
 That Enter belongs entirely to the overlay. **Submit separately in the terminal.**
 Macros, pasted keys, repeated input and the context API cannot approve proposals.
 

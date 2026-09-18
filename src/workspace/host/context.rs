@@ -2,7 +2,7 @@
 
 use super::{WorkspaceHost, context_reads::ReadState};
 use crate::{
-    app::context_access::{Decision, Kind, Surface, visible},
+    app::context_access::{Decision, Detail, Kind, Surface, label, visible},
     plugin::application::{Error, ErrorCode as Code},
     terminal::{
         TerminalId,
@@ -199,22 +199,25 @@ impl WorkspaceHost {
                 .map(|(_, scopes)| scopes.clone())
                 .unwrap_or_else(|| [Scope::TerminalRead, Scope::EditorContextRead].into());
             let mut explanation = vec![
-                format!("Identity: {}", visible(&identity)),
-                format!(
-                    "Workspace: {}",
-                    visible(&self.app.project_root.to_string_lossy())
-                ),
-                "Read grants include unsaved text and sensitive terminal output.".into(),
-                "Terminal proposals always require a separate approval.".into(),
+                Detail::value("Identity", visible(&identity)),
+                Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
+                Detail::note("Read grants include unsaved text and sensitive terminal output."),
+                Detail::note("Terminal proposals always require a separate approval."),
             ];
             explanation.extend(self.context.readers.values().map(|reader| {
-                format!(
-                    "Active reader: {}; scopes: {:?}",
-                    visible(&reader.identity),
-                    reader.scopes
+                Detail::value(
+                    "Reader",
+                    format!("{}; scopes: {:?}", visible(&reader.identity), reader.scopes),
                 )
             }));
-            explanation.extend(self.context.recent.iter().rev().take(4).cloned());
+            explanation.extend(
+                self.context
+                    .recent
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .map(|recent| Detail::value("Recent", recent.clone())),
+            );
             self.app.plugins.presentation_dirty = true;
             self.app.context_ui.surface = Some(Surface::new(
                 Kind::Grant {
@@ -329,21 +332,22 @@ impl WorkspaceHost {
                 .get(&p.owner)
                 .map_or("disconnected", |r| r.identity.as_str());
             let mut explanation = vec![
-                format!("Agent: {}", visible(identity)),
-                format!(
-                    "Workspace: {}",
-                    visible(&self.app.project_root.to_string_lossy())
+                Detail::value("Agent", visible(identity)),
+                Detail::value(
+                    "Terminal",
+                    format!("{} (#{})", label(&terminal.name()), p.terminal),
                 ),
-                format!(
-                    "Terminal: {} (#{}). Inserts at current input position.",
-                    visible(&terminal.name()),
-                    p.terminal
-                ),
-                "Insertion sends no Enter. Printable input can still trigger actions.".into(),
+                Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
             ];
             if let Some(reason) = &p.reason {
-                explanation.push(format!("Untrusted reason: {}", visible(reason)));
+                explanation.push(Detail::value(
+                    "Reason",
+                    format!("{} (unverified)", label(reason)),
+                ));
             }
+            explanation.push(Detail::note(
+                "Inserted at the input position without Enter; it may still act.",
+            ));
             if let Ok(context) = terminal.read_output(
                 crate::terminal::read::Region::Tail,
                 crate::terminal::read::Limits {
@@ -353,10 +357,18 @@ impl WorkspaceHost {
                 },
                 None,
             ) {
-                explanation.push("Recent output (not an input-line guarantee):".into());
-                for row in context.rows {
-                    explanation.push(visible(&row.text));
+                // Context for the reader, not part of what is approved, so a
+                // long row is cut rather than allowed to push the proposal
+                // onto a second page.
+                for (index, row) in context.rows.iter().enumerate() {
+                    explanation.push(Detail::excerpt(
+                        if index == 0 { "Output" } else { "" },
+                        &label(row.text.trim_end()),
+                    ));
                 }
+                explanation.push(Detail::note(
+                    "Recent output does not show whether the input line is empty.",
+                ));
             }
             self.app.plugins.presentation_dirty = true;
             self.app.context_ui.surface = Some(Surface::new(

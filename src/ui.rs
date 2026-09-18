@@ -4150,6 +4150,22 @@ fn confirmation_overlay_area(area: Rect, overlay: &OverlaySnapshot) -> Rect {
         .max()
         .unwrap_or_default()
         + 2;
+    // A review lists its contents as rows, each behind the selection gutter.
+    let row_width = overlay
+        .rows
+        .iter()
+        .map(|row| {
+            SELECTION_GUTTER.width()
+                + row.label.width()
+                + if row.detail.is_empty() {
+                    0
+                } else {
+                    row.detail.width() + 2
+                }
+        })
+        .max()
+        .map_or(0, |width| width + 2);
+    let message_width = message_width.max(row_width);
     let minimum = MIN_WIDTH.min(area.width);
     let maximum = MAX_WIDTH.min(area.width);
     let width = u16::try_from(title_width.max(message_width))
@@ -4159,14 +4175,21 @@ fn confirmation_overlay_area(area: Rect, overlay: &OverlaySnapshot) -> Rect {
     let message_rows = overlay
         .message
         .as_deref()
-        .map_or(1, |message| wrapped_text_rows(message, inner_width));
+        .map_or(usize::from(overlay.rows.is_empty()), |message| {
+            wrapped_text_rows(message, inner_width)
+        });
     let input_rows = usize::from(
         overlay.kind == OverlayKind::Confirmation
             && overlay.input == crate::snapshot::OverlayInput::Text,
     );
-    let height = u16::try_from(message_rows.saturating_add(input_rows).saturating_add(2))
-        .unwrap_or(u16::MAX)
-        .clamp(3.min(area.height), area.height);
+    let height = u16::try_from(
+        message_rows
+            .saturating_add(overlay.rows.len())
+            .saturating_add(input_rows)
+            .saturating_add(2),
+    )
+    .unwrap_or(u16::MAX)
+    .clamp(3.min(area.height), area.height);
 
     Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -7486,6 +7509,57 @@ mod tests {
         assert!(screen.contains("permanently delete"));
         assert!(!root.join("new-file").exists());
         std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_text_review_fits_whole_in_the_smallest_approving_editor() {
+        use crate::app::context_access::{Detail, Kind, Surface, label, visible};
+        let mut app = App::new(Config::default(), None).unwrap();
+        let mut explanation = vec![
+            Detail::value("Agent", visible("claude")),
+            Detail::value("Terminal", format!("{} (#1)", label("\u{25d1} shell"))),
+            Detail::value("Workspace", label("/home/user/code/runyte")),
+            Detail::value("Reason", format!("{} (unverified)", label("say hello"))),
+            Detail::note("Inserted at the input position without Enter; it may still act."),
+        ];
+        explanation.extend((0..3).map(|_| Detail::excerpt("", &"─".repeat(126))));
+        explanation.push(Detail::note(
+            "Recent output does not show whether the input line is empty.",
+        ));
+        app.context_ui.surface = Some(Surface::new(
+            Kind::Proposal { id: "p".into() },
+            "Review terminal text".into(),
+            explanation,
+            "Hello to myself",
+            app.plugins.attachment_generation,
+        ));
+        app.context_ui.width = 80;
+        app.context_ui.height = 22;
+        app.context_ui.surface.as_mut().unwrap().accept_selected = true;
+        let overlay = app.context_overlay().unwrap();
+        let area = confirmation_overlay_area(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 22,
+            },
+            &overlay,
+        );
+        assert_eq!(
+            usize::from(area.height),
+            overlay.rows.len() + 2,
+            "every row and the border: {area:?}"
+        );
+
+        let screen = rendered(&mut app, 80, 24);
+        for row in &overlay.rows {
+            assert!(
+                screen.contains(row.label.as_str()),
+                "{:?} in {screen:?}",
+                row.label
+            );
+        }
     }
 
     #[test]
