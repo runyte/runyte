@@ -57,10 +57,13 @@ This uses Codex’s documented
 For Claude Code:
 
 ```sh
-claude mcp add --transport stdio runyte -- /path/to/runyte-context/.venv/bin/runyte-context --identity claude
+claude mcp add --scope user --transport stdio runyte -- /path/to/runyte-context/.venv/bin/runyte-context --identity claude
 ```
 
-The command and argument separator follow Claude Code’s
+`--scope user` makes the server available to Claude Code in every directory,
+like the Codex entry above. Omit it to register the bridge only for the project
+where the command is run, which is Claude Code’s default. The scope, command
+and argument separator follow Claude Code’s
 [MCP configuration documentation](https://code.claude.com/docs/en/mcp).
 
 Other MCP stdio clients can use this server entry:
