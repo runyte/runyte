@@ -377,3 +377,50 @@ class RealRunyteTests(unittest.TestCase):
         final = codex.data('list_workspaces')['workspaces']
         self.assertFalse(next(row for row in final if Path(row['root']).name == 'one')['readable'])
         self.assertTrue(next(row for row in final if Path(row['root']).name == 'two')['readable'])
+
+    def test_concurrent_appends_from_two_agents_land_whole_without_a_revision(self):
+        editor = self.editor(0)
+        codex, claude = self.client('codex'), self.client('claude')
+        targets = []
+        for client in (codex, claude):
+            rows = client.data('list_workspaces')['workspaces']
+            workspace = next(row['workspace'] for row in rows if Path(row['root']).name == 'one')
+            buffers = client.data('list_buffers', workspace=workspace)['buffers']
+            targets.append((client, workspace, next(row for row in buffers if row['name'].endswith('note.txt'))))
+        errors, results = [], [[], []]
+
+        def write(index):
+            client, workspace, row = targets[index]
+            try:
+                for turn in range(10):
+                    results[index].append(client.data('append_buffer', workspace=workspace, buffer=row['buffer'],
+                                                      text=f'[{index}:{turn}] 界\n'))
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=write, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        self.assertEqual(errors, [])
+        client, workspace, row = targets[0]
+        observed = next(item for item in client.data('list_buffers', workspace=workspace)['buffers']
+                        if item['name'].endswith('note.txt'))
+        text = client.data('read_buffer', workspace=workspace, buffer=row['buffer'],
+                           expected_revision=observed['revision'], **{'from': 0, 'to': observed['chars']})['text']
+        self.assertTrue(text.startswith('ORIGINAL_BUFFER_MARKER\n'))
+        for index in range(2):
+            for turn in range(10):
+                self.assertEqual(text.count(f'[{index}:{turn}] 界\n'), 1)
+        ranges = sorted((item['from'], item['to']) for batch in results for item in batch)
+        self.assertEqual(ranges[0][0], len('ORIGINAL_BUFFER_MARKER\n'))
+        self.assertTrue(all(left[1] == right[0] for left, right in zip(ranges, ranges[1:])))
+        self.assertEqual(ranges[-1][1], observed['chars'])
+        self.assertTrue(all(item['preview'] == text[item['from']:item['to']] for batch in results for item in batch))
+        self.assertEqual((self.projects[0] / 'note.txt').read_text(), 'ORIGINAL_BUFFER_MARKER\n')
+        with self.assertRaises(AssertionError):
+            codex.data('append_buffer', workspace=targets[0][1], buffer=targets[0][2]['buffer'],
+                       text='never', expected_tail='ORIGINAL_BUFFER_MARKER\n')
+        self.assertNotIn('never', client.data('read_buffer', workspace=workspace, buffer=row['buffer'],
+            expected_revision=observed['revision'], **{'from': 0, 'to': observed['chars']})['text'])

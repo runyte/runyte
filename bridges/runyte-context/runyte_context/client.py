@@ -443,6 +443,19 @@ class Bridge:
         return {"workspaces": workspaces, "next": offset + len(page) if offset + len(page) < len(records) else None,
                 "truncated": bool(inventory.get("truncated", False)), "content_read": False}
 
+    def prime_scopes(self):
+        """Learn grants that already exist, so a client's first tool list includes them.
+
+        Some clients fetch tools once and ignore list_changed. This runs the same
+        bounded discovery as list_workspaces but keeps only the scopes: targets
+        still have to be discovered explicitly before any call can use them.
+        """
+        try:
+            self.list_workspaces()
+        except Failure:
+            pass  # Fall back to read tools; list_workspaces reports the reason.
+        self.records = {}
+
     def connection(self, workspace, resource=False):
         if workspace not in self.records:
             raise Failure("not_found", "Discover this explicit workspace first")
@@ -492,7 +505,7 @@ class Bridge:
                 params[kind] = native
             except (ValueError, TypeError, Failure):
                 raise Failure("stale", "Resource does not belong to this workspace connection") from None
-        mutating = method in {"buffer.edit", "terminal.input.propose", "terminal.input.cancel"}
+        mutating = method in {"buffer.edit", "buffer.append", "terminal.input.propose", "terminal.input.cancel"}
         try:
             result = connection.request(method, params)
         except (OSError, Failure) as error:

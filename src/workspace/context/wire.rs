@@ -28,6 +28,11 @@ pub const PROPOSAL_EXPIRY_SECONDS: u64 = 120;
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 pub const MAX_REQUEST_ID_BYTES: usize = 128;
 pub const MAX_DEDUPLICATED_REQUESTS: usize = 1024;
+/// An append's optional suffix guard is compared in one host turn, so it only
+/// needs to identify the end of the text a writer composed against.
+pub const MAX_EXPECTED_TAIL_BYTES: usize = 4096;
+/// Enough of the inserted text to show escaping or formatting mistakes.
+pub const APPEND_PREVIEW_CHARS: usize = 256;
 pub const CAPABILITIES: &[&str] = &[
     "terminal_read",
     "editor_context_read",
@@ -64,7 +69,8 @@ pub fn limits() -> serde_json::Value {
         "proposals":MAX_PROPOSALS,"host_proposals":MAX_HOST_PROPOSALS,
         "proposal_text_bytes":crate::terminal::proposal::MAX_TEXT_BYTES,"proposal_expiry_seconds":PROPOSAL_EXPIRY_SECONDS,
         "edit_changes":editor::MAX_CHANGES,"edit_replacement_bytes":editor::MAX_REPLACEMENT_BYTES,
-        "request_ids":MAX_DEDUPLICATED_REQUESTS
+        "request_ids":MAX_DEDUPLICATED_REQUESTS,"append_tail_bytes":MAX_EXPECTED_TAIL_BYTES,
+        "append_preview_chars":APPEND_PREVIEW_CHARS
     });
     value
 }
@@ -251,6 +257,16 @@ pub enum Request {
         expected_revision: String,
         changes: Vec<editor::Change>,
     },
+    /// Appends at the buffer end current when the host applies it. There is
+    /// no expected revision: appends serialize on the host loop, so no writer
+    /// is lost. `expected_tail` guards against composing against stale text.
+    #[serde(rename = "buffer.append")]
+    BufferAppend {
+        buffer: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_tail: Option<String>,
+    },
     #[serde(rename = "buffer.snapshot.open")]
     SnapshotOpen {
         buffer: String,
@@ -320,7 +336,7 @@ pub enum Request {
 impl Request {
     pub fn required_scope(&self) -> Scope {
         match self {
-            Self::BufferEdit { .. } => Scope::BufferEdit,
+            Self::BufferEdit { .. } | Self::BufferAppend { .. } => Scope::BufferEdit,
             Self::TerminalInputPropose { .. }
             | Self::TerminalInputStatus { .. }
             | Self::TerminalInputCancel { .. } => Scope::TerminalPropose,
@@ -376,6 +392,26 @@ impl Request {
                     if change.from > change.to {
                         return Err(invalid("Reversed edit range"));
                     }
+                }
+            }
+            Self::BufferAppend {
+                buffer,
+                text,
+                expected_tail,
+            } => {
+                identifier(buffer)?;
+                if text.is_empty() || expected_tail.as_ref().is_some_and(String::is_empty) {
+                    return Err(invalid("Append text and expected tail must not be empty"));
+                }
+                if text.len() > editor::MAX_REPLACEMENT_BYTES
+                    || expected_tail
+                        .as_ref()
+                        .is_some_and(|tail| tail.len() > MAX_EXPECTED_TAIL_BYTES)
+                {
+                    return Err(Error::new(
+                        ErrorCode::LimitExceeded,
+                        "Buffer append exceeds limits",
+                    ));
                 }
             }
             Self::SnapshotOpen {

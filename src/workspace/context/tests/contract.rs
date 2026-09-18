@@ -113,6 +113,11 @@ fn every_allowlisted_method_has_an_explicit_scope_and_round_trips() {
             Scope::BufferEdit,
         ),
         (
+            "buffer.append",
+            json!({"buffer":"b:1","text":"line\nnext\n","expected_tail":"end"}),
+            Scope::BufferEdit,
+        ),
+        (
             "buffer.snapshot.open",
             json!({"buffer":"b:1","expected_revision":"r:1"}),
             Scope::EditorContextRead,
@@ -348,4 +353,41 @@ fn proposal_reason_is_optional_bounded_and_never_an_authorization_flag() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn buffer_append_is_a_strict_buffer_edit_request_with_advertised_bounds() {
+    let parsed = parse_request(&request(
+        "buffer.append",
+        json!({"buffer":"b:1","text":"line\n","expected_tail":"end"}),
+    ))
+    .unwrap();
+    assert_eq!(parsed.request.required_scope(), Scope::BufferEdit);
+    assert!(
+        parse_request(&request(
+            "buffer.append",
+            json!({"buffer":"b:1","text":"x"})
+        ))
+        .is_ok()
+    );
+    assert!(
+        parse_request(&request(
+            "buffer.append",
+            json!({"buffer":"b:1","text":"x","expected_tail":null})
+        ))
+        .is_ok()
+    );
+    for params in [
+        json!({"buffer":"b:1","text":"x","expected_revision":"r:1"}),
+        json!({"buffer":"b:1"}),
+        json!({"buffer":"b:1","text":""}),
+        json!({"buffer":"b:1","text":"x","expected_tail":""}),
+        json!({"buffer":"b 1","text":"x"}),
+        json!({"buffer":"b:1","text":"x","expected_tail":"x".repeat(MAX_EXPECTED_TAIL_BYTES + 1)}),
+    ] {
+        assert!(parse_request(&request("buffer.append", params)).is_err());
+    }
+    let context = &limits()["context"];
+    assert_eq!(context["append_tail_bytes"], MAX_EXPECTED_TAIL_BYTES);
+    assert_eq!(context["append_preview_chars"], APPEND_PREVIEW_CHARS);
 }

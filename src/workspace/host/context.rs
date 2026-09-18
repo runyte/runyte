@@ -653,6 +653,7 @@ impl WorkspaceHost {
             Request::BufferList { .. } => ("buffer.list", "inventory"),
             Request::BufferRead { buffer, .. } => ("buffer.read", buffer.as_str()),
             Request::BufferEdit { buffer, .. } => ("buffer.edit", buffer.as_str()),
+            Request::BufferAppend { buffer, .. } => ("buffer.append", buffer.as_str()),
             Request::SnapshotOpen { buffer, .. } => ("buffer.snapshot.open", buffer.as_str()),
             Request::SnapshotRead { snapshot, .. } => ("buffer.snapshot.read", snapshot.as_str()),
             Request::SnapshotClose { snapshot } => ("buffer.snapshot.close", snapshot.as_str()),

@@ -28,7 +28,7 @@ PAGE = {"offset": integer(0, 2**53 - 1, 0), "limit": integer(1, 256, 20)}
 TOOLS = {}
 
 
-def tool(name, method, scope, description, properties=None, required=(), write=False):
+def tool(name, method, scope, description, properties=None, required=(), write=False, destructive=None):
     properties = dict(properties or {})
     if name != "list_workspaces":
         properties = {"workspace": string(128), **properties}
@@ -37,7 +37,7 @@ def tool(name, method, scope, description, properties=None, required=(), write=F
         "descriptor": {"name": name, "description": description,
                        "inputSchema": obj(properties, list(required)),
                        "annotations": {"readOnlyHint": not write,
-                                       "destructiveHint": write,
+                                       "destructiveHint": write if destructive is None else destructive,
                                        "idempotentHint": not write,
                                        "openWorldHint": False}}}
 
@@ -84,6 +84,15 @@ tool("edit_buffer", "buffer.edit", "buffer_edit",
                   "items": obj({"from": integer(0, 2**53 - 1), "to": integer(0, 2**53 - 1),
                                 "text": {"type": "string", "maxLength": 524288}}, ["from", "to", "text"])}},
      ("buffer", "expected_revision", "changes"), write=True)
+tool("append_buffer", "buffer.append", "buffer_edit",
+     "Append text at the buffer's current end in one atomic undoable transaction, without an expected revision; "
+     "concurrent appends are serialized and none is lost. Optional expected_tail must equal the buffer's current "
+     "ending or nothing is written (stale). Text is literal: send real line breaks, not backslash-n. Returns the "
+     "inserted scalar range, line_breaks and a bounded preview. Does not save. Do not automatically retry "
+     "uncertain delivery.",
+     {"buffer": string(), "text": {"type": "string", "minLength": 1, "maxLength": 524288},
+      "expected_tail": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096, "default": None}},
+     ("buffer", "text"), write=True, destructive=False)
 tool("propose_terminal_text", "terminal.input.propose", "terminal_propose",
      "Propose one literal line for individual native overlay approval. No bytes are sent before the person "
      "selects Insert text. Approval never submits Enter; the person submits separately. "
@@ -148,4 +157,11 @@ def call(bridge, name, arguments):
             raise Failure("invalid_argument", "Proposal reason must be bounded text without controls")
     if name == "edit_buffer" and sum(len(c["text"].encode("utf-8")) for c in params["changes"]) > 524288:
         raise Failure("limit_exceeded", "Buffer replacement text exceeds limit")
+    if name == "append_buffer":
+        if len(params["text"].encode("utf-8")) > 524288:
+            raise Failure("limit_exceeded", "Buffer append text exceeds limit")
+        if params["expected_tail"] is None:
+            del params["expected_tail"]
+        elif len(params["expected_tail"].encode("utf-8")) > 4096:
+            raise Failure("limit_exceeded", "Expected tail exceeds limit")
     return bridge.request(workspace, spec["method"], spec["scope"], params)

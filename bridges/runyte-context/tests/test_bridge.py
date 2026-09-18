@@ -14,7 +14,8 @@ import threading
 import time
 import unittest
 
-from runyte_context.client import Bridge, Failure, Connection, decode, encode, load_credential, FRAME_BYTES
+from runyte_context.client import (Bridge, Failure, Connection, decode, encode, load_credential, FRAME_BYTES,
+                                   workspace_key)
 from runyte_context.server import INSTRUCTIONS, Server, PROTOCOL
 from runyte_context.tools import call, descriptors
 
@@ -33,12 +34,14 @@ class Host:
         self.grants = grants if grants is not None else {"a" * 64: ALL, "b" * 64: READS}
         self.detached = detached
         self.methods = []
+        self.requests = []
         self.inputs = []
         self.snapshots = {}
         self.proposals = {}
         self.text = f"terminal {number}: untrusted text"
         self.buffer = "original界"
         self.revision = 1
+        self.lock = threading.Lock()
         self.fail_next = None
         self.malformed_next = None
         self.slow = False
@@ -93,6 +96,7 @@ class Host:
                     request = decode(raw)
                     method, params = request["method"], request["params"]
                     self.methods.append(method)
+                    self.requests.append((method, params))
                     response = {"type": "response", "id": request["id"]}
                     if credential not in self.grants:
                         response["error"] = {"code": "capability_denied", "message": "Revoked"}
@@ -141,6 +145,18 @@ class Host:
                 self.buffer = self.buffer[:change["from"]] + change["text"] + self.buffer[change["to"]:]
             self.revision += 1
             return {"buffer": "b:1", "revision": f"r:{self.revision}"}
+        if method == "buffer.append":
+            # Mirrors the host: the tail check and insertion form one step.
+            with self.lock:
+                tail = params.get("expected_tail")
+                if tail is not None and not self.buffer.endswith(tail):
+                    return {"error": {"code": "stale", "message": "Buffer tail does not match expected_tail"}}
+                start = len(self.buffer)
+                self.buffer += params["text"]
+                self.revision += 1
+                return {"buffer": "b:1", "revision": f"r:{self.revision}", "from": start, "to": len(self.buffer),
+                        "line_breaks": params["text"].count("\n"), "preview": params["text"][:256],
+                        "preview_truncated": len(params["text"]) > 256}
         if method == "terminal.input.propose":
             self.proposals["i:1"] = {"text": params["text"], "state": "pending"}
             return {"proposal": "i:1", "state": "pending"}
@@ -466,7 +482,8 @@ class BridgeTests(unittest.TestCase):
         first, second = MCPClient(self.root, "codex"), MCPClient(self.root, "claude")
         self.clients.extend((first, second))
         initial = first.rpc("tools/list", {})["result"]["tools"]
-        self.assertNotIn("edit_buffer", {tool["name"] for tool in initial})
+        self.assertIn("edit_buffer", {tool["name"] for tool in initial})
+        self.assertNotIn("edit_buffer", {tool["name"] for tool in second.rpc("tools/list", {})["result"]["tools"]})
         first_inventory = first.tool("list_workspaces")["structuredContent"]
         second_inventory = second.tool("list_workspaces")["structuredContent"]
         self.assertEqual(len(first_inventory["workspaces"]), 2)
@@ -477,7 +494,8 @@ class BridgeTests(unittest.TestCase):
             response = client.tool("read_terminal", workspace=workspace, terminal=terminal)
             self.assertFalse(response["isError"])
             self.assertEqual(response["structuredContent"]["source_content"], "untrusted")
-        self.assertTrue(any(n["method"] == "notifications/tools/list_changed" for n in first.notifications))
+        # Discovery confirmed the startup inventory, so nothing changed.
+        self.assertEqual(first.notifications, [])
 
     def test_strict_json_lifecycle_and_bounded_stdio(self):
         for raw in (b'{"id":1,"id":2}', b'{"a":NaN}', b'[' * 30 + b']' * 30):
@@ -509,6 +527,236 @@ class BridgeTests(unittest.TestCase):
             "Terminal write: list_terminals then propose_terminal_text then terminal_proposal_status",
         ):
             self.assertIn(route, INSTRUCTIONS)
+
+    def buffer_handle(self, bridge, workspace):
+        return call(bridge, "list_buffers", {"workspace": workspace})["data"]["buffers"][0]["buffer"]
+
+    def test_append_buffer_schema_is_revision_free_and_only_advertised_with_its_grant(self):
+        codex, claude = self.bridge(), self.bridge("claude")
+        self.assertNotIn("append_buffer", {tool["name"] for tool in descriptors(codex)})
+        self.targets(codex)
+        self.targets(claude)
+        tools = {tool["name"]: tool for tool in descriptors(codex)}
+        schema = tools["append_buffer"]["inputSchema"]
+        self.assertEqual(set(schema["properties"]), {"workspace", "buffer", "text", "expected_tail"})
+        self.assertEqual(schema["required"], ["workspace", "buffer", "text"])
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(schema["properties"]["expected_tail"]["maxLength"], 4096)
+        self.assertEqual(tools["append_buffer"]["annotations"], {"readOnlyHint": False, "destructiveHint": False,
+                                                                 "idempotentHint": False, "openWorldHint": False})
+        # The existing edit keeps its revision-checked contract.
+        self.assertIn("expected_revision", tools["edit_buffer"]["inputSchema"]["required"])
+        self.assertTrue(tools["edit_buffer"]["annotations"]["destructiveHint"])
+        self.assertNotIn("append_buffer", {tool["name"] for tool in descriptors(claude)})
+        workspace = self.targets(claude)[0]
+        buffer = self.buffer_handle(claude, workspace)
+        with self.assertRaises(Failure) as error:
+            call(claude, "append_buffer", {"workspace": workspace, "buffer": buffer, "text": "x"})
+        self.assertEqual(error.exception.code, "capability_denied")
+        self.assertNotIn("buffer.append", self.hosts[0].methods)
+
+    def test_append_buffer_returns_range_preview_and_provenance(self):
+        bridge = self.bridge()
+        workspace = self.targets(bridge)[0]
+        buffer = self.buffer_handle(bridge, workspace)
+        result = call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer,
+                                                "text": "\n[codex]\nline 界🙂\n"})
+        self.assertEqual(result["source_content"], "untrusted")
+        self.assertEqual(result["provenance"]["workspace"], workspace)
+        data = result["data"]
+        self.assertEqual(data["buffer"], buffer)
+        self.assertEqual((data["from"], data["to"]), (9, 26))
+        self.assertEqual(data["line_breaks"], 3)
+        self.assertEqual(data["preview"], "\n[codex]\nline 界🙂\n")
+        self.assertEqual(data["revision"], "r:2")
+        self.assertEqual(self.hosts[0].buffer, "original界\n[codex]\nline 界🙂\n")
+        # An omitted guard is not sent; a null guard is the same request.
+        call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer, "text": "a", "expected_tail": None})
+        self.assertEqual([params for method, params in self.hosts[0].requests if method == "buffer.append"],
+                         [{"buffer": "b:1", "text": "\n[codex]\nline 界🙂\n"}, {"buffer": "b:1", "text": "a"}])
+
+    def test_append_buffer_expected_tail_mismatch_writes_nothing_and_keeps_the_connection(self):
+        bridge = self.bridge()
+        workspace = self.targets(bridge)[0]
+        buffer = self.buffer_handle(bridge, workspace)
+        call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer, "text": "!", "expected_tail": "界"})
+        self.hosts[0].buffer = "reset"
+        with self.assertRaises(Failure) as error:
+            call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer, "text": "?", "expected_tail": "界!"})
+        self.assertEqual(error.exception.code, "stale")
+        self.assertEqual(self.hosts[0].buffer, "reset")
+        self.assertIn(workspace, bridge.connections)
+        call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer, "text": "?", "expected_tail": "reset"})
+        self.assertEqual(self.hosts[0].buffer, "reset?")
+
+    def test_append_buffer_bounds_are_checked_before_sending(self):
+        bridge = self.bridge()
+        workspace = self.targets(bridge)[0]
+        buffer = self.buffer_handle(bridge, workspace)
+        for arguments, code in (({"text": ""}, "invalid_argument"),
+                                ({"text": "x", "expected_tail": ""}, "invalid_argument"),
+                                ({"text": "x", "expected_revision": "r:1"}, "invalid_argument"),
+                                ({"text": "x" * 524289}, "invalid_argument"),
+                                ({"text": "界" * 174763}, "limit_exceeded"),
+                                ({"text": "x", "expected_tail": "界" * 1366}, "limit_exceeded")):
+            with self.assertRaises(Failure) as error:
+                call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer, **arguments})
+            self.assertEqual(error.exception.code, code)
+        self.assertNotIn("buffer.append", self.hosts[0].methods)
+
+    def test_append_buffer_rejects_foreign_and_stale_handles_and_never_replays(self):
+        bridge = self.bridge()
+        first, second = self.targets(bridge)
+        foreign = self.buffer_handle(bridge, second)
+        with self.assertRaises(Failure) as error:
+            call(bridge, "append_buffer", {"workspace": first, "buffer": foreign, "text": "x"})
+        self.assertEqual(error.exception.code, "stale")
+        buffer = self.buffer_handle(bridge, first)
+        self.hosts[0].fail_next = "buffer.append"
+        with self.assertRaises(Failure) as error:
+            call(bridge, "append_buffer", {"workspace": first, "buffer": buffer, "text": "once"})
+        self.assertEqual(error.exception.code, "outcome_unknown")
+        with self.assertRaises(Failure) as error:
+            call(bridge, "append_buffer", {"workspace": first, "buffer": buffer, "text": "again"})
+        self.assertEqual(error.exception.code, "stale")
+        self.assertEqual(self.hosts[0].methods.count("buffer.append"), 1)
+        self.assertEqual(self.hosts[1].methods.count("buffer.append"), 0)
+
+    def test_concurrent_appends_from_two_bridges_keep_every_writer(self):
+        self.hosts[0].grants["b" * 64] = ALL
+        writers = [self.bridge(), self.bridge("claude")]
+        targets = [(bridge, self.targets(bridge)[0]) for bridge in writers]
+        handles = [(bridge, workspace, self.buffer_handle(bridge, workspace)) for bridge, workspace in targets]
+        errors = []
+
+        def write(index):
+            bridge, workspace, buffer = handles[index]
+            try:
+                for turn in range(25):
+                    call(bridge, "append_buffer", {"workspace": workspace, "buffer": buffer,
+                                                   "text": f"<{index}:{turn}>"})
+            except Failure as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=write, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(errors, [])
+        for index in range(2):
+            for turn in range(25):
+                self.assertEqual(self.hosts[0].buffer.count(f"<{index}:{turn}>"), 1)
+
+    def test_tool_list_refresh_after_discovery_grants_write_tools(self):
+        """initialize -> tools/list -> list_workspaces -> list_changed -> refreshed tools/list."""
+        granted = [host.grants.pop("a" * 64) for host in self.hosts]
+        server = Server(self.bridge())
+        self.assertEqual(len(server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": PROTOCOL}})), 1)
+        self.assertEqual(server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}), [])
+        initial = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        self.assertEqual(len(initial), 1)
+        writes = {"edit_buffer", "append_buffer", "propose_terminal_text", "terminal_proposal_status",
+                  "cancel_terminal_proposal"}
+        self.assertFalse(writes & {tool["name"] for tool in initial[0]["result"]["tools"]})
+        for host, scopes in zip(self.hosts, granted):
+            host.grants["a" * 64] = scopes
+        discovered = server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                    "params": {"name": "list_workspaces", "arguments": {}}})
+        # The reply comes first, then exactly one notification, emitted only once
+        # the refreshed inventory is already what tools/list returns.
+        self.assertEqual([message.get("id") for message in discovered], [3, None])
+        self.assertEqual(discovered[1], {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+        scopes = discovered[0]["result"]["structuredContent"]["workspaces"][0]["scopes"]
+        self.assertIn("buffer_edit", scopes)
+        self.assertIn("terminal_propose", scopes)
+        refreshed = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}})
+        self.assertEqual(len(refreshed), 1)
+        self.assertLessEqual(writes, {tool["name"] for tool in refreshed[0]["result"]["tools"]})
+        again = server.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                               "params": {"name": "list_workspaces", "arguments": {}}})
+        self.assertEqual(len(again), 1)
+
+    def test_real_stdio_client_receives_list_changed_and_refreshed_write_tools(self):
+        (self.root / "inventory.json").write_text(json.dumps(self.inventory()))
+        (self.root / "runyte").symlink_to(REPO / "src/fixtures/stand-in")
+        (self.root / "runyte.behavior").write_text('cat "$RUNYTE_CONTEXT_TEST_INVENTORY"\n')
+        granted = [host.grants.pop("a" * 64) for host in self.hosts]
+        client = MCPClient(self.root, "codex")
+        self.clients.append(client)
+        initial = {tool["name"] for tool in client.rpc("tools/list", {})["result"]["tools"]}
+        self.assertNotIn("append_buffer", initial)
+        for host, scopes in zip(self.hosts, granted):
+            host.grants["a" * 64] = scopes
+        client.tool("list_workspaces")
+        refreshed = {tool["name"] for tool in client.rpc("tools/list", {})["result"]["tools"]}
+        self.assertEqual([n["method"] for n in client.notifications], ["notifications/tools/list_changed"])
+        self.assertLessEqual({"edit_buffer", "append_buffer", "propose_terminal_text"}, refreshed)
+
+    def start(self, bridge):
+        server = Server(bridge)
+        server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": PROTOCOL}})
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return server
+
+    def test_first_tool_list_includes_write_tools_granted_before_startup(self):
+        calls = []
+        bridge = self.bridge()
+        bridge.discovery = lambda hidden: calls.append(hidden) or self.inventory(hidden)
+        server = self.start(bridge)
+        self.assertEqual(calls, [])  # initialize alone does not discover.
+        first = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        self.assertEqual(len(first), 1)  # No list_changed: this is the first inventory.
+        names = {tool["name"] for tool in first[0]["result"]["tools"]}
+        self.assertLessEqual({"edit_buffer", "append_buffer", "propose_terminal_text"}, names)
+        self.assertEqual(calls, [False])  # Default discovery only, never hidden environments.
+        server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}})
+        self.assertEqual(calls, [False])  # Checked once per session.
+        # Knowing the scopes admits no target: calls still need explicit discovery.
+        workspace = workspace_key(self.hosts[0].record)
+        with self.assertRaises(Failure) as error:
+            call(bridge, "list_buffers", {"workspace": workspace})
+        self.assertEqual(error.exception.code, "not_found")
+        self.assertNotIn("buffer.list", self.hosts[0].methods)
+        listed = server.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                                "params": {"name": "list_workspaces", "arguments": {}}})
+        self.assertEqual(len(listed), 1)  # Discovery confirms the inventory; no change.
+        self.assertEqual(listed[0]["result"]["structuredContent"]["workspaces"][0]["workspace"], workspace)
+        self.assertIn("data", call(bridge, "list_buffers", {"workspace": workspace}))
+
+    def test_first_tool_list_offers_only_what_the_startup_grants_allow(self):
+        server = self.start(self.bridge("claude"))
+        names = {tool["name"] for tool in
+                 server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})[0]["result"]["tools"]}
+        self.assertIn("read_buffer", names)
+        self.assertFalse(names & {"edit_buffer", "append_buffer", "propose_terminal_text"})
+
+    def test_failed_or_slow_startup_check_still_answers_with_read_tools(self):
+        def unavailable(hidden):
+            raise Failure("timeout", "Workspace discovery timed out")
+        bridge = self.bridge()
+        bridge.discovery = unavailable
+        reply = self.start(bridge).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        names = {tool["name"] for tool in reply[0]["result"]["tools"]}
+        self.assertIn("list_workspaces", names)
+        self.assertNotIn("edit_buffer", names)
+        self.hosts[0].slow = True
+        started = time.monotonic()
+        reply = self.start(self.bridge()).handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        self.assertLess(time.monotonic() - started, .7)
+        # The unresponsive host is skipped; the healthy host's grant still counts.
+        self.assertIn("edit_buffer", {tool["name"] for tool in reply[0]["result"]["tools"]})
+
+    def test_a_tool_call_before_any_tool_list_skips_the_startup_check(self):
+        calls = []
+        bridge = self.bridge()
+        bridge.discovery = lambda hidden: calls.append(hidden) or self.inventory(hidden)
+        server = self.start(bridge)
+        server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": {"name": "list_workspaces", "arguments": {}}})
+        server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}})
+        self.assertEqual(calls, [False])
 
 
 if __name__ == "__main__":

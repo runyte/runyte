@@ -983,3 +983,208 @@ fn late_unicode_snapshot_ranges_use_bounded_sparse_offsets() {
         ""
     );
 }
+
+fn append(buffer: &str, text: &str, expected_tail: Option<&str>) -> Request {
+    Request::BufferAppend {
+        buffer: buffer.into(),
+        text: text.into(),
+        expected_tail: expected_tail.map(Into::into),
+    }
+}
+
+#[test]
+fn appends_land_at_the_current_end_with_scalar_ranges_and_undo_atomically() {
+    let (_root, mut host, mut state) = fixture();
+    seed(&mut host, "a界🙂");
+    let (handle, _) = buffer(&mut host, &mut state);
+    let focus = host.app.active_pane;
+    let result = call(&mut host, &mut state, append(&handle, "\n二🙂\n", None));
+    assert_eq!(result["from"], 3);
+    assert_eq!(result["to"], 7);
+    assert_eq!(result["line_breaks"], 2);
+    assert_eq!(result["preview"], "\n二🙂\n");
+    assert_eq!(result["preview_truncated"], false);
+    assert_eq!(result["revision"], revision(host.app.buffers[0].revision()));
+    assert_eq!(host.app.buffers[0].text().to_string(), "a界🙂\n二🙂\n");
+    assert!(host.app.plugins.presentation_dirty);
+    assert_eq!(host.app.active_pane, focus);
+    // An escaped newline is ordinary text; the result makes that visible.
+    let literal = call(&mut host, &mut state, append(&handle, "x\\ny", None));
+    assert_eq!(literal["line_breaks"], 0);
+    assert_eq!(literal["preview"], "x\\ny");
+    assert!(host.app.buffers[0].undo());
+    assert!(host.app.buffers[0].undo());
+    assert_eq!(host.app.buffers[0].text().to_string(), "a界🙂");
+}
+
+#[test]
+fn interleaved_appends_from_two_readers_keep_every_writer() {
+    let (_root, mut host, mut first) = fixture();
+    let mut second = ReadState::new("owner:2".into());
+    seed(&mut host, "chat\n");
+    let (one, stale_revision) = buffer(&mut host, &mut first);
+    let (two, _) = buffer(&mut host, &mut second);
+    let mut expected = String::from("chat\n");
+    for turn in 0..8 {
+        let (state, handle, line) = if turn % 2 == 0 {
+            (&mut first, &one, format!("[a] {turn}\n"))
+        } else {
+            (&mut second, &two, format!("[b] {turn}\n"))
+        };
+        let result = call(&mut host, state, append(handle, &line, None));
+        assert_eq!(result["from"], expected.chars().count());
+        expected.push_str(&line);
+        assert_eq!(result["to"], expected.chars().count());
+    }
+    assert_eq!(host.app.buffers[0].text().to_string(), expected);
+    // The revision-checked edit keeps its contract after appends move it.
+    assert_eq!(
+        host.context_read_request(
+            &mut first,
+            &scopes(),
+            Request::BufferEdit {
+                buffer: one,
+                expected_revision: stale_revision,
+                changes: vec![editor::Change {
+                    from: 0,
+                    to: 0,
+                    text: "x".into()
+                }],
+            }
+        )
+        .unwrap_err()
+        .code,
+        Code::Stale
+    );
+}
+
+#[test]
+fn expected_tail_is_compared_atomically_and_a_mismatch_writes_nothing() {
+    let (_root, mut host, mut state) = fixture();
+    seed(&mut host, "hello 界🙂");
+    let (handle, _) = buffer(&mut host, &mut state);
+    let result = call(&mut host, &mut state, append(&handle, "!", Some("界🙂")));
+    assert_eq!(
+        (result["from"].clone(), result["to"].clone()),
+        (json!(8), json!(9))
+    );
+    let before = host.app.buffers[0].revision();
+    for tail in ["界🙂", "hello 界🙂!!", "x"] {
+        assert_eq!(
+            host.context_read_request(&mut state, &scopes(), append(&handle, "?", Some(tail)))
+                .unwrap_err()
+                .code,
+            Code::Stale
+        );
+    }
+    assert_eq!(host.app.buffers[0].revision(), before);
+    assert_eq!(host.app.buffers[0].text().to_string(), "hello 界🙂!");
+    // After a reset, a tail taken from the old conversation no longer matches,
+    // even where the new text happens to end the same way.
+    let current = revision(before);
+    call(
+        &mut host,
+        &mut state,
+        Request::BufferEdit {
+            buffer: handle.clone(),
+            expected_revision: current,
+            changes: vec![editor::Change {
+                from: 0,
+                to: 9,
+                text: "!".into(),
+            }],
+        },
+    );
+    assert_eq!(
+        host.context_read_request(&mut state, &scopes(), append(&handle, "?", Some("🙂!")))
+            .unwrap_err()
+            .code,
+        Code::Stale
+    );
+    assert_eq!(host.app.buffers[0].text().to_string(), "!");
+    call(&mut host, &mut state, append(&handle, "?", Some("!")));
+    assert_eq!(host.app.buffers[0].text().to_string(), "!?");
+}
+
+#[test]
+fn appends_are_bounded_granted_owned_and_refused_on_read_only_buffers() {
+    let (_root, mut host, mut state) = fixture();
+    let (handle, _) = buffer(&mut host, &mut state);
+    let refused = |host: &mut WorkspaceHost,
+                   state: &mut ReadState,
+                   scopes: &BTreeSet<Scope>,
+                   request: Request| {
+        host.context_read_request(state, scopes, request)
+            .unwrap_err()
+            .code
+    };
+    for (text, tail, code) in [
+        ("", None, Code::InvalidArgument),
+        ("x", Some(""), Code::InvalidArgument),
+        (
+            &*"x".repeat(editor::MAX_REPLACEMENT_BYTES + 1),
+            None,
+            Code::LimitExceeded,
+        ),
+        (
+            "x",
+            Some(&*"界".repeat(wire::MAX_EXPECTED_TAIL_BYTES / 3 + 1)),
+            Code::LimitExceeded,
+        ),
+    ] {
+        assert_eq!(
+            refused(
+                &mut host,
+                &mut state,
+                &scopes(),
+                append(&handle, text, tail)
+            ),
+            code
+        );
+    }
+    call(
+        &mut host,
+        &mut state,
+        append(&handle, &"x".repeat(editor::MAX_REPLACEMENT_BYTES), None),
+    );
+    let long = call(
+        &mut host,
+        &mut state,
+        append(&handle, &"界".repeat(300), None),
+    );
+    assert_eq!(
+        long["preview"].as_str().unwrap().chars().count(),
+        wire::APPEND_PREVIEW_CHARS
+    );
+    assert_eq!(long["preview_truncated"], true);
+    let length = host.app.buffers[0].len_chars();
+    for scopes in [
+        BTreeSet::from([Scope::EditorContextRead]),
+        BTreeSet::from([Scope::BufferEdit]),
+        BTreeSet::from([Scope::TerminalRead, Scope::TerminalPropose]),
+    ] {
+        assert_eq!(
+            refused(&mut host, &mut state, &scopes, append(&handle, "x", None)),
+            Code::CapabilityDenied
+        );
+    }
+    let mut other = ReadState::new("other".into());
+    assert_eq!(
+        refused(&mut host, &mut other, &scopes(), append(&handle, "x", None)),
+        Code::NotFound
+    );
+    host.app
+        .buffers
+        .push(crate::buffer::Buffer::help("reference"));
+    let generated = state.buffer(host.app.buffers.len() - 1).unwrap();
+    assert_eq!(
+        refused(
+            &mut host,
+            &mut state,
+            &scopes(),
+            append(&generated, "x", None)
+        ),
+        Code::ReadOnly
+    );
+    assert_eq!(host.app.buffers[0].len_chars(), length);
+}

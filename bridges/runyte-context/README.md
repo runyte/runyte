@@ -3,7 +3,7 @@
 This separately versioned Python package connects a local MCP client to
 explicitly authorized Runyte workspaces. It reads live terminal screens,
 retained terminal history, unsaved buffers, selections, and native viewports.
-It also exposes revision-checked buffer edits and proposals for terminal text
+It also exposes revision-checked buffer edits, atomic appends and proposals for terminal text
 when the corresponding native grants exist. Runyte owns every authorization
 decision and terminal approval.
 
@@ -107,7 +107,8 @@ are:
 
 - buffer read: `list_buffers`, then `read_buffer`;
 - terminal read: `list_terminals`, then `read_terminal`;
-- buffer write: `list_buffers`, then `edit_buffer` with the listed revision;
+- buffer write: `list_buffers`, then `edit_buffer` with the listed revision,
+  or `append_buffer` to add at the end without one;
 - terminal write: `list_terminals`, then `propose_terminal_text`, followed by
   `terminal_proposal_status`.
 
@@ -125,7 +126,7 @@ does not bypass discovery or fall back to the currently focused workspace.
 | --- | --- |
 | `list_terminals`, `read_terminal`, terminal snapshot open/read/close | `terminal_read` |
 | `list_buffers`, `list_panes`, `read_buffer`, `read_selection`, `read_pane`, buffer snapshot open/read/close | `editor_context_read` |
-| `edit_buffer` | `buffer_edit` plus editor reads |
+| `edit_buffer`, `append_buffer` | `buffer_edit` plus editor reads |
 | `propose_terminal_text`, `terminal_proposal_status`, `cancel_terminal_proposal` | `terminal_propose` plus terminal reads |
 
 Terminal viewports additionally require terminal reads. Detached persistent
@@ -134,13 +135,32 @@ Read results include structured provenance and mark source content untrusted.
 They preserve the host’s revisions and clipping metadata. Terminal rows are
 presentation text, not a reconstructed conversation or shell transcript.
 
-Mutation tools appear after discovery authenticates a workspace with the
-corresponding grant. Clients receive `notifications/tools/list_changed` when
-the advertised tools change. Each invocation still checks the selected target’s
-grant; access to one workspace never grants access to another.
+Mutation tools appear only when a discovered workspace has the corresponding
+grant. Before answering a client’s first tool-list request, the bridge runs the
+same bounded discovery as `list_workspaces` once and keeps only the granted
+scopes, so grants that already exist are offered from the start. It does not
+make any workspace usable: calls still need a handle returned by
+`list_workspaces`. If discovery fails or a host does not answer in time, the
+first list has the read tools and whatever the responsive hosts granted.
+Later grant changes send `notifications/tools/list_changed`. Each invocation
+still checks the selected target’s grant; access to one workspace never grants
+access to another.
+
+Some clients do not act on that notification. Codex 0.155.0 logs it but keeps
+the tool list it fetched at startup, so it sees the write tools only if the
+grant existed when the session started; after granting access during a Codex
+session, start a new one. A revocation during the session leaves the tools
+listed, and calling them fails. Claude Code refreshes its tool list when
+notified.
 
 `edit_buffer` allows multiline text in one atomic transaction and never saves
-or completes an external-editor wait. `propose_terminal_text` allows only one
+or completes an external-editor wait. `append_buffer` adds text at the buffer's
+current end without a revision. Concurrent appends from several agents are
+applied one at a time and all are kept. An optional `expected_tail` must match
+the buffer's current ending, or nothing is written and the call fails as
+`stale`. The result gives the inserted scalar range, the number of line breaks
+and a preview of up to 256 scalars of what was actually inserted, so a literal
+`\n` sent in place of a line break is visible. `propose_terminal_text` allows only one
 line, with an optional short `reason` displayed separately as untrusted text.
 It creates a pending native overlay; no text reaches the terminal before
 the person chooses **Insert text**. That approval inserts text without Enter.

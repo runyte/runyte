@@ -302,6 +302,51 @@ impl WorkspaceHost {
                     json!({"buffer":buffer,"revision":revision(self.app.buffers[index].revision()),"changes":count}),
                 )
             }
+            Request::BufferAppend {
+                buffer,
+                text,
+                expected_tail,
+            } => {
+                let index = self.context_buffer(state, &buffer)?;
+                let value = &self.app.buffers[index];
+                if value.is_read_only() {
+                    return Err(Error::new(Code::ReadOnly, "Buffer is read-only"));
+                }
+                // The end and the tail are read in the same host turn that
+                // applies the insertion, so no other writer can intervene.
+                let from = value.len_chars();
+                if let Some(tail) = &expected_tail {
+                    let count = tail.chars().count();
+                    if count > from || value.text().slice_string(from - count, from) != *tail {
+                        return Err(Error::new(
+                            Code::Stale,
+                            "Buffer tail does not match expected_tail; nothing was appended",
+                        ));
+                    }
+                }
+                let expected = value.revision();
+                self.app.buffers[index].commit_undo_group();
+                self.apply_expected_transaction(
+                    BufferId::from_index(index),
+                    BufferRevision::from_raw(expected),
+                    Transaction::new(vec![Change::new(from, from, text)]),
+                )
+                .map_err(|_| Error::new(Code::Conflict, "Append could not be applied"))?;
+                self.app.buffers[index].commit_undo_group();
+                self.app.plugins.presentation_dirty = true;
+                // Report what the buffer now holds rather than echoing the
+                // request, so a caller sees exactly what landed.
+                let value = &self.app.buffers[index];
+                let to = value.len_chars();
+                let preview_to = to.min(from + wire::APPEND_PREVIEW_CHARS);
+                let line_breaks =
+                    value.text().position_of(to).row - value.text().position_of(from).row;
+                Ok(json!({
+                    "buffer":buffer,"revision":revision(value.revision()),"from":from,"to":to,
+                    "line_breaks":line_breaks,"preview":value.text().slice_string(from, preview_to),
+                    "preview_truncated":preview_to < to
+                }))
+            }
             Request::SnapshotOpen {
                 buffer,
                 expected_revision,

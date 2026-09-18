@@ -72,7 +72,7 @@ rejected, including inside parameters, changes and registration lists.
 | --- | --- |
 | `terminal_read` | `terminal.list`, `terminal.read`, `terminal.snapshot.open/read/close` |
 | `editor_context_read` | `buffer.list`, `buffer.read`, `buffer.snapshot.open/read/close`, `selection.get`, `pane.context.list`, `pane.viewport.read` |
-| `buffer_edit` | `buffer.edit`; requires `editor_context_read` |
+| `buffer_edit` | `buffer.edit`, `buffer.append`; requires `editor_context_read` |
 | `terminal_propose` | `terminal.input.propose/status/cancel`; requires `terminal_read` |
 
 `pane.viewport.read` additionally requires `terminal_read` whenever the target
@@ -99,6 +99,7 @@ broader capabilities.
 | `buffer.list`, `terminal.list` | `offset`, `limit` (1–256) |
 | `buffer.read` | `buffer`, `expected_revision`, scalar offsets `from`, `to` |
 | `buffer.edit` | `buffer`, `expected_revision`, `changes: [{from,to,text}]` |
+| `buffer.append` | `buffer`, nonempty `text`, optional nonempty `expected_tail` (at most 4 KiB) |
 | `buffer.snapshot.open` | `buffer`, `expected_revision` |
 | `buffer.snapshot.read` | `snapshot`, `from`, `to` |
 | `buffer.snapshot.close`, `terminal.snapshot.close` | `snapshot` |
@@ -159,6 +160,26 @@ replacement text, applied atomically through the native transaction and undo
 system only if the expected revision still matches. Newlines in buffer edits
 are allowed. Editing does not save, complete an external-editor wait, change
 focus or perform filesystem operations.
+
+`buffer.append` inserts nonempty text of at most 512 KiB at the buffer's end as
+it stands when the host applies the request. It takes no expected revision.
+Requests from every reader run one at a time on the host loop, so concurrent
+appends are all kept, one after another, in arrival order. Read-only buffers
+refuse it. When `expected_tail` is present, the buffer's current text must end
+with exactly that string, compared as Unicode scalars in the same host turn as
+the insertion. Otherwise the request fails with `stale` and writes nothing.
+The guard catches replies composed against text that has since been reset or
+rewritten. It is not a lock: text that another writer appended with the same
+ending still matches. An append is one undoable transaction, with the same
+save, wait and focus exclusions as an edit.
+
+The result reports the resulting `revision`, the inserted scalar range `from`
+and `to`, `line_breaks` inserted, and a `preview` of at most 256 scalars read
+back from the buffer, with `preview_truncated`. A caller that meant to send line
+breaks but sent a literal backslash-n sees `line_breaks` of zero and the
+backslash in the preview. The hello limits advertise these bounds as
+`context.append_tail_bytes` and `context.append_preview_chars`. An append whose
+acknowledgement is lost is uncertain and must not be retried automatically.
 
 ## Terminal proposals and revocation
 

@@ -3494,6 +3494,14 @@ An edit does not save, close the buffer, apply a directory operation or complete
 an external-editor wait request. In particular it cannot submit a prompt
 opened using `EDITOR` merely by changing its buffer.
 
+The same grant allows appending at a buffer's end without a revision, so
+several agents can take turns in one shared buffer without refusing each
+other's writes. Appends are applied one at a time, and each keeps its text
+whole. An agent may pass the ending it last read as `expected_tail`; if the
+buffer no longer ends that way, for example because somebody cleared it, the
+append writes nothing and fails as stale. Each append is also one undoable
+transaction and never saves.
+
 With the proposal grant, an agent can request literal terminal text. The target
 workspace shows **Review terminal text**, opening with the exact proposed value
 and followed by the requester, target terminal, workspace, untrusted reason when
