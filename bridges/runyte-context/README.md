@@ -14,13 +14,28 @@ package version and release lifecycle are independent of the editor.
 
 ## Install and pair
 
-From this directory, install into a virtual environment:
+With [uv](https://docs.astral.sh/uv/), install the bridge as a tool from this
+directory:
+
+```sh
+uv tool install .
+uv tool dir --bin
+```
+
+The second command prints the directory holding the `runyte-context`
+executable, usually `.local/bin` in the account home. uv selects or downloads
+a suitable Python itself. The install is a copy: after changing the bridge,
+run `uv tool install --reinstall .` again. While developing the bridge,
+`uv tool install --editable .` runs the source in place instead.
+
+Without uv, install into a virtual environment using only Python:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install .
 ```
 
+The executable is then `.venv/bin/runyte-context` in this directory.
 Alternatively, run `python3 -m runyte_context` directly from this directory
 without installing anything. Use an absolute executable path in MCP client
 configuration so it works from every workspace.
@@ -43,14 +58,14 @@ inventory discovery, with independent authentication at each host.
 ## Configure clients
 
 For Codex, add the following table to `~/.codex/config.toml`, replacing the
-example executable path with the installed bridge’s absolute path. Codex reads
-`$CODEX_HOME/config.toml` instead when `CODEX_HOME` is set. The file applies to
-every Codex session for the account; create it if it does not exist, and
-restart Codex after editing it:
+example executable path with the installed bridge’s absolute path from either
+installation method. Codex reads `$CODEX_HOME/config.toml` instead when
+`CODEX_HOME` is set. The file applies to every Codex session for the account;
+create it if it does not exist, and restart Codex after editing it:
 
 ```toml
 [mcp_servers.runyte]
-command = "/path/to/runyte-context/.venv/bin/runyte-context"
+command = "/path/to/bin/runyte-context"
 args = ["--identity", "codex"]
 ```
 
@@ -60,7 +75,7 @@ This uses Codex’s documented
 For Claude Code:
 
 ```sh
-claude mcp add --scope user --transport stdio runyte -- /path/to/runyte-context/.venv/bin/runyte-context --identity claude
+claude mcp add --scope user --transport stdio runyte -- /path/to/bin/runyte-context --identity claude
 ```
 
 The command writes the entry to `~/.claude.json` rather than to a file in the
@@ -75,7 +90,7 @@ command and argument separator follow Claude Code’s
 Other MCP stdio clients can use this server entry:
 
 ```json
-{"mcpServers":{"runyte":{"command":"/path/to/runyte-context/.venv/bin/runyte-context","args":["--identity","agent"]}}}
+{"mcpServers":{"runyte":{"command":"/path/to/bin/runyte-context","args":["--identity","agent"]}}}
 ```
 
 `--runyte /absolute/path/to/runyte` selects the discovery executable;
