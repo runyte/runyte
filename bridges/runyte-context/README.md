@@ -42,8 +42,11 @@ inventory discovery, with independent authentication at each host.
 
 ## Configure clients
 
-For Codex, add the following to the applicable `config.toml`, replacing the
-example executable path with the installed bridge’s absolute path:
+For Codex, add the following table to `~/.codex/config.toml`, replacing the
+example executable path with the installed bridge’s absolute path. Codex reads
+`$CODEX_HOME/config.toml` instead when `CODEX_HOME` is set. The file applies to
+every Codex session for the account; create it if it does not exist, and
+restart Codex after editing it:
 
 ```toml
 [mcp_servers.runyte]
@@ -60,10 +63,13 @@ For Claude Code:
 claude mcp add --scope user --transport stdio runyte -- /path/to/runyte-context/.venv/bin/runyte-context --identity claude
 ```
 
-`--scope user` makes the server available to Claude Code in every directory,
-like the Codex entry above. Omit it to register the bridge only for the project
-where the command is run, which is Claude Code’s default. The scope, command
-and argument separator follow Claude Code’s
+The command writes the entry to `~/.claude.json` rather than to a file in the
+project; edit it through `claude mcp` instead of by hand. `--scope user` makes
+the server available to Claude Code in every directory, like the Codex entry
+above. Omit it to register the bridge only for the project where the command is
+run, which is Claude Code’s default. Confirm the registration with
+`claude mcp list`, and start a new Claude Code session to load it. The scope,
+command and argument separator follow Claude Code’s
 [MCP configuration documentation](https://code.claude.com/docs/en/mcp).
 
 Other MCP stdio clients can use this server entry:
