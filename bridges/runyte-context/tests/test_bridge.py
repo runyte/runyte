@@ -15,7 +15,7 @@ import time
 import unittest
 
 from runyte_context.client import Bridge, Failure, Connection, decode, encode, load_credential, FRAME_BYTES
-from runyte_context.server import Server, PROTOCOL
+from runyte_context.server import INSTRUCTIONS, Server, PROTOCOL
 from runyte_context.tools import call, descriptors
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -492,6 +492,23 @@ class BridgeTests(unittest.TestCase):
         output = io.BytesIO()
         server.run(io.BytesIO(b"x" * (FRAME_BYTES + 1)), output)
         self.assertEqual(output.getvalue(), b"")
+
+    def test_initialize_routes_the_common_same_project_workflows(self):
+        server = Server(self.bridge())
+        response = server.handle({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": PROTOCOL},
+        })[0]["result"]
+        self.assertEqual(response["instructions"], INSTRUCTIONS)
+        self.assertLessEqual(len(INSTRUCTIONS), 512)
+        self.assertIn("root matches the client's current project", INSTRUCTIONS)
+        for route in (
+            "Buffer read: list_buffers then read_buffer",
+            "Terminal read: list_terminals then read_terminal",
+            "Buffer write: list_buffers then edit_buffer",
+            "Terminal write: list_terminals then propose_terminal_text then terminal_proposal_status",
+        ):
+            self.assertIn(route, INSTRUCTIONS)
 
 
 if __name__ == "__main__":

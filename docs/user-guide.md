@@ -3460,14 +3460,17 @@ terminal content are written into tracked project context. This is permission
 for Runyte's API, not an operating-system sandbox against other processes
 already running as your user.
 
-Ask an agent to list authorized workspaces, list the terminal sessions in one,
-and read the desired terminal. It must use the returned workspace and resource
-handles, even when two workspaces or terminals have the same name. It can read
-a detached persistent workspace after you have granted access there. A
-standalone workspace is available while its editor process is running. Neither
-case attaches another TUI or changes focus. Native pane viewport reads need an
-attached frontend; detached hosts can still return live terminal text and
-unsaved buffer content. Listing targets does not read their contents.
+The bridge tells an agent to list authorized workspaces first and normally use
+the one whose root matches its current project. Its initialization instructions
+also route buffer reads, terminal reads, buffer edits and terminal proposals to
+their dedicated discovery and operation tools. The agent must use the returned
+workspace and resource handles, even when two workspaces or resources have the
+same name. It can read a detached persistent workspace after you have granted
+access there. A standalone workspace is available while its editor process is
+running. Neither case attaches another TUI or changes focus. Native pane
+viewport reads need an attached frontend; detached hosts can still return live
+terminal text and unsaved buffer content. Listing targets does not read their
+contents.
 
 `runyte --context-list --json` provides bounded, versioned endpoint metadata for
 local tooling. It includes only live enabled endpoints in the current

@@ -100,15 +100,26 @@ are local; the examples do not publish a package or contact an agent account.
 
 ## Use
 
-Ask the agent to call `list_workspaces`, select one explicit returned workspace,
-then call `list_terminals` and `read_terminal`. For example:
+The initialization response tells the agent to start with `list_workspaces` and
+normally choose the returned workspace whose root matches its current project.
+Name another workspace when that is the intended target. The four common routes
+are:
+
+- buffer read: `list_buffers`, then `read_buffer`;
+- terminal read: `list_terminals`, then `read_terminal`;
+- buffer write: `list_buffers`, then `edit_buffer` with the listed revision;
+- terminal write: `list_terminals`, then `propose_terminal_text`, followed by
+  `terminal_proposal_status`.
+
+For example:
 
 > Read Claude’s terminal in workspace B and summarize its latest findings.
 
 Names can be duplicated. Resource handles bind the exact host incarnation and
 connection, and every subsequent call requires the workspace handle as well.
 A reconnect, host restart, or connection eviction requires fresh resource
-discovery. There is no fallback to the currently focused workspace.
+discovery. Matching the current project chooses among discovered workspaces; it
+does not bypass discovery or fall back to the currently focused workspace.
 
 | Tools | Native scope |
 | --- | --- |
