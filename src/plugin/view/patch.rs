@@ -226,5 +226,9 @@ impl Model {
     }
 }
 fn row_bytes(row: &Row) -> usize {
-    row.id.len() + row.text.len() + row.cells.iter().map(|cell| cell.text.len()).sum::<usize>() + 1
+    row.id.len()
+        + row.text.len()
+        + row.cells.iter().map(|cell| cell.text.len()).sum::<usize>()
+        + row.actions.iter().flatten().map(String::len).sum::<usize>()
+        + 1
 }

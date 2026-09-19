@@ -335,6 +335,48 @@ requires a selected data row; other view commands remain available on empty
 views. An optional `actions` list restricts view commands to those registered
 local names; an omitted or empty list retains all registered view commands.
 
+### Row-dependent actions
+
+Negotiate optional feature `view-row-actions` to override action availability for
+individual rows. List it in registration's `optional_features` and check the
+acknowledged `features` before sending the new field. Older hosts can keep using
+the original model-wide actions or a plugin-owned contextual picker. The wire
+protocol remains `runyte-1`; capability `views` is still required.
+
+With the feature selected, each row may contain `actions: [local_command_name]`.
+An omitted row list inherits the model's action restriction. A supplied row list
+**replaces** it, and an empty row list offers no view commands for that row.
+Include common actions such as refresh in each override that should offer them.
+Each list has at most 64 distinct registered view-command names. Unknown names,
+workspace/buffer commands and invalid names reject the complete publication.
+`null` is invalid. Unnegotiated row actions return `unsupported`, including empty
+lists and staged model/patch publications. Existing model-wide empty/omitted lists
+keep their original meaning: all registered view commands.
+
+For multiple selected data rows, the offered actions are the intersection of
+each row's effective list. Without a selected data row (including headers, empty
+views and pending queries), the model-wide list applies. Primary actions still
+require selected data rows, and pending queries still refuse primary dispatch.
+Availability is shared by the Tab menu, command-palette admission and execution
+through Enter, configured bindings or full command names. Help and key hints
+continue to describe registered bindings; they do not create additional actions.
+Selection changes require reopening an already-open action menu. Model changes
+are rechecked on acceptance, and unseen revisions cannot execute.
+
+```json
+{"title":"Connections","purpose":"list","actions":["refresh"],"rows":[
+  {"id":"live","text":"Connected","role":"ordinary","actions":["refresh","disconnect"]},
+  {"id":"offline","text":"Disconnected","role":"muted","actions":["refresh","connect"]}
+]}
+```
+
+Row action lists count toward existing encoded/retained model budgets. They
+survive model reads, snapshots, row reorder and patching; updating a row without
+`actions` restores inheritance. No cursor notifications, plugin round trips or
+polling are needed to choose the menu.
+
+### Model patches and staging
+
 `view.patch` takes `view`, `expected_revision`, optional complete `header`
 (the model without `rows`) and at most 1,024 `operations`. Operations are
 `{kind:"insert",before:row_id_or_null,row}`, `{kind:"update",row}`,

@@ -435,8 +435,8 @@ impl App {
 }
 
 impl App {
-    /// Shared discovery/admission checks use metadata only. Snapshot encoding,
-    /// selected-row capture and queue admission remain execution-time checks.
+    /// Shared discovery/admission checks include negotiated row availability.
+    /// Snapshot encoding and queue admission remain execution-time checks.
     fn plugin_command_preflight(&self, command: &RuntimeCommand) -> Result<()> {
         // Native Stop must remain available while work is busy or cancelling.
         if command.local == "stop" {
@@ -470,7 +470,8 @@ impl App {
                     })
                     .ok_or_else(|| anyhow::anyhow!("command requires an owned application view"))?;
                 ensure!(
-                    view.model.actions.is_empty() || view.model.actions.contains(&command.local),
+                    self.plugin_view_actions(command.plugin, view)
+                        .is_none_or(|actions| actions.contains(command.local.as_str())),
                     "Application view does not offer this action"
                 );
                 ensure!(

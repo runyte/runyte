@@ -3126,6 +3126,14 @@ Explicitly enabled process plugins can register commands, read the invoking
 buffer's text and selections, and return replacements as one undoable edit.
 They run asynchronously; changing the invoking text rejects stale results.
 Persistent hosts retain their plugin processes across TUI detach and reattach.
+In an application view, Tab offers actions from its plugin. Plugins supporting
+row-dependent actions can tailor that list to the selected rows: for example,
+a connected database can offer Disconnect while a disconnected one offers
+Connect. Multiple selected rows offer only actions common to all of them.
+Moving the selection after opening the menu requires reopening it; changed
+models are checked again before an action runs. Other plugins retain their
+view-wide menus.
+
 Application plugins also provide retained native views, typed commands,
 finite background jobs, explicit buffer/selection operations and bounded local
 filesystem operations with native confirmation, plus native prompts, filterable

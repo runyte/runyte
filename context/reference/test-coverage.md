@@ -43,6 +43,43 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-19 — negotiated row actions
+
+Measured on `x86_64-unknown-linux-gnu` for optional process-plugin feature
+`view-row-actions`, using `cargo llvm-cov --locked --workspace --summary-only
+--fail-under-lines 89`. The ordinary and instrumented workspace suites each pass
+3,759 tests with 34 existing ignored tests. Formatting and warnings-as-errors
+Clippy also pass. The 89% floor is unchanged.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 124,344 | 135,302 | 91.90% |
+| Functions | 11,247 | 12,246 | 91.84% |
+| Regions | 188,708 | 206,613 | 91.33% |
+
+Coverage exercises optional negotiation, row-list bounds and inheritance,
+multiselection intersection, header behavior, menu/palette/primary admission,
+stale menu rejection and atomic inline/staged publication. Patch input is checked
+before insert/remove or update/overwrite operations can erase an unnegotiated
+field or invalid action reference. Base-profile command discovery retains its
+view-wide restriction without inspecting row selections. Independent review
+reported no remaining actionable findings after these fixes.
+
+Separate Linux conformance checks passed: 11 schema, 11 application, 8 SDK
+compatibility, 12 model, 14 Node and 69 Python/Rust/C todo cases. The todo checks
+used existing local compiled examples; a fresh C rebuild was unavailable because
+json-c development headers were not installed. Frozen-client checks accepted
+91 retained plugin frames, 61 current host frames and the unchanged SDK handshake.
+The unchanged sibling ru-time suite passed all 65 tests with schema validation
+and native editor checks enabled. No ru-time runtime or vendored-client update
+was made. The companion ru-dbviewer combined suites passed at 88.11% lines,
+including native direct row actions and older-host fallback coverage; its own
+validation record lists the platform and database fixtures.
+
+These are local development-source results, not exact-pinned-host CI or published
+release evidence. macOS and ARM64 acceptance remain CI gates; this measurement
+does not establish a new baseline on either target.
+
 ## 2026-09-18 — scoped agent workspace context
 
 Measured on `x86_64-unknown-linux-gnu` for the agent-context implementation

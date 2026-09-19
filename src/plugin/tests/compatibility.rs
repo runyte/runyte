@@ -69,3 +69,23 @@ fn optional_features_are_selected_only_when_supported() {
     let excessive = (0..33).map(|i| format!("feature-{i}")).collect();
     assert!(negotiate_features(&excessive, &BTreeSet::new(), &[]).is_err());
 }
+
+#[test]
+fn row_actions_are_advertised_but_never_selected_for_unchanged_plugins() {
+    let empty = BTreeSet::new();
+    assert!(
+        negotiate_features(&empty, &empty, crate::plugin::application::FEATURES)
+            .unwrap()
+            .is_empty()
+    );
+    let requested = [crate::plugin::application::VIEW_ROW_ACTIONS.to_owned()].into();
+    assert_eq!(
+        negotiate_features(&empty, &requested, crate::plugin::application::FEATURES).unwrap(),
+        requested
+    );
+    assert!(
+        negotiate_features(&empty, &requested, &[])
+            .unwrap()
+            .is_empty()
+    );
+}

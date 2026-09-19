@@ -81,6 +81,13 @@ pub struct Row {
         deserialize_with = "decoding::cells"
     )]
     pub cells: Vec<Cell>,
+    /// Negotiated override: absent inherits the model, empty offers no actions.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::row_actions"
+    )]
+    pub actions: Option<Vec<String>>,
 }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -159,6 +166,34 @@ fn cancelled(flag: &std::sync::atomic::AtomicBool) -> Result<(), Error> {
 }
 
 impl Model {
+    /// Effective restriction for row indices resolved from the retained projection.
+    /// None preserves the legacy unrestricted model; multiple rows intersect.
+    pub fn selected_actions(&self, selected: &[usize]) -> Option<BTreeSet<&str>> {
+        let inherited = || {
+            (!self.actions.is_empty()).then(|| self.actions.iter().map(String::as_str).collect())
+        };
+        if selected.is_empty() {
+            return inherited();
+        }
+        let mut allowed: Option<BTreeSet<&str>> = None;
+        for index in selected {
+            let Some(row) = self.rows.get(*index) else {
+                return Some(BTreeSet::new());
+            };
+            let restriction = row.actions.as_ref().map_or_else(inherited, |actions| {
+                Some(actions.iter().map(String::as_str).collect())
+            });
+            if let Some(restriction) = restriction {
+                if let Some(allowed) = &mut allowed {
+                    allowed.retain(|action| restriction.contains(action));
+                } else {
+                    allowed = Some(restriction);
+                }
+            }
+        }
+        allowed
+    }
+
     /// Bounded retained storage estimate, including container allocations.
     pub fn payload_bytes(&self) -> usize {
         self.title.capacity()
@@ -170,6 +205,10 @@ impl Model {
                 .map(|row| {
                     row.id.capacity()
                         + row.text.capacity()
+                        + row.actions.as_ref().map_or(0, |actions| {
+                            actions.capacity() * std::mem::size_of::<String>()
+                                + actions.iter().map(String::capacity).sum::<usize>()
+                        })
                         + row.cells.capacity() * std::mem::size_of::<Cell>()
                         + row
                             .cells
@@ -245,6 +284,18 @@ impl Model {
         let mut ids = BTreeSet::new();
         let mut bytes = self.title.len();
         for row in &self.rows {
+            if let Some(actions) = &row.actions {
+                if actions.len() > super::application::MAX_COMMANDS {
+                    return Err(limited("View row action limit exceeded"));
+                }
+                let mut unique = BTreeSet::new();
+                if actions
+                    .iter()
+                    .any(|action| !super::valid_name(action) || !unique.insert(action))
+                {
+                    return Err(invalid("Invalid or duplicate view row action"));
+                }
+            }
             if !safe(&row.id, 64)
                 || !ids.insert(&row.id)
                 || row.text.chars().any(char::is_control)

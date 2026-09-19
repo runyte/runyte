@@ -492,3 +492,65 @@ fn streaming_operation_decoder_preserves_strict_field_shapes_and_any_key_order()
         );
     }
 }
+
+#[test]
+fn row_actions_inherit_override_intersect_and_roundtrip_through_patches() {
+    let mut m = model(&[("a", "A"), ("b", "B"), ("c", "C")]);
+    m.actions = vec!["refresh".into()];
+    m.rows[0].actions = Some(vec!["refresh".into(), "disconnect".into()]);
+    m.rows[1].actions = Some(vec!["refresh".into(), "connect".into()]);
+    let offered = |m: &Model, rows: &[usize]| {
+        m.selected_actions(rows)
+            .map(|s| s.into_iter().map(str::to_owned).collect::<Vec<_>>())
+    };
+    assert_eq!(offered(&m, &[]), Some(vec!["refresh".into()]));
+    assert_eq!(
+        offered(&m, &[0]),
+        Some(vec!["disconnect".into(), "refresh".into()])
+    );
+    assert_eq!(offered(&m, &[0, 1, 2]), Some(vec!["refresh".into()]));
+    let bytes = m.payload_bytes();
+    m.rows[1].actions = Some(vec![]);
+    assert!(m.payload_bytes() < bytes);
+    assert_eq!(offered(&m, &[0, 1]), Some(vec![]));
+    let mut row = m.rows[1].clone();
+    row.actions = None;
+    let patched = m
+        .patched(
+            Patch {
+                header: None,
+                operations: vec![Operation::Update { row }],
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(offered(&patched, &[0, 1]), Some(vec!["refresh".into()]));
+    m.actions.clear();
+    assert_eq!(offered(&m, &[2]), None);
+    assert_eq!(
+        offered(&m, &[0, 2]),
+        Some(vec!["disconnect".into(), "refresh".into()])
+    );
+    assert_eq!(offered(&m, &[99]), Some(vec![]));
+    let encoded = serde_json::to_value(&m).unwrap();
+    assert_eq!(encoded["rows"][1]["actions"], serde_json::json!([]));
+    assert!(encoded["rows"][2].get("actions").is_none());
+    m.validate().unwrap();
+}
+
+#[test]
+fn row_action_names_counts_and_null_are_bounded() {
+    for actions in [serde_json::Value::Null, serde_json::json!(vec!["a"; 65])] {
+        let wire = serde_json::json!({"id":"a","text":"A","role":"ordinary","actions":actions});
+        assert!(serde_json::from_value::<Row>(wire).is_err());
+    }
+    for actions in [
+        vec!["bad name".into()],
+        vec!["a".into(), "a".into()],
+        vec!["a".into(); 65],
+    ] {
+        let mut m = model(&[("a", "A")]);
+        m.rows[0].actions = Some(actions);
+        assert!(m.validate().is_err());
+    }
+}

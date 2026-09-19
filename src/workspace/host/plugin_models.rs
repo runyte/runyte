@@ -35,6 +35,73 @@ pub(super) fn is_model_request(request: &Request) -> bool {
     )
 }
 
+/// Registration is immutable for an owner's generation. Capture this bounded
+/// policy for worker-side validation before patch operations can erase evidence.
+struct ActionPolicy {
+    row_actions: bool,
+    commands: std::collections::BTreeSet<String>,
+}
+impl ActionPolicy {
+    fn new(state: &api::Instance) -> Self {
+        Self {
+            row_actions: state.features.contains(api::VIEW_ROW_ACTIONS),
+            commands: state
+                .command_contexts
+                .iter()
+                .filter(|(_, context)| **context == api::CommandContext::View)
+                .map(|(name, _)| name.clone())
+                .collect(),
+        }
+    }
+    fn actions(&self, actions: &[String]) -> Result<(), Error> {
+        let mut unique = std::collections::BTreeSet::new();
+        if actions.len() > api::MAX_COMMANDS
+            || actions
+                .iter()
+                .any(|action| !self.commands.contains(action) || !unique.insert(action))
+        {
+            return Err(Error::new(
+                Code::InvalidArgument,
+                "View actions must name distinct registered view commands",
+            ));
+        }
+        Ok(())
+    }
+    fn row(&self, row: &view::Row) -> Result<(), Error> {
+        if let Some(actions) = &row.actions {
+            if !self.row_actions {
+                return Err(Error::new(
+                    Code::Unsupported,
+                    "Row actions require the view-row-actions feature",
+                ));
+            }
+            self.actions(actions)?;
+        }
+        Ok(())
+    }
+    fn model(&self, model: &view::Model) -> Result<(), Error> {
+        self.actions(&model.actions)?;
+        for row in &model.rows {
+            self.row(row)?;
+        }
+        Ok(())
+    }
+    fn patch(&self, patch: &view::Patch) -> Result<(), Error> {
+        if let Some(header) = &patch.header {
+            self.actions(&header.actions)?;
+        }
+        for operation in &patch.operations {
+            match operation {
+                view::Operation::Insert { row, .. } | view::Operation::Update { row } => {
+                    self.row(row)?
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 enum Input {
     Model(view::Model),
     Staged(Arc<view::Model>, String),
@@ -42,14 +109,21 @@ enum Input {
     Encoded(Arc<view::Model>, view::StageKind, String),
 }
 impl Input {
-    fn prepare(self, cancelled: &AtomicBool) -> Result<view::PreparedModel, Error> {
+    fn prepare(
+        self,
+        cancelled: &AtomicBool,
+        policy: &ActionPolicy,
+    ) -> Result<view::PreparedModel, Error> {
         if cancelled.load(Ordering::SeqCst) {
             return Err(Error::new(Code::Cancelled, "View preparation cancelled"));
         }
         let model = match self {
             Self::Staged(..) => unreachable!("stage admitted before spawning worker"),
             Self::Model(model) => model,
-            Self::Patch(base, patch) => base.patched(patch, cancelled)?,
+            Self::Patch(base, patch) => {
+                policy.patch(&patch)?;
+                base.patched(patch, cancelled)?
+            }
             Self::Encoded(base, kind, text) => match kind {
                 view::StageKind::Model => serde_json::from_str(&text)
                     .map_err(|_| Error::new(Code::InvalidArgument, "Invalid staged view model"))?,
@@ -57,10 +131,12 @@ impl Input {
                     let patch = serde_json::from_str(&text).map_err(|_| {
                         Error::new(Code::InvalidArgument, "Invalid staged view patch")
                     })?;
+                    policy.patch(&patch)?;
                     base.patched(patch, cancelled)?
                 }
             },
         };
+        policy.model(&model)?;
         view::PreparedModel::build(model, cancelled)
     }
 }
@@ -511,6 +587,7 @@ impl WorkspaceHost {
             input => input,
         };
         let state = &self.app.plugins.instances[&owner].application;
+        let policy = ActionPolicy::new(state);
         let old_projection = target
             .as_ref()
             .map(|target| state.views[target].projection.clone());
@@ -566,7 +643,7 @@ impl WorkspaceHost {
         );
         let request = request.to_owned();
         let work = runtime.spawn_blocking(move || {
-            let mut model = input.prepare(&cancelled)?;
+            let mut model = input.prepare(&cancelled, &policy)?;
             let spans = model.projection.spans.clone();
             let remap = old_projection
                 .as_ref()
@@ -676,18 +753,7 @@ impl WorkspaceHost {
                 ));
             }
         }
-        if model.model.actions.iter().any(|action| {
-            self.app.plugins.instances[&owner]
-                .application
-                .command_contexts
-                .get(action)
-                != Some(&api::CommandContext::View)
-        }) {
-            return Err(Error::new(
-                Code::InvalidArgument,
-                "View action is not a registered view command",
-            ));
-        }
+        ActionPolicy::new(&self.app.plugins.instances[&owner].application).model(&model.model)?;
         let old_charge = pending.buffer.map_or(0, |_| {
             self.app.plugins.instances[&owner].application.views[&pending.view].charge
         });

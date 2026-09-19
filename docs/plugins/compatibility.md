@@ -106,7 +106,9 @@ supported `capabilities`, `features`, and `limits`. Registration supplies
 is the intersection with host support and user grants; all required grants must
 be present. Features select understood wire behavior and cannot grant authority.
 
-The initial feature inventory is empty. Future supported features are selected
+The host supports `view-row-actions`, the first optional process-plugin feature.
+It enables row-specific action lists in native view models; see the
+[application contract](applications.md#row-dependent-actions). Supported features are selected
 from the plugin's required/optional declarations; unavailable optional features
 are omitted, unavailable required features fail. Each negotiation family is
 bounded at 32 entries with no duplicates or overlap between required/optional

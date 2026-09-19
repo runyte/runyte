@@ -499,7 +499,11 @@ buffers. Their stable row identities are separate from text offsets; publication
 preserves each pane's selection endpoints and viewport by identity. Application
 views retain ordinary buffer navigation and management. Filtering is an explicit
 registered action, while Tab opens a transient action picker from runtime command
-metadata. Clean hidden views share normal special-buffer eviction; visible views
+metadata. Stable `runyte-1` feature `view-row-actions` allows each row to
+replace the view-wide action restriction. The Tab picker uses the intersection
+for selected data rows; header-only selections use the model-wide restriction.
+The picker remains an overlay over the same buffer, not a separate navigation
+level. Clean hidden views share normal special-buffer eviction; visible views
 remain retained. Plugin stop preserves readable content labelled unavailable.
 
 Application filesystem plans use the existing native filesystem confirmation.

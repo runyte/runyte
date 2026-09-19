@@ -161,6 +161,9 @@ pub(super) fn commands(
     let (sender, receiver) = tokio::sync::mpsc::channel(32);
     let mut application = api::Instance::default();
     application.primary_commands.insert("enter".into());
+    if model.rows.iter().any(|row| row.actions.is_some()) {
+        application.features.insert(api::VIEW_ROW_ACTIONS.into());
+    }
     application.views.insert(
         "v:1".into(),
         view::View {

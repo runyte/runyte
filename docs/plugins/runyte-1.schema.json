@@ -201,6 +201,16 @@
             "$ref": "#/$defs/viewCell"
           },
           "maxItems": 8
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,48}$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Requires negotiated view-row-actions. Replaces model actions for this row; empty offers none, omission inherits."
         }
       },
       "required": [
@@ -8231,6 +8241,16 @@
             "$ref": "#/$defs/host_viewCell"
           },
           "maxItems": 8
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,48}$"
+          },
+          "maxItems": 64,
+          "uniqueItems": true,
+          "description": "Requires negotiated view-row-actions. Replaces model actions for this row; empty offers none, omission inherits."
         }
       },
       "required": [

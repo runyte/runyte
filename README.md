@@ -9,35 +9,33 @@ https://github.com/user-attachments/assets/cc77a90c-25e5-4b15-a1c9-f5da7f3f12fb
 
 **Runyte** is a terminal workspace built around a modal text editor.
 
-Optional persistent mode lets you **detach and return later**. A local host keeps
-your terminal processes and language servers running.
+It supports **standalone** and **persistent** modes.
+In standalone mode when you exit Runyte you quit everything it was running.
+In persistent mode you can **detach and return later**, while a local host keeps
+your terminal processes and language servers running, and unsaved buffers open.
+The persistent mode is more powerful and preferred for focused work across
+many projects.
 
-The **fuzzy Finder** searches your project, including files, unsaved buffers,
-and terminals. Search by name or by content.
+Runyte integrates text editing, a file explorer, and terminal multiplexing under one
+roof. It gives us some unique benefits:
+- **Fuzzy Finder** searches your entire project, including files, unsaved buffers,
+  and terminals
+- **Consistent keys** to move across buffers, files, terminals, plugins
+- With the optional [context bridge](bridges/runyte-context/README.md), agents can
+  read and write to buffers and terminals, including sending messages to other agents 🤯
+  (no worries - you still need to approve)
+- Press `Ctrl+g` in **Claude Code** or **Codex** running in a Runyte terminal to edit
+  your prompt in the same persistent Runyte session instead of starting a new one
+  (it requires setting [Runyte as their editor](docs/user-guide.md#session-and-destination-navigation))
 
-Use **consistent keys** to move between files, buffers, terminals, and Git
-worktrees.
-
-Run **Claude Code**, **Codex** or any other CLI agent in a terminal pane.
-Share the clipboard with the editor. With [Runyte set as their editor](#editing-agent-prompts), `Ctrl+G`
-opens your prompt in the same persistent workspace. Save it and return to
-the agent.
-
-With the optional [context bridge](bridges/runyte-context/README.md), agents can
-read terminals and unsaved editor content in workspaces you authorize. Buffer
-edits have a separate grant. Proposed terminal text needs individual approval
-in Runyte and never includes Enter; you submit it yourself. Start with
-`:context-access` in each workspace.
-
-Press `?` to read Markdown as a **formatted page**, including tables.
-
-**Paste images** with `Ctrl+V`. Runyte saves them in the project's temporary cache
-and inserts a Markdown link into your document.
+If you work with agents a lot, you'll also appreciate our **Markdown formatting**
+with `?`, including wide tables and **image pasting** with
+`Ctrl+V`. Runyte saves images in the project's temporary cache and inserts a
+Markdown link into your document.
 
 Press `gf` on a file path in a buffer or terminal review to open it. Markdown
-link and image labels work too, in both source and the formatted `?` page. Images
-and other binary files open in an external program you choose. Web links
-(`https://`, `http://`, and `www.`) open in your default browser.
+link and image labels work too. Images and other binary files open in an external program you choose.
+Web links (`https://`, `http://`, and `www.`) open in your default browser.
 
 Project goals:
 
@@ -48,6 +46,7 @@ Project goals:
 - One consistent theme for editing and terminals.
 
 Runyte currently supports Linux and macOS.
+On Windows it's best to use WSL.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·
@@ -119,66 +118,35 @@ Client (your Runyte screen)
 ```
 
 Each host serves one workspace. Switching persistent sessions connects the
-client to another host.
+client to another host. Persistent sessions survive detaching, but not a host
+shutdown or reboot.
+
+Add `-a` when starting Runyte to run in the persistent mode:
 
 ```sh
-runyte --persistent
-runyte --session-list
-runyte --session-list --include-hidden  # include isolated live sessions
-runyte --persistent api   # attach to a session by ID, name, or directory
+runyte -a  # attach to a session or start a new one
 ```
 
-Persistent mode keeps open and unsaved buffers, selections, registers, syntax
-state, diagnostics, Git projections, language-server processes, and live
-terminal sessions for the lifetime of the host process. It is local, supports
-one interactive TUI at a time, and is currently Unix-only. It does not claim
-survival across a host crash, force-stop, logout, reboot, or machine failure.
+Press `Space Space` to open the session manager in Runyte.
+Press `Shift Left` and `Shift Right` to quickly switch between sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
 
-### Editing agent prompts
-
-`Ctrl+G` opens the external prompt editor in
-[Codex CLI](https://learn.chatgpt.com/docs/cli-customization#prompt-editor) and
-[Claude Code](https://code.claude.com/docs/en/interactive-mode#general-controls).
-When the agent runs in a Runyte persistent terminal with `EDITOR` and `VISUAL`
-set to `runyte --wait`, that request connects to the existing host and opens
-the prompt as a buffer in the same pane:
-
-```text
-Codex / Claude Code in a Runyte terminal
-    |
-    +-- Ctrl+G --> runyte --wait --> Existing host
-                                       |
-                                       +-- Prompt buffer in the same pane
-                                               |
-                                               +-- :wq --> Back to the agent
-                                                           with the edited prompt
-```
-
-Set `export EDITOR='runyte --wait' VISUAL='runyte --wait'` in the integrated
-shell before launching the agent. The attached client displays the prompt;
-`:wq` saves it, completes the request, and restores the agent's terminal.
-See the [navigation guide](docs/user-guide.md#session-and-destination-navigation)
-for editor environment handling and the full return-to-terminal behavior.
-
 ## Plugins
 
-Official Runyte plugins are in development. The first is
-[**ru-time**](https://github.com/runyte/ru-time), a task list and time tracker
-written in Python using only the standard library. It keeps task status and
-recorded time in a native editor buffer, with persistent history and recovery
-for interrupted timers. Each task can have a note opened as an ordinary editable
-buffer with `::time-note` or `Space = n`.
+Official Runyte plugins are in development:
+
+- [**ru-time**](https://github.com/runyte/ru-time) — a task list and time tracker with task notes.
+- [**ru-dbviewer**](https://github.com/runyte/ru-dbviewer) — browse SQLite and PostgreSQL databases and run SQL from editor buffers.
 
 Plugins can be written in **any programming language**. Each runs as an
 explicitly enabled external process and exchanges bounded, newline-delimited
 JSON with Runyte over stdin/stdout. The asynchronous host handles registered
 commands, native views and input, background work, and capability grants.
-Type `::` to browse plugin commands;
-ru-time offers `::time`, `::time-add`, and `::time-delete`. Plugins can also
-provide configurable keybindings through the editor's regular help and hints.
+Type `::` to browse plugin commands.
+For example, ru-time offers `::time`, `::time-add`, and `::time-delete`.
+Plugins can also provide configurable keybindings through the editor's regular help and hints.
 
 The repository includes examples to build on:
 
@@ -221,31 +189,13 @@ runyte
 runyte .
 runyte src/main.rs
 runyte +120:8 src/app.rs
-runyte --persistent
+runyte -a
 runyte -a /path/to/notes
 ```
 
 Run `runyte --help` for the complete command-line interface. To let
 `:quit-here` change the launching shell's directory, use the
 [Bash/Zsh wrapper](docs/user-guide.md#change-the-shell-directory-on-exit).
-
-## Persistent sessions
-
-Persistent mode keeps buffers, selections, Git state, language servers, and
-terminal sessions alive while the TUI is detached. Each workspace has a local
-host and accepts one interactive TUI at a time. Persistent mode is Unix-only
-and does not survive host termination or reboot.
-
-```sh
-runyte --persistent
-runyte -a WORKSPACE
-runyte --session-list
-```
-
-Inside the editor, the session strip and keyboard shortcuts switch running
-sessions. Commands in an integrated terminal can use `runyte -a` to switch the
-outer TUI or `runyte --wait` for editor requests. See the
-[persistent-session guide](docs/user-guide.md#workspaces-and-modes).
 
 ## Screenshots
 

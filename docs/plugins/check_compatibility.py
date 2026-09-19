@@ -60,6 +60,20 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(sent[0]['runyte'], '>=0.3.0, <0.4.0')
         self.assertEqual(sent[0]['optional_features'], ['extension', 'unavailable'])
 
+    def test_row_actions_optional_feature_keeps_legacy_clients_unchanged(self):
+        hello = {'type': 'hello', 'version': VERSION, 'host_version': '0.3.0',
+                 'capabilities': ['views'], 'features': ['view-row-actions'], 'limits': TEST_LIMITS}
+        ack = {'type': 'registered', 'runyte': '>=0.3.0, <0.4.0',
+               'capabilities': ['views'], 'features': [], 'limits': TEST_LIMITS}
+        app, _ = self.handshake(hello=hello, registered=ack)
+        self.assertEqual(app.features, set())
+        app, _ = self.handshake(hello=hello, registered={**ack, 'features': ['view-row-actions']},
+                                optional_features=['view-row-actions'])
+        self.assertEqual(app.features, {'view-row-actions'})
+        app, _ = self.handshake(hello={**hello, 'features': []}, registered=ack,
+                                optional_features=['view-row-actions'])
+        self.assertEqual(app.features, set())
+
     def test_invalid_or_unsupported_host_never_receives_registration(self):
         for hello in [[], {'type': 'hello', 'version': 'runyte-experimental-2'},
                       {'type': 'hello', 'version': VERSION, 'host_version': '0.2.9'},

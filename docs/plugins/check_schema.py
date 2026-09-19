@@ -36,6 +36,16 @@ class PluginSchemaTests(unittest.TestCase):
                 errors = list(validator.iter_errors(fixture['message']))
                 self.assertFalse(errors, errors[0].message if errors else '')
 
+    def test_row_action_override_shape_in_both_directions(self):
+        for definition in ('row', 'host_row'):
+            validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/' + definition})
+            row = {'id': 'row', 'text': 'Row', 'role': 'ordinary'}
+            self.assertTrue(validator.is_valid(row))
+            for actions in ([], ['refresh', 'disconnect']):
+                self.assertTrue(validator.is_valid({**row, 'actions': actions}))
+            for actions in (None, ['duplicate', 'duplicate'], ['bad name'], ['x'] * 65):
+                self.assertFalse(validator.is_valid({**row, 'actions': actions}))
+
     def test_event_name_selects_payload_with_additive_host_fields(self):
         validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/hostMessage'}]})
         events = [f['message'] for f in FIXTURES if f['direction'] == 'host' and f['message']['type'] == 'event']

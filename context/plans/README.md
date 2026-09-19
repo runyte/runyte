@@ -13,6 +13,9 @@ Empty lifecycle directories are omitted and created only when needed.
 
 Active work:
 
+- [Database viewer interactive browsing](active/PLAN_DBVIEWER_INTERACTIVE_BROWSING.md):
+  connection forms, contextual navigation, access modes, query guidance,
+  interactive filters, JSON inspection and transaction management for ru-dbviewer.
 - [Stable plugin compatibility](active/PLAN_STABLE_PLUGINS.md): release-range
   declarations, a stable application contract, a clean experimental cutover and
   reproducible compatibility gates using ru-time as an external plugin.

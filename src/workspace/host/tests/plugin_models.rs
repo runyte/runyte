@@ -398,3 +398,193 @@ async fn stopped_model_worker_keeps_reservation_until_completion_delivery() {
     assert_eq!(host.app.plugins.orphaned_payload, 0);
     assert!(host.plugin_local_orphans.is_empty());
 }
+
+#[tokio::test]
+async fn row_actions_require_negotiation_and_registered_view_commands_atomically() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let mut value = small_model();
+    value["rows"][0]["actions"] = json!([]);
+    model_request(
+        &mut host,
+        0,
+        1,
+        api_request("view.create", json!({"model":value})),
+    )
+    .await;
+    assert_eq!(response_json(&mut output)["error"]["code"], "unsupported");
+    assert!(host.app.plugins.instances[&0].application.views.is_empty());
+    let state = &mut host.app.plugins.instances.get_mut(&0).unwrap().application;
+    state.features.insert(api::VIEW_ROW_ACTIONS.into());
+    state
+        .command_contexts
+        .insert("refresh".into(), api::CommandContext::View);
+    value["rows"][0]["actions"] = json!(["open"]); // Registered, but workspace-scoped.
+    model_request(
+        &mut host,
+        0,
+        2,
+        api_request("view.create", json!({"model":value})),
+    )
+    .await;
+    assert_eq!(
+        response_json(&mut output)["error"]["code"],
+        "invalid_argument"
+    );
+    value["rows"][0]["actions"] = json!(["refresh"]);
+    model_request(
+        &mut host,
+        0,
+        3,
+        api_request("view.create", json!({"model":value})),
+    )
+    .await;
+    let created = response_json(&mut output);
+    assert!(created.get("error").is_none(), "{created}");
+    let initial = created["result"].clone();
+    let id = initial["view"].as_str().unwrap();
+    assert_eq!(
+        host.app.plugins.instances[&0].application.views[id]
+            .model
+            .rows[0]
+            .actions,
+        Some(vec!["refresh".into()])
+    );
+    let mut row = value["rows"][0].clone();
+    row["actions"] = json!(["unknown"]);
+    model_request(&mut host, 0, 4, api_request("view.patch", json!({"view":id,"expected_revision":initial["revision"],"operations":[{"kind":"update","row":row}]}))).await;
+    assert_eq!(
+        response_json(&mut output)["error"]["code"],
+        "invalid_argument"
+    );
+    assert_eq!(
+        host.app.plugins.instances[&0].application.views[id].revision,
+        1
+    );
+    row["actions"] = json!([]);
+    model_request(&mut host, 0, 5, api_request("view.patch", json!({"view":id,"expected_revision":initial["revision"],"operations":[{"kind":"update","row":row}]}))).await;
+    assert_eq!(
+        response_json(&mut output)["result"]["model"]["rows"][0]["actions"],
+        json!([])
+    );
+}
+
+#[tokio::test]
+async fn staged_row_actions_cannot_bypass_negotiation() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let initial = create(&mut host, &mut output, small_model()).await;
+    let mut value = small_model();
+    value["rows"][0]["actions"] = json!([]);
+    let data = serde_json::to_string(&value).unwrap();
+    request(
+        &mut host,
+        0,
+        2,
+        api_request(
+            "view.stage.open",
+            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"model","bytes":data.len()}),
+        ),
+    );
+    let stage = response_json(&mut output)["result"]["stage"].clone();
+    request(
+        &mut host,
+        0,
+        3,
+        api_request(
+            "view.stage.write",
+            json!({"stage":stage,"offset":0,"text":data}),
+        ),
+    );
+    assert!(response_json(&mut output).get("error").is_none());
+    model_request(
+        &mut host,
+        0,
+        4,
+        api_request("view.stage.commit", json!({"stage":stage})),
+    )
+    .await;
+    assert_eq!(response_json(&mut output)["error"]["code"], "unsupported");
+    let live = &host.app.plugins.instances[&0].application.views[initial["view"].as_str().unwrap()];
+    assert_eq!(live.revision, 1);
+    assert!(live.model.rows.iter().all(|r| r.actions.is_none()));
+}
+
+#[tokio::test]
+async fn transient_patch_row_actions_are_checked_before_operations_erase_them() {
+    for negotiated in [false, true] {
+        for staged in [false, true] {
+            for inserted in [false, true] {
+                let (_root, mut host) = host();
+                let mut output = setup(&mut host, 0, &["views"]);
+                next(&mut output);
+                let initial = create(&mut host, &mut output, small_model()).await;
+                if negotiated {
+                    host.app
+                        .plugins
+                        .instances
+                        .get_mut(&0)
+                        .unwrap()
+                        .application
+                        .features
+                        .insert(api::VIEW_ROW_ACTIONS.into());
+                }
+                let id = if inserted { "temporary" } else { "first" };
+                let row = json!({"id":id,"text":"Temporary","role":"ordinary","actions":if negotiated {json!(["open"])} else {json!([])}});
+                let operations = if inserted {
+                    json!([{"kind":"insert","before":null,"row":row},{"kind":"remove","ids":[id]}])
+                } else {
+                    json!([{"kind":"update","row":row},{"kind":"update","row":{"id":id,"text":"First","role":"ordinary"}}])
+                };
+                if staged {
+                    let text = json!({"operations":operations}).to_string();
+                    request(
+                        &mut host,
+                        0,
+                        2,
+                        api_request(
+                            "view.stage.open",
+                            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"patch","bytes":text.len()}),
+                        ),
+                    );
+                    let stage = response_json(&mut output)["result"]["stage"].clone();
+                    request(
+                        &mut host,
+                        0,
+                        3,
+                        api_request(
+                            "view.stage.write",
+                            json!({"stage":stage,"offset":0,"text":text}),
+                        ),
+                    );
+                    assert!(response_json(&mut output).get("error").is_none());
+                    model_request(
+                        &mut host,
+                        0,
+                        4,
+                        api_request("view.stage.commit", json!({"stage":stage})),
+                    )
+                    .await;
+                } else {
+                    model_request(&mut host,0,2,api_request("view.patch",json!({"view":initial["view"],"expected_revision":initial["revision"],"operations":operations}))).await;
+                }
+                assert_eq!(
+                    response_json(&mut output)["error"]["code"],
+                    if negotiated {
+                        "invalid_argument"
+                    } else {
+                        "unsupported"
+                    }
+                );
+                assert_eq!(
+                    host.app.plugins.instances[&0].application.views
+                        [initial["view"].as_str().unwrap()]
+                    .revision,
+                    1
+                );
+            }
+        }
+    }
+}

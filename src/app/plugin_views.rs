@@ -97,6 +97,27 @@ impl App {
         Some(self.plugin_view_selected_rows(view))
     }
 
+    pub(super) fn plugin_view_actions<'a>(
+        &self,
+        owner: usize,
+        view: &'a view::View,
+    ) -> Option<std::collections::BTreeSet<&'a str>> {
+        // Base-profile command discovery must not walk the current selection.
+        if !self.plugins.instances[&owner]
+            .application
+            .features
+            .contains(api::VIEW_ROW_ACTIONS)
+        {
+            return view.model.selected_actions(&[]);
+        }
+        let selected = self
+            .plugin_view_selected_rows(view)
+            .iter()
+            .filter_map(|id| view.projection.row_by_id.get(id).copied())
+            .collect::<Vec<_>>();
+        view.model.selected_actions(&selected)
+    }
+
     pub(super) fn open_plugin_actions(&mut self) -> bool {
         let crate::keymap::BindingScope::Plugin(owner) = self.key_binding_scope() else {
             return false;
@@ -114,7 +135,7 @@ impl App {
             })
             .map(|view| {
                 (
-                    &view.model.actions,
+                    self.plugin_view_actions(owner, view),
                     view.query.as_ref().is_some_and(|query| query.pending),
                 )
             });
@@ -125,9 +146,11 @@ impl App {
             .filter(|c| {
                 c.plugin == owner
                     && c.context == api::CommandContext::View
-                    && allowed.is_some_and(|(actions, pending)| {
-                        (actions.is_empty() || actions.contains(&c.local))
-                            && (!pending
+                    && allowed.as_ref().is_some_and(|(actions, pending)| {
+                        actions
+                            .as_ref()
+                            .is_none_or(|actions| actions.contains(c.local.as_str()))
+                            && (!*pending
                                 || !self.plugins.instances[&owner]
                                     .application
                                     .primary_commands

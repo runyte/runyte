@@ -518,7 +518,11 @@ the existing filterable list keys; Enter opens explicit lifecycle choices.
 These colon commands add no default physical binding.
 
 Epoch 2 view commands use a validated dynamic application scope. One declared
-primary action defaults to Enter; Tab lists registered view actions. Normal
+primary action defaults to Enter; Tab lists registered view actions. Stable
+`runyte-1` feature `view-row-actions` can restrict this list by selected data
+rows, intersecting availability across multiple rows. The same restriction gates
+Enter, configured bindings and colon commands; no new physical binding is added.
+Normal
 movement, selection, copying, search and host prefixes retain their registry
 bindings. Refreshes cannot accept an action against an unseen model revision.
 Typed plugin command arguments are parsed as quoted positional values without

@@ -580,3 +580,90 @@ fn native_plugin_spans_preserve_half_open_ranges_and_empty_eof() {
         vec![(0, 2), (6, 6)]
     );
 }
+
+#[test]
+fn row_actions_gate_menu_palette_primary_and_multiselection() {
+    let mut value = model(&["a", "b", "c"]);
+    value.status = Some(view::Block {
+        text: "Status".into(),
+        role: view::Role::Muted,
+    });
+    value.actions = vec!["refresh".into()];
+    value.rows[0].actions = Some(vec!["enter".into(), "refresh".into()]);
+    value.rows[1].actions = Some(vec!["hidden".into(), "refresh".into()]);
+    value.rows[2].actions = Some(vec![]);
+    let (mut app, _, mut receiver) = application(value);
+    let offsets: Vec<_> = app.plugins.instances[&0].application.views["v:1"]
+        .projection
+        .rows
+        .iter()
+        .map(|r| r.from)
+        .collect();
+    let menu = |app: &mut App| {
+        app.list = None;
+        app.list_actions.clear();
+        app.open_plugin_actions();
+        app.list_actions
+            .iter()
+            .filter_map(|a| match a {
+                ListAction::PluginCommand { command, .. } => Some(*command),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    app.active_mut().replace_selection(Selection::point(0));
+    assert_eq!(menu(&mut app), vec![2]);
+    app.active_mut()
+        .replace_selection(Selection::point(offsets[0]));
+    assert_eq!(menu(&mut app), vec![1, 2]);
+    assert_eq!(palette_reason(&app, 1), None);
+    assert!(palette_reason(&app, 3).unwrap().contains("does not offer"));
+    app.active_mut().replace_selection(Selection::new(
+        vec![Range::point(offsets[0]), Range::point(offsets[1])],
+        0,
+    ));
+    assert_eq!(menu(&mut app), vec![2]);
+    assert!(matches!(
+        app.invoke_plugin_arguments(1, "").unwrap(),
+        CommandOutcome::UserError(_)
+    ));
+    assert!(receiver.try_recv().is_err());
+    app.active_mut()
+        .replace_selection(Selection::point(offsets[2]));
+    assert!(menu(&mut app).is_empty());
+    app.active_mut()
+        .replace_selection(Selection::point(offsets[1]));
+    assert_eq!(menu(&mut app), vec![2, 3]);
+    assert!(matches!(
+        app.invoke_plugin_arguments(3, "").unwrap(),
+        CommandOutcome::AsynchronousRequest(_)
+    ));
+    match receiver.try_recv().unwrap() {
+        plugin::HostMessage::Application(api::HostMessage::Request { params, .. }) => {
+            assert_eq!(params.rows, ["b"])
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn row_actions_changed_after_menu_open_are_rechecked_before_dispatch() {
+    let mut value = model(&["a"]);
+    value.rows[0].actions = Some(vec!["refresh".into()]);
+    let (mut app, _, mut receiver) = application(value);
+    assert!(app.open_plugin_actions());
+    let live = app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .views
+        .get_mut("v:1")
+        .unwrap();
+    std::sync::Arc::make_mut(&mut live.model).rows[0].actions = Some(vec![]);
+    app.handle_list_key(KeyStroke::parse("Enter").unwrap())
+        .unwrap();
+    assert!(receiver.try_recv().is_err());
+    assert!(app.status.contains("does not offer"));
+}

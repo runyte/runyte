@@ -71,6 +71,11 @@ bounded!(rows, Row, MAX_ROWS);
 bounded!(cells, Cell, MAX_COLUMNS);
 bounded!(columns, Column, MAX_COLUMNS);
 bounded!(actions, String, super::super::application::MAX_COMMANDS);
+pub(crate) fn row_actions<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    actions(deserializer).map(Some)
+}
 bounded!(ids, String, MAX_ROWS);
 
 pub(crate) fn operations<'de, D: Deserializer<'de>>(

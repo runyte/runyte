@@ -374,7 +374,9 @@
         }
       },
       "host_version": "0.3.0",
-      "features": []
+      "features": [
+        "view-row-actions"
+      ]
     }
   },
   {
@@ -741,7 +743,7 @@
         "surface": "u:g:1",
         "accepted": true,
         "values": {
-          "name": "é"
+          "name": "\u00e9"
         }
       }
     }
@@ -754,7 +756,7 @@
       "method": "buffer.create",
       "params": {
         "path": "notes.txt",
-        "text": "é猫\n",
+        "text": "\u00e9\u732b\n",
         "invocation": null
       }
     }
@@ -875,7 +877,7 @@
         "value": {
           "version": "v1",
           "offset": 0,
-          "text": "é猫",
+          "text": "\u00e9\u732b",
           "eof": true
         }
       }
@@ -1050,7 +1052,7 @@
         "job": "j:g:1",
         "upload": "upload-1",
         "offset": 0,
-        "text": "é猫"
+        "text": "\u00e9\u732b"
       }
     }
   },
@@ -2379,6 +2381,52 @@
       "runyte": ">=0.3.0, <0.4.0",
       "required_features": [],
       "optional_features": []
+    }
+  },
+  {
+    "direction": "plugin",
+    "features": [
+      "view-row-actions"
+    ],
+    "message": {
+      "type": "request",
+      "id": "p:1700",
+      "method": "view.create",
+      "params": {
+        "model": {
+          "title": "Connections",
+          "purpose": "list",
+          "actions": [
+            "refresh"
+          ],
+          "rows": [
+            {
+              "id": "connected",
+              "text": "Connected",
+              "role": "ordinary",
+              "actions": [
+                "refresh",
+                "disconnect"
+              ]
+            },
+            {
+              "id": "disconnected",
+              "text": "Disconnected",
+              "role": "muted",
+              "actions": [
+                "refresh",
+                "connect"
+              ]
+            },
+            {
+              "id": "unavailable",
+              "text": "Unavailable",
+              "role": "warning",
+              "actions": []
+            }
+          ]
+        }
+      }
     }
   }
 ]

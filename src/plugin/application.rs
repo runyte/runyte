@@ -34,7 +34,8 @@ fn unique_names<'de, D: serde::Deserializer<'de>>(
 
 /// Optional wire extensions supported by this host. Capabilities grant authority;
 /// features only select understood message shapes and behavior.
-pub const FEATURES: &[&str] = &[];
+pub const VIEW_ROW_ACTIONS: &str = "view-row-actions";
+pub const FEATURES: &[&str] = &[VIEW_ROW_ACTIONS];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RegistrationFailure {
@@ -1190,7 +1191,7 @@ mod tests {
         let messages = [
             HostMessage::Hello {
                 host_version: "0.3.0",
-                features: vec![],
+                features: FEATURES.to_vec(),
                 version: VERSION,
                 capabilities: CAPABILITIES.to_vec(),
                 limits: Limits::default(),
