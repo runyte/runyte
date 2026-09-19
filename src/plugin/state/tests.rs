@@ -125,17 +125,13 @@ fn private_state_refuses_symlink_hardlink_fifo_and_nonprivate_targets() {
 
 #[test]
 fn private_state_refuses_linked_directories_and_serializes_independent_callers() {
-    use std::os::fd::AsRawFd;
     let root = TestRuntimeRoot::new("state-lock").unwrap();
     let store = root.join("state");
     get(&store);
     let directory =
         crate::private_storage::Directory::open(&store.join("plugins/tasks"), true).unwrap();
     let lock = directory.append(OsStr::new(".lock")).unwrap();
-    assert_eq!(
-        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-        0
-    );
+    let lock = storage::StateLock::acquire(lock).unwrap();
     assert_eq!(
         run(&store, "tasks", Task::Get, &Control::new())
             .unwrap_err()
@@ -150,6 +146,30 @@ fn private_state_refuses_linked_directories_and_serializes_independent_callers()
     symlink(&outside, store.join("plugins/tasks")).unwrap();
     assert!(run(&store, "tasks", Task::Get, &Control::new()).is_err());
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
+}
+
+#[test]
+fn private_state_releases_lock_while_a_duplicate_descriptor_is_still_open() {
+    let root = TestRuntimeRoot::new("state-inherited-lock").unwrap();
+    let store = root.join("state");
+    get(&store);
+    let directory =
+        crate::private_storage::Directory::open(&store.join("plugins/tasks"), true).unwrap();
+    let file = directory.append(OsStr::new(".lock")).unwrap();
+    // dup and fork retain the same open file description. Keeping this copy
+    // alive deterministically models an unrelated child between fork and exec.
+    let inherited = file.try_clone().unwrap();
+    let lock = storage::StateLock::acquire(file).unwrap();
+    assert_eq!(
+        run(&store, "tasks", Task::Get, &Control::new())
+            .unwrap_err()
+            .code,
+        Code::Busy
+    );
+    drop(lock);
+    let saved = set(&store, "s:missing", "1").expect("completed operation must release its lock");
+    assert_eq!(get(&store).revision, saved.revision);
+    drop(inherited);
 }
 
 #[test]

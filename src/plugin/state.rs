@@ -214,9 +214,36 @@ mod storage {
     use crate::private_storage::Directory;
     use std::{
         ffi::OsStr,
+        fs::File,
         io::{Read, Write},
         os::{fd::AsRawFd, unix::fs::MetadataExt},
     };
+    pub(super) struct StateLock(File);
+
+    impl StateLock {
+        pub(super) fn acquire(file: File) -> Result<Self, Error> {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
+                let error = std::io::Error::last_os_error();
+                return Err(if error.kind() == std::io::ErrorKind::WouldBlock {
+                    Error::new(Code::Busy, "Plugin state storage is locked")
+                } else {
+                    unavailable()
+                });
+            }
+            Ok(Self(file))
+        }
+    }
+
+    impl Drop for StateLock {
+        fn drop(&mut self) {
+            // A concurrent fork can retain this open file description until
+            // exec, even with O_CLOEXEC. Closing our descriptor alone would
+            // leave the completed operation's lock held by that child.
+            // SAFETY: this guard still owns the locked file descriptor.
+            let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+
     const FILE: &str = "state.json";
     const PENDING: &str = "state.pending";
     fn read(directory: &Directory) -> Result<Info, Error> {
@@ -262,14 +289,7 @@ mod storage {
         let lock = directory
             .append(OsStr::new(".lock"))
             .map_err(|_| unavailable())?;
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
-            let error = std::io::Error::last_os_error();
-            return Err(if error.kind() == std::io::ErrorKind::WouldBlock {
-                Error::new(Code::Busy, "Plugin state storage is locked")
-            } else {
-                unavailable()
-            });
-        }
+        let _lock = StateLock::acquire(lock)?;
         control.check()?;
         // Only this fixed, validated, owned orphan can be reclaimed. No scan.
         match directory.open_read(OsStr::new(PENDING)) {
