@@ -3003,6 +3003,7 @@ pub struct App {
     /// needs that distinction so it can refuse rather than silently fall back.
     previously_focused_pane: Option<usize>,
     lsp_trust: Option<crate::lsp_trust::TrustStore>,
+    lsp_trust_error: Option<String>,
     pub(crate) context_ui: context_access::ContextUi,
     lsp_workspace_allowed: bool,
     lsp_servers: HashMap<String, ServerState>,
@@ -3494,6 +3495,7 @@ impl App {
             pane_activated_at: HashMap::from([(0, 1)]),
             previously_focused_pane: None,
             lsp_trust: None,
+            lsp_trust_error: None,
             context_ui: Default::default(),
             lsp_workspace_allowed: false,
             lsp_servers: HashMap::new(),

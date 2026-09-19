@@ -469,9 +469,12 @@ session reattachment. The service-health report includes Git discovery state.
 opens the same choice overlay shown on first opening an undecided workspace:
 Keep LSP disabled, Allow LSP once, and Always allow LSP. Enter applies the
 selected row; Escape and the effective leader dismiss without granting new
-permission. The initial selection is Keep LSP disabled. Existing LSP bindings
-retain their identities and report missing workspace permission through the
-shared availability registry. No new default keybinding is assigned.
+permission. The initial selection is Keep LSP disabled.
+When permission storage is unavailable, the same keys operate the temporary
+choices Keep LSP disabled for now and Allow LSP once; a storage failure stays
+visible inside the overlay. Existing LSP bindings retain their identities and
+report missing workspace permission through the shared availability registry.
+No new default keybinding is assigned.
 
 ## Session and destination navigation
 

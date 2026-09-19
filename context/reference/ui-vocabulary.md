@@ -425,6 +425,11 @@ the shared choice rows, selection marker, preview, and dismissal behavior.
 The persistent host owns both the decision and overlay; attached clients
 render its existing semantic snapshot. This permission governs language
 servers and does not claim to sandbox all workspace features.
+Unavailable permission storage replaces the remembered choices with **Keep
+LSP disabled for now** and **Allow LSP once**. Storage errors appear in the
+overlay message with their full details in the preview. A failed save keeps
+the overlay open with these temporary choices; the initial selection returns
+to the temporary refusal. That refusal does not change a remembered decision.
 
 ## Session strip and Navigator
 

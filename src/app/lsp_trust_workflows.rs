@@ -10,10 +10,16 @@ impl App {
     /// Called by production startup before attaching any language services.
     /// Storage is injected so tests never consult or write the user's records.
     pub fn configure_lsp_trust(&mut self, directory: Option<PathBuf>) {
+        self.configure_lsp_trust_store(TrustStore::new(directory, &self.project_root));
+    }
+
+    pub(super) fn configure_lsp_trust_store(&mut self, store: std::io::Result<TrustStore>) {
         self.lsp_workspace_allowed = false;
-        self.lsp_trust = match TrustStore::new(directory, &self.project_root) {
+        self.lsp_trust_error = None;
+        self.lsp_trust = match store {
             Ok(store) => Some(store),
             Err(error) => {
+                self.lsp_trust_error = Some(format!("LSP permission storage unavailable: {error}"));
                 self.action_warning("LSP permission unavailable", error.to_string());
                 None
             }
@@ -22,17 +28,30 @@ impl App {
         let decision = match decision {
             Ok(decision) => decision.flatten(),
             Err(error) => {
+                self.lsp_trust_error = Some(format!("Cannot read LSP permission: {error}"));
                 self.action_warning("LSP permission could not be read", error.to_string());
                 None
             }
         };
         self.lsp_workspace_allowed = decision == Some(true) && self.config.lsp.enable;
         if decision.is_none() && self.config.lsp.enable {
-            self.open_lsp_trust();
+            self.show_lsp_trust();
         }
     }
 
     pub(super) fn open_lsp_trust(&mut self) {
+        // Explicit reopening retries storage, allowing recovery after the user
+        // fixes a transient read/write failure without restarting the editor.
+        if let Some(store) = &self.lsp_trust {
+            self.lsp_trust_error = store
+                .load()
+                .err()
+                .map(|error| format!("Cannot read LSP permission: {error}"));
+        }
+        self.show_lsp_trust();
+    }
+
+    fn show_lsp_trust(&mut self) {
         if !self.config.lsp.enable {
             self.mark_unavailable(
                 "LSP is disabled in configuration; enable lsp.enable and restart first",
@@ -42,48 +61,77 @@ impl App {
         if self.settings_view.is_some() {
             self.cancel_settings_picker();
         }
-        let explanation = "Language servers may execute code from this project with your permissions.\n\n\
+        let remember = self.lsp_trust_error.is_none()
+            && self
+                .lsp_trust
+                .as_ref()
+                .is_some_and(TrustStore::can_remember);
+        if !remember && self.lsp_trust_error.is_none() {
+            self.lsp_trust_error = Some("LSP permission storage unavailable".to_owned());
+        }
+        let mut explanation =
+            "Language servers may execute code from this project with your permissions.\n\n\
             Permission covers every configured language server in this exact workspace.\n\n\
             Editing and syntax highlighting remain available with LSP disabled.\n\n\
-            You can change this decision later with :lsp-trust.";
-        self.list = Some(
-            ListPicker::new(
-                "Run language servers for this workspace?",
-                vec![
-                    PickerItem::new("Keep LSP disabled", "Remember this decision", 0)
-                        .with_preview(explanation),
-                    PickerItem::new(
-                        "Allow LSP once",
-                        "Until this editor or persistent host stops",
-                        1,
-                    )
-                    .with_preview(explanation),
-                    PickerItem::new("Always allow LSP", "Remember for this exact workspace", 2)
-                        .with_preview(explanation),
-                ],
+            You can change this decision later with :lsp-trust."
+                .to_owned();
+        if let Some(error) = &self.lsp_trust_error {
+            explanation = format!(
+                "{error}\n\nOnly temporary choices are available. Keeping LSP disabled for now does not change a remembered decision. Allow LSP once must clear any remembered decision first.\n\n{explanation}"
+            );
+        }
+        let mut items = vec![
+            PickerItem::new(
+                if remember {
+                    "Keep LSP disabled"
+                } else {
+                    "Keep LSP disabled for now"
+                },
+                if remember {
+                    "Remember this decision"
+                } else {
+                    "Until this editor or persistent host stops"
+                },
+                0,
             )
-            .with_column_header(
-                format!("Workspace: {}", self.project_root.display()),
-                "",
-                "",
+            .with_preview(&explanation),
+            PickerItem::new(
+                "Allow LSP once",
+                "Until this editor or persistent host stops",
+                1,
             )
-            .as_choice("apply permission")
-            .with_preview("Before you allow LSP"),
-        );
+            .with_preview(&explanation),
+        ];
         self.list_actions = vec![
             ListAction::LspTrust {
                 allowed: false,
-                remember: true,
+                remember,
             },
             ListAction::LspTrust {
                 allowed: true,
                 remember: false,
             },
-            ListAction::LspTrust {
+        ];
+        if remember {
+            items.push(
+                PickerItem::new("Always allow LSP", "Remember for this exact workspace", 2)
+                    .with_preview(&explanation),
+            );
+            self.list_actions.push(ListAction::LspTrust {
                 allowed: true,
                 remember: true,
-            },
-        ];
+            });
+        }
+        self.list = Some(
+            ListPicker::new("Run language servers for this workspace?", items)
+                .with_column_header(
+                    format!("Workspace: {}", self.project_root.display()),
+                    "",
+                    "",
+                )
+                .as_choice("apply permission")
+                .with_preview("Before you allow LSP"),
+        );
     }
 
     pub(super) fn choose_lsp_trust(&mut self, allowed: bool, remember: bool) {
@@ -101,15 +149,16 @@ impl App {
                 if !allowed {
                     self.set_lsp_workspace_allowed(false);
                 }
-                self.action_failed(format!("cannot remember LSP permission: {error}; choose Allow LSP once for a temporary grant"));
+                self.lsp_trust_failed(format!("Cannot remember LSP permission: {error}"));
                 return;
             }
         }
         if !remember
+            && allowed
             && let Some(store) = &self.lsp_trust
             && let Err(error) = store.forget()
         {
-            self.action_failed(format!("cannot clear remembered LSP permission: {error}"));
+            self.lsp_trust_failed(format!("Cannot clear remembered LSP permission: {error}"));
             return;
         }
         self.set_lsp_workspace_allowed(allowed);
@@ -120,6 +169,12 @@ impl App {
         } else {
             "LSP disabled for this workspace"
         });
+    }
+
+    fn lsp_trust_failed(&mut self, message: String) {
+        self.action_failed(message.clone());
+        self.lsp_trust_error = Some(message);
+        self.show_lsp_trust();
     }
 
     fn set_lsp_workspace_allowed(&mut self, allowed: bool) {

@@ -120,8 +120,9 @@ fn attached(host: &mut WorkspaceHost) -> Vec<String> {
 #[test]
 fn lsp_permission_explanation_aligns_and_wraps_in_both_frontends() {
     let project = TempProject::new("lsp-explanation");
+    let storage = TempProject::new("lsp-trust");
     let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
-    app.configure_lsp_trust(Some(project.path().join("trust")));
+    app.configure_lsp_trust(Some(storage.path().join("trust")));
     let expected = app
         .list
         .as_ref()
@@ -192,6 +193,47 @@ fn lsp_permission_explanation_aligns_and_wraps_in_both_frontends() {
                 "the complete explanation must be readable at width {width}, persistent={persistent}:\n{}",
                 screen.join("\n")
             );
+        }
+    }
+}
+
+#[test]
+fn lsp_permission_storage_failure_is_visible_with_and_without_preview() {
+    let project = TempProject::new("lsp-error-project");
+    let storage = TempProject::new("lsp-error-storage");
+    let directory = storage.path().join("trust");
+    let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
+    app.configure_lsp_trust(Some(directory.clone()));
+    fs::write(&directory, "blocked").unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::End)).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    let mut host = WorkspaceHost::new(app);
+    for width in [60, 120] {
+        for persistent in [false, true] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    if persistent {
+                        let published = host.prepare_frame(ui::frame_geometry(frame.area()));
+                        ui::render_host_frame_exact_colors_for_test(frame, &published);
+                    } else {
+                        let app = host.app_mut();
+                        let prepared = app.prepare_view(ui::frame_geometry(frame.area()));
+                        let snapshot = app.snapshot(&prepared);
+                        ui::render_exact_colors_for_test(
+                            frame,
+                            app,
+                            &snapshot,
+                            &KeyHintState::default(),
+                        );
+                    }
+                })
+                .unwrap();
+            let screen = lines(terminal.backend().buffer());
+            row_of(&screen, "Cannot remember LSP permission");
+            row_of(&screen, "LSP may execute project code");
+            row_of(&screen, "Keep LSP disabled for now");
+            assert!(!screen.iter().any(|row| row.contains("Always allow LSP")));
         }
     }
 }

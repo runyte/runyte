@@ -241,12 +241,19 @@ bypass it by detaching and reattaching. Other already-running editors retain
 their own current decision until changed or restarted.
 
 Remembered approvals and refusals live in private `lsp-trust/` storage beneath
-Runyte's per-user platform cache, outside the project and `.runyte/`. Clearing
-that cache makes Runyte ask again. Records use the canonical workspace root:
-symlink aliases share a decision, but nested workspaces, other worktrees, and
-clones in other directories do not inherit it. If a decision cannot be read,
-Runyte keeps LSP disabled and asks again. If it cannot be saved, a permanent
-grant fails. **Allow LSP once** needs no new storage, but it removes an older
+Runyte's per-user platform cache, separate from `.runyte/`. Clearing
+that cache makes Runyte ask again. A workspace rooted at the effective user's
+home directory may use Runyte's standard cache beneath that home; arbitrary
+project-local cache overrides remain rejected. Records use the canonical
+workspace root: symlink aliases share a decision, but nested workspaces, other
+worktrees, and clones in other directories do not inherit it. If a decision cannot be read,
+Runyte keeps LSP disabled and asks again. When storage is unavailable, the
+overlay explains the failure and offers **Keep LSP disabled for now** and
+**Allow LSP once**, without the permanent choice. A failed save leaves the
+overlay open with the error and these temporary choices. Keeping LSP disabled
+for now stops this editor's servers without changing any remembered decision.
+Reopening `:lsp-trust` retries an unreadable or unwritable store after it has
+been repaired. **Allow LSP once** needs no new storage, but it removes an older
 remembered decision first; failure to remove that decision leaves the choice
 pending. The next launch asks again after a one-time grant. Globally disabling
 `lsp.enable` suppresses the question and prevents approval from starting LSP.

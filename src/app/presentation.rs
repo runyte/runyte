@@ -1593,7 +1593,13 @@ impl App {
             {
                 // The execution warning must remain visible when a narrow
                 // pane cannot show the optional preview column.
-                snapshot.message = Some("LSP may execute project code".to_owned());
+                snapshot.message = Some(match &self.lsp_trust_error {
+                    Some(error) => {
+                        let summary = error.split(':').next().unwrap_or(error);
+                        format!("{summary}\nLSP may execute project code")
+                    }
+                    None => "LSP may execute project code".to_owned(),
+                });
             }
             snapshot.purpose = match picker.purpose {
                 ListPurpose::Picker => OverlayPurpose::Picker,

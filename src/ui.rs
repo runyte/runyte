@@ -626,7 +626,16 @@ fn render_editor_frame(
     } else if let Some(actions) = action_overlay {
         draw_snapshot_overlay(frame, &app.theme, actions, snapshot);
     } else if app.list.is_some() {
-        draw_list(frame, &app, editor_area);
+        if let Some(overlay) = overlays
+            .iter()
+            .find(|overlay| overlay.kind == OverlayKind::ResultList && overlay.message.is_some())
+        {
+            // Permission warnings and storage failures belong to the overlay
+            // in standalone mode just as they do in an attached frontend.
+            draw_snapshot_overlay(frame, &app.theme, overlay, snapshot);
+        } else {
+            draw_list(frame, &app, editor_area);
+        }
     } else if let Some(choice) = overlays.iter().find(|overlay| {
         overlay.kind == OverlayKind::ResultList
             && overlay.purpose == crate::snapshot::OverlayPurpose::Choice
@@ -873,7 +882,10 @@ fn draw_snapshot_overlay(
         overlay.input != crate::snapshot::OverlayInput::None || !overlay.query.is_empty();
     let query_height = usize::from(shows_query);
     let header_height = usize::from(overlay.column_header.is_some());
-    let message_height = usize::from(overlay.message.is_some());
+    let message_height = overlay
+        .message
+        .as_deref()
+        .map_or(0, |message| message.lines().count());
     let area = if overlay.layout == OverlayLayout::Setting {
         to_tui_rect(setting_popup_area(editor_area))
     } else if overlay.layout == OverlayLayout::SettingChoice {

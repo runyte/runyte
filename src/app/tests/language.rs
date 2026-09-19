@@ -4204,3 +4204,148 @@ fn workspace_lsp_permission_fails_closed_without_storage_and_respects_configurat
     assert!(!app.lsp_workspace_allowed);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn home_workspace_lsp_choices_accept_enter_and_restore_only_remembered_decisions() {
+    use crate::{lsp_trust::TrustStore, test_support::TestRuntimeRoot};
+    for choice in 0..3 {
+        let home = TestRuntimeRoot::new("lsp-home").unwrap();
+        let storage = home.join(TrustStore::HOME_CACHE);
+        let store = || TrustStore::new_with_home(Some(storage.clone()), &home, Some(&home));
+        let mut app = App::new_in_project(Config::default(), None, &home).unwrap();
+        app.configure_lsp_trust_store(store());
+        assert_eq!(app.list.as_ref().unwrap().items.len(), 3);
+        for _ in 0..choice {
+            app.handle_key(KeyStroke::plain(KeyCode::Down)).unwrap();
+        }
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.list.is_none());
+        assert_eq!(app.lsp_workspace_allowed, choice != 0);
+        assert_eq!(
+            store().unwrap().load().unwrap(),
+            match choice {
+                0 => Some(false),
+                1 => None,
+                _ => Some(true),
+            }
+        );
+        let mut reopened = App::new_in_project(Config::default(), None, &home).unwrap();
+        reopened.configure_lsp_trust_store(store());
+        assert_eq!(reopened.lsp_workspace_allowed, choice == 2);
+        assert_eq!(reopened.list.is_some(), choice == 1);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unavailable_lsp_storage_offers_working_temporary_choices() {
+    let root = crate::test_support::TestRuntimeRoot::new("lsp-unavailable").unwrap();
+    for storage in [None, Some(root.join("project-cache"))] {
+        let mut app = App::new_in_project(Config::default(), None, &root).unwrap();
+        app.configure_lsp_trust(storage.clone());
+        let list = app.list.as_ref().unwrap();
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[0].label, "Keep LSP disabled for now");
+        assert!(
+            list.selected_preview()
+                .unwrap()
+                .contains("storage unavailable")
+        );
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.list.is_none());
+        assert!(!app.lsp_workspace_allowed);
+
+        app.open_lsp_trust();
+        app.handle_key(KeyStroke::plain(KeyCode::Tab)).unwrap();
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.list.is_none());
+        assert!(app.lsp_workspace_allowed);
+
+        app.open_lsp_trust();
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.list.is_none());
+        assert!(!app.lsp_workspace_allowed);
+        if let Some(storage) = storage {
+            assert!(!storage.exists());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_storage_failure_stays_visible_and_temporary_refusal_still_works() {
+    let root = crate::test_support::TestRuntimeRoot::new("lsp-failure").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let storage = root.join("trust");
+    let mut app = App::new_in_project(Config::default(), None, &project).unwrap();
+    app.configure_lsp_trust(Some(storage.clone()));
+    // Storage disappears after the choices were displayed. A regular file
+    // fails reliably even when tests run as root, unlike chmod-based fixtures.
+    std::fs::write(&storage, "blocked").unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::End)).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert_eq!(app.list.as_ref().unwrap().items.len(), 2);
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert!(
+        overlay
+            .message
+            .unwrap()
+            .contains("Cannot remember LSP permission")
+    );
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .unwrap()
+            .contains("Cannot remember LSP permission:")
+    );
+
+    app.handle_key(KeyStroke::plain(KeyCode::Down)).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .selected_preview()
+            .unwrap()
+            .contains("Cannot clear remembered LSP permission")
+    );
+    // Refusal for this run needs no disk write and cannot leave the dialog stuck.
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(app.list.is_none());
+    assert!(!app.lsp_workspace_allowed);
+
+    // Explicit reopening retries the repaired storage.
+    std::fs::remove_file(&storage).unwrap();
+    app.open_lsp_trust();
+    assert_eq!(app.list.as_ref().unwrap().items.len(), 3);
+    app.handle_key(KeyStroke::plain(KeyCode::End)).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(app.lsp_workspace_allowed);
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
+
+    // An unreadable saved grant must not silently become an enduring "once".
+    let moved = root.join("saved-trust");
+    std::fs::rename(&storage, &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, &storage).unwrap();
+    app.configure_lsp_trust(Some(storage.clone()));
+    assert!(!app.lsp_workspace_allowed);
+    assert_eq!(app.list.as_ref().unwrap().items.len(), 2);
+    app.handle_key(KeyStroke::plain(KeyCode::Down)).unwrap();
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(!app.lsp_workspace_allowed);
+    assert!(app.list.is_some());
+    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+    assert!(app.list.is_none());
+    std::fs::remove_file(&storage).unwrap();
+    std::fs::rename(moved, &storage).unwrap();
+    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
+}

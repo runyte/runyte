@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Per-user approval to run language servers in one exact workspace.
-//! The project cannot grant itself approval through a file in its own tree.
+//! Ordinary projects cannot supply their own approval records. The account's
+//! home workspace may use its standard private per-user cache.
 
 use serde::{Deserialize, Serialize};
 use std::{
     io,
     path::{Path, PathBuf},
 };
+
+#[cfg(all(test, unix))]
+mod tests;
 
 #[derive(Debug)]
 pub struct TrustStore {
@@ -25,6 +29,20 @@ struct Decision {
 
 impl TrustStore {
     pub fn new(directory: Option<PathBuf>, project: &Path) -> io::Result<Self> {
+        #[cfg(unix)]
+        let home = crate::user_paths::system_home_directory();
+        #[cfg(not(unix))]
+        let home = None;
+        Self::new_with_home(directory, project, home.as_deref())
+    }
+
+    /// The account home is injected separately from environment-selected cache
+    /// storage. An arbitrary XDG override inside a project is still rejected.
+    pub(crate) fn new_with_home(
+        directory: Option<PathBuf>,
+        project: &Path,
+        account_home: Option<&Path>,
+    ) -> io::Result<Self> {
         let project = project.canonicalize()?;
         if let Some(directory) = &directory {
             if !directory.is_absolute() {
@@ -32,8 +50,14 @@ impl TrustStore {
                     "LSP trust storage must have an absolute path",
                 ));
             }
-            crate::project_root::validate_state_root(&project, std::slice::from_ref(directory))
-                .map_err(io::Error::other)?;
+            let home_cache = account_home.is_some_and(|home| {
+                home.canonicalize().ok().as_ref() == Some(&project)
+                    && *directory == home.join(Self::HOME_CACHE)
+            });
+            if !home_cache {
+                crate::project_root::validate_state_root(&project, std::slice::from_ref(directory))
+                    .map_err(io::Error::other)?;
+            }
         }
         #[cfg(unix)]
         let project = {
@@ -48,6 +72,15 @@ impl TrustStore {
             project,
             name,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) const HOME_CACHE: &str = "Library/Caches/runyte/lsp-trust";
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) const HOME_CACHE: &str = ".cache/runyte/lsp-trust";
+
+    pub(crate) fn can_remember(&self) -> bool {
+        self.directory.is_some()
     }
 
     pub fn load(&self) -> io::Result<Option<bool>> {
