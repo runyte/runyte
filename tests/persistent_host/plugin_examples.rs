@@ -146,7 +146,10 @@ fn examples_on_disk(directory: &Path) -> BTreeSet<String> {
             let name = path.file_name().unwrap().to_str().unwrap();
             (name.ends_with(".py") || name.ends_with(".mjs"))
                 && !name.starts_with("check_")
-                && name != "application.py"
+                // Shared clients contain registration frames but are not
+                // standalone plugin programs. ContextClient registers over
+                // its separately authenticated socket, not plugin stdio.
+                && !matches!(name, "application.py" | "context_client.py")
         })
         .filter(|path| {
             let source = fs::read_to_string(path).unwrap();
@@ -358,11 +361,9 @@ async fn register_in_one_host(programs: &Programs, batch: &[Example]) {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[tokio::test]
-#[ignore = "needs Python with Paramiko, Node.js and the built todo showcase; run by plugin conformance CI"]
-async fn every_example_plugin_registers_and_stays_running_in_a_real_host() {
-    let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let examples = checkout.join("docs/plugins");
+#[test]
+fn example_inventory_matches_standalone_plugins() {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/plugins");
     let listed: BTreeSet<_> = EXAMPLES
         .iter()
         .filter(|example| !matches!(example.runtime, Runtime::Built) && !example.path.contains('/'))
@@ -373,6 +374,14 @@ async fn every_example_plugin_registers_and_stays_running_in_a_real_host() {
         examples_on_disk(&examples),
         "EXAMPLES must start every example program in docs/plugins"
     );
+}
+
+#[tokio::test]
+#[ignore = "needs Python with Paramiko, Node.js and the built todo showcase; run by plugin conformance CI"]
+async fn every_example_plugin_registers_and_stays_running_in_a_real_host() {
+    example_inventory_matches_standalone_plugins();
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let examples = checkout.join("docs/plugins");
     let programs = Programs {
         python: program("RUNYTE_EXAMPLE_PYTHON", "python3"),
         node: program("RUNYTE_EXAMPLE_NODE", "node"),
