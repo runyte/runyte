@@ -1,5 +1,8 @@
 # Runyte user guide
 
+This guide is best read with an AI agent: we recommend asking the agent specific
+questions instead of reading it from top to bottom.
+
 This is the detailed reference for Runyte's editing model, language support,
 persistent sessions, terminals, Git workflows, keybindings, and configuration.
 For the project overview and quick start, see the [main README](../README.md).
@@ -2099,7 +2102,11 @@ frozen review text and resolving relative paths against the terminal's latest
 validated directory (or its launch directory) and the project root. Multiple
 existing file matches open a picker. Opening a file leaves the terminal
 process running; opening a link keeps the terminal view in place. Inferred
-targets stay within one buffer line or terminal review row.
+targets stay within one buffer line. In terminal review, a bare caret anywhere
+on a web link follows the complete URL across rows joined by automatic terminal
+wrapping. Explicit newlines remain boundaries; links split by a program using
+newlines are not reconstructed. Resizing the live terminal width clears wrap
+information, while an already captured review keeps its original links.
 
 | Key | Action |
 | --- | --- |

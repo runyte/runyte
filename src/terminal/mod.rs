@@ -408,6 +408,7 @@ pub struct TerminalHighlight {
 
 #[derive(Clone, Debug)]
 struct ReviewLine {
+    continuation_columns: Option<usize>,
     id: TerminalLineId,
     cells: TerminalRow,
     text_start: usize,
@@ -590,7 +591,7 @@ impl TerminalSession {
             let mut text = String::new();
             let mut text_chars = 0;
             let mut lines = Vec::new();
-            for (id, cells) in grid.retained_lines() {
+            for (row, (id, cells)) in grid.retained_lines().enumerate() {
                 let text_start = text_chars;
                 let end = cells
                     .iter()
@@ -609,6 +610,7 @@ impl TerminalSession {
                 }
                 let text_end = text_start + char_columns.len();
                 lines.push(ReviewLine {
+                    continuation_columns: grid.continuation_columns(row),
                     id,
                     cells: cells.clone(),
                     text_start,
@@ -790,10 +792,49 @@ impl TerminalSession {
                     .collect(),
             );
         }
-        let line = review
+        let row = review
             .lines
             .iter()
-            .find(|line| line.text_start <= range.head && range.head < line.text_end)?;
+            .position(|line| line.text_start <= range.head && range.head < line.text_end)?;
+        let line = &review.lines[row];
+        let mut first = row;
+        while first > 0 && review.lines[first].continuation_columns.is_some() {
+            first -= 1;
+        }
+        let mut last = row;
+        while last + 1 < review.lines.len() && review.lines[last + 1].continuation_columns.is_some()
+        {
+            last += 1;
+        }
+        if first != last {
+            let mut joined = String::new();
+            let mut caret = range.head - line.text_start;
+            for index in first..=last {
+                let current = &review.lines[index];
+                let columns = if index < last {
+                    review.lines[index + 1].continuation_columns.unwrap()
+                } else {
+                    current.cells.len()
+                };
+                for cell in current
+                    .cells
+                    .iter()
+                    .take(columns)
+                    .filter(|cell| cell.width != 0)
+                {
+                    joined.push(cell.character);
+                    joined.extend(cell.combining[..usize::from(cell.combining_len)].iter());
+                    if index < row {
+                        caret += 1 + usize::from(cell.combining_len);
+                    }
+                }
+            }
+            if let Some(target) = crate::navigation_target::under_cursor(&joined, caret)
+                && crate::navigation_target::web_url(&target).is_some()
+            {
+                return Some(target);
+            }
+        }
         let text: String = review
             .text
             .chars()
@@ -2773,6 +2814,7 @@ fn local_hostname_is(_value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    mod navigation;
     use super::*;
     use std::time::Duration;
 

@@ -82,6 +82,26 @@ Deliberate limits:
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.
 
+## Wrapped web links in review
+
+Automatic wraps retain the preceding row's identity and occupied column count
+through scrollback. Frozen review captures that provenance, letting `gf` infer a
+complete web URL from any of its rows without joining explicit newlines or
+unrelated rows after line insertion/deletion. Wide-glyph wrap padding is skipped;
+actual spaces and combining marks are preserved. Cursor movement, including line
+feeds through existing rows, and partial erases or redraws retain wrap provenance.
+Whole-row erasure or a completed contiguous rewrite from column zero clears the
+old links on both sides of that row. New hard line breaks never create links.
+Explicit selections keep their
+exact review text. Live width changes discard wrap provenance because resize
+truncates or pads rows without reflow; an existing frozen review is unaffected.
+
+`src/terminal/tests/navigation.rs` covers wrapped URLs, Unicode, hard boundaries,
+scrollback, alternate screens, insert mode, partial erases and redraws, line-feed
+movement, whole-row replacement, and resize. The browser handoff
+is covered by `goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot`
+in `src/app/tests/navigation_and_files.rs`.
+
 ## Agent context reads and approved input text
 
 `TerminalSession::read_output` captures owned text from the live emulator screen

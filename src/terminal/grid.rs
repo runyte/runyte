@@ -190,6 +190,23 @@ impl TerminalLineId {
     }
 }
 
+/// Wrap provenance travels with the row, including through scrollback. The
+/// predecessor identity prevents deleted or inserted rows from creating links.
+#[derive(Clone, Copy, Debug)]
+struct LineMetadata {
+    id: TerminalLineId,
+    continuation: Option<(TerminalLineId, usize)>,
+}
+
+impl LineMetadata {
+    fn new(id: TerminalLineId) -> Self {
+        Self {
+            id,
+            continuation: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Cursor {
     pub row: usize,
@@ -209,9 +226,9 @@ pub struct Grid {
     columns: usize,
     rows: usize,
     lines: Vec<Line>,
-    line_ids: Vec<TerminalLineId>,
+    line_ids: Vec<LineMetadata>,
     scrollback: VecDeque<Line>,
-    scrollback_ids: VecDeque<TerminalLineId>,
+    scrollback_ids: VecDeque<LineMetadata>,
     /// Whether lines leaving the top are kept. False for the alternate screen,
     /// which by definition has no history.
     keeps_history: bool,
@@ -224,6 +241,9 @@ pub struct Grid {
     /// sliding, not the length.
     retired: u64,
     pub cursor: Cursor,
+    /// A contiguous rewrite starting at column zero. Partial redraws retain
+    /// wrap provenance; replacing the complete row retires its old links.
+    rewrite: Option<(TerminalLineId, usize)>,
     saved_cursor: Option<(Cursor, Pen)>,
     /// Inclusive top and bottom rows of the scrolling region.
     scroll_top: usize,
@@ -250,13 +270,14 @@ impl Grid {
             rows,
             lines: vec![vec![Cell::default(); columns]; rows],
             line_ids: (0..rows)
-                .map(|local| TerminalLineId::new(generation, local as u64))
+                .map(|local| LineMetadata::new(TerminalLineId::new(generation, local as u64)))
                 .collect(),
             scrollback: VecDeque::new(),
             scrollback_ids: VecDeque::new(),
             keeps_history,
             retired: 0,
             cursor: Cursor::default(),
+            rewrite: None,
             saved_cursor: None,
             scroll_top: 0,
             scroll_bottom: rows - 1,
@@ -267,7 +288,7 @@ impl Grid {
         self.generation = generation;
         self.next_local_line_id = self.rows as u64;
         self.line_ids = (0..self.rows)
-            .map(|local| TerminalLineId::new(generation, local as u64))
+            .map(|local| LineMetadata::new(TerminalLineId::new(generation, local as u64)))
             .collect();
     }
 
@@ -301,9 +322,14 @@ impl Grid {
     pub fn retained_lines(&self) -> impl Iterator<Item = (TerminalLineId, &Line)> {
         self.scrollback_ids
             .iter()
-            .copied()
+            .map(|line| line.id)
             .zip(self.scrollback.iter())
-            .chain(self.line_ids.iter().copied().zip(self.lines.iter()))
+            .chain(
+                self.line_ids
+                    .iter()
+                    .map(|line| line.id)
+                    .zip(self.lines.iter()),
+            )
     }
 
     pub fn scrollback_cells(&self) -> usize {
@@ -472,7 +498,7 @@ impl Grid {
         }
     }
 
-    fn retire(&mut self, line: Line, line_id: TerminalLineId) {
+    fn retire(&mut self, line: Line, line_id: LineMetadata) {
         self.scrollback.push_back(line);
         self.scrollback_ids.push_back(line_id);
         self.retired = self.retired.wrapping_add(1);
@@ -482,10 +508,10 @@ impl Grid {
         }
     }
 
-    fn allocate_line_id(&mut self) -> TerminalLineId {
+    fn allocate_line_id(&mut self) -> LineMetadata {
         let line_id = TerminalLineId::new(self.generation, self.next_local_line_id);
         self.next_local_line_id = self.next_local_line_id.wrapping_add(1);
-        line_id
+        LineMetadata::new(line_id)
     }
 
     fn blank_line(&self, pen: Pen) -> Line {
@@ -525,23 +551,30 @@ impl Grid {
             }
             return;
         }
-        if self.cursor.pending_wrap && autowrap {
+        let wrapped =
+            autowrap && (self.cursor.pending_wrap || self.cursor.column + width > self.columns);
+        if wrapped {
+            let previous = self.line_ids[self.cursor.row].id;
+            let columns = if self.cursor.pending_wrap {
+                self.columns
+            } else {
+                self.cursor.column
+            };
             self.cursor.column = 0;
             self.index(pen);
-            self.cursor.pending_wrap = false;
-        }
-        if self.cursor.column + width > self.columns {
-            if autowrap {
-                self.cursor.column = 0;
-                self.index(pen);
-            } else {
-                self.cursor.column = self.columns - width.min(self.columns);
-            }
+            self.line_ids[self.cursor.row].continuation = Some((previous, columns));
+        } else if self.cursor.column + width > self.columns {
+            self.cursor.column = self.columns - width.min(self.columns);
         }
         let row = self.cursor.row;
         let column = self.cursor.column;
+        let id = self.line_ids[row].id;
+        let rewriting = !wrapped && (column == 0 || self.rewrite == Some((id, column)));
+        self.rewrite = None;
         if insert {
+            let continuation = self.line_ids[row].continuation;
             self.insert_characters(width, pen);
+            self.line_ids[row].continuation = continuation;
         }
         // Overwriting half of a double-width character leaves the other half
         // orphaned; blank it so no stale glyph survives.
@@ -562,6 +595,13 @@ impl Grid {
             self.lines[row][column + 1] = Cell::spacer(pen);
         }
         let advanced = column + width;
+        if rewriting {
+            if advanced == self.columns {
+                self.clear_row_wraps(row);
+            } else {
+                self.rewrite = Some((id, advanced));
+            }
+        }
         if advanced >= self.columns {
             self.cursor.column = self.columns - 1;
             self.cursor.pending_wrap = autowrap;
@@ -569,6 +609,18 @@ impl Grid {
             self.cursor.column = advanced;
             self.cursor.pending_wrap = false;
         }
+    }
+
+    fn clear_following_wrap(&mut self, row: usize) {
+        if let Some(next) = self.line_ids.get_mut(row + 1) {
+            next.continuation = None;
+        }
+    }
+
+    fn clear_row_wraps(&mut self, row: usize) {
+        self.line_ids[row].continuation = None;
+        self.clear_following_wrap(row);
+        self.rewrite = None;
     }
 
     /// Blanks the other half of a double-width character at `column`.
@@ -597,6 +649,9 @@ impl Grid {
         let end = end.min(self.columns);
         if start >= end {
             return;
+        }
+        if start == 0 && end == self.columns {
+            self.clear_row_wraps(row);
         }
         self.clear_partner(row, start, pen);
         self.clear_partner(row, end - 1, pen);
@@ -649,12 +704,14 @@ impl Grid {
         match mode {
             1 => {
                 for row in 0..self.cursor.row {
+                    self.clear_row_wraps(row);
                     self.lines[row] = self.blank_line(pen);
                 }
                 self.erase_line(1, pen);
             }
             2 => {
                 for row in 0..self.rows {
+                    self.clear_row_wraps(row);
                     self.lines[row] = self.blank_line(pen);
                 }
             }
@@ -665,6 +722,7 @@ impl Grid {
             _ => {
                 self.erase_line(0, pen);
                 for row in self.cursor.row + 1..self.rows {
+                    self.clear_row_wraps(row);
                     self.lines[row] = self.blank_line(pen);
                 }
             }
@@ -689,6 +747,9 @@ impl Grid {
         }
         // Both ends of what is about to be removed can fall inside a
         // character, whose halves the shift would then separate.
+        if count == self.columns {
+            self.clear_row_wraps(row);
+        }
         self.split_before(row, column, pen);
         self.split_before(row, column + count, pen);
         for _ in 0..count {
@@ -707,6 +768,9 @@ impl Grid {
         }
         // Inserting inside a character separates its halves; the truncation
         // at the far end can push one off the line entirely.
+        if count == self.columns {
+            self.clear_row_wraps(row);
+        }
         self.split_before(row, column, pen);
         for _ in 0..count {
             self.lines[row].insert(column, Cell::blank(pen));
@@ -759,6 +823,16 @@ impl Grid {
         let rows = rows.max(1);
         if columns == self.columns && rows == self.rows {
             return;
+        }
+        self.rewrite = None;
+        if columns != self.columns {
+            for line in self
+                .line_ids
+                .iter_mut()
+                .chain(self.scrollback_ids.iter_mut())
+            {
+                line.continuation = None;
+            }
         }
         let narrowing = columns < self.columns;
         for line in self.lines.iter_mut().chain(self.scrollback.iter_mut()) {
@@ -824,11 +898,24 @@ impl Grid {
     /// Stable identity of one retained presentation row.
     pub fn retained_line_id(&self, row: usize) -> Option<TerminalLineId> {
         if row < self.scrollback.len() {
-            self.scrollback_ids.get(row).copied()
+            self.scrollback_ids.get(row).map(|line| line.id)
         } else {
             let screen_row = row - self.scrollback.len();
-            self.line_ids.get(screen_row).copied()
+            self.line_ids.get(screen_row).map(|line| line.id)
         }
+    }
+
+    /// Columns of the previous row joined by a real automatic wrap. Explicit
+    /// newlines and rows that ceased to be adjacent are never joined.
+    pub(super) fn continuation_columns(&self, row: usize) -> Option<usize> {
+        let previous = self.retained_line_id(row.checked_sub(1)?)?;
+        let metadata = if row < self.scrollback.len() {
+            self.scrollback_ids.get(row)
+        } else {
+            self.line_ids.get(row - self.scrollback.len())
+        }?;
+        let (id, columns) = metadata.continuation?;
+        (id == previous).then_some(columns)
     }
 
     /// Current retained-row index for a stable identity, if it was not
@@ -836,11 +923,11 @@ impl Grid {
     pub fn retained_row(&self, line_id: TerminalLineId) -> Option<usize> {
         self.scrollback_ids
             .iter()
-            .position(|candidate| *candidate == line_id)
+            .position(|candidate| candidate.id == line_id)
             .or_else(|| {
                 self.line_ids
                     .iter()
-                    .position(|candidate| *candidate == line_id)
+                    .position(|candidate| candidate.id == line_id)
                     .map(|row| self.scrollback.len() + row)
             })
     }

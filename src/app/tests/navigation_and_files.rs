@@ -3189,6 +3189,7 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
     let terminal = app.active_terminal().unwrap();
+    app.terminals.get_mut(terminal).unwrap().resize(12, 3);
     let buffer = app.active().buffer;
     let original = app.active_buffer().to_string();
     app.apply_terminal_output(TerminalOutput::Bytes {
@@ -3208,8 +3209,11 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
     app.terminals
         .get_mut(terminal)
         .unwrap()
-        .search_review("www.example.com", false)
+        .search_review("www", false)
         .unwrap();
+    let session = app.terminals.get_mut(terminal).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.goto_review_offset(offset, false);
     press(&mut app, 'g');
     press(&mut app, 'f');
     assert_eq!(

@@ -35,7 +35,8 @@ Markdown link into your document.
 
 Press `gf` on a file path in a buffer or terminal review to open it. Markdown
 link and image labels work too. Images and other binary files open in an external program you choose.
-Web links (`https://`, `http://`, and `www.`) open in your default browser.
+Web links (`https://`, `http://`, and `www.`) open in your default browser,
+including links automatically wrapped across terminal review rows.
 
 Project goals:
 
