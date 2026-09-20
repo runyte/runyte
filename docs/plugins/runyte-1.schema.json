@@ -3186,6 +3186,10 @@
     "inputField": {
       "type": "object",
       "properties": {
+        "completion": {
+          "enum": ["local-path"],
+          "description": "Requires input-path-completion. Literal local path suggestions on text fields only; relative paths use the workspace root."
+        },
         "id": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_-]*$",

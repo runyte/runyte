@@ -43,6 +43,33 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-20 — native plugin path completion
+
+The optional `input-path-completion` extension adds literal local path suggestions
+to opted-in text fields. The final Linux x86-64 working-tree run of
+`RUST_TEST_THREADS=4 cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 89`
+measured **91.92%** total line coverage (125,223 of 136,226 lines). The enforced
+89% floor is unchanged. Formatting, all-target Clippy with warnings denied, and
+the ordinary Rust suite passed; the latter ran 3,799 tests with 34 ignored.
+
+`src/app/tests/plugin_validation.rs` covers literal spelling, workspace-root
+identity after `:cd`, candidate bounds, selection, field navigation, submission,
+and invalidation of validation intent. `src/workspace/host/tests/plugin_interaction.rs`
+covers feature negotiation before input acquisition; the field checks in
+`src/plugin/tests/interaction_validation.rs` reject nontext completion and
+malformed authored values. Public schema checks, SDK compatibility checks, and
+the frozen Python v1 compatibility check also passed. Frozen artifacts remain
+unchanged; the current hello fixture advertises the added optional feature.
+
+The coordinated ru-dbviewer tests passed all nine native PTY cases against the
+final local debug host, including live path completion after `:cd` in standalone
+and persistent modes. Its separate validation register records plugin coverage
+and wire checks. An initial sandboxed host run stalled in a transport test and
+failed two process-cleanup tests; the full rerun outside that sandbox with four
+test threads passed after updating the current hello fixture. No process or
+transport implementation was changed. These are local Linux checks, not macOS
+or release-commit acceptance.
+
 ## 2026-09-19 — database viewer presentation and full values
 
 The coordinated implementation retains `runyte-1` and negotiates optional action

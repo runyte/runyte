@@ -396,8 +396,25 @@ impl App {
     fn path_hints_for(&self, argument: &str) -> Vec<PathHint> {
         let argument = argument.trim_start();
         let raw = unclosed_or_complete_quoted_path(argument);
+        self.path_hints_for_raw(raw, &self.working_directory, true)
+    }
+
+    /// Plugin fields contain literal paths, without palette quoting or home expansion.
+    pub(super) fn literal_path_hints(&self, raw: &str) -> Vec<PathHint> {
+        self.path_hints_for_raw(raw, &self.project_root, false)
+    }
+
+    fn path_hints_for_raw(&self, raw: &str, root: &Path, expand_home: bool) -> Vec<PathHint> {
+        let resolve = |path: PathBuf| {
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
+        };
         let separator = std::path::MAIN_SEPARATOR;
         if raw == "~"
+            && expand_home
             && let Some(home) = &self.home_directory
         {
             return vec![PathHint {
@@ -409,19 +426,23 @@ impl App {
         }
 
         let typed = PathBuf::from(raw);
-        let expanded = expand_home_path(typed, self.home_directory.as_deref());
+        let expanded = if expand_home {
+            expand_home_path(typed, self.home_directory.as_deref())
+        } else {
+            typed
+        };
         let ends_in_separator = raw.ends_with(is_path_separator);
         let (directory, prefix) = if raw.is_empty() {
-            (self.working_directory.clone(), "")
+            (root.to_path_buf(), "")
         } else if ends_in_separator {
-            (self.resolve_hint_path(expanded), "")
+            (resolve(expanded), "")
         } else {
             let prefix = Path::new(raw)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or(raw);
             let parent = expanded.parent().unwrap_or_else(|| Path::new(""));
-            (self.resolve_hint_path(parent.to_path_buf()), prefix)
+            (resolve(parent.to_path_buf()), prefix)
         };
 
         let base_end = raw.rfind(is_path_separator).map_or(0, |index| index + 1);
@@ -483,14 +504,6 @@ impl App {
         (self.prompt_kind == PromptKind::FinderPath
             && self.command_cursor == self.command.chars().count())
         .then(|| self.path_hints_for(&self.command))
-    }
-
-    fn resolve_hint_path(&self, path: PathBuf) -> PathBuf {
-        if path.is_absolute() {
-            path
-        } else {
-            self.working_directory.join(path)
-        }
     }
 
     fn command_hint_count(&self) -> usize {

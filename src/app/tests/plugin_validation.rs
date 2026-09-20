@@ -34,6 +34,7 @@ fn fixture(fields: Vec<Field>) -> App {
         values: fields.iter().map(Field::initial).collect(),
         fields,
         selected: 0,
+        completion_selected: 0,
         cursor: 0,
         error: None,
         picker: None,
@@ -52,6 +53,106 @@ fn form_snapshot(app: &App) -> crate::snapshot::OverlaySnapshot {
 
 fn type_text(app: &mut App, value: &str) {
     app.handle_input(InputEvent::Text(value.into())).unwrap();
+}
+
+#[test]
+fn local_path_completion_preserves_literal_paths_and_form_submission() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-path-completion").unwrap();
+    std::fs::create_dir(root.path().join("data space")).unwrap();
+    std::fs::write(root.path().join("data space/ledger.sqlite"), "fixture").unwrap();
+    let mut path = field("path", Kind::Text, false);
+    path.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let mut app = fixture(vec![field("name", Kind::Text, false), path]);
+    app.project_root = root.path().to_owned();
+    // :cd changes palette paths, but plugin paths still use the plugin's
+    // workspace launch directory rather than the editor's working directory.
+    app.working_directory = root.path().join("data space");
+    type_text(&mut app, "ledger");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    type_text(&mut app, "dat");
+    let snapshot = form_snapshot(&app);
+    assert_eq!(snapshot.rows[0].label, "data space/");
+    assert!(
+        snapshot
+            .actions
+            .iter()
+            .any(|action| action.label == "complete")
+    );
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[1],
+        Value::Text("data space/".into())
+    );
+    assert_eq!(form_snapshot(&app).rows[0].label, "ledger.sqlite");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(app.plugin_path_hints().is_empty());
+    assert!(app.plugins.input_finished.is_empty());
+    key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
+    assert_eq!(app.plugins.input.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let (_, _, submission) = app.plugins.input_finished.pop().unwrap();
+    assert!(submission.accepted);
+    assert_eq!(submission.values["name"], Value::Text("ledger".into()));
+    assert_eq!(
+        submission.values["path"],
+        Value::Text("data space/ledger.sqlite".into())
+    );
+}
+
+#[test]
+fn local_path_completion_bounds_candidates_and_keeps_navigation_and_validation_current() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-path-completion").unwrap();
+    for name in [
+        "alpha",
+        "beta",
+        "too-long",
+        "quoted'file",
+        " file",
+        "bad\nname",
+    ] {
+        std::fs::write(root.path().join(name), "fixture").unwrap();
+    }
+    std::fs::create_dir(root.path().join("~")).unwrap();
+    std::fs::write(root.path().join("~/local"), "fixture").unwrap();
+    let mut path = field("path", Kind::Text, true);
+    path.maximum_length = 5;
+    path.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let mut app = fixture(vec![path]);
+    app.project_root = root.path().to_owned();
+    let names = app
+        .plugin_path_hints()
+        .into_iter()
+        .map(|hint| hint.name)
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["~/", " file", "alpha", "beta"]);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(form_snapshot(&app).selected, Some(3));
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(form_snapshot(&app).selected, Some(0));
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text(" file".into())
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.peek_plugin_validation().is_some());
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert!(app.peek_plugin_validation().is_none());
+    assert_eq!(app.plugin_path_hints()[0].name, " file");
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert!(app.plugin_path_hints().is_empty());
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(!app.plugins.input_finished.pop().unwrap().2.accepted);
+
+    let mut path = field("path", Kind::Text, false);
+    path.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let mut app = fixture(vec![path]);
+    app.project_root = root.path().to_owned();
+    type_text(&mut app, "~/");
+    assert_eq!(app.plugin_path_hints()[0].value, "~/local");
+    key(&mut app, KeyCode::Home, Modifiers::NONE);
+    assert!(app.plugin_path_hints().is_empty());
 }
 
 #[test]

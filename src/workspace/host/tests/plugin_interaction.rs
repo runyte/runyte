@@ -55,6 +55,45 @@ pub(super) fn begin(
 pub(super) fn key(host: &mut WorkspaceHost, key: &str) {
     host.app.handle_key(KeyStroke::parse(key).unwrap()).unwrap();
 }
+
+#[test]
+fn local_path_completion_requires_negotiation_before_acquiring_input() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["interaction"]);
+    next(&mut output);
+    host.app.note_plugin_frontend(true);
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { id, .. } = next(&mut output) else {
+        panic!()
+    };
+    let mut field = Field::text("path", "Local file".into());
+    field.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let form = api::Request::UiForm {
+        invocation: id,
+        title: "Connection".into(),
+        fields: vec![field],
+    };
+    assert_eq!(
+        host.application_input_request(0, form.clone())
+            .unwrap_err()
+            .code,
+        api::ErrorCode::Unsupported
+    );
+    assert!(host.app.plugins.input.is_none());
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .features
+        .insert(api::INPUT_PATH_COMPLETION.into());
+    assert!(matches!(
+        host.application_input_request(0, form).unwrap(),
+        api::ResultValue::Surface { .. }
+    ));
+    assert!(host.app.plugins.input.is_some());
+}
 #[test]
 fn form_masks_secrets_in_private_frames_and_returns_unicode_only_to_owner() {
     let (_root, mut host) = host();

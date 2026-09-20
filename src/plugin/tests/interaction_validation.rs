@@ -3,6 +3,32 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn local_path_completion_is_optional_and_text_only() {
+    let ordinary = Field::text("path", "Path".into());
+    assert!(
+        serde_json::to_value(&ordinary)
+            .unwrap()
+            .get("completion")
+            .is_none()
+    );
+    let mut field = ordinary;
+    field.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    validate("File", &[field.clone()]).unwrap();
+    assert_eq!(
+        serde_json::to_value(&field).unwrap()["completion"],
+        "local-path"
+    );
+    for kind in [Kind::Secret, Kind::Boolean, Kind::Choice] {
+        field.kind = kind;
+        assert!(validate("File", &[field.clone()]).is_err());
+    }
+    let wire = json!({"id":"path","label":"Path","kind":"text","completion":"remote-path"});
+    assert!(serde_json::from_value::<Field>(wire).is_err());
+    let wire = json!({"id":"path","label":"Path","kind":"text","completion":null});
+    assert!(serde_json::from_value::<Field>(wire).is_err());
+}
+
+#[test]
 fn value_validation_preserves_acceptance_and_distinguishes_failures() {
     let mut text = Field::text("text", "Text".into());
     text.minimum_length = 2;

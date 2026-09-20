@@ -40,3 +40,10 @@ Its schema and independently vendorable Python client live in
 denial, scoped admission, response identity and uncertain mutation outcomes.
 No frozen `compatibility/v1/` artifact or immutable inventory pin changes for
 this addition; those continue to test ordinary stable process applications.
+
+The optional `input-path-completion` feature adds `completion: "local-path"`
+to text fields in native prompts and forms. Hosts require negotiation before
+accepting the property; plugins omit it for older hosts. This changes neither
+the `runyte-1` epoch nor the frozen base schema/client fixtures. Native path
+selection edits the field only; submission and validation retain their existing
+authority and revision checks.

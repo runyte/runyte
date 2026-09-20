@@ -20,6 +20,7 @@ pub(crate) struct Surface {
     pub fields: Vec<Field>,
     pub values: Vec<Value>,
     pub selected: usize,
+    pub completion_selected: usize,
     pub cursor: usize,
     pub error: Option<InputError>,
     pub picker: Option<crate::picker::ListPicker>,
@@ -121,6 +122,25 @@ impl Surface {
     }
 }
 impl App {
+    pub(super) fn plugin_path_hints(&self) -> Vec<super::PathHint> {
+        let Some(surface) = &self.plugins.input else {
+            return Vec::new();
+        };
+        let field = &surface.fields[surface.selected];
+        let Value::Text(value) = &surface.values[surface.selected] else {
+            return Vec::new();
+        };
+        if field.completion.is_none() || surface.cursor != value.chars().count() {
+            return Vec::new();
+        }
+        self.literal_path_hints(value)
+            .into_iter()
+            .filter(|hint| {
+                hint.value != *value && field.validate_text_insertion("", &hint.value).is_ok()
+            })
+            .collect()
+    }
+
     pub fn plugin_input_active(&self) -> bool {
         self.plugins.input.is_some()
     }
@@ -194,6 +214,7 @@ impl App {
     }
     pub(super) fn handle_plugin_input(&mut self, input: InputEvent) {
         self.cancel_plugin_validation_intent();
+        let hints = self.plugin_path_hints();
         let foreground = self.plugins.foreground_generation;
         let Some(surface) = self.plugins.input.as_mut() else {
             return;
@@ -274,6 +295,27 @@ impl App {
         let before = surface.values[i].clone();
         match input {
             InputEvent::Key(key)
+                if !hints.is_empty()
+                    && key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down) =>
+            {
+                let selected = surface.completion_selected.min(hints.len() - 1);
+                if key.code == KeyCode::Tab {
+                    let value = hints[selected].value.clone();
+                    surface.cursor = value.chars().count();
+                    surface.values[i] = Value::Text(value);
+                    surface.error = None;
+                } else {
+                    surface.completion_selected = (selected
+                        + if key.code == KeyCode::Up {
+                            hints.len() - 1
+                        } else {
+                            1
+                        })
+                        % hints.len();
+                }
+            }
+            InputEvent::Key(key)
                 if key.code == KeyCode::Escape
                     || (key.code == KeyCode::Char('c') && key.modifiers == Modifiers::CONTROL) =>
             {
@@ -332,6 +374,7 @@ impl App {
                 let back = matches!(key.code, KeyCode::BackTab | KeyCode::Up);
                 surface.selected =
                     (i + if back { surface.fields.len() - 1 } else { 1 }) % surface.fields.len();
+                surface.completion_selected = 0;
                 surface.cursor = match &surface.values[surface.selected] {
                     Value::Text(v) => v.chars().count(),
                     _ => 0,
@@ -421,6 +464,7 @@ impl App {
             && surface.values[i] != before
         {
             surface.error = None;
+            surface.completion_selected = 0;
             surface.validation.revision += 1;
             surface.validation.results.clear();
             surface.validation.unavailable = false;

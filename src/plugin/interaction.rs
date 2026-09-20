@@ -25,6 +25,12 @@ pub enum Kind {
     Choice,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Completion {
+    LocalPath,
+}
+
 /// Native validation feedback carries no input text, including for secrets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ValueError {
@@ -43,6 +49,12 @@ pub struct Field {
     pub id: String,
     pub label: String,
     pub kind: Kind,
+    #[serde(
+        default,
+        deserialize_with = "super::presentation::authored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completion: Option<Completion>,
     #[serde(default)]
     pub required: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -68,6 +80,7 @@ impl Field {
             id: id.into(),
             label,
             kind: Kind::Text,
+            completion: None,
             required: true,
             validate: false,
             validation_message: None,
@@ -143,6 +156,7 @@ pub fn validate(title: &str, fields: &[Field]) -> Result<(), Error> {
             !super::valid_name(&f.id)
                 || !ids.insert(&f.id)
                 || !safe(&f.label, 160)
+                || (f.completion.is_some() && f.kind != Kind::Text)
                 || f.validation_message
                     .as_ref()
                     .is_some_and(|message| !safe(message, 160))

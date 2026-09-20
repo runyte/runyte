@@ -2194,6 +2194,28 @@ impl App {
                     .push(OverlayAction::new("←/→/Space", "choice"));
             }
             snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+            if surface.fields[surface.selected].completion.is_some() {
+                let hints = self.plugin_path_hints();
+                if snapshot.message.is_none() {
+                    snapshot.message = Some(
+                        "Local path · relative to workspace · type a directory or filename prefix"
+                            .into(),
+                    );
+                }
+                if !hints.is_empty() {
+                    snapshot.rows = path_hint_rows(&hints);
+                    snapshot.total_rows = hints.len();
+                    snapshot.selected = Some(surface.completion_selected.min(hints.len() - 1));
+                    snapshot.scroll_anchor = snapshot.selected;
+                    snapshot.actions = vec![
+                        OverlayAction::new("Tab", "complete"),
+                        OverlayAction::new("↑/↓", "path"),
+                        OverlayAction::new("Shift-Tab", "field"),
+                        OverlayAction::new("Enter", "submit"),
+                        OverlayAction::new("Esc", "cancel"),
+                    ];
+                }
+            }
             if surface.confirmation {
                 snapshot.purpose = OverlayPurpose::Confirmation;
                 snapshot.input = OverlayInput::None;

@@ -759,6 +759,26 @@ Input state is ephemeral and is not persisted. Plugins must keep secret values
 out of their own logs and state. Validation errors and secret-bearing submit
 callback errors use generic host feedback instead of plugin-provided error text.
 
+### Local path completion
+
+Negotiate `input-path-completion` to add `completion: "local-path"` to a `text`
+field in `ui.form` or `ui.prompt`. Other field kinds refuse this property.
+Omit it entirely on older hosts. The host offers bounded local file/directory
+suggestions while the caret is at the end of the value. Relative paths use the
+workspace root. Values are literal: spaces and quotes need no escaping, and `~`,
+environment variables and web URLs are not expanded. Hidden-file visibility
+follows the editor setting, with a leading dot revealing matching hidden names.
+
+While candidates are visible, Up/Down selects and Tab inserts the complete path;
+directory candidates retain a trailing separator for continued completion.
+Shift-Tab returns to the previous form field. With no candidates, normal field
+navigation applies. Enter submits the entered value, preserving existing local
+checks and asynchronous validation; Escape cancels. Completing a path never
+submits, opens a file, or sends values to the plugin. Candidate paths must fit
+the field's character and byte limits. Completion reuses the editor's directory
+listing cache and introduces no polling timer. The plugin remains responsible
+for checking the submitted path's existence, type and application-specific use.
+
 ### Asynchronous field validation
 
 A field may declare `validate: true` and an optional static `validation_message`

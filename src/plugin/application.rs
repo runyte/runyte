@@ -39,12 +39,14 @@ pub const VIEW_ACTION_PRESENTATION: &str = "view-action-presentation";
 pub const VIEW_METADATA: &str = "view-metadata";
 pub const JOB_FEEDBACK: &str = "job-feedback";
 pub const VIEW_DOCUMENT: &str = "view-document";
+pub const INPUT_PATH_COMPLETION: &str = "input-path-completion";
 pub const FEATURES: &[&str] = &[
     VIEW_ROW_ACTIONS,
     VIEW_ACTION_PRESENTATION,
     VIEW_METADATA,
     VIEW_DOCUMENT,
     JOB_FEEDBACK,
+    INPUT_PATH_COMPLETION,
 ];
 
 #[derive(Clone, Debug, Serialize)]

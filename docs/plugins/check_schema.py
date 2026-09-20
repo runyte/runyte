@@ -26,6 +26,14 @@ PLUGIN_VALIDATOR = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/p
 
 
 class PluginSchemaTests(unittest.TestCase):
+    def test_local_path_completion_field_shape(self):
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/inputField'})
+        field = {'id': 'path', 'label': 'Local file', 'kind': 'text'}
+        self.assertTrue(validator.is_valid(field))
+        self.assertTrue(validator.is_valid({**field, 'completion': 'local-path'}))
+        for completion in (None, False, 'remote-path', {}):
+            self.assertFalse(validator.is_valid({**field, 'completion': completion}))
+
     def test_schema_and_directional_fixtures(self):
         Draft202012Validator.check_schema(SCHEMA)
         self.assertTrue(FIXTURES)

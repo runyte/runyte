@@ -379,7 +379,8 @@
         "view-action-presentation",
         "view-metadata",
         "view-document",
-        "job-feedback"
+        "job-feedback",
+        "input-path-completion"
       ]
     }
   },

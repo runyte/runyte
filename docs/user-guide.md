@@ -3178,6 +3178,12 @@ needs no polling; slow consumers receive an explicit resynchronization marker.
 Opted-in form fields can validate asynchronously after Enter. Editing keeps the
 form open and rejects stale results; secret values reach validation only when
 that field explicitly opts in. Validation runs without blocking editor input.
+Plugins can also opt text fields into local path completion. Type a directory
+or filename prefix, select with Up/Down, and press Tab to complete. Directory
+suggestions continue into that directory. Shift-Tab returns to the previous
+field, Enter submits, and Escape cancels. Relative paths start at the workspace
+root; spaces and quotes are literal, and `~` or environment variables are not
+expanded. Older hosts retain the plugin's ordinary text field behavior.
 Provider applications can also open version-bound UTF-8 documents with normal
 editing, syntax highlighting and remote saves. Providers with conditional writes
 save normally; weaker providers require native foreground confirmation describing

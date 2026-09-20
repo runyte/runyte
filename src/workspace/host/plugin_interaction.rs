@@ -61,6 +61,14 @@ impl WorkspaceHost {
             _ => unreachable!(),
         };
         interaction::validate(&title, &fields)?;
+        if fields.iter().any(|field| field.completion.is_some())
+            && !state.features.contains(api::INPUT_PATH_COMPLETION)
+        {
+            return Err(fail(
+                api::ErrorCode::Unsupported,
+                "Input path completion was not negotiated",
+            ));
+        }
         let context = state
             .requests
             .get(&invocation)
@@ -113,6 +121,7 @@ impl WorkspaceHost {
             values: fields.iter().map(Field::initial).collect(),
             fields,
             selected: 0,
+            completion_selected: 0,
             cursor: 0,
             error: None,
         });

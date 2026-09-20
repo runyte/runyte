@@ -537,7 +537,7 @@ the command palette with its name filled in; Enter submits the supplied argument
 and Escape cancels. Argumentless actions invoke directly. These application
 commands remain deliberate Runyte additions.
 
-Epoch 2 application forms use the same overlay-specific input boundary as other
+Stable application forms use the same overlay-specific input boundary as other
 prompts: Tab/Shift-Tab and Up/Down change fields, Left/Right/Space change a choice
 or boolean, Enter submits valid fields and Escape/Ctrl-c cancels. For fields
 opting into asynchronous validation, physical unmodified Enter starts the check;
@@ -546,6 +546,11 @@ intent. Typing never triggers validation. Text fields
 retain character movement, Home/End, Backspace/Delete and literal paste. Application
 pickers use typed filtering, Up/Down, Enter and Escape. These keys belong to the
 transient surface and do not add a second editor command registry.
+Negotiated `input-path-completion` fields show local path candidates while typing:
+Up/Down selects and Tab completes while candidates are visible; Shift-Tab changes
+fields. With no candidates, ordinary field navigation applies. Enter still
+submits the form and Escape cancels; completion alone never submits or opens a
+file. Paths are literal and relative to the workspace root unless absolute.
 
 ### Agent context permission command
 

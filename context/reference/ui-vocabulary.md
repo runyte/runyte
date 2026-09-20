@@ -539,6 +539,10 @@ distinguishes controls, byte limits, character limits, and submission constraint
 without echoing rejected input. Successful edits and field navigation clear the
 feedback; submission checks the current values again.
 Application pickers display filterable candidate rows using the shared matcher.
+Negotiated local-path fields show path completion candidates in the same input
+overlay while typing. Up/Down chooses a candidate and Tab inserts its literal
+path; Shift-Tab returns to the previous form field. Enter retains form submission
+and validation, while Escape cancels. Completion never opens or submits a file.
 Opening competing native input cancels the application surface, as do detach and
 owner/source closure.
 Cancelled callbacks cannot reopen presentation without another foreground command.
