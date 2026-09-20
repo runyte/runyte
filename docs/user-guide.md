@@ -61,9 +61,16 @@ For the project overview and quick start, see the [main README](../README.md).
 - Undo/redo, yank/paste, dirty-buffer protection, and save-as
 - Operating-system clipboard yank and paste
 
-This is intentionally a compact editor, not a complete Helix clone. Some Helix
-behavior is deliberately absent and some of it deliberately differs; the
-[key bindings](#key-bindings) section records what each binding does here.
+Runyte is not a Helix clone, and it is not a subset of one. The editing model
+and much of the keymap language come from Helix; the surrounding scope does
+not. Terminal multiplexing, an editable file manager, a detachable
+client-server host for unsaved buffers and live processes, rendered Markdown,
+image pasting, and a plugin runtime are all listed above and have no Helix
+counterpart. In the other direction a few Helix behaviors are deliberately
+absent and a number deliberately differ: the [key bindings](#key-bindings)
+section records what each binding does here, and
+`context/reference/helix-keymap-v1.md` is the register of which bindings match
+Helix and which do not.
 
 ### Syntax highlighting
 
