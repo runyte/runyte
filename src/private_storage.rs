@@ -237,7 +237,20 @@ mod platform {
         }
 
         pub fn append(&self, name: &OsStr) -> io::Result<File> {
-            self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_APPEND, true)
+            // Concurrent nonexclusive O_CREAT opens can return ENOENT on
+            // macOS. Give creation one winner, then open that existing inode
+            // without creation flags. Both paths retain the same admission
+            // checks, and neither truncates or replaces an existing file.
+            match self.open_file(
+                name,
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_APPEND,
+                true,
+            ) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    self.open_file(name, libc::O_RDWR | libc::O_APPEND, true)
+                }
+                result => result,
+            }
         }
 
         pub fn create_new(&self, name: &OsStr) -> io::Result<File> {
@@ -403,6 +416,9 @@ mod platform {
 }
 
 pub(crate) use platform::Directory;
+
+#[cfg(all(test, unix))]
+mod tests;
 
 mod owned_file;
 pub(crate) use owned_file::OwnedFile;
