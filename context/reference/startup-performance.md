@@ -17,6 +17,38 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-19 — complete plugin value documents
+
+Observed the coordinated database-viewer implementation on Linux x86-64 using
+uninstrumented debug builds of Runyte 0.3.0 and ru-dbviewer. This is a native
+acceptance observation from `ru-dbviewer/tests/native.py`, not a release startup
+benchmark or a comparison with the release-build measurements below. No startup
+ordering changed. Background load/format/publication and ordinary document input
+are the measured paths.
+
+A captured 4,944,933-byte JSON value became one 5,256,945-byte, 48,005-line
+read-only document. The harness observed completion in 0.801 seconds and a
+command prompt response in 0.100 seconds while loading was still in progress.
+The harness includes a 0.3-second send drain and 0.1-second polling; these are
+observed elapsed times, not isolated worker latency or a sub-millisecond input
+measurement. Complete formatted copying, exact raw copying, tail search and
+persistent detach/reattach passed in the same fixture.
+
+Host-only Linux RSS/high-water marks were 50,052 KiB before loading, 72,392 KiB
+with the full document open, and 144,888 KiB after copying formatted and raw
+values into two additional editable documents. These observations exclude the
+plugin process and do not assert a combined memory peak. Back at the beginning
+of the full read-only document, after two seconds of settling, a one-second
+sample recorded 0 ms host CPU at Linux process-counter resolution. A prior
+sample taken while an editable copy was still settling is excluded. Non-Linux
+or unavailable process counters are reported as unavailable.
+
+The native cancellation test covers responsive input and the atomic
+commit/cancel race. `tests/full_values.py` separately holds a staged commit to
+prove cancellation wins before publication and leaves the preview intact. No
+idle database polling or new periodic worker is introduced. These measurements
+do not claim macOS, ARM64, or release-build performance.
+
 ## 2026-09-18 — scoped agent context access
 
 Measured the completed agent-context implementation based on `0999b82`, built

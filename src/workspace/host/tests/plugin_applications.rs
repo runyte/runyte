@@ -24,6 +24,8 @@ mod filesystem_stat;
 mod handoffs;
 #[path = "plugin_interaction.rs"]
 mod interaction;
+#[path = "plugin_job_feedback.rs"]
+mod job_feedback;
 #[path = "plugin_model_review.rs"]
 mod model_review;
 #[path = "plugin_models.rs"]
@@ -84,6 +86,7 @@ fn setup(
             version: api::VERSION.into(),
             name: "Tasks".into(),
             commands: vec![api::Registration {
+                presentation: None,
                 alias: None,
                 arguments: vec![],
                 primary: false,
@@ -180,6 +183,7 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
             version: api::VERSION.into(),
             name: "Arguments".into(),
             commands: vec![api::Registration {
+                presentation: None,
                 alias: None,
                 name: "echo".into(),
                 description: "Echo arguments".into(),
@@ -309,6 +313,7 @@ fn jobs_survive_commands_and_protect_host_until_terminal_response() {
         0,
         2,
         api::Request::JobFinish {
+            message: None,
             job: created.job.clone(),
             state: api::TerminalState::Succeeded,
         },
@@ -327,6 +332,7 @@ fn jobs_survive_commands_and_protect_host_until_terminal_response() {
         0,
         3,
         api::Request::JobFinish {
+            message: None,
             job: created.job,
             state: api::TerminalState::Succeeded,
         },
@@ -415,6 +421,7 @@ fn cancellation_is_idempotent_rejects_late_success_and_preserves_other_owner() {
         0,
         4,
         api::Request::JobFinish {
+            message: None,
             job: created.job.clone(),
             state: api::TerminalState::Succeeded,
         },
@@ -687,6 +694,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
             name: "Tasks".into(),
             commands: vec![
                 api::Registration {
+                    presentation: None,
                     alias: None,
                     arguments: vec![],
                     name: "open".into(),
@@ -695,6 +703,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
                     primary: false,
                 },
                 api::Registration {
+                    presentation: None,
                     alias: None,
                     arguments: vec![],
                     name: "toggle".into(),
@@ -1502,6 +1511,7 @@ fn terminal_job_history_retains_completion_order_across_handle_widths() {
             0,
             index * 2 + 2,
             api::Request::JobFinish {
+                message: None,
                 job: created.job.clone(),
                 state: api::TerminalState::Succeeded,
             },

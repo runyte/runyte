@@ -1,8 +1,15 @@
 # Database viewer interactive browsing
 
-Status: implementation delivered; automated Linux acceptance recorded below.
-Native macOS/ARM64 and separate human manual acceptance remain outstanding.
+Status: completed as an implementation record, 2026-09-19.
+Automated Linux acceptance is recorded below. Native macOS/ARM64 and the full
+separate human manual acceptance flow remain unverified by this record.
 Date: 2026-09-19.
+
+The delivered browsing foundation is archived under
+[the plan lifecycle](../README.md). Subsequent UX work covers readable grouped
+actions, explicit view titles, labelled metadata above rows and on-demand
+full-value inspection. Those changes form a separate follow-up scope; this
+closure does not claim that the current viewer already provides them.
 
 ## Objective
 
@@ -20,9 +27,12 @@ This document authorizes the agreed scope, not publication or release.
 
 ## Implementation record
 
-The plugin implementation and its first review loop are recorded in
+The plugin implementation is recorded in ru-dbviewer commit `2dd230d`
+(`Add interactive database browsing and contextual row actions`). Its first
+review loop and validation are recorded in
 ru-dbviewer `INTERACTIVE_BROWSING.md` and `VALIDATION.md`. The subsequent host
-extension adds optional `view-row-actions` within `runyte-1`: negotiated row
+extension, Runyte commit `41a94ce` (`Add optional row-specific plugin actions and
+refresh README`), adds optional `view-row-actions` within `runyte-1`: negotiated row
 lists override model-wide actions, and selections spanning several data rows
 use their intersection. Availability gates both discovery and dispatch.
 Inline and staged patches validate every row action list before operations can

@@ -14,6 +14,7 @@ pub mod interaction;
 pub mod json;
 pub(crate) mod manager;
 pub mod observation;
+pub mod presentation;
 pub mod process;
 pub mod provider;
 pub mod settings;

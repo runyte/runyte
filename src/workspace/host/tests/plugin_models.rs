@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+use crate::plugin::view;
 use serde_json::{Value, json};
 
 fn api_request(method: &str, params: Value) -> api::Request {
@@ -587,4 +588,307 @@ async fn transient_patch_row_actions_are_checked_before_operations_erase_them() 
             }
         }
     }
+}
+
+#[tokio::test]
+async fn presentation_and_metadata_features_gate_inline_and_staged_headers() {
+    for (field, feature, content) in [
+        ("metadata", api::VIEW_METADATA, json!([])),
+        (
+            "action_presentation",
+            api::VIEW_ACTION_PRESENTATION,
+            json!({}),
+        ),
+    ] {
+        for staged in [false, true] {
+            let (_root, mut host) = host();
+            let mut output = setup(&mut host, 0, &["views"]);
+            next(&mut output);
+            let initial = create(&mut host, &mut output, small_model()).await;
+            let mut candidate = small_model();
+            candidate[field] = content.clone();
+            model_request(
+                &mut host,
+                0,
+                2,
+                api_request("view.create", json!({"model":candidate})),
+            )
+            .await;
+            assert_eq!(response_json(&mut output)["error"]["code"], "unsupported");
+            let mut header = json!({"title":"Metadata","purpose":"list"});
+            header[field] = content.clone();
+            if staged {
+                let text = json!({"header":header,"operations":[]}).to_string();
+                request(
+                    &mut host,
+                    0,
+                    3,
+                    api_request(
+                        "view.stage.open",
+                        json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"patch","bytes":text.len()}),
+                    ),
+                );
+                let stage = response_json(&mut output)["result"]["stage"].clone();
+                request(
+                    &mut host,
+                    0,
+                    4,
+                    api_request(
+                        "view.stage.write",
+                        json!({"stage":stage,"offset":0,"text":text}),
+                    ),
+                );
+                assert!(response_json(&mut output).get("error").is_none());
+                model_request(
+                    &mut host,
+                    0,
+                    5,
+                    api_request("view.stage.commit", json!({"stage":stage})),
+                )
+                .await;
+            } else {
+                model_request(&mut host, 0, 3, api_request("view.patch", json!({"view":initial["view"],"expected_revision":initial["revision"],"header":header,"operations":[]}))).await;
+            }
+            assert_eq!(response_json(&mut output)["error"]["code"], "unsupported");
+            host.app
+                .plugins
+                .instances
+                .get_mut(&0)
+                .unwrap()
+                .application
+                .features
+                .insert(feature.into());
+            model_request(&mut host, 0, 6, api_request("view.patch", json!({"view":initial["view"],"expected_revision":initial["revision"],"header":header,"operations":[]}))).await;
+            assert_eq!(
+                response_json(&mut output)["result"]["model"][field],
+                content
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn view_presentation_must_reference_registered_view_commands() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let state = &mut host.app.plugins.instances.get_mut(&0).unwrap().application;
+    state.features.insert(api::VIEW_ACTION_PRESENTATION.into());
+    state
+        .command_contexts
+        .insert("inspect".into(), api::CommandContext::View);
+    for (index, name) in ["unknown", "open", "inspect"].into_iter().enumerate() {
+        let mut candidate = small_model();
+        candidate["action_presentation"] =
+            json!({name: {"label":"Show full value","listed":false}});
+        model_request(
+            &mut host,
+            0,
+            index as u64 + 1,
+            api_request("view.create", json!({"model":candidate})),
+        )
+        .await;
+        let reply = response_json(&mut output);
+        if name == "inspect" {
+            assert!(reply.get("error").is_none(), "{reply}");
+        } else {
+            assert_eq!(reply["error"]["code"], "invalid_argument");
+        }
+    }
+}
+
+#[tokio::test]
+async fn document_negotiation_and_large_staging_preserve_complete_native_buffer() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let initial = create(&mut host, &mut output, small_model()).await;
+    model_request(
+        &mut host,
+        0,
+        2,
+        api_request(
+            "view.create",
+            json!({"model":{"title":"Full","purpose":"document","rows":[],"document":""}}),
+        ),
+    )
+    .await;
+    assert_eq!(response_json(&mut output)["error"]["code"], "unsupported");
+    request(
+        &mut host,
+        0,
+        3,
+        api_request(
+            "view.stage.open",
+            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"model","bytes":5*1024*1024}),
+        ),
+    );
+    assert_eq!(
+        response_json(&mut output)["error"]["code"],
+        "limit_exceeded"
+    );
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .features
+        .insert(api::VIEW_DOCUMENT.into());
+    let body = format!("{}END猫", format!("{}\n", "x".repeat(110)).repeat(48_000));
+    assert!(body.len() > view::MAX_PROJECTION_BYTES);
+    let data = json!({"title":"Full","purpose":"document","rows":[],"document":body}).to_string();
+    request(
+        &mut host,
+        0,
+        4,
+        api_request(
+            "view.stage.open",
+            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"model","bytes":data.len()}),
+        ),
+    );
+    let stage = response_json(&mut output)["result"]["stage"].clone();
+    let mut serial = 5;
+    let mut offset = 0;
+    while offset < data.len() {
+        let mut end = (offset + view::MAX_CHUNK_BYTES).min(data.len());
+        while !data.is_char_boundary(end) {
+            end -= 1;
+        }
+        request(
+            &mut host,
+            0,
+            serial,
+            api_request(
+                "view.stage.write",
+                json!({"stage":stage,"offset":offset,"text":&data[offset..end]}),
+            ),
+        );
+        assert_eq!(response_json(&mut output)["result"]["offset"], end);
+        offset = end;
+        serial += 1;
+    }
+    model_request(
+        &mut host,
+        0,
+        serial,
+        api_request("view.stage.commit", json!({"stage":stage})),
+    )
+    .await;
+    let reply = response_json(&mut output);
+    assert!(reply.get("error").is_none(), "{reply}");
+    let state = &host.app.plugins.instances[&0].application;
+    let live = &state.views[initial["view"].as_str().unwrap()];
+    assert_eq!(host.app.buffers[live.buffer].text().to_string(), body);
+    assert_eq!(host.app.buffers[live.buffer].last_row(), 48_000);
+    assert_eq!(live.projection.line_rows.len(), 48_001);
+    assert!(state.retained_payload < view::DOCUMENT_PREPARE_CHARGE);
+    assert!(state.model_requests.is_empty());
+    assert!(state.view_stages.is_empty());
+}
+
+#[tokio::test]
+async fn document_prepare_quota_failure_keeps_old_view_and_stage_for_retry() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let initial = create(&mut host, &mut output, small_model()).await;
+    let state = &mut host.app.plugins.instances.get_mut(&0).unwrap().application;
+    state.features.insert(api::VIEW_DOCUMENT.into());
+    // Emulate other retained parents/results; preparation cannot discard them to fit.
+    state.retained_payload = 80 * 1024 * 1024;
+    let data =
+        json!({"title":"Full","purpose":"document","rows":[],"document":"complete"}).to_string();
+    request(
+        &mut host,
+        0,
+        2,
+        api_request(
+            "view.stage.open",
+            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"model","bytes":data.len()}),
+        ),
+    );
+    let stage = response_json(&mut output)["result"]["stage"].clone();
+    request(
+        &mut host,
+        0,
+        3,
+        api_request(
+            "view.stage.write",
+            json!({"stage":stage,"offset":0,"text":data}),
+        ),
+    );
+    assert!(response_json(&mut output).get("error").is_none());
+    model_request(
+        &mut host,
+        0,
+        4,
+        api_request("view.stage.commit", json!({"stage":stage})),
+    )
+    .await;
+    assert_eq!(
+        response_json(&mut output)["error"]["code"],
+        "limit_exceeded"
+    );
+    let state = &host.app.plugins.instances[&0].application;
+    assert_eq!(state.views[initial["view"].as_str().unwrap()].revision, 1);
+    assert!(state.view_stages.contains_key(stage.as_str().unwrap()));
+    assert!(state.model_requests.is_empty());
+}
+
+#[tokio::test]
+async fn negotiated_document_staging_does_not_raise_legacy_model_limits() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["views"]);
+    next(&mut output);
+    let initial = create(&mut host, &mut output, small_model()).await;
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .features
+        .insert(api::VIEW_DOCUMENT.into());
+    let data = format!("{}{}", small_model(), " ".repeat(view::MAX_MODEL_BYTES));
+    request(
+        &mut host,
+        0,
+        2,
+        api_request(
+            "view.stage.open",
+            json!({"view":initial["view"],"expected_revision":initial["revision"],"kind":"model","bytes":data.len()}),
+        ),
+    );
+    let stage = response_json(&mut output)["result"]["stage"].clone();
+    let mut serial = 3;
+    for (chunk, text) in data.as_bytes().chunks(view::MAX_CHUNK_BYTES).enumerate() {
+        request(
+            &mut host,
+            0,
+            serial,
+            api_request(
+                "view.stage.write",
+                json!({"stage":stage,"offset":chunk*view::MAX_CHUNK_BYTES,"text":std::str::from_utf8(text).unwrap()}),
+            ),
+        );
+        assert!(response_json(&mut output).get("error").is_none());
+        serial += 1;
+    }
+    model_request(
+        &mut host,
+        0,
+        serial,
+        api_request("view.stage.commit", json!({"stage":stage})),
+    )
+    .await;
+    assert_eq!(
+        response_json(&mut output)["error"]["code"],
+        "limit_exceeded"
+    );
+    assert_eq!(
+        host.app.plugins.instances[&0].application.views[initial["view"].as_str().unwrap()]
+            .revision,
+        1
+    );
 }

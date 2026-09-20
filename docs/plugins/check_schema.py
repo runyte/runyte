@@ -46,6 +46,30 @@ class PluginSchemaTests(unittest.TestCase):
             for actions in (None, ['duplicate', 'duplicate'], ['bad name'], ['x'] * 65):
                 self.assertFalse(validator.is_valid({**row, 'actions': actions}))
 
+    def test_negotiated_view_fields_preserve_document_and_metadata_shapes(self):
+        for definition in ('model', 'host_model', 'viewHeader'):
+            validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/' + definition})
+            model = {'title': 'Full value', 'purpose': 'document',
+                     'document': 'first\nlast\t', 'metadata': [{'label': 'Format', 'value': 'Raw'}],
+                     'action_presentation': {'raw': {'label': 'Show raw value', 'group': 'Value'}}}
+            if definition != 'viewHeader':
+                model['rows'] = []
+            self.assertTrue(validator.is_valid(model))
+            for field in ('document', 'metadata', 'action_presentation'):
+                self.assertFalse(validator.is_valid({**model, field: None}), (definition, field))
+            self.assertFalse(validator.is_valid({**model, 'purpose': 'list'}))
+            self.assertFalse(validator.is_valid({**model, 'document': 'bad\rtext'}))
+            self.assertFalse(validator.is_valid({**model, 'metadata': [{'label': 'Label\n', 'value': ''}]}))
+            self.assertFalse(validator.is_valid({**model, 'metadata': model['metadata'] * 17}))
+            if definition != 'viewHeader':
+                self.assertFalse(validator.is_valid({**model, 'rows': [{'id': 'x', 'text': '', 'role': 'ordinary'}]}))
+        command = {'name': 'connect-new', 'description': 'Connect', 'context': 'view'}
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/command'})
+        self.assertTrue(validator.is_valid({**command, 'presentation': {'label': 'Add database'}}))
+        for presentation in (None, {'label': ''}, {'label': 'Bad\n'}, {'label': 'Good', 'group': None},
+                             {'label': 'Good', 'order': 65536}, {'label': 'Good', 'listed': 0}):
+            self.assertFalse(validator.is_valid({**command, 'presentation': presentation}))
+
     def test_event_name_selects_payload_with_additive_host_fields(self):
         validator = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/hostMessage'}]})
         events = [f['message'] for f in FIXTURES if f['direction'] == 'host' and f['message']['type'] == 'event']

@@ -79,6 +79,11 @@ The optional client handles the handshake, request IDs, response correlation,
 bounded dispatch and ordered observation callbacks. Every host method remains
 available through `app.request(method, **params)`; convenience methods add model
 staging, snapshots, subscriptions, managed binary pipes and state operations.
+`publish_document` publishes a complete bounded read-only body when
+`view-document` is acknowledged. The [dashboard](dashboard.py) demonstrates
+optional action labels/groups and labelled metadata while retaining older-host
+fallbacks. See [action labels and groups](applications.md#action-labels-and-groups)
+for negotiation and the unchanged command identifier grammar.
 Its output lane remains bounded while the host stops reading. A local delivery
 timeout closes the connection to prevent queued late operations; explicitly
 restart before issuing new requests. Host-returned errors remain ordinary

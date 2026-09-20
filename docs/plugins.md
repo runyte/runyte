@@ -70,6 +70,11 @@ collide: Runyte disables the alias for every claimant, reports the conflicting
 full names, and restores the alias when only one claimant remains. Built-in
 `:write` and a plugin's `::write` are distinct namespaces.
 
+With negotiated `view-action-presentation`, command labels can contain spaces
+(`Add database`) while identifiers and aliases keep their existing grammar.
+Plugins can group Tab actions and hide an internal Enter callback from discovery
+without disabling it. See [action labels and groups](plugins/applications.md#action-labels-and-groups).
+
 Bindings use physical spellings, at most eight keys, in Normal and Select modes.
 They cannot replace existing commands or grammar controls. Invalid commands,
 arguments, aliases or binding collisions reject the whole registration.

@@ -375,7 +375,11 @@
       },
       "host_version": "0.3.0",
       "features": [
-        "view-row-actions"
+        "view-row-actions",
+        "view-action-presentation",
+        "view-metadata",
+        "view-document",
+        "job-feedback"
       ]
     }
   },
@@ -2426,6 +2430,118 @@
             }
           ]
         }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "features": [
+      "view-action-presentation",
+      "view-metadata",
+      "view-document"
+    ],
+    "message": {
+      "type": "request",
+      "id": "p:301",
+      "method": "view.publish",
+      "params": {
+        "view": "v:1",
+        "expected_revision": "m:1",
+        "model": {
+          "title": "[value] Example",
+          "purpose": "document",
+          "rows": [],
+          "document": "first\nlast\tvalue",
+          "metadata": [
+            {
+              "label": "Format",
+              "value": "Raw"
+            }
+          ],
+          "actions": [
+            "raw"
+          ],
+          "action_presentation": {
+            "raw": {
+              "label": "Show raw value",
+              "group": "Value",
+              "order": 1,
+              "listed": true
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "features": [
+      "view-action-presentation",
+      "view-metadata",
+      "view-document"
+    ],
+    "message": {
+      "type": "response",
+      "id": "p:301",
+      "result": {
+        "view": "v:1",
+        "revision": "m:2",
+        "model": {
+          "title": "[value] Example",
+          "purpose": "document",
+          "rows": [],
+          "document": "first\nlast\tvalue",
+          "metadata": [
+            {
+              "label": "Format",
+              "value": "Raw"
+            }
+          ],
+          "actions": [
+            "raw"
+          ],
+          "action_presentation": {
+            "raw": {
+              "label": "Show raw value",
+              "group": "Value",
+              "order": 1,
+              "listed": true
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "direction": "plugin",
+    "features": [
+      "job-feedback"
+    ],
+    "message": {
+      "type": "request",
+      "id": "p:302",
+      "method": "job.finish",
+      "params": {
+        "job": "j:1",
+        "state": "failed",
+        "message": "Full value exceeds available capacity"
+      }
+    }
+  },
+  {
+    "direction": "host",
+    "features": [
+      "job-feedback"
+    ],
+    "message": {
+      "type": "response",
+      "id": "p:302",
+      "result": {
+        "job": "j:1",
+        "title": "Show full value",
+        "state": "failed",
+        "progress": 0,
+        "message": "Full value exceeds available capacity"
       }
     }
   }

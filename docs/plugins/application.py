@@ -15,6 +15,8 @@ import time
 VERSION = 'runyte-1'
 LIMIT = 1024 * 1024
 MODEL_LIMIT = 4 * 1024 * 1024
+DOCUMENT_MODEL_LIMIT = 16 * 1024 * 1024
+DOCUMENT_LIMIT = 8 * 1024 * 1024
 MODEL_CHUNK = 128 * 1024
 STATE_LIMIT = LIMIT - 4096
 
@@ -330,6 +332,8 @@ class Application:
         optional_features = _names(self.optional_features, features=True)
         if required & optional or len(required | optional) > 32 or features & optional_features or len(features | optional_features) > 32:
             raise ValueError('Overlapping or excessive negotiation sets')
+        if any('presentation' in command for command in commands) and 'view-action-presentation' not in features | optional_features:
+            raise ValueError('Command presentation requires a feature declaration')
         self.host_version = None
         self.granted_capabilities = frozenset()
         self.features = frozenset()
@@ -510,6 +514,42 @@ class Application:
             raise PluginError('outcome_unknown', 'Helper input acknowledgement was incomplete')
         return result
 
+    def _registration_commands(self, supported_features):
+        """Readable labels are omitted for old strict registration decoders."""
+        if 'view-action-presentation' in supported_features:
+            return self.commands
+        return [{key: value for key, value in command.items() if key != 'presentation'}
+                for command in self.commands]
+
+    def finish_job(self, job, state, *, message=None):
+        """Finish an owned job with optional negotiated native completion detail."""
+        params = {'job': job, 'state': state}
+        if message is not None:
+            if 'job-feedback' not in self.features:
+                raise PluginError('unsupported', 'Job feedback requires job-feedback')
+            if not message or len(message.encode('utf-8')) > 1024 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in message):
+                raise PluginError('invalid_argument', 'Invalid job feedback message')
+            params['message'] = message
+        return self.request('job.finish', **params)
+
+    def publish_document(self, view, expected_revision, title, text, *, metadata=None,
+                         actions=(), action_presentation=None, expected_query_revision=None):
+        """Publish one complete read-only body; internal chunks never become pages."""
+        if 'view-document' not in self.features:
+            raise PluginError('unsupported', 'Full documents require view-document')
+        if len(text.encode('utf-8')) > DOCUMENT_LIMIT or text.count('\n') + 1 > 250_000:
+            raise PluginError('limit_exceeded', 'Full document exceeds supported size')
+        if any((ord(c) < 32 and c not in '\n\t') or 127 <= ord(c) <= 159 for c in text):
+            raise PluginError('invalid_argument', 'Document contains unsupported control characters')
+        model = {'title': title, 'purpose': 'document', 'rows': [], 'document': text,
+                 'actions': list(actions)}
+        if metadata is not None:
+            model['metadata'] = metadata
+        if action_presentation is not None:
+            model['action_presentation'] = action_presentation
+        return self.publish_model(view, expected_revision, model,
+                                  expected_query_revision=expected_query_revision)
+
     def publish_model(self, view, expected_revision, model, *, expected_query_revision=None):
         """Atomically publish a model, staging large JSON without exposing partial rows."""
         return self._model_update(view, expected_revision, 'model', model, expected_query_revision)
@@ -528,9 +568,14 @@ class Application:
         return self.request('view.query.set', **params)
 
     def _model_update(self, view, expected_revision, kind, value, expected_query_revision=None):
+        header = value if kind == 'model' else value.get('header', {})
+        for field, feature in (('metadata', 'view-metadata'), ('action_presentation', 'view-action-presentation'), ('document', 'view-document')):
+            if field in header and feature not in self.features:
+                raise PluginError('unsupported', f'{field} requires {feature}')
         data = json.dumps(value, ensure_ascii=False, allow_nan=False,
                           separators=(',', ':')).encode('utf-8')
-        if len(data) > MODEL_LIMIT:
+        limit = DOCUMENT_MODEL_LIMIT if 'document' in header else MODEL_LIMIT
+        if len(data) > limit:
             raise PluginError('limit_exceeded', 'Encoded model update exceeds limit')
         preconditions = {'expected_revision': expected_revision}
         if expected_query_revision is not None:
@@ -568,7 +613,8 @@ class Application:
                                 expected_revision=result['revision'])
         handle = snapshot['snapshot']
         try:
-            if not 0 <= snapshot['bytes'] <= MODEL_LIMIT:
+            limit = DOCUMENT_MODEL_LIMIT if 'view-document' in self.features else MODEL_LIMIT
+            if not 0 <= snapshot['bytes'] <= limit:
                 raise PluginError('limit_exceeded', 'Model snapshot exceeds limit')
             data = bytearray()
             while True:
@@ -780,7 +826,7 @@ class Application:
                 if not set(self.required_features) <= supported_features:
                     raise PluginError('unsupported_feature', 'Required host feature is unavailable')
                 registration = {'type': 'register', 'version': VERSION, 'runyte': self.runyte.normalized,
-                                'name': self.name, 'commands': self.commands,
+                                'name': self.name, 'commands': self._registration_commands(supported_features),
                                 'required_capabilities': self.capabilities,
                                 'optional_capabilities': self.optional_capabilities,
                                 'required_features': self.required_features, 'optional_features': self.optional_features}
@@ -796,6 +842,8 @@ class Application:
                     raise PluginError('unavailable', 'Registration refused')
                 granted = _names(registered['capabilities'])
                 selected = _names(registered['features'], features=True)
+                if any('presentation' in command for command in registration['commands']) and 'view-action-presentation' not in selected:
+                    raise PluginError('invalid_registration', 'Command presentation was not acknowledged')
                 effective = ReleaseRange(registered['runyte'])
                 if (not set(self.capabilities) <= granted or not granted <= supported
                         or not granted <= set(self.capabilities) | set(self.optional_capabilities)

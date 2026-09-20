@@ -15,6 +15,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeCommand {
+    pub presentation: Option<plugin::presentation::Presentation>,
     pub alias: Option<String>,
     /// Active palette spelling, including its second colon. Collisions clear it.
     pub alias_name: Option<String>,
@@ -109,6 +110,52 @@ pub(crate) struct Plugins {
 }
 
 impl App {
+    pub(crate) fn plugin_command_presentation<'a>(
+        &'a self,
+        command: &'a RuntimeCommand,
+    ) -> Option<&'a plugin::presentation::Presentation> {
+        if command.context == plugin::application::CommandContext::View
+            && let Some(view) = self
+                .plugins
+                .instances
+                .get(&command.plugin)
+                .and_then(|instance| {
+                    instance
+                        .application
+                        .views
+                        .values()
+                        .find(|view| view.buffer == self.active().buffer)
+                })
+            && let Some(presentation) = view
+                .model
+                .action_presentation
+                .as_ref()
+                .and_then(|presentations| presentations.get(&command.local))
+        {
+            return Some(presentation);
+        }
+        command.presentation.as_ref()
+    }
+    pub(crate) fn plugin_binding_description(&self, target: BindingTarget) -> Option<&str> {
+        let BindingTarget::Plugin(id) = target else {
+            return None;
+        };
+        let command = self.plugins.commands.get(&id)?;
+        self.plugin_command_presentation(command)
+            .map(|presentation| presentation.label.as_str())
+    }
+
+    pub(crate) fn present_plugin_key_hints(&self, rows: &mut [crate::key_hints::KeyHintRow]) {
+        for row in rows {
+            if let Some(description) = row
+                .target
+                .and_then(|target| self.plugin_binding_description(target))
+            {
+                row.description = description.to_owned().into();
+            }
+        }
+    }
+
     /// Native operative ranges for an explicit pane, including its retained
     /// half-open/linewise selection semantics. Presentation does not retarget it.
     pub(crate) fn plugin_selection_spans(&self, pane: usize) -> Vec<plugin::editor::Span> {
@@ -174,8 +221,14 @@ impl App {
                     if command.context == plugin::application::CommandContext::View {
                         binding.scope = crate::keymap::BindingScope::Plugin(command.plugin);
                     }
-                    binding.description =
-                        format!(":{} — {}", command.palette_name(), command.description).into();
+                    binding.description = command
+                        .presentation
+                        .as_ref()
+                        .map_or_else(
+                            || format!(":{} — {}", command.palette_name(), command.description),
+                            |presentation| presentation.label.clone(),
+                        )
+                        .into();
                     binding
                 })
             })
@@ -510,14 +563,22 @@ impl App {
             .commands
             .values()
             .filter(|c| {
+                if self
+                    .plugin_command_presentation(c)
+                    .is_some_and(|p| !p.listed)
+                {
+                    return false;
+                }
                 if query.chars().any(char::is_whitespace) && exact.is_some() {
                     return exact.is_some_and(|exact| exact.id == c.id);
                 }
                 let haystack = format!(
-                    "{} {} {} editing",
+                    "{} {} {} {} editing",
                     c.name,
                     c.alias_name.as_deref().unwrap_or(""),
-                    c.description
+                    c.description,
+                    self.plugin_command_presentation(c)
+                        .map_or("", |p| p.label.as_str())
                 )
                 .to_lowercase();
                 query
@@ -530,7 +591,9 @@ impl App {
                     name: &command.name,
                     aliases: &[],
                     usage: &command.usage,
-                    description: &command.description,
+                    description: self
+                        .plugin_command_presentation(command)
+                        .map_or(command.description.as_str(), |p| p.label.as_str()),
                     arguments: if command.arguments.is_empty() {
                         crate::command::CommandArguments::None
                     } else {
@@ -555,6 +618,35 @@ impl App {
 }
 
 impl App {
+    pub(crate) fn plugin_job_feedback(
+        &mut self,
+        owner: usize,
+        action: Option<u64>,
+        job: &plugin::application::Job,
+        notify: bool,
+    ) {
+        let Some(message) = job.message.as_deref() else {
+            return;
+        };
+        if matches!(
+            job.state,
+            plugin::application::JobState::Failed | plugin::application::JobState::OutcomeUnknown
+        ) {
+            self.mark_action_feedback_failed(action, message);
+            if notify {
+                self.push_notification(crate::notification::NotificationDraft::new(
+                    crate::notification::NotificationSeverity::Error,
+                    format!("Plugin {}", self.plugins.instances[&owner].config.id),
+                    &job.title,
+                    message,
+                ));
+            }
+            self.plugins.presentation_dirty = true;
+        } else {
+            self.plugin_application_feedback(action, message);
+        }
+    }
+
     pub(crate) fn plugin_application_feedback(&mut self, action: Option<u64>, detail: &str) {
         if self.update_action_feedback(action, detail) {
             self.plugins.presentation_dirty = true;

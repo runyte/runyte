@@ -88,6 +88,7 @@ impl DownloadCase {
             .application_request(
                 0,
                 api::Request::JobFinish {
+                    message: None,
                     job: self.job.clone(),
                     state,
                 },

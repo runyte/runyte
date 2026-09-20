@@ -201,6 +201,7 @@ pub(super) fn commands(
         app.plugins.commands.insert(
             id,
             RuntimeCommand {
+                presentation: None,
                 alias: None,
                 alias_name: None,
                 arguments: vec![],
@@ -645,4 +646,106 @@ fn rich_projection_first_native_presentation_starts_at_first_actionable_row() {
         app.active().selection.primary().head,
         prepared.projection.rows[0].from
     );
+}
+
+#[test]
+fn full_document_search_copy_and_header_replacement_cover_the_entire_body() {
+    let body = format!("{}END猫", "record\n".repeat(20_000));
+    let model = view::Model {
+        title: "Full value".into(),
+        document: Some(body.clone()),
+        ..Default::default()
+    };
+    let (mut app, buffer, old) = fixture(model.clone());
+    assert_eq!(app.buffers[buffer].text().to_string(), body);
+    assert!(app.buffers[buffer].is_read_only());
+    app.active_mut().replace_selection(Selection::point(0));
+    app.commit_search(SearchQuery {
+        pattern: "END猫".into(),
+        mode: SearchMode::Sensitive,
+        ..Default::default()
+    });
+    let matches = app.search_matches().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].from(), body.chars().count() - 4);
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, body.chars().count())));
+    let copied = app.yank_value(false);
+    assert_eq!(copied.text, body);
+    let last = app.buffers[buffer].line_to_offset(20_000) + 2;
+    app.active_mut().replace_selection(Selection::point(last));
+    app.active_mut().scroll_row = 19_900;
+    let updated = view::Model {
+        metadata: Some(vec![view::Metadata {
+            label: "Format".into(),
+            value: "Raw".into(),
+        }]),
+        ..model
+    };
+    let projection = publish(&mut app, buffer, &old, updated);
+    assert_eq!(app.active().selection.primary().head, last + 12);
+    assert_eq!(app.active().scroll_row, 19_901);
+    assert_eq!(projection.document_line, Some(1));
+}
+
+#[test]
+fn action_presentation_groups_labels_and_hides_discovery_without_revoking_primary() {
+    use crate::plugin::presentation::Presentation;
+    let presentation = |label: &str, group: &str, order, listed| Presentation {
+        label: label.into(),
+        group: Some(group.into()),
+        order,
+        listed,
+    };
+    let mut value = model(&["a"]);
+    value.actions = vec!["enter".into(), "refresh".into(), "hidden".into()];
+    value.action_presentation = Some(
+        [(
+            "refresh".into(),
+            presentation("Refresh rows", "Browse", 1, true),
+        )]
+        .into(),
+    );
+    let (mut app, buffer, projection) = fixture(value.clone());
+    let offset = projection.rows[0].from;
+    let mut receiver = commands(&mut app, buffer, value, projection);
+    app.plugins.commands.get_mut(&1).unwrap().presentation =
+        Some(presentation("Open row", "Browse", 0, false));
+    app.plugins.commands.get_mut(&2).unwrap().presentation =
+        Some(presentation("Refresh table", "Database", 50, true));
+    app.plugins.commands.get_mut(&3).unwrap().presentation =
+        Some(presentation("Disconnect", "Database", 2, true));
+    app.active_mut().replace_selection(Selection::point(offset));
+    assert_eq!(
+        app.plugin_binding_description(crate::keymap::BindingTarget::Plugin(2)),
+        Some("Refresh rows")
+    );
+    assert!(app.open_plugin_actions());
+    let picker = app.list.as_ref().unwrap();
+    assert_eq!(picker.visible_indices().len(), 2);
+    assert_eq!(picker.selected_item().unwrap().label, "Refresh rows");
+    let overlays = app.overlay_snapshots();
+    let overlay = overlays
+        .iter()
+        .find(|overlay| overlay.rows.iter().any(|row| row.heading))
+        .unwrap();
+    assert_eq!(
+        overlay
+            .rows
+            .iter()
+            .filter(|row| row.heading)
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Browse", "Database"]
+    );
+    assert_eq!(overlay.selected, Some(1));
+    app.list = None;
+    assert!(matches!(
+        app.invoke_plugin_arguments(1, "").unwrap(),
+        CommandOutcome::AsynchronousRequest(_)
+    ));
+    assert!(matches!(
+        receiver.try_recv().unwrap(),
+        plugin::HostMessage::Application(api::HostMessage::Request { .. })
+    ));
 }

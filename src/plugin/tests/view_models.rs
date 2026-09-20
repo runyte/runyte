@@ -554,3 +554,261 @@ fn row_action_names_counts_and_null_are_bounded() {
         assert!(m.validate().is_err());
     }
 }
+
+#[test]
+fn metadata_precedes_content_preserves_row_identity_and_legacy_blocks() {
+    let mut value = model(&[("record", "猫 row")]);
+    value.metadata = Some(vec![Metadata {
+        label: "Database path".into(),
+        value: "/tmp/猫.sqlite".into(),
+    }]);
+    value.status = Some(Block {
+        text: "Ready".into(),
+        role: Role::Muted,
+    });
+    value.detail = Some(Block {
+        text: "Legacy detail".into(),
+        role: Role::Ordinary,
+    });
+    let before = prepare(value.clone());
+    let projection = &before.projection;
+    assert!(
+        projection
+            .text
+            .starts_with("Database path: /tmp/猫.sqlite\nReady\n猫 row\n")
+    );
+    assert!(projection.text.contains("Detail\nLegacy detail"));
+    assert_eq!(projection.rows[0].line, 2);
+    assert_eq!(projection.line_rows[0], None);
+    assert_eq!(projection.line_rows[1], None);
+    assert_eq!(projection.line_rows[2], Some(0));
+    assert_eq!(
+        projection.spans[0].scope,
+        crate::syntax::Scope::named("markup.heading").unwrap()
+    );
+    let updated = value
+        .patched(
+            Patch {
+                header: Some(Header {
+                    title: "Updated".into(),
+                    purpose: Purpose::List,
+                    metadata: Some(vec![
+                        Metadata {
+                            label: "Filters".into(),
+                            value: "none".into(),
+                        },
+                        Metadata {
+                            label: "Sort".into(),
+                            value: "id".into(),
+                        },
+                    ]),
+                    ..Default::default()
+                }),
+                operations: vec![],
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let after = prepare(updated);
+    assert!(
+        after
+            .projection
+            .text
+            .starts_with("Filters: none\nSort: id\n猫 row\n")
+    );
+    assert_eq!(after.projection.remap_from(&before.projection), [0]);
+    assert!(!after.projection.text.contains("Legacy detail"));
+}
+
+#[test]
+fn metadata_and_presentation_decode_validate_and_charge_authored_fields() {
+    let mut value = model(&[]);
+    let before = value.payload_bytes();
+    value.metadata = Some(vec![Metadata {
+        label: "Filters".into(),
+        value: "".into(),
+    }]);
+    value.action_presentation = Some(BTreeMap::from([(
+        "open".into(),
+        super::super::presentation::Presentation {
+            label: "Open value".into(),
+            group: Some("Value".into()),
+            order: 1,
+            listed: false,
+        },
+    )]));
+    value.validate().unwrap();
+    assert!(value.payload_bytes() > before);
+    let retained = value
+        .patched(
+            Patch {
+                header: None,
+                operations: vec![],
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        retained.action_presentation.as_ref().unwrap()["open"].label,
+        "Open value"
+    );
+    for (field, bad) in [
+        ("metadata", "null"),
+        ("action_presentation", "null"),
+        (
+            "action_presentation",
+            r#"{"open":{"label":"One"},"open":{"label":"Two"}}"#,
+        ),
+    ] {
+        let encoded = format!(r#"{{"title":"Test","purpose":"list","rows":[],"{field}":{bad}}}"#);
+        assert!(
+            serde_json::from_str::<Model>(&encoded).is_err(),
+            "{encoded}"
+        );
+    }
+    let empty: Model = serde_json::from_str(
+        r#"{"title":"Test","purpose":"list","rows":[],"metadata":[],"action_presentation":{}}"#,
+    )
+    .unwrap();
+    assert!(empty.metadata.is_some());
+    assert!(empty.action_presentation.is_some());
+    value.metadata.as_mut().unwrap()[0].value = "bad\nvalue".into();
+    assert!(value.validate().is_err());
+    value.metadata = Some(vec![
+        Metadata {
+            label: "L".into(),
+            value: "V".into()
+        };
+        17
+    ]);
+    assert!(value.validate().is_err());
+    assert!(serde_json::from_value::<Model>(serde_json::to_value(&value).unwrap()).is_err());
+    value.metadata = None;
+    value.action_presentation = Some(
+        (0..17)
+            .map(|index| {
+                (
+                    format!("action-{index}"),
+                    super::super::presentation::Presentation {
+                        label: "Action".into(),
+                        group: Some(format!("Group {index}")),
+                        order: 0,
+                        listed: true,
+                    },
+                )
+            })
+            .collect(),
+    );
+    assert!(value.validate().is_err());
+    value
+        .action_presentation
+        .as_mut()
+        .unwrap()
+        .values_mut()
+        .for_each(|p| p.group = None);
+    value.validate().unwrap();
+    value.action_presentation.as_mut().unwrap().insert(
+        "invalid command".into(),
+        super::super::presentation::Presentation {
+            label: "Action".into(),
+            group: None,
+            order: 0,
+            listed: true,
+        },
+    );
+    assert!(value.validate().is_err());
+}
+
+#[test]
+fn documents_preserve_complete_text_and_bound_size_lines_and_structure() {
+    let body = format!("{}\nEND猫\t", "data\n".repeat(20_000));
+    let value = Model {
+        title: "Full value".into(),
+        document: Some(body.clone()),
+        ..Default::default()
+    };
+    let prepared = prepare(value.clone());
+    assert_eq!(prepared.projection.text, body);
+    assert_eq!(prepared.projection.document_from, Some(0));
+    assert_eq!(prepared.projection.document_line, Some(0));
+    assert_eq!(prepared.projection.line_rows.len(), 20_002);
+    assert!(prepared.projection.rows.is_empty());
+    assert!(prepared.projection.line_rows.iter().all(Option::is_none));
+    for body in [
+        "bad\rtext".to_owned(),
+        "\u{0}".into(),
+        "\n".repeat(MAX_DOCUMENT_LINES),
+        "x".repeat(MAX_DOCUMENT_BYTES + 1),
+    ] {
+        let mut invalid = value.clone();
+        invalid.document = Some(body);
+        assert!(invalid.validate().is_err());
+    }
+    for extra in [
+        serde_json::json!({"rows":[{"id":"a","text":"A","role":"ordinary"}]}),
+        serde_json::json!({"purpose":"list"}),
+        serde_json::json!({"detail":{"text":"A","role":"ordinary"}}),
+    ] {
+        let mut wire = serde_json::to_value(&value).unwrap();
+        wire.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(
+            serde_json::from_value::<Model>(wire)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+    }
+    assert!(
+        serde_json::from_str::<Model>(
+            r#"{"title":"Test","purpose":"document","rows":[],"document":null}"#
+        )
+        .is_err()
+    );
+    let large = Model {
+        document: Some("猫".repeat((MAX_PROJECTION_BYTES + 300) / 3)),
+        ..value
+    };
+    assert!(prepare(large).projection.text.len() > MAX_PROJECTION_BYTES);
+}
+
+#[test]
+fn document_header_patches_keep_exact_body_and_metadata_offsets() {
+    let value = Model {
+        title: "Value".into(),
+        document: Some("first\nlast".into()),
+        ..Default::default()
+    };
+    let preserved = value
+        .patched(
+            Patch {
+                header: None,
+                operations: vec![],
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(preserved.document.as_deref(), Some("first\nlast"));
+    let updated = value
+        .patched(
+            Patch {
+                header: Some(Header {
+                    title: "Value".into(),
+                    document: Some("first\nlast".into()),
+                    metadata: Some(vec![Metadata {
+                        label: "Format".into(),
+                        value: "Raw".into(),
+                    }]),
+                    ..Default::default()
+                }),
+                operations: vec![],
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let projection = prepare(updated).projection;
+    assert_eq!(projection.text, "Format: Raw\nfirst\nlast");
+    assert_eq!(projection.document_line, Some(1));
+    assert_eq!(projection.document_from, Some(12));
+}

@@ -28,8 +28,9 @@ does not establish these guarantees. A change must assess the affected contract
 and add meaningful regression coverage at its behavior boundary.
 
 Implementation and initial validation are tracked in
-[the active transition plan](../plans/active/PLAN_STABLE_PLUGINS.md). This register
-does not claim that 0.3.0 has already been published or certified.
+[the completed transition plan](../plans/completed/PLAN_STABLE_PLUGINS.md).
+Its lifecycle closure records delivered implementation, not certification of
+unverified release gates. This register does not establish registry publication.
 
 The external agent context transport adds the negotiated
 `runyte.context.v1` profile on a separate, natively granted Unix socket.

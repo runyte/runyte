@@ -525,8 +525,11 @@ primary action defaults to Enter; Tab lists registered view actions. Stable
 `runyte-1` feature `view-row-actions` can restrict this list by selected data
 rows, intersecting availability across multiple rows. The same restriction gates
 Enter, configured bindings and colon commands; no new physical binding is added.
-Normal
-movement, selection, copying, search and host prefixes retain their registry
+Negotiated `view-action-presentation` supplies readable labels for menu, help
+and hints, and non-selectable Tab group headings. A hidden primary callback
+keeps Enter and direct invocation; command IDs and physical spellings do not
+change. Complete `view-document` bodies use normal whole-buffer search/copy.
+Normal movement, selection, copying, search and host prefixes retain their registry
 bindings. Refreshes cannot accept an action against an unseen model revision.
 Typed plugin command arguments are parsed as quoted positional values without
 shell evaluation. Choosing a view action with required arguments from Tab opens

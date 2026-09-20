@@ -139,13 +139,14 @@ impl App {
                     view.query.as_ref().is_some_and(|query| query.pending),
                 )
             });
-        let commands = self
+        let mut commands = self
             .plugins
             .commands
             .values()
             .filter(|c| {
                 c.plugin == owner
                     && c.context == api::CommandContext::View
+                    && self.plugin_command_presentation(c).is_none_or(|p| p.listed)
                     && allowed.as_ref().is_some_and(|(actions, pending)| {
                         actions
                             .as_ref()
@@ -158,6 +159,13 @@ impl App {
                     })
             })
             .collect::<Vec<_>>();
+        commands.sort_by_key(|command| {
+            (
+                self.plugin_command_presentation(command)
+                    .map_or(0, |p| p.order),
+                command.id,
+            )
+        });
         if commands.is_empty() {
             return false;
         }
@@ -169,7 +177,17 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(index, c)| {
-                    super::PickerItem::new(c.local.clone(), c.description.clone(), index)
+                    let presentation = self.plugin_command_presentation(c);
+                    let label = presentation.map_or(c.local.as_str(), |p| p.label.as_str());
+                    let item = super::PickerItem::searchable(
+                        label,
+                        c.description.clone(),
+                        format!("{label} {} {}", c.local, c.description),
+                        index,
+                    );
+                    presentation
+                        .and_then(|p| p.group.as_deref())
+                        .map_or_else(|| item.clone(), |group| item.clone().with_section(group))
                 })
                 .collect(),
         ));
@@ -245,6 +263,13 @@ impl App {
     ) -> bool {
         let projected = &model.projection;
         let row_map = |line: usize| {
+            if let (Some(old_start), Some(new_start)) = (old.document_line, projected.document_line)
+                && line >= old_start
+            {
+                return new_start
+                    .saturating_add(line - old_start)
+                    .min(projected.line_rows.len().saturating_sub(1));
+            }
             let Some(Some(index)) = old.line_rows.get(line) else {
                 return line.min(projected.line_rows.len().saturating_sub(1));
             };
@@ -364,8 +389,13 @@ impl App {
                 .values()
                 .flat_map(|instance| instance.application.views.values())
                 .find(|view| view.buffer == buffer)
-                .and_then(|view| view.projection.rows.first())
-                .map(|row| row.from)
+                .and_then(|view| {
+                    view.projection
+                        .rows
+                        .first()
+                        .map(|row| row.from)
+                        .or(view.projection.document_from)
+                })
             {
                 self.active_mut()
                     .replace_selection(Selection::point(offset));

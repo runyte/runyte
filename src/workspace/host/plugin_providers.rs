@@ -352,7 +352,7 @@ impl WorkspaceHost {
                         .unwrap()
                         .application;
                     state.retained_payload -= pending.charge;
-                    state.jobs.remove(&job.job);
+                    state.remove_job(&job.job);
                     let _ = self.plugin_send(
                         owner,
                         plugin::HostMessage::Deadline {

@@ -11,21 +11,22 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
-Active work:
-
-- [Database viewer interactive browsing](active/PLAN_DBVIEWER_INTERACTIVE_BROWSING.md):
-  connection forms, contextual navigation, access modes, query guidance,
-  interactive filters, JSON inspection and transaction management for ru-dbviewer.
-- [Stable plugin compatibility](active/PLAN_STABLE_PLUGINS.md): release-range
-  declarations, a stable application contract, a clean experimental cutover and
-  reproducible compatibility gates using ru-time as an external plugin.
-
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
 current sources take precedence.
 
 The retained completed records cover:
+
+- [Database viewer UX and full-value inspection](completed/PLAN_DBVIEWER_UX_AND_FULL_VALUES.md):
+  grouped actions, explicit view identity, labelled top metadata and on-demand
+  complete-value documents through compatible `runyte-1` extensions;
+- [Database viewer interactive browsing](completed/PLAN_DBVIEWER_INTERACTIVE_BROWSING.md):
+  connection forms, contextual navigation, access modes, query guidance,
+  interactive filters, JSON inspection and transaction management for ru-dbviewer;
+- [Stable plugin compatibility](completed/PLAN_STABLE_PLUGINS.md): release-range
+  declarations, a stable application contract, a clean experimental cutover and
+  reproducible compatibility gates using ru-time as an external plugin;
 
 - [Agent workspace context](completed/PLAN_AGENT_WORKSPACE_CONTEXT.md): bounded
   context reads, separately granted buffer edits, and individually approved

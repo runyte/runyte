@@ -581,6 +581,7 @@ impl TryFrom<OverlaySnapshot> for core::OverlaySnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OverlayRow {
+    pub heading: bool,
     pub identity: OverlayIdentity,
     pub label: String,
     pub detail: String,
@@ -598,6 +599,7 @@ pub struct OverlayRow {
 impl From<core::OverlayRow> for OverlayRow {
     fn from(value: core::OverlayRow) -> Self {
         Self {
+            heading: value.heading,
             identity: value.identity.into(),
             label: value.label,
             detail: value.detail,
@@ -613,6 +615,7 @@ impl From<core::OverlayRow> for OverlayRow {
 impl From<OverlayRow> for core::OverlayRow {
     fn from(value: OverlayRow) -> Self {
         Self {
+            heading: value.heading,
             identity: value.identity.into(),
             label: value.label,
             detail: value.detail,
@@ -754,6 +757,7 @@ mod tests {
     #[test]
     fn overlay_row_availability_survives_the_wire_round_trip() {
         let row = core::OverlayRow {
+            heading: false,
             identity: core::OverlayIdentity::Text("Space l".to_owned()),
             label: "Space l".to_owned(),
             detail: "Language (LSP) · unavailable: no server".to_owned(),

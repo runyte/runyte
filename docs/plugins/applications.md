@@ -302,7 +302,8 @@ are retained per owner. Reading renews a 30-second idle deadline; closing the
 source buffer, explicit release, expiry or disconnect releases the snapshot.
 An expired snapshot returns `closed`. Chunks never combine different revisions.
 
-An instance can hold sixteen native views, each with at most 10,000 rows.
+An instance can hold sixteen native views. Base models have at most 10,000 rows;
+negotiated complete documents use the separate bounds below.
 Models contain at most 4 MiB of canonical JSON and project to at most 4 MiB of
 text. Single-message models must fit the encoded line with envelope headroom;
 larger models use the staging operations described below. View projections
@@ -375,6 +376,115 @@ survive model reads, snapshots, row reorder and patching; updating a row without
 `actions` restores inheritance. No cursor notifications, plugin round trips or
 polling are needed to choose the menu.
 
+### Job completion feedback
+
+With optional feature `job-feedback`, `job.finish` accepts a `message` of
+1–1,024 UTF-8 bytes without control characters. Omission preserves the original
+behavior; authored `null` is invalid. Capability `jobs` and the owned job handle
+remain required, and host-owned jobs still finish through their IO completion.
+A refused message leaves the job state unchanged.
+
+The terminal job retains this detail for `job.get`, replies and job events.
+Native feedback updates the originating action, including a job that finishes
+before its command acknowledgement arrives. Failed or uncertain jobs also leave
+a native notification, without replacing a later action's interaction line or
+requiring the general notifications capability. This lets a display job report
+why it could not load/format a value while keeping its prior document intact.
+Each plugin-created job reserves 1,024 bytes when this feature is negotiated,
+so completion can report a failure even when the remaining shared quota is full.
+Finishing transfers the actual message charge and releases unused space; an
+absent message releases the reservation. Messages count toward retained payload
+and are released with the bounded recent job history or owner cleanup. The Python SDK exposes
+`finish_job(job, state, message=...)`; it refuses to send messages without the
+feature. This does not settle a plugin's database transaction.
+
+### Action labels and groups
+
+Negotiate `view-action-presentation` to add command `presentation` objects:
+
+```json
+{"label":"Add database","group":"Database","order":10,"listed":true}
+```
+
+Labels are 1–160 UTF-8 bytes; optional group names are 1–64 bytes. Neither may
+contain control characters. `order` is an unsigned 16-bit integer, default 0;
+`listed` defaults to true. At most 16 distinct groups occur in one registration.
+Command identifiers, aliases, arguments and configured bindings keep their
+existing grammar. Spaces belong in labels, not identifiers.
+
+Registration may include this field only after hello advertises the feature and
+the registration requests it. The Python client omits presentations on older
+hosts when the feature was optional. After acknowledgement, an optional model or
+header `action_presentation` map overrides complete presentations by registered
+view-command ID. The map has at most 64 distinct keys and 16 distinct groups;
+missing entries inherit registration. Duplicate keys and invalid or unregistered
+references are rejected. Empty authored maps still require negotiation; `null`
+is invalid for presentations, group names and the map.
+
+Tab groups listed commands in named, non-selectable sections. Commands sort by
+order then registration order; groups follow their first command in that order.
+Filtering searches labels, command IDs and descriptions, removes empty sections
+and keeps actions selectable without selecting headings. `listed: false` hides
+menu entries and palette suggestions, while Enter, configured bindings and
+direct invocation keep their existing admission checks. A primary callback must
+therefore stay registered and allowed even when hidden. Palette descriptions,
+help and key hints resolve labels through the same command/view registry.
+Retained presentation metadata counts toward the owner's payload budget.
+
+### Labelled top metadata
+
+With `view-metadata`, models and headers may contain `metadata`, an ordered array
+of at most 16 `{label,value}` entries. Labels are 1–64 UTF-8 bytes; values are at
+most 1,024 bytes and may be empty. Neither accepts controls. Authored empty arrays
+require the feature too; `null` is invalid.
+
+Each entry renders as `label: value` above status, columns and rows. Labels and
+values carry separate semantic styling; ordinary wrapping and selection apply.
+For example, use `Filters: none` or `Database path: /tmp/example.sqlite`.
+Metadata has no data-row identity and cannot become a primary-action target.
+It counts toward model, projection and retained budgets. Header patches replace
+the entire array and presentation map; omitted header fields restore their
+absent defaults. Existing `detail` and `preview` blocks retain their original
+placement and headings for older plugins.
+
+### Complete read-only documents
+
+With `view-document` and capability `views`, a model/header may carry `document`,
+a complete UTF-8 body of at most **8 MiB and 250,000 LF-delimited lines**. It must
+have purpose `document`, empty rows and columns, and no detail or preview block.
+An empty document is valid; `null` is invalid. Tabs and line feeds are accepted;
+all other controls are rejected. No trailing newline is inserted.
+
+This is one ordinary read-only buffer: movement, selection, whole-document
+search and copying cover the entire loaded body, including transport chunk
+boundaries. It retains the same owned view handle, actions and model revision;
+plugins implement their usual parent navigation. Metadata/status can precede
+the body. Publication restores document positions using actual body lines, so
+header changes do not clamp selections and scrolling to the metadata.
+
+Complete text is not unlimited. Document JSON is limited to 16 MiB and prepared
+payload to 64 MiB. The host reserves 96 MiB before document preparation, including
+staging, encoded content, working copies and rope publication. Negotiated owners
+have a 160 MiB retained allowance; the aggregate host allowance remains 160 MiB.
+Retained parents, the current document, other resources and other owners can
+therefore prevent another load. Refusal leaves the previous readable view in
+place. These bounds describe accounted payload, not allocator RSS or the
+plugin's own memory/storage.
+
+Staged model/patch inputs for negotiated owners may reach 16 MiB, with unchanged
+128 KiB chunks and 1 MiB framing. Decoded non-document models retain the original
+4 MiB bounds. Old owners keep the 48 MiB allowance and existing model limits;
+registration's resource inventory reports the selected retained allowance.
+The new feature bounds above supplement, rather than reinterpret, the inventory's
+base `model_bytes` and `model_rows` fields.
+
+The Python client offers `publish_document(view, revision, title, text, ...)`
+and uses internal staging automatically. Format or escape data before publishing
+it: label lossless escaped text and binary/invalid-UTF-8 hexadecimal distinctly,
+and never present an incomplete prefix as a full value. The host does not fetch
+missing source bytes. Database plugins must capture or retrieve them themselves;
+opening a captured SQL result must not silently rerun that SQL.
+
 ### Model patches and staging
 
 `view.patch` takes `view`, `expected_revision`, optional complete `header`
@@ -391,7 +501,8 @@ limits are enforced while decoding: oversized inline arrays are protocol errors,
 and oversized staged arrays refuse the candidate before excess values are retained.
 
 For larger updates, `view.stage.open` captures a view and `expected_revision`,
-`kind: model|patch`, and exact UTF-8 `bytes` (1 byte–4 MiB). Write JSON text with
+`kind: model|patch`, and exact UTF-8 `bytes` (1 byte–4 MiB, or 16 MiB
+with `view-document`). Write JSON text with
 `view.stage.write {stage,offset,text}` in contiguous chunks of at most 128 KiB;
 each reply gives the next offset. A staged patch is `{header?,operations}`.
 `view.stage.commit` prepares and publishes the complete document once; stale

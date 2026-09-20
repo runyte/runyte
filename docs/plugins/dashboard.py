@@ -10,7 +10,16 @@ app = Application('Dashboard', [
     {'name': 'reverse', 'alias': 'dashboard-reverse', 'description': 'Reverse rows atomically', 'context': 'view'},
     {'name': 'inspect', 'alias': 'dashboard-inspect', 'description': 'Show selected row detail', 'context': 'view'},
     {'name': 'verify', 'alias': 'dashboard-verify', 'description': 'Read and verify one immutable model', 'context': 'view'},
-], ['views'], runyte='>=0.3.0, <0.4.0')
+], ['views'], runyte='>=0.3.0, <0.4.0',
+    optional_features=['view-action-presentation', 'view-metadata'])
+for command in app.commands:
+    command['presentation'] = {
+        'label': {'open': 'Open dashboard', 'large': 'Open large dashboard',
+                  'toggle': 'Toggle row', 'reverse': 'Reverse rows',
+                  'inspect': 'Inspect row', 'verify': 'Verify model'}[command['name']],
+        'group': 'Rows' if command['name'] in ('toggle', 'reverse', 'inspect') else 'Dashboard',
+        'listed': command['name'] != 'toggle',
+    }
 lock = threading.Lock()
 view = None
 revision = None
@@ -33,6 +42,10 @@ def open_view(context, count=12):
     global view, revision, current
     with lock:
         candidate = model(count)
+        if 'view-metadata' in app.features:
+            candidate['metadata'] = [{'label': 'Rows', 'value': str(count)},
+                                     {'label': 'Source', 'value': 'Generated example data'}]
+            candidate.pop('detail', None)
         if view is None:
             result = app.request('view.create', model={'title': 'Dashboard', 'purpose': 'dashboard', 'rows': []})
             view, revision = result['view'], result['revision']
@@ -71,7 +84,11 @@ def update(context, action):
             observed = app.get_model(view)
             if observed['revision'] != revision or observed['model'] != current:
                 raise PluginError('stale', 'Dashboard changed during verification')
-            header['detail'] = {'text': f'Verified {len(rows)} rows from one immutable model revision.', 'role': 'heading'}
+            if 'view-metadata' in app.features:
+                header['metadata'] = [entry for entry in header.get('metadata', []) if entry['label'] != 'Verification'] + [
+                    {'label': 'Verification', 'value': f'{len(rows)} rows from one immutable revision'}]
+            else:
+                header['detail'] = {'text': f'Verified {len(rows)} rows from one immutable model revision.', 'role': 'heading'}
         result = app.patch_view(view, revision, operations, header=header)
         revision = result['revision']
         current = {**header, 'rows': rows}

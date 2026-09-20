@@ -206,6 +206,8 @@ impl OverlayKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OverlayRow {
+    /// Non-selectable section heading supplied by a grouped picker.
+    pub heading: bool,
     pub identity: OverlayIdentity,
     pub label: String,
     pub detail: String,

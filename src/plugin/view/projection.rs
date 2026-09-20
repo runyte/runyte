@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-use super::{Error, MAX_PROJECTION_BYTES, MAX_RETAINED_BYTES, Model, Role, cancelled, limited};
+use super::{
+    Error, MAX_DOCUMENT_MODEL_BYTES, MAX_PROJECTION_BYTES, Model, Role, cancelled, limited,
+};
 use crate::syntax::{Scope, Span};
 use std::{
     collections::BTreeMap,
@@ -20,6 +22,8 @@ pub struct ProjectedRow {
 pub struct Projection {
     /// Taken by the buffer preparation worker before this projection is retained.
     pub text: String,
+    pub document_line: Option<usize>,
+    pub document_from: Option<usize>,
     pub spans: Vec<Span>,
     pub rows: Vec<ProjectedRow>,
     pub row_by_id: BTreeMap<String, usize>,
@@ -59,7 +63,7 @@ impl PreparedModel {
                 .map(|id| id.capacity() + 128)
                 .sum::<usize>()
             + projection.line_rows.capacity() * std::mem::size_of::<Option<usize>>();
-        if charge > MAX_RETAINED_BYTES {
+        if charge > model.retained_limit() {
             return Err(limited("Prepared view storage limit exceeded"));
         }
         cancelled(cancel)?;
@@ -75,6 +79,7 @@ impl PreparedModel {
 struct Builder {
     projection: Projection,
     chars: usize,
+    text_limit: usize,
 }
 impl Builder {
     fn new(model: &Model) -> Self {
@@ -98,20 +103,28 @@ impl Builder {
             })
             .sum::<usize>()
             + block_lines
-            + model.columns.len();
+            + model.columns.len()
+            + model.metadata.as_ref().map_or(0, |entries| entries.len());
         Self {
             projection: Projection {
                 text: String::new(),
+                document_line: None,
+                document_from: None,
                 spans: Vec::with_capacity(spans),
                 rows: Vec::with_capacity(model.rows.len()),
                 row_by_id: BTreeMap::new(),
                 line_rows: Vec::with_capacity(model.rows.len() + block_lines + 2),
             },
             chars: 0,
+            text_limit: if model.document.is_some() {
+                MAX_DOCUMENT_MODEL_BYTES
+            } else {
+                MAX_PROJECTION_BYTES
+            },
         }
     }
     fn push(&mut self, text: &str, role: Role) -> Result<(), Error> {
-        if self.projection.text.len().saturating_add(text.len()) > MAX_PROJECTION_BYTES {
+        if self.projection.text.len().saturating_add(text.len()) > self.text_limit {
             return Err(limited("Generated view text exceeds limit"));
         }
         let from = self.chars;
@@ -179,8 +192,27 @@ impl Projection {
     fn build(model: &Model, cancel: &AtomicBool) -> Result<Self, Error> {
         cancelled(cancel)?;
         let mut builder = Builder::new(model);
+        if let Some(metadata) = &model.metadata {
+            for entry in metadata {
+                builder.push(&entry.label, Role::Heading)?;
+                builder.push(": ", Role::Heading)?;
+                builder.push(&entry.value, Role::Ordinary)?;
+                builder.newline(None)?;
+            }
+        }
         if let Some(status) = &model.status {
             builder.block(status)?;
+        }
+        if let Some(document) = &model.document {
+            cancelled(cancel)?;
+            builder.projection.document_line = Some(builder.projection.line_rows.len());
+            builder.projection.document_from = Some(builder.chars);
+            builder.push(document, Role::Ordinary)?;
+            builder.projection.line_rows.resize(
+                builder.projection.line_rows.len() + document.split('\n').count(),
+                None,
+            );
+            return Ok(builder.projection);
         }
         let mut widths: Vec<_> = model
             .columns

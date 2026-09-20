@@ -202,10 +202,13 @@ impl Model {
         if let Some(header) = patch.header {
             model.title = header.title;
             model.purpose = header.purpose;
+            model.document = header.document;
             model.columns = header.columns;
             model.detail = header.detail;
             model.preview = header.preview;
             model.status = header.status;
+            model.metadata = header.metadata;
+            model.action_presentation = header.action_presentation;
             model.actions = header.actions;
         }
         cancelled(cancel)?;
@@ -216,11 +219,14 @@ impl Model {
         Self {
             title: self.title.clone(),
             purpose: self.purpose,
+            document: self.document.clone(),
             rows: vec![],
             columns: self.columns.clone(),
             detail: self.detail.clone(),
             preview: self.preview.clone(),
             status: self.status.clone(),
+            metadata: self.metadata.clone(),
+            action_presentation: self.action_presentation.clone(),
             actions: self.actions.clone(),
         }
     }

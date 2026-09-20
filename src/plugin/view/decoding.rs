@@ -88,3 +88,48 @@ pub(crate) fn operations<'de, D: Deserializer<'de>>(
         Operation::references,
     )
 }
+
+pub(crate) fn metadata<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<super::Metadata>>, D::Error> {
+    sequence(deserializer, 16, 16, |_| 1).map(Some)
+}
+
+pub(crate) fn presentations<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<
+    Option<std::collections::BTreeMap<String, super::super::presentation::Presentation>>,
+    D::Error,
+> {
+    use serde::de::MapAccess;
+    use std::collections::BTreeMap;
+    struct Presentations;
+    impl<'de> Visitor<'de> for Presentations {
+        type Value = BTreeMap<String, super::super::presentation::Presentation>;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a bounded map of view command presentations")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut entries = BTreeMap::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if entries.len() == super::super::application::MAX_COMMANDS {
+                    return Err(de::Error::custom("View action presentation limit exceeded"));
+                }
+                if entries.contains_key(&key) {
+                    return Err(de::Error::custom(
+                        "Duplicate view action presentation command",
+                    ));
+                }
+                entries.insert(key, map.next_value()?);
+            }
+            Ok(entries)
+        }
+    }
+    deserializer.deserialize_map(Presentations).map(Some)
+}
+
+pub(crate) fn document<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}

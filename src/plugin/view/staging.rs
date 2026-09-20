@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-use super::{Error, ErrorCode, MAX_CHUNK_BYTES, MAX_MODEL_BYTES, invalid, limited};
+use super::{Error, ErrorCode, MAX_CHUNK_BYTES, invalid, limited};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ pub(crate) struct Stage {
     text: String,
 }
 impl Stage {
+    #[cfg(test)]
     pub fn new(
         view: String,
         expected_revision: String,
@@ -26,7 +27,24 @@ impl Stage {
         kind: StageKind,
         declared: usize,
     ) -> Result<Self, Error> {
-        if declared == 0 || declared > MAX_MODEL_BYTES {
+        Self::with_limit(
+            view,
+            expected_revision,
+            expected_query_revision,
+            kind,
+            declared,
+            super::MAX_MODEL_BYTES,
+        )
+    }
+    pub fn with_limit(
+        view: String,
+        expected_revision: String,
+        expected_query_revision: Option<String>,
+        kind: StageKind,
+        declared: usize,
+        limit: usize,
+    ) -> Result<Self, Error> {
+        if declared == 0 || declared > limit {
             return Err(limited("View stage byte limit exceeded"));
         }
         Ok(Self {

@@ -20,6 +20,8 @@ pub enum ListPurpose {
 
 #[derive(Clone, Debug)]
 pub struct PickerItem {
+    /// Presentation section; headings are derived and never selectable items.
+    section: Option<String>,
     pub label: String,
     pub detail: String,
     /// A short final run that remains visible when the middle of an overlong
@@ -64,6 +66,7 @@ impl PickerItem {
         let label = label.into();
         let detail = detail.into();
         Self {
+            section: None,
             search: format!("{label} {detail}").to_lowercase(),
             label,
             detail,
@@ -83,6 +86,7 @@ impl PickerItem {
         index: usize,
     ) -> Self {
         Self {
+            section: None,
             label: label.into(),
             detail: detail.into(),
             trailing_detail: String::new(),
@@ -118,6 +122,11 @@ impl PickerItem {
 
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    pub fn with_section(mut self, section: impl Into<String>) -> Self {
+        self.section = Some(section.into());
         self
     }
 
@@ -171,7 +180,53 @@ pub struct ListPicker {
     fuzzy: bool,
 }
 
+/// Rows for drawing a picker. Selection continues to index only matching items.
+pub enum ListDisplayRow<'a> {
+    Section(&'a str),
+    Item(&'a PickerItem),
+}
+
 impl ListPicker {
+    pub fn display_rows(&self) -> Vec<ListDisplayRow<'_>> {
+        let mut rows = Vec::new();
+        let mut previous = None;
+        for index in self.visible_indices() {
+            let item = &self.items[index];
+            if item.section.as_deref() != previous {
+                if let Some(section) = &item.section {
+                    rows.push(ListDisplayRow::Section(section));
+                }
+                previous = item.section.as_deref();
+            }
+            rows.push(ListDisplayRow::Item(item));
+        }
+        rows
+    }
+
+    pub fn selected_display_index(&self) -> Option<usize> {
+        let selected = self.selected_item()?;
+        self.display_rows().iter().position(
+            |row| matches!(row, ListDisplayRow::Item(item) if std::ptr::eq(*item, selected)),
+        )
+    }
+
+    fn section_order(&self, mut indices: Vec<usize>) -> Vec<usize> {
+        if !self.items.iter().any(|item| item.section.is_some()) {
+            return indices;
+        }
+        let mut sections = Vec::new();
+        for item in &self.items {
+            if !sections.contains(&item.section.as_deref()) {
+                sections.push(item.section.as_deref());
+            }
+        }
+        indices.sort_by_key(|&index| {
+            sections
+                .iter()
+                .position(|section| *section == self.items[index].section.as_deref())
+        });
+        indices
+    }
     pub fn new(title: impl Into<String>, items: Vec<PickerItem>) -> Self {
         Self {
             title: title.into(),
@@ -320,15 +375,16 @@ impl ListPicker {
             Some(tag) => item.tag.as_ref() == Some(tag),
         };
         if !self.fuzzy {
-            return self
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(index, item)| {
-                    (in_group(item) && (query.is_empty() || item.search.contains(&query)))
-                        .then_some(index)
-                })
-                .collect();
+            return self.section_order(
+                self.items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        (in_group(item) && (query.is_empty() || item.search.contains(&query)))
+                            .then_some(index)
+                    })
+                    .collect(),
+            );
         }
         // A row is text, not a path: `/` in an object id or a commit subject
         // is an ordinary character, so the project finder's line matcher is
@@ -356,7 +412,7 @@ impl ListPicker {
                     .then_with(|| left_index.cmp(right_index))
             });
         }
-        matches.into_iter().map(|(index, _)| index).collect()
+        self.section_order(matches.into_iter().map(|(index, _)| index).collect())
     }
 
     pub fn selected_item(&self) -> Option<&PickerItem> {
@@ -498,6 +554,39 @@ mod tests {
                 PickerItem::new("gamma", "function", 2),
             ],
         )
+    }
+
+    #[test]
+    fn section_headings_are_not_selectable_and_empty_groups_disappear() {
+        let mut picker = ListPicker::fuzzy(
+            "Actions",
+            vec![
+                PickerItem::searchable("Next page", "Browse", "next next-page", 0)
+                    .with_section("Browse"),
+                PickerItem::searchable("Disconnect", "Database", "disconnect", 1)
+                    .with_section("Database"),
+                PickerItem::searchable("Previous page", "Browse", "previous previous-page", 2)
+                    .with_section("Browse"),
+            ],
+        );
+        assert_eq!(picker.visible_indices(), [0, 2, 1]);
+        assert_eq!(picker.display_rows().len(), 5);
+        assert_eq!(picker.selected_display_index(), Some(1));
+        picker.down();
+        assert_eq!(picker.selected_item().unwrap().label, "Previous page");
+        assert_eq!(picker.selected_display_index(), Some(2));
+        picker.down();
+        assert_eq!(picker.selected_display_index(), Some(4));
+        picker.push_filter('d');
+        assert_eq!(picker.visible_indices(), [1]);
+        assert_eq!(picker.display_rows().len(), 2);
+        assert!(matches!(
+            picker.display_rows()[0],
+            ListDisplayRow::Section("Database")
+        ));
+        picker.push_filter('x');
+        assert!(picker.display_rows().is_empty());
+        assert_eq!(picker.selected_display_index(), None);
     }
 
     #[test]

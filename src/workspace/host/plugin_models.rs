@@ -39,12 +39,18 @@ pub(super) fn is_model_request(request: &Request) -> bool {
 /// policy for worker-side validation before patch operations can erase evidence.
 struct ActionPolicy {
     row_actions: bool,
+    metadata: bool,
+    presentation: bool,
+    document: bool,
     commands: std::collections::BTreeSet<String>,
 }
 impl ActionPolicy {
     fn new(state: &api::Instance) -> Self {
         Self {
             row_actions: state.features.contains(api::VIEW_ROW_ACTIONS),
+            metadata: state.features.contains(api::VIEW_METADATA),
+            presentation: state.features.contains(api::VIEW_ACTION_PRESENTATION),
+            document: state.features.contains(api::VIEW_DOCUMENT),
             commands: state
                 .command_contexts
                 .iter()
@@ -79,7 +85,47 @@ impl ActionPolicy {
         }
         Ok(())
     }
+    fn header_features(
+        &self,
+        document: &Option<String>,
+        metadata: &Option<Vec<view::Metadata>>,
+        presentation: &Option<
+            std::collections::BTreeMap<String, plugin::presentation::Presentation>,
+        >,
+    ) -> Result<(), Error> {
+        if document.is_some() && !self.document {
+            return Err(Error::new(
+                Code::Unsupported,
+                "Documents require the view-document feature",
+            ));
+        }
+        if metadata.is_some() && !self.metadata {
+            return Err(Error::new(
+                Code::Unsupported,
+                "Metadata requires the view-metadata feature",
+            ));
+        }
+        if let Some(presentation) = presentation {
+            if !self.presentation {
+                return Err(Error::new(
+                    Code::Unsupported,
+                    "Action presentation requires the view-action-presentation feature",
+                ));
+            }
+            if presentation
+                .keys()
+                .any(|name| !self.commands.contains(name))
+            {
+                return Err(Error::new(
+                    Code::InvalidArgument,
+                    "Action presentation must name registered view commands",
+                ));
+            }
+        }
+        Ok(())
+    }
     fn model(&self, model: &view::Model) -> Result<(), Error> {
+        self.header_features(&model.document, &model.metadata, &model.action_presentation)?;
         self.actions(&model.actions)?;
         for row in &model.rows {
             self.row(row)?;
@@ -88,6 +134,11 @@ impl ActionPolicy {
     }
     fn patch(&self, patch: &view::Patch) -> Result<(), Error> {
         if let Some(header) = &patch.header {
+            self.header_features(
+                &header.document,
+                &header.metadata,
+                &header.action_presentation,
+            )?;
             self.actions(&header.actions)?;
         }
         for operation in &patch.operations {
@@ -124,17 +175,27 @@ impl Input {
                 policy.patch(&patch)?;
                 base.patched(patch, cancelled)?
             }
-            Self::Encoded(base, kind, text) => match kind {
-                view::StageKind::Model => serde_json::from_str(&text)
-                    .map_err(|_| Error::new(Code::InvalidArgument, "Invalid staged view model"))?,
-                view::StageKind::Patch => {
-                    let patch = serde_json::from_str(&text).map_err(|_| {
-                        Error::new(Code::InvalidArgument, "Invalid staged view patch")
-                    })?;
-                    policy.patch(&patch)?;
-                    base.patched(patch, cancelled)?
+            Self::Encoded(base, kind, text) => {
+                let model: view::Model = match kind {
+                    view::StageKind::Model => serde_json::from_str(&text).map_err(|_| {
+                        Error::new(Code::InvalidArgument, "Invalid staged view model")
+                    })?,
+                    view::StageKind::Patch => {
+                        let patch = serde_json::from_str(&text).map_err(|_| {
+                            Error::new(Code::InvalidArgument, "Invalid staged view patch")
+                        })?;
+                        policy.patch(&patch)?;
+                        base.patched(patch, cancelled)?
+                    }
+                };
+                if text.len() > model.encoded_limit() {
+                    return Err(Error::new(
+                        Code::LimitExceeded,
+                        "Encoded view input exceeds limit",
+                    ));
                 }
-            },
+                model
+            }
         };
         policy.model(&model)?;
         view::PreparedModel::build(model, cancelled)
@@ -220,19 +281,25 @@ impl WorkspaceHost {
                 {
                     return Err(Error::new(Code::LimitExceeded, "View stage limit reached"));
                 }
-                if bytes == 0 || bytes > view::MAX_MODEL_BYTES {
+                let stage_limit = if state.features.contains(api::VIEW_DOCUMENT) {
+                    view::MAX_DOCUMENT_MODEL_BYTES
+                } else {
+                    view::MAX_MODEL_BYTES
+                };
+                if bytes == 0 || bytes > stage_limit {
                     return Err(Error::new(
                         Code::LimitExceeded,
                         "View stage byte limit exceeded",
                     ));
                 }
                 self.reserve_application_payload(owner, bytes + HANDLE_CHARGE)?;
-                let stage = view::Stage::new(
+                let stage = view::Stage::with_limit(
                     handle,
                     expected_revision,
                     expected_query_revision,
                     kind,
                     bytes,
+                    stage_limit,
                 )?;
                 let state = &mut self
                     .app
@@ -536,6 +603,33 @@ impl WorkspaceHost {
         stage: Option<String>,
         charge: usize,
     ) -> Result<Option<ResultValue>, Error> {
+        let document_input = match &input {
+            Input::Model(model) => model.document.is_some(),
+            Input::Patch(base, patch) => {
+                base.document.is_some()
+                    || patch.header.as_ref().is_some_and(|h| h.document.is_some())
+            }
+            Input::Staged(..) | Input::Encoded(..) => self.app.plugins.instances[&owner]
+                .application
+                .features
+                .contains(api::VIEW_DOCUMENT),
+        };
+        if document_input
+            && !self.app.plugins.instances[&owner]
+                .application
+                .features
+                .contains(api::VIEW_DOCUMENT)
+        {
+            return Err(Error::new(
+                Code::Unsupported,
+                "Documents require the view-document feature",
+            ));
+        }
+        let charge = if document_input {
+            view::DOCUMENT_PREPARE_CHARGE
+        } else {
+            charge
+        };
         let transferred = stage
             .as_ref()
             .and_then(|stage| {

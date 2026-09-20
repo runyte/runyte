@@ -1,10 +1,19 @@
 # Stable plugin compatibility and Runyte release ranges
 
-## Status and intended outcome
+## Status and outcome
 
-Active, 2026-09-15. Implementation authorized, including subagent code reviews.
-The first stable target is 0.3.0. Release publication remains a separate action.
+Completed as an implementation record, 2026-09-19. The stable `runyte-1`
+contract, release-range admission, client migration and compatibility gates
+were delivered by `3fa28b0` and `4d1e19c`. The local `v0.3.0` tag identifies
+`02f324d` (`Release 0.3.0`); the checkout now declares version 0.3.0.
 Follow [the plan lifecycle](../README.md).
+
+This closure archives the delivered transition. The dated validation below
+preserves the evidence available at each implementation checkpoint, including
+unverified remote CI and platform results. Closing the plan does not certify
+those results or infer registry publication from a local tag. Exact-release
+acceptance remains governed by [the compatibility register](../../reference/plugin-compatibility.md)
+and [the release runbook](../../reference/releasing.md).
 
 ## Implementation progress
 
@@ -148,11 +157,11 @@ native tests also passed with 2-second injected plugin delays and in four
 concurrent runs. Three new standard-library regressions cover the cell model,
 stale completion feedback and presentation markers.
 
-The plan stays active for Stage F's remote CI and release-readiness evidence.
-Publishing/tagging and the two-file 0.3.0 version commit require a separate release
-request. A normal build of this checkout still reports 0.2.4, so native plugin
-acceptance before that bump uses the explicitly staged 0.3.0 candidate. Retain
-these initial immutable profiles when adding the first published stable release.
+At this 2026-09-15 checkpoint, Stage F's remote CI and release-readiness evidence
+remained outstanding. Publication/tagging and the two-file 0.3.0 version commit
+were separate release work. The checkout then reported 0.2.4, so native plugin
+acceptance used the explicitly staged 0.3.0 candidate. These initial immutable
+profiles remain compatibility evidence after the subsequent version bump.
 
 
 Migration decision: the only current user is the maintainer, so the transition
@@ -683,9 +692,9 @@ the exact release gate.
 
 ## 8. Stages, affected files and acceptance
 
-Each stage is independently reviewable. Stage completion records actual results
-and unresolved failures in this plan; only the final acceptance moves it to
-`completed/`.
+Each stage is independently reviewable. The original acceptance criteria below
+remain the record of the planned gates. The lifecycle closure above archives
+the implementation while keeping unverified release acceptance explicit.
 
 ### Stage A — approve and freeze the promise
 
@@ -809,7 +818,7 @@ provenance and host pins forming the first compatibility baseline.
 **Acceptance:** exact candidate CI has no failed/skipped required compatibility
 cells on Linux/macOS; release notes state stable support's starting version and
 range/config migration. Frozen artifacts and public documentation agree. Record
-the actual run IDs/SHAs before marking this plan completed.
+the actual run IDs/SHAs before claiming this release acceptance is complete.
 
 For Rust implementation validation run `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`, and canonical

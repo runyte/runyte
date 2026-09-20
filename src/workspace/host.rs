@@ -1228,6 +1228,7 @@ impl WorkspaceHost {
             let capabilities = self.app.command_capabilities();
             let mut hint_rows =
                 key_hints.rows_in(self.app.keymap(), mode, self.app.key_binding_scope());
+            self.app.present_plugin_key_hints(&mut hint_rows);
             for row in &mut hint_rows {
                 row.apply_capabilities(&capabilities);
             }
@@ -1259,6 +1260,7 @@ impl WorkspaceHost {
                     let available =
                         hint.availability.is_implemented() && hint.unavailable_reason.is_none();
                     OverlayRow {
+                        heading: false,
                         identity: OverlayIdentity::Text(hint.sequence.to_string()),
                         label: key_hint_keys(&hint),
                         detail: key_hint_description(&hint),

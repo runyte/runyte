@@ -284,7 +284,7 @@ impl WorkspaceHost {
                 .unwrap()
                 .application;
             state.retained_payload -= pending.charge;
-            state.jobs.remove(&job.job);
+            state.remove_job(&job.job);
             let _ = self.plugin_send(
                 requester,
                 plugin::HostMessage::Deadline {
@@ -318,11 +318,12 @@ impl WorkspaceHost {
         }
         if state.jobs.len() >= 64 {
             let oldest = state.finished_jobs.pop_front().unwrap();
-            state.jobs.remove(&oldest);
+            state.remove_job(&oldest);
             state.job_actions.remove(&oldest);
         }
         state.next_handle += 1;
         let job = api::Job {
+            message: None,
             job: format!("j:{}:{}", state.generation, state.next_handle),
             title: title.into(),
             state: api::JobState::Running,

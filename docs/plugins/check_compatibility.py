@@ -33,8 +33,8 @@ class CompatibilityTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 _version(version)
 
-    def handshake(self, *, hello=None, registered=None, **kwargs):
-        app = Application('Check', [], ['views'], runyte='>=0.3.0, <0.4.0', **kwargs)
+    def handshake(self, *, hello=None, registered=None, commands=(), **kwargs):
+        app = Application('Check', list(commands), ['views'], runyte='>=0.3.0, <0.4.0', **kwargs)
         messages = iter([
             hello if hello is not None else {'type': 'hello', 'version': VERSION, 'host_version': '0.3.1', 'capabilities': ['views', 'jobs'], 'features': ['extension'], 'limits': TEST_LIMITS, 'future': True},
             registered if registered is not None else {'type': 'registered', 'runyte': '>=0.3.1, <0.4.0', 'capabilities': ['views'], 'features': [], 'limits': TEST_LIMITS, 'future': True},
@@ -51,6 +51,23 @@ class CompatibilityTests(unittest.TestCase):
         app._write = sent.append
         app.run()
         return app, sent
+
+    def test_presentation_handshake_omits_unsupported_fields_and_requires_ack(self):
+        commands = [{'name': 'open', 'description': 'Open', 'context': 'view',
+                     'presentation': {'label': 'Open value'}}]
+        app, sent = self.handshake(commands=commands, optional_features=['view-action-presentation'])
+        self.assertNotIn('presentation', sent[0]['commands'][0])
+        self.assertIn('presentation', app.commands[0])
+        hello = {'type': 'hello', 'version': VERSION, 'host_version': '0.3.1',
+                 'capabilities': ['views'], 'features': ['view-action-presentation'], 'limits': TEST_LIMITS}
+        with self.assertRaises(PluginError) as error:
+            self.handshake(hello=hello, commands=commands, optional_features=['view-action-presentation'])
+        self.assertEqual(error.exception.code, 'invalid_registration')
+        ack = {'type': 'registered', 'runyte': '>=0.3.1, <0.4.0', 'capabilities': ['views'],
+               'features': ['view-action-presentation'], 'limits': TEST_LIMITS}
+        _, sent = self.handshake(hello=hello, registered=ack, commands=commands,
+                                 optional_features=['view-action-presentation'])
+        self.assertEqual(sent[0]['commands'][0]['presentation'], {'label': 'Open value'})
 
     def test_acknowledged_state_and_ignorable_additions(self):
         app, sent = self.handshake(optional_features=['extension', 'unavailable'], optional_capabilities=['jobs'])

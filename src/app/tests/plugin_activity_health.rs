@@ -151,6 +151,7 @@ fn active_plugin_jobs_share_the_standalone_quit_guard() {
     state.jobs.insert(
         "j:1".into(),
         api::Job {
+            message: None,
             job: "j:1".into(),
             title: "Download".into(),
             state: api::JobState::Cancelling,

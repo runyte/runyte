@@ -320,7 +320,17 @@ impl WorkspaceHost {
                     } else {
                         "Application command completed"
                     };
-                    self.app.plugin_application_feedback(action.action, detail);
+                    let completed = result
+                        .job
+                        .as_ref()
+                        .and_then(|handle| instance.application.jobs.get(handle))
+                        .filter(|job| !job.state.active() && job.message.is_some())
+                        .cloned();
+                    if let Some(job) = completed {
+                        self.app.plugin_job_feedback(id, action.action, &job, false);
+                    } else {
+                        self.app.plugin_application_feedback(action.action, detail);
+                    }
                 }
                 self.plugin_send(
                     id,
@@ -483,6 +493,41 @@ impl WorkspaceHost {
                 None,
             ));
         }
+        let feedback = if let Request::JobFinish {
+            job,
+            message: Some(message),
+            ..
+        } = &request
+        {
+            if !self.app.plugins.instances[&id]
+                .application
+                .features
+                .contains(api::JOB_FEEDBACK)
+            {
+                return Err(fail(Code::Unsupported, "Job messages require job-feedback"));
+            }
+            if !safe_label(message, 1024) {
+                return Err(fail(Code::InvalidArgument, "Invalid job feedback message"));
+            }
+            if !self.app.plugins.instances[&id]
+                .application
+                .job_feedback_reservations
+                .contains(job)
+            {
+                self.reserve_application_payload(id, message.len())?;
+            }
+            Some(message.clone())
+        } else {
+            None
+        };
+        let reserve_feedback = matches!(request, Request::JobCreate { .. })
+            && self.app.plugins.instances[&id]
+                .application
+                .features
+                .contains(api::JOB_FEEDBACK);
+        if reserve_feedback {
+            self.reserve_application_payload(id, 1024)?;
+        }
         let state = &mut self.app.plugins.instances.get_mut(&id).unwrap().application;
         let mut deadline = None;
         let mut event = Some("job.changed");
@@ -500,18 +545,23 @@ impl WorkspaceHost {
                 // Retain a bounded recent terminal history for job.get.
                 if state.jobs.len() >= 64 {
                     let oldest = state.finished_jobs.pop_front().unwrap();
-                    state.jobs.remove(&oldest);
+                    state.remove_job(&oldest);
                     state.job_actions.remove(&oldest);
                 }
                 state.next_handle += 1;
                 let handle = format!("j:{}:{}", state.generation, state.next_handle);
                 let job = api::Job {
+                    message: None,
                     job: handle.clone(),
                     title,
                     state: api::JobState::Running,
                     progress: 0,
                 };
                 state.jobs.insert(handle.clone(), job.clone());
+                if reserve_feedback {
+                    state.job_feedback_reservations.insert(handle.clone());
+                    state.retained_payload += 1024;
+                }
                 deadline = Some((handle, Some(deadline_seconds * 1000)));
                 job
             }
@@ -553,6 +603,7 @@ impl WorkspaceHost {
                             return Err(fail(Code::Cancelled, "Cancellation already accepted"));
                         }
                         job.state = (*state).into();
+                        job.message = feedback.clone();
                         deadline = Some((job.job.clone(), None));
                     }
                     Request::JobCancel { .. } => {
@@ -575,6 +626,13 @@ impl WorkspaceHost {
                 job.clone()
             }
         };
+        if !job.state.active() {
+            if state.job_feedback_reservations.contains(&job.job) {
+                state.settle_job_feedback(&job.job);
+            } else {
+                state.retained_payload += feedback.as_ref().map_or(0, String::capacity);
+            }
+        }
         if event.is_some() && !job.state.active() {
             state.finished_jobs.push_back(job.job.clone());
         }
@@ -686,14 +744,25 @@ impl WorkspaceHost {
         job: api::Job,
     ) -> Result<()> {
         if !job.state.active() {
+            self.app
+                .plugins
+                .instances
+                .get_mut(&id)
+                .unwrap()
+                .application
+                .settle_job_feedback(&job.job);
             let action = self.app.plugins.instances[&id]
                 .application
                 .job_actions
                 .get(&job.job)
                 .copied()
                 .flatten();
-            self.app
-                .plugin_application_feedback(action, "Background job finished");
+            if job.message.is_some() {
+                self.app.plugin_job_feedback(id, action, &job, true);
+            } else {
+                self.app
+                    .plugin_application_feedback(action, "Background job finished");
+            }
         }
         let state = &mut self.app.plugins.instances.get_mut(&id).unwrap().application;
         state.sequence += 1;
@@ -795,7 +864,9 @@ impl WorkspaceHost {
                     .sum::<usize>(),
             )
             .saturating_add(bytes)
-            > api::MAX_RETAINED_BYTES
+            > self.app.plugins.instances[&owner]
+                .application
+                .retained_payload_limit()
             || self
                 .app
                 .plugins

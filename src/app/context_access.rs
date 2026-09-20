@@ -523,6 +523,7 @@ impl App {
 /// and only keys choose between them.
 fn review_row(label: String, muted: Vec<usize>, emphasis: Vec<usize>) -> OverlayRow {
     OverlayRow {
+        heading: false,
         identity: OverlayIdentity::Text(label.clone()),
         label,
         detail: String::new(),

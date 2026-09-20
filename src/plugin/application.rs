@@ -35,7 +35,17 @@ fn unique_names<'de, D: serde::Deserializer<'de>>(
 /// Optional wire extensions supported by this host. Capabilities grant authority;
 /// features only select understood message shapes and behavior.
 pub const VIEW_ROW_ACTIONS: &str = "view-row-actions";
-pub const FEATURES: &[&str] = &[VIEW_ROW_ACTIONS];
+pub const VIEW_ACTION_PRESENTATION: &str = "view-action-presentation";
+pub const VIEW_METADATA: &str = "view-metadata";
+pub const JOB_FEEDBACK: &str = "job-feedback";
+pub const VIEW_DOCUMENT: &str = "view-document";
+pub const FEATURES: &[&str] = &[
+    VIEW_ROW_ACTIONS,
+    VIEW_ACTION_PRESENTATION,
+    VIEW_METADATA,
+    VIEW_DOCUMENT,
+    JOB_FEEDBACK,
+];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RegistrationFailure {
@@ -88,6 +98,12 @@ impl Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    #[serde(
+        default,
+        deserialize_with = "super::presentation::authored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub presentation: Option<super::presentation::Presentation>,
     /// Public spelling after `::`; omitted by older applications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
@@ -452,7 +468,16 @@ pub enum Request {
     #[serde(rename = "job.update")]
     JobUpdate { job: String, progress: u8 },
     #[serde(rename = "job.finish")]
-    JobFinish { job: String, state: TerminalState },
+    JobFinish {
+        job: String,
+        state: TerminalState,
+        #[serde(
+            default,
+            deserialize_with = "super::presentation::authored",
+            skip_serializing_if = "Option::is_none"
+        )]
+        message: Option<String>,
+    },
     #[serde(rename = "job.cancel")]
     JobCancel { job: String },
 }
@@ -496,6 +521,8 @@ impl From<TerminalState> for JobState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     pub job: String,
     pub title: String,
     pub state: JobState,
@@ -552,6 +579,20 @@ impl Default for Limits {
         }
     }
 }
+impl Limits {
+    pub fn for_features(features: &BTreeSet<String>) -> Self {
+        let mut limits = Self::default();
+        if features.contains(VIEW_DOCUMENT) {
+            let resources = limits
+                .resources
+                .as_mut()
+                .expect("default resource inventory");
+            resources.retained_payload_bytes = MAX_HOST_RETAINED_BYTES;
+        }
+        limits
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceLimits {
@@ -862,6 +903,7 @@ pub(crate) struct Instance {
     pub command_arguments: BTreeMap<String, Vec<super::arguments::Argument>>,
     pub jobs: BTreeMap<String, Job>,
     pub finished_jobs: std::collections::VecDeque<String>,
+    pub job_feedback_reservations: BTreeSet<String>,
     pub job_actions: BTreeMap<String, Option<u64>>,
     pub last_request: u64,
     pub next_handle: u64,
@@ -912,6 +954,7 @@ impl Default for Instance {
             command_arguments: Default::default(),
             jobs: Default::default(),
             finished_jobs: Default::default(),
+            job_feedback_reservations: Default::default(),
             job_actions: Default::default(),
             last_request: 0,
             next_handle: 0,
@@ -922,6 +965,34 @@ impl Default for Instance {
 }
 
 impl Instance {
+    pub fn remove_job(&mut self, handle: &str) {
+        if let Some(job) = self.jobs.remove(handle) {
+            self.retained_payload -= if self.job_feedback_reservations.remove(handle) {
+                1024
+            } else {
+                job.message.as_ref().map_or(0, String::capacity)
+            };
+        }
+    }
+    pub fn settle_job_feedback(&mut self, handle: &str) {
+        if self.job_feedback_reservations.remove(handle) {
+            self.retained_payload = self.retained_payload - 1024
+                + self
+                    .jobs
+                    .get(handle)
+                    .and_then(|job| job.message.as_ref())
+                    .map_or(0, String::capacity);
+        }
+    }
+
+    pub fn retained_payload_limit(&self) -> usize {
+        if self.features.contains(VIEW_DOCUMENT) {
+            MAX_HOST_RETAINED_BYTES
+        } else {
+            MAX_RETAINED_BYTES
+        }
+    }
+
     pub fn buffer_handle(&mut self, buffer: usize) -> Result<String, Error> {
         Self::issue_handle(
             &mut self.buffers,
@@ -1183,6 +1254,7 @@ mod tests {
             assert_eq!(serde_json::to_value(decoded).unwrap(), *message);
         }
         let job = Job {
+            message: None,
             job: "j:g:1".into(),
             title: "Download".into(),
             state: JobState::Running,
@@ -1850,6 +1922,48 @@ mod tests {
                     result: ResultValue::State(super::super::state::Info {
                         revision: "s:missing".into(),
                         document: None,
+                    }),
+                },
+            },
+            HostMessage::Response {
+                id: "p:301".into(),
+                outcome: Response::Success {
+                    result: ResultValue::View {
+                        view: "v:1".into(),
+                        revision: "m:2".into(),
+                        query: None,
+                        model: std::sync::Arc::new(view::Model {
+                            title: "[value] Example".into(),
+                            purpose: view::Purpose::Document,
+                            document: Some("first\nlast\tvalue".into()),
+                            metadata: Some(vec![view::Metadata {
+                                label: "Format".into(),
+                                value: "Raw".into(),
+                            }]),
+                            actions: vec!["raw".into()],
+                            action_presentation: Some(BTreeMap::from([(
+                                "raw".into(),
+                                super::super::presentation::Presentation {
+                                    label: "Show raw value".into(),
+                                    group: Some("Value".into()),
+                                    order: 1,
+                                    listed: true,
+                                },
+                            )])),
+                            ..Default::default()
+                        }),
+                    },
+                },
+            },
+            HostMessage::Response {
+                id: "p:302".into(),
+                outcome: Response::Success {
+                    result: ResultValue::Job(Job {
+                        job: "j:1".into(),
+                        title: "Show full value".into(),
+                        state: JobState::Failed,
+                        progress: 0,
+                        message: Some("Full value exceeds available capacity".into()),
                     }),
                 },
             },

@@ -3,7 +3,10 @@
 //! Bounded semantic application projections. Plugin row IDs never become offsets.
 use super::application::{Error, ErrorCode};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 mod decoding;
 mod patch;
@@ -21,6 +24,11 @@ pub(crate) use query::{QueryState, check_query};
 pub use staging::StageKind;
 pub(crate) use staging::{ReadSnapshot, Stage};
 
+pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_DOCUMENT_LINES: usize = 250_000;
+pub const MAX_DOCUMENT_MODEL_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_DOCUMENT_RETAINED_BYTES: usize = 64 * 1024 * 1024;
+pub const DOCUMENT_PREPARE_CHARGE: usize = 96 * 1024 * 1024;
 pub const MAX_MODEL_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_ROWS: usize = 10_000;
 pub const MAX_PATCH_REFERENCES: usize = 20_000;
@@ -40,6 +48,12 @@ pub const IDLE_SECONDS: u64 = 30;
 pub struct Model {
     pub title: String,
     pub purpose: Purpose,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::document"
+    )]
+    pub document: Option<String>,
     #[serde(deserialize_with = "decoding::rows")]
     pub rows: Vec<Row>,
     #[serde(
@@ -54,6 +68,18 @@ pub struct Model {
     pub preview: Option<Block>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Block>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::metadata"
+    )]
+    pub metadata: Option<Vec<Metadata>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::presentations"
+    )]
+    pub action_presentation: Option<BTreeMap<String, super::presentation::Presentation>>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -119,12 +145,25 @@ pub struct Block {
     pub role: Role,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Metadata {
+    pub label: String,
+    pub value: String,
+}
+
 /// A patch can replace the complete header without retransmitting stable rows.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {
     pub title: String,
     pub purpose: Purpose,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::document"
+    )]
+    pub document: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -137,6 +176,18 @@ pub struct Header {
     pub preview: Option<Block>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Block>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::metadata"
+    )]
+    pub metadata: Option<Vec<Metadata>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "decoding::presentations"
+    )]
+    pub action_presentation: Option<BTreeMap<String, super::presentation::Presentation>>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -197,6 +248,7 @@ impl Model {
     /// Bounded retained storage estimate, including container allocations.
     pub fn payload_bytes(&self) -> usize {
         self.title.capacity()
+            + self.document.as_ref().map_or(0, String::capacity)
             + std::mem::size_of::<Self>()
             + self.rows.capacity() * std::mem::size_of::<Row>()
             + self
@@ -223,6 +275,21 @@ impl Model {
                 .iter()
                 .map(|column| column.id.capacity() + column.label.capacity())
                 .sum::<usize>()
+            + self.metadata.as_ref().map_or(0, |entries| {
+                entries.capacity() * std::mem::size_of::<Metadata>()
+                    + entries
+                        .iter()
+                        .map(|entry| entry.label.capacity() + entry.value.capacity())
+                        .sum::<usize>()
+            })
+            + self.action_presentation.as_ref().map_or(0, |entries| {
+                entries
+                    .iter()
+                    .map(|(name, presentation)| {
+                        name.capacity() + presentation.payload_bytes() + 128
+                    })
+                    .sum::<usize>()
+            })
             + self.actions.capacity() * std::mem::size_of::<String>()
             + self.actions.iter().map(String::capacity).sum::<usize>()
             + [&self.detail, &self.preview, &self.status]
@@ -230,6 +297,22 @@ impl Model {
                 .flatten()
                 .map(|block| block.text.capacity())
                 .sum::<usize>()
+    }
+
+    pub fn encoded_limit(&self) -> usize {
+        if self.document.is_some() {
+            MAX_DOCUMENT_MODEL_BYTES
+        } else {
+            MAX_MODEL_BYTES
+        }
+    }
+
+    pub fn retained_limit(&self) -> usize {
+        if self.document.is_some() {
+            MAX_DOCUMENT_RETAINED_BYTES
+        } else {
+            MAX_RETAINED_BYTES
+        }
     }
 
     pub fn validate(&self) -> Result<(), Error> {
@@ -246,8 +329,62 @@ impl Model {
         {
             return Err(limited("View row, column or action limit exceeded"));
         }
-        if self.payload_bytes() > MAX_RETAINED_BYTES {
+        if self.payload_bytes() > self.retained_limit() {
             return Err(limited("View storage limit exceeded"));
+        }
+        if let Some(document) = &self.document {
+            if self.purpose != Purpose::Document
+                || !self.rows.is_empty()
+                || !self.columns.is_empty()
+                || self.detail.is_some()
+                || self.preview.is_some()
+            {
+                return Err(invalid(
+                    "Document views require document purpose and no rows, columns, detail or preview",
+                ));
+            }
+            if document.len() > MAX_DOCUMENT_BYTES
+                || document.split('\n').count() > MAX_DOCUMENT_LINES
+            {
+                return Err(limited("View document limit exceeded"));
+            }
+            if document
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(invalid("Invalid view document text"));
+            }
+        }
+        if let Some(metadata) = &self.metadata {
+            if metadata.len() > 16 {
+                return Err(limited("View metadata limit exceeded"));
+            }
+            for entry in metadata {
+                if !safe(&entry.label, 64)
+                    || entry.value.len() > 1024
+                    || entry.value.chars().any(char::is_control)
+                {
+                    return Err(invalid("Invalid view metadata"));
+                }
+            }
+        }
+        if let Some(presentations) = &self.action_presentation {
+            if presentations.len() > super::application::MAX_COMMANDS {
+                return Err(limited("View action presentation limit exceeded"));
+            }
+            let mut groups = BTreeSet::new();
+            for (name, presentation) in presentations {
+                if !super::valid_name(name) {
+                    return Err(invalid("Invalid view action presentation command"));
+                }
+                presentation.validate()?;
+                if let Some(group) = &presentation.group {
+                    groups.insert(group);
+                }
+            }
+            if groups.len() > 16 {
+                return Err(limited("View action group limit exceeded"));
+            }
         }
         let mut columns = BTreeSet::new();
         for column in &self.columns {
@@ -318,7 +455,7 @@ impl Model {
             }
         }
         let encoded = serde_json::to_string(self).map_err(|_| invalid("View encoding failed"))?;
-        if encoded.len() > MAX_MODEL_BYTES {
+        if encoded.len() > self.encoded_limit() {
             return Err(limited("Encoded view model exceeds limit"));
         }
         Ok(encoded)

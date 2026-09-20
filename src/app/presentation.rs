@@ -720,12 +720,13 @@ impl App {
         } else {
             HelpTopic::for_context(self.key_binding_scope())
         };
-        let document = crate::help::render_document(
+        let document = crate::help::render_document_with_descriptions(
             topic,
             self.grammar.kind(),
             self.key_binding_scope(),
             self.keymap(),
             self.active_buffer().is_read_only(),
+            |target| self.plugin_binding_description(target).map(str::to_owned),
         );
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)
@@ -1269,6 +1270,7 @@ impl App {
             detail: impl Into<String>,
         ) -> OverlayRow {
             OverlayRow {
+                heading: false,
                 identity: identity.into(),
                 label: label.into(),
                 detail: detail.into(),
@@ -1553,10 +1555,19 @@ impl App {
             let visible = picker.visible_indices();
             let report = picker.purpose == ListPurpose::Report;
             let report_offset = picker.report_offset.min(visible.len().saturating_sub(1));
-            let all_rows = visible
-                .iter()
-                .filter_map(|index| picker.items.get(*index))
-                .map(|item| {
+            let all_rows = picker
+                .display_rows()
+                .into_iter()
+                .enumerate()
+                .map(|(position, display)| {
+                    let crate::picker::ListDisplayRow::Item(item) = display else {
+                        let crate::picker::ListDisplayRow::Section(label) = display else {
+                            unreachable!()
+                        };
+                        let mut heading = row(usize::MAX - position, label, "");
+                        heading.heading = true;
+                        return heading;
+                    };
                     let mut row = row(item.index, item.label.clone(), item.detail.clone());
                     row.trailing_detail = item.trailing_detail.clone();
                     row.dimmed = item.is_dimmed();
@@ -1577,7 +1588,7 @@ impl App {
             } else {
                 all_rows
             };
-            let selected = (!report && !visible.is_empty()).then_some(picker.selected);
+            let selected = (!report).then(|| picker.selected_display_index()).flatten();
             let mut snapshot = bounded(
                 OverlayKind::ResultList,
                 picker.title.clone(),
@@ -2289,6 +2300,7 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
             let name = action.name;
             let context = context_label(action);
             OverlayRow {
+                heading: false,
                 identity: action.mnemonic.label().into(),
                 label: action.mnemonic.label(),
                 detail: format!(

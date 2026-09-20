@@ -63,6 +63,13 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])",
+          "description": "Requires negotiated job-feedback; bounded native completion detail, retained with this owned job."
         }
       },
       "required": [
@@ -115,6 +122,10 @@
           ],
           "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])",
           "description": "Optional public name after ::, independent of the configured plugin ID. Ambiguous aliases are disabled; full names remain available."
+        },
+        "presentation": {
+          "$ref": "#/$defs/actionPresentation",
+          "description": "Requires view-action-presentation advertised in hello and requested in registration; omit entirely for unsupported hosts."
         }
       },
       "required": [
@@ -286,6 +297,31 @@
           },
           "maxItems": 64,
           "uniqueItems": true
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/viewMetadata"
+          },
+          "description": "Requires view-metadata, including an empty authored array. Ordered labelled values above content; labels 64 UTF-8 bytes, values 1024 bytes."
+        },
+        "action_presentation": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/actionPresentation"
+          },
+          "description": "Requires view-action-presentation even when empty. Unique registered view-command IDs; each override replaces the complete presentation. At most 16 distinct groups."
+        },
+        "document": {
+          "type": "string",
+          "maxLength": 8388608,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]*$",
+          "description": "Requires view-document. Complete read-only body, at most 8 MiB UTF-8 and 250000 LF-delimited lines; no implicit final newline. Tabs and LF allowed."
         }
       },
       "required": [
@@ -293,7 +329,35 @@
         "purpose",
         "rows"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "document"
+            ]
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "const": "document"
+              },
+              "rows": {
+                "maxItems": 0
+              },
+              "columns": {
+                "maxItems": 0
+              },
+              "detail": {
+                "type": "null"
+              },
+              "preview": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "view": {
       "type": "object",
@@ -1737,6 +1801,13 @@
                 "cancelled",
                 "outcome_unknown"
               ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])",
+              "description": "Requires negotiated job-feedback; bounded native completion detail, retained with this owned job."
             }
           },
           "required": [
@@ -5875,13 +5946,66 @@
           },
           "maxItems": 64,
           "uniqueItems": true
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/viewMetadata"
+          },
+          "description": "Requires view-metadata, including an empty authored array. Ordered labelled values above content; labels 64 UTF-8 bytes, values 1024 bytes."
+        },
+        "action_presentation": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/actionPresentation"
+          },
+          "description": "Requires view-action-presentation even when empty. Unique registered view-command IDs; each override replaces the complete presentation. At most 16 distinct groups."
+        },
+        "document": {
+          "type": "string",
+          "maxLength": 8388608,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]*$",
+          "description": "Requires view-document. Complete read-only body, at most 8 MiB UTF-8 and 250000 LF-delimited lines; no implicit final newline. Tabs and LF allowed."
         }
       },
       "required": [
         "title",
         "purpose"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "document"
+            ]
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "const": "document"
+              },
+              "rows": {
+                "maxItems": 0
+              },
+              "columns": {
+                "maxItems": 0
+              },
+              "detail": {
+                "type": "null"
+              },
+              "preview": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "viewOperation": {
       "oneOf": [
@@ -6106,7 +6230,8 @@
             "bytes": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 4194304
+              "maximum": 16777216,
+              "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
             },
             "expected_query_revision": {
               "type": "string",
@@ -6156,7 +6281,8 @@
             "offset": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 4194304
+              "maximum": 16777216,
+              "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
             },
             "text": {
               "type": "string",
@@ -6322,7 +6448,8 @@
             "offset": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 4194304
+              "maximum": 16777216,
+              "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
             },
             "limit": {
               "type": "integer",
@@ -6399,7 +6526,8 @@
         "bytes": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4194304
+          "maximum": 16777216,
+          "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
         },
         "rows": {
           "type": "integer",
@@ -6429,7 +6557,8 @@
         "bytes": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4194304
+          "maximum": 16777216,
+          "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
         }
       },
       "required": [
@@ -6444,7 +6573,8 @@
         "offset": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4194304
+          "maximum": 16777216,
+          "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
         }
       },
       "required": [
@@ -6468,7 +6598,8 @@
         "bytes": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4194304
+          "maximum": 16777216,
+          "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
         }
       },
       "required": [
@@ -6484,7 +6615,8 @@
         "offset": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4194304
+          "maximum": 16777216,
+          "description": "Above 4 MiB requires negotiated view-document; decoded non-document models retain the 4 MiB limit."
         },
         "text": {
           "type": "string",
@@ -8381,6 +8513,31 @@
           },
           "maxItems": 64,
           "uniqueItems": true
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/host_viewMetadata"
+          },
+          "description": "Requires view-metadata, including an empty authored array. Ordered labelled values above content; labels 64 UTF-8 bytes, values 1024 bytes."
+        },
+        "action_presentation": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9-]{1,48}(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/host_actionPresentation"
+          },
+          "description": "Requires view-action-presentation even when empty. Unique registered view-command IDs; each override replaces the complete presentation. At most 16 distinct groups."
+        },
+        "document": {
+          "type": "string",
+          "maxLength": 8388608,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]*$",
+          "description": "Requires view-document. Complete read-only body, at most 8 MiB UTF-8 and 250000 LF-delimited lines; no implicit final newline. Tabs and LF allowed."
         }
       },
       "required": [
@@ -8388,7 +8545,35 @@
         "purpose",
         "rows"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "document"
+            ]
+          },
+          "then": {
+            "properties": {
+              "purpose": {
+                "const": "document"
+              },
+              "rows": {
+                "maxItems": 0
+              },
+              "columns": {
+                "maxItems": 0
+              },
+              "detail": {
+                "type": "null"
+              },
+              "preview": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "host_viewColumn": {
       "type": "object",
@@ -8431,6 +8616,110 @@
     "contextProfile": {
       "$ref": "runyte-context-1.schema.json",
       "$comment": "Separate authenticated Unix socket profile requiring runyte.context.v1; not admitted on the ordinary process plugin transport."
+    },
+    "actionPresentation": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "listed": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "host_actionPresentation": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "listed": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "viewMetadata": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "host_viewMetadata": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": true
     }
   },
   "anyOf": [

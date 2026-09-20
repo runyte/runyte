@@ -281,6 +281,17 @@ pub(crate) fn render_document(
     keymap: &Keymap,
     read_only: bool,
 ) -> HelpDocument {
+    render_document_with_descriptions(topic, grammar, scope, keymap, read_only, |_| None)
+}
+
+pub(crate) fn render_document_with_descriptions(
+    topic: HelpTopic,
+    grammar: GrammarKind,
+    scope: BindingScope,
+    keymap: &Keymap,
+    read_only: bool,
+    description: impl Fn(crate::keymap::BindingTarget) -> Option<String>,
+) -> HelpDocument {
     // Normal and Select bind the same sequences to the same commands, so
     // either answers for both. `normal_and_select_bind_the_same_sequences` in
     // keymap.rs fails if that stops being true, since this would then be
@@ -346,7 +357,9 @@ pub(crate) fn render_document(
             key_cells.push(row(
                 &mut out,
                 &binding.sequence.to_string(),
-                &binding.description,
+                description(binding.target)
+                    .as_deref()
+                    .unwrap_or(&binding.description),
             ));
         }
         if !actions.is_empty() {

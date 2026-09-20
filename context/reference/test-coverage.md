@@ -43,6 +43,34 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-19 — database viewer presentation and full values
+
+The coordinated implementation retains `runyte-1` and negotiates optional action
+presentation, top metadata, complete documents and bounded job feedback. Linux
+x86_64-unknown-linux-gnu, Rust 1.97.1, passed the canonical workspace command with
+`--summary-only --fail-under-lines 89`: **91.91% total lines** (125,130 of
+136,147), 91.82% functions and 91.34% regions. Across 37 suites, 3,795 tests passed,
+none failed and 34 were ignored. The enforced 89% floor is unchanged.
+
+Coverage includes authored-empty/null feature gates, atomic registration and
+metadata accounting, selectable grouped actions, staged documents above 4 MiB
+and 10,000 lines, legacy model limits, quota refusal preserving current views,
+whole-document search/copy and position restoration. Job-feedback tests cover
+pre-reserved error capacity, finished-job eviction, ownership, late completion
+without foreground retargeting and finish-before-command-response ordering.
+Formatting, denied-warning all-target Clippy and ordinary `cargo test` also pass.
+Unix-socket fixtures were run outside the filesystem sandbox after its socket
+creation restriction was identified; permission failures are not counted as
+passing tests.
+
+Separate compatibility checks passed the schema/SDK suites, frozen `runyte-1`
+frames and the inventory-pinned unchanged ru-time checkout: 65 schema-enabled
+external tests, both strict native tests, and all 19 bundled demonstration
+programs in a real host. Frozen source and fixtures were not rewritten. The
+coordinated plugin has its own fresh combined behavior-coverage register.
+This result is Linux-only; configured macOS/ARM64 gates and future publication
+remain separate evidence.
+
 ## 2026-09-19 — negotiated row actions
 
 Measured on `x86_64-unknown-linux-gnu` for optional process-plugin feature

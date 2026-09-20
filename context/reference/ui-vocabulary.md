@@ -481,7 +481,7 @@ hints and the palette distinguish `Syntax is still parsing` from an unsupported
 language or failed parse. Routine completion is silent. Language-service health
 reports pending work or failure through the existing service-health surface.
 
-## Experimental plugins
+## Plugins
 
 Plugin commands use the colon palette and the existing keymap help and hints.
 A second leading colon changes the same palette to **Plugin commands** and
@@ -497,9 +497,9 @@ plugin stop is informational. Captured buffer targets never change focus when
 results arrive. Generated help remains a snapshot of the view where it was
 opened; reopening it uses the current registered bindings.
 
-## Experimental application views
+## Application views
 
-Epoch 2 native application models materialize as retained read-only special
+Native application models materialize as retained read-only special
 buffers. Their stable row identities are separate from text offsets; publication
 preserves each pane's selection endpoints and viewport by identity. Application
 views retain ordinary buffer navigation and management. Filtering is an explicit
@@ -510,6 +510,14 @@ for selected data rows; header-only selections use the model-wide restriction.
 The picker remains an overlay over the same buffer, not a separate navigation
 level. Clean hidden views share normal special-buffer eviction; visible views
 remain retained. Plugin stop preserves readable content labelled unavailable.
+
+Plugin action pickers may contain **section headings**, non-selectable semantic
+rows grouping their actions. Filtering removes empty sections; selection indexes
+actions, while frontend snapshots include headings as presentation rows.
+**View metadata** is an ordered set of explicitly labelled facts above a plugin
+view's content, without actionable data-row identities. A **complete plugin
+document** is one bounded read-only buffer; internal transfer chunks are not
+user-visible pages or search/copy boundaries.
 
 Application filesystem plans use the existing native filesystem confirmation.
 Showing a plan requires a current foreground invocation and no competing input

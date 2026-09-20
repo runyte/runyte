@@ -31,7 +31,21 @@ impl WorkspaceHost {
         let mut names = BTreeSet::new();
         let mut full_names = Vec::new();
         let mut next_command = self.app.plugins.next_command;
+        let mut groups = BTreeSet::new();
         for registration in &commands {
+            if let Some(presentation) = &registration.presentation {
+                ensure!(
+                    features.contains(plugin::application::VIEW_ACTION_PRESENTATION),
+                    "Command presentation requires view-action-presentation"
+                );
+                presentation
+                    .validate()
+                    .map_err(|error| anyhow::anyhow!(error.message))?;
+                if let Some(group) = &presentation.group {
+                    groups.insert(group);
+                }
+                ensure!(groups.len() <= 16, "Too many command presentation groups");
+            }
             ensure!(
                 registration.alias.as_deref().is_none_or(plugin::valid_name),
                 "invalid plugin command alias"
@@ -72,6 +86,7 @@ impl WorkspaceHost {
             candidate.insert(
                 next_command,
                 RuntimeCommand {
+                    presentation: registration.presentation.clone(),
                     alias: registration.alias.clone(),
                     alias_name: None,
                     arguments: registration.arguments.clone(),
@@ -110,6 +125,7 @@ impl WorkspaceHost {
         candidate.insert(
             next_command,
             RuntimeCommand {
+                presentation: None,
                 alias: None,
                 alias_name: None,
                 arguments: vec![],
@@ -125,6 +141,14 @@ impl WorkspaceHost {
         );
         let conflicts = crate::app::plugin_workflows::resolve_aliases(&mut candidate);
         let maps = self.app.plugin_keymaps(&candidate)?;
+        let presentation_bytes = candidate
+            .values()
+            .filter(|command| command.plugin == id)
+            .filter_map(|command| command.presentation.as_ref())
+            .map(plugin::presentation::Presentation::payload_bytes)
+            .sum();
+        self.reserve_application_payload(id, presentation_bytes)
+            .map_err(|error| anyhow::anyhow!(error.message))?;
         // Admission cannot await, so this ack and the following state commit are
         // one host turn. Queue failure leaves the entire registry unchanged.
         instance.sender.try_send(HostMessage::Application(
@@ -133,10 +157,11 @@ impl WorkspaceHost {
                 capabilities: capabilities.clone(),
                 features: features.clone(),
                 runyte: runyte.clone(),
-                limits: Default::default(),
+                limits: plugin::application::Limits::for_features(&features),
             },
         ))?;
         let instance = self.app.plugins.instances.get_mut(&id).unwrap();
+        instance.application.retained_payload += presentation_bytes;
         instance.application.capabilities = capabilities;
         instance.application.features = features;
         instance.application.runyte = runyte;

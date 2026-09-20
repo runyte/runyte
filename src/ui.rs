@@ -1097,6 +1097,13 @@ fn draw_snapshot_overlay(
         .skip(visible_offset)
         .take(row_capacity)
     {
+        if row.heading {
+            lines.push(Line::styled(
+                row.label.clone(),
+                Style::default().fg(theme.accent).bold(),
+            ));
+            continue;
+        }
         let selected = overlay.selected == Some(index);
         // The selection contributes a background and nothing else, so the
         // accent on a mnemonic letter and the emphasis on a fuzzy match both
@@ -3293,18 +3300,17 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     } else {
         0
     };
-    let displayed = visible
-        .iter()
+    let displayed = picker
+        .display_rows()
+        .into_iter()
         .skip(report_offset)
         .take(if report {
             usize::from(list_area.height).max(1)
         } else {
             usize::MAX
         })
-        .copied()
         .collect::<Vec<_>>();
-    let selected = (!report && !visible.is_empty())
-        .then_some(picker.selected.min(visible.len().saturating_sub(1)));
+    let selected = (!report).then(|| picker.selected_display_index()).flatten();
     let items = if visible.is_empty() {
         vec![
             ListItem::new(if report {
@@ -3318,8 +3324,14 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         displayed
             .iter()
             .enumerate()
-            .filter_map(|(position, index)| picker.items.get(*index).map(|item| (position, item)))
-            .map(|(position, item)| {
+            .map(|(position, display)| {
+                let crate::picker::ListDisplayRow::Item(item) = display else {
+                    let crate::picker::ListDisplayRow::Section(label) = display else {
+                        unreachable!()
+                    };
+                    return ListItem::new((*label).to_owned())
+                        .style(Style::default().fg(app.theme.accent).bold());
+                };
                 // A dormant row keeps its shape and its place and gives up
                 // only its colours, so the list still reads as one column of
                 // names rather than two kinds of row. The selected row is
@@ -3957,6 +3969,7 @@ fn draw_key_hints(
     let scope = app.key_binding_scope();
     let capabilities = app.command_capabilities();
     let mut rows = key_hints.rows_in(app.keymap(), mode, scope);
+    app.present_plugin_key_hints(&mut rows);
     for row in &mut rows {
         row.apply_capabilities(&capabilities);
     }
@@ -6433,6 +6446,7 @@ mod tests {
         overlay.rows = rows
             .into_iter()
             .map(|(label, detail)| crate::snapshot::OverlayRow {
+                heading: false,
                 identity: label.into(),
                 label: label.to_owned(),
                 detail: detail.to_owned(),

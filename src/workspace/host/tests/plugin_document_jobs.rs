@@ -186,6 +186,7 @@ fn document_job_cancellation_and_completion_enforce_owner_authority() {
             progress: 100,
         },
         api::Request::JobFinish {
+            message: None,
             job: token.clone(),
             state: api::TerminalState::Succeeded,
         },

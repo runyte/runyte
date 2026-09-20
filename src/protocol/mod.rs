@@ -171,7 +171,9 @@ use crate::workspace::{
 /// bounded lease ownership and cancellation state, in session health.
 /// Version 53 binds context review input to the last frame actually rendered
 /// by its physical frontend; prepared or dropped pages cannot authorize input.
-pub const VERSION: u32 = 53;
+// Version 54 carries non-selectable grouped-picker heading rows. This private
+// bundled frontend version is independent of the stable runyte-1 plugin API.
+pub const VERSION: u32 = 54;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1143,7 +1145,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 53);
+        assert_eq!(VERSION, 54);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

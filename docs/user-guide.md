@@ -3148,6 +3148,18 @@ Moving the selection after opening the menu requires reopening it; changed
 models are checked again before an action runs. Other plugins retain their
 view-wide menus.
 
+Plugins can give actions readable labels and group the Tab menu into named
+sections. Headings cannot be selected; typing filters actions across sections.
+Enter can still open the selected item when its internal callback is hidden
+from the menu. View titles identify the content, and plugins can place labelled
+facts such as filters or a database path above it.
+
+A plugin can open a complete read-only document on demand. It scrolls, searches
+and copies as one buffer, including content received in internal chunks. The
+supported body limit is 8 MiB and 250,000 lines; loading can fail when the host's
+shared memory allowance is occupied. A shortened preview remains a preview until
+the plugin loads and publishes the complete content.
+
 Application plugins also provide retained native views, typed commands,
 finite background jobs, explicit buffer/selection operations and bounded local
 filesystem operations with native confirmation, plus native prompts, filterable

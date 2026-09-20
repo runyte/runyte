@@ -74,6 +74,7 @@ fn registration(commands: Vec<api::Registration>) -> api::ClientMessage {
 }
 fn command(name: &str) -> api::Registration {
     api::Registration {
+        presentation: None,
         alias: None,
         arguments: vec![],
         primary: false,
@@ -760,4 +761,64 @@ done
     undo(&mut host);
     assert_eq!(host.app.buffers[0].to_string(), "éß");
     host.shutdown_plugins().await.unwrap();
+}
+
+#[test]
+fn command_presentation_registration_is_negotiated_bounded_atomic_and_charged() {
+    use crate::plugin::presentation::Presentation;
+    let (_root, mut host) = host();
+    let _receiver = instance(&mut host, 0, config("labels"));
+    let mut cmd = command("upper");
+    cmd.presentation = Some(Presentation {
+        label: "Uppercase text".into(),
+        group: Some("Edit".into()),
+        order: 0,
+        listed: true,
+    });
+    let register = |host: &mut WorkspaceHost, commands, features| {
+        host.register_plugin_commands(
+            0,
+            commands,
+            Default::default(),
+            features,
+            format!("={}", plugin::compatibility::HOST_VERSION),
+        )
+    };
+    let features = || [api::VIEW_ACTION_PRESENTATION.to_owned()].into();
+    let mut wire = serde_json::to_value(&cmd).unwrap();
+    wire["presentation"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<api::Registration>(wire).is_err());
+    assert!(register(&mut host, vec![cmd.clone()], Default::default()).is_err());
+    let mut invalid = cmd.clone();
+    invalid.presentation.as_mut().unwrap().label.push('\n');
+    assert!(register(&mut host, vec![invalid], features()).is_err());
+    let many = (0..17)
+        .map(|i| {
+            let mut c = cmd.clone();
+            c.name = format!("c{i}");
+            c.presentation.as_mut().unwrap().group = Some(format!("g{i}"));
+            c
+        })
+        .collect();
+    assert!(register(&mut host, many, features()).is_err());
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .retained_payload = api::MAX_RETAINED_BYTES;
+    assert!(register(&mut host, vec![cmd.clone()], features()).is_err());
+    assert!(host.app.plugins.commands.is_empty());
+    assert!(!host.app.plugins.instances[&0].registered);
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .retained_payload = 0;
+    register(&mut host, vec![cmd], features()).unwrap();
+    assert!(host.app.plugins.instances[&0].application.retained_payload > 0);
+    assert!(host.app.plugins.instances[&0].registered);
 }

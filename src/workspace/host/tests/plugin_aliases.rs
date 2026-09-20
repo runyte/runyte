@@ -217,6 +217,7 @@ fn stable_alias_keeps_argument_usage_completion_and_wire_command_identity() {
             optional_features: Default::default(),
             name: "Timer".into(),
             commands: vec![api::Registration {
+                presentation: None,
                 name: "add".into(),
                 alias: Some("time-add".into()),
                 description: "Add a task".into(),

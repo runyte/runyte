@@ -60,6 +60,51 @@ class ModelTests(unittest.TestCase):
                          self.app._control, self.app._observations, self.app._validation_executor):
             executor.shutdown(wait=True, cancel_futures=True)
 
+    def test_job_feedback_is_explicit_and_never_sent_to_old_hosts(self):
+        self.app.finish_job('j:1', 'succeeded')
+        self.assertNotIn('message', self.port.calls[-1][1])
+        with self.assertRaises(PluginError) as error:
+            self.app.finish_job('j:1', 'failed', message='Not enough memory')
+        self.assertEqual(error.exception.code, 'unsupported')
+        self.app.features = frozenset(['job-feedback'])
+        self.app.finish_job('j:1', 'failed', message='Not enough memory')
+        self.assertEqual(self.port.calls[-1][1]['message'], 'Not enough memory')
+        for message in ('', 'bad\nmessage', 'x' * 1025):
+            with self.assertRaises(PluginError):
+                self.app.finish_job('j:1', 'failed', message=message)
+
+    def test_full_document_feature_stages_and_reads_one_complete_body(self):
+        body = ('one line\n' * 600_000)[:5 * 1024 * 1024].replace('\n', ' ') + 'END猫'
+        with self.assertRaises(PluginError) as error:
+            self.app.publish_document('v:1', 'm:1', 'Value', body)
+        self.assertEqual(error.exception.code, 'unsupported')
+        self.assertFalse(self.port.calls)
+        self.app.features = frozenset(['view-document'])
+        self.app.publish_document('v:1', 'm:1', 'Value', body)
+        self.assertEqual(self.port.model['document'], body)
+        self.assertEqual(self.app.get_model('v:1')['model']['document'], body)
+        self.assertEqual(self.port.calls[-1][0], 'view.snapshot.close')
+
+    def test_feature_fields_require_acknowledgement_even_when_empty(self):
+        for field, empty in [('metadata', []), ('action_presentation', {}), ('document', '')]:
+            with self.subTest(field=field), self.assertRaises(PluginError) as error:
+                self.app.publish_model('v:1', 'm:1', {'title': 'View', 'purpose': 'document', 'rows': [], field: empty})
+            self.assertEqual(error.exception.code, 'unsupported')
+        self.assertFalse(self.port.calls)
+        self.app.features = frozenset(['view-document'])
+        for body in ('\n' * 250_000, 'bad\rtext', 'x' * (8 * 1024 * 1024 + 1)):
+            with self.assertRaises(PluginError):
+                self.app.publish_document('v:1', 'm:1', 'Value', body)
+        self.assertFalse(self.port.calls)
+
+    def test_registration_labels_are_omitted_for_old_strict_hosts(self):
+        self.app.commands = [{'name': 'open', 'presentation': {'label': 'Open value'}}]
+        self.assertEqual(self.app._registration_commands([]), [{'name': 'open'}])
+        self.assertEqual(self.app._registration_commands(['view-action-presentation']), self.app.commands)
+        self.assertIn('presentation', self.app.commands[0])
+        with self.assertRaises(ValueError):
+            Application('Invalid', self.app.commands, [], runyte='>=0.3.0, <0.4.0')
+
     def test_small_model_and_patch_preserve_single_message_operations(self):
         model = {'title': 'Small', 'purpose': 'list', 'rows': []}
         self.app.publish_model('v:1', 'm:1', model)
