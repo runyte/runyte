@@ -433,8 +433,7 @@ mod tests {
         assert!(deadline.unwrap() >= before_delayed_message + DEBOUNCE);
     }
 
-    #[tokio::test]
-    async fn a_native_burst_produces_one_debounced_invalidation() {
+    fn monitor_repository() -> (PathBuf, Repository) {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -454,8 +453,31 @@ mod tests {
         let common_dir = root.join("metadata/common");
         let workdir = root.join("work");
         let repository = Repository::with_git_dirs(&workdir, &git_dir, &common_dir);
-        let (monitor, mut events) = spawn();
-        monitor.sync_and_wait(Some(repository));
+        (root, repository)
+    }
+
+    #[tokio::test]
+    async fn an_injected_burst_produces_one_debounced_invalidation() {
+        let (root, repository) = monitor_repository();
+        let workdir = repository.workdir().to_owned();
+        let git_dir = repository.git_dir().to_owned();
+        let common_dir = repository.common_dir().to_owned();
+        // Register real watch roots, but make injected observations the only
+        // worker input. FSEvents can deliver setup writes after registration.
+        let mut watcher = notify::recommended_watcher(|_| {}).unwrap();
+        let (commands, receiver) = sync_channel(COMMAND_CAPACITY);
+        let (sender, mut events) = mpsc::channel(EVENT_CAPACITY);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let mut monitor = GitMonitorHandle {
+            commands,
+            overflowed: Arc::clone(&overflowed),
+            stopped: Arc::clone(&stopped),
+            synced_repository: None,
+        };
+        // Queue the entire burst before the worker starts, so scheduling the
+        // producer cannot split these observations across quiet periods.
+        monitor.sync(Some(repository));
 
         for path in [
             workdir.join("source.rs"),
@@ -464,6 +486,10 @@ mod tests {
         ] {
             monitor.inject_native(Event::new(notify::EventKind::Any).add_path(path));
         }
+
+        let worker = thread::spawn(move || {
+            run_worker(Some(&mut watcher), receiver, sender, overflowed, stopped);
+        });
 
         let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
@@ -478,6 +504,26 @@ mod tests {
             "one filesystem burst produced multiple invalidations"
         );
 
+        drop(monitor);
+        worker.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_watcher_reports_worktree_changes() {
+        let (root, repository) = monitor_repository();
+        let workdir = repository.workdir().to_owned();
+        let (monitor, mut events) = spawn();
+        monitor.sync_and_wait(Some(repository));
+        fs::write(workdir.join("source.rs"), "changed\n").unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("the native filesystem event arrived")
+            .expect("the monitor stayed live");
+        assert_eq!(event.repository, workdir);
+        assert!(!event.overflowed);
+        // Native backends may batch or repeat hints; exact coalescing belongs
+        // to the controlled-observation test above.
         drop(monitor);
         fs::remove_dir_all(root).unwrap();
     }
