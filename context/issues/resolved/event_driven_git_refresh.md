@@ -97,7 +97,17 @@ successful reconciliation and the last automatic attempt. Filling data for a
 newly revealed consumer observes the same automatic cooldown; explicit
 refreshes and editor-owned mutations remain immediate.
 
-Tests: `git_monitor::tests::a_native_burst_produces_one_debounced_invalidation`,
+The debounce regression test previously injected observations into a worker
+that also accepted real filesystem notifications. macOS FSEvents could deliver
+fixture-creation notifications after registration and after the injected burst,
+violating the test's assumption that there was only one burst. The controlled
+test now discards native callbacks and queues its complete injected burst before
+starting the worker. A separate native-watcher test writes a worktree file and
+checks delivery without assuming a platform-specific number of notifications.
+No production debounce or watcher timing changes are involved.
+
+Tests: `git_monitor::tests::an_injected_burst_produces_one_debounced_invalidation`,
+`git_monitor::tests::native_watcher_reports_worktree_changes`,
 `git_monitor::tests::linked_worktree_watches_checkout_private_and_shared_metadata`,
 and `git_monitor::tests::worktree_index_head_refs_and_packed_refs_are_relevant`
 in `src/git_monitor.rs` cover native coalescing and metadata scope;
