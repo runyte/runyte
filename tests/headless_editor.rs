@@ -109,32 +109,6 @@ impl Drop for IsolatedRoot {
     }
 }
 
-struct CurrentDirectoryGuard(PathBuf);
-
-impl Drop for CurrentDirectoryGuard {
-    fn drop(&mut self) {
-        std::env::set_current_dir(&self.0).unwrap();
-    }
-}
-
-fn relative_path(from: &Path, to: &Path) -> PathBuf {
-    let from = from.components().collect::<Vec<_>>();
-    let to = to.components().collect::<Vec<_>>();
-    let common = from
-        .iter()
-        .zip(&to)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut relative = PathBuf::new();
-    for _ in common..from.len() {
-        relative.push("..");
-    }
-    for component in &to[common..] {
-        relative.push(component.as_os_str());
-    }
-    relative
-}
-
 #[test]
 fn public_headless_edit_command_selection_and_undo_flow() {
     let root = IsolatedRoot::new("flow");
@@ -217,18 +191,43 @@ fn construction_uses_only_the_explicit_isolated_root_without_writing_it() {
 
 #[test]
 fn relative_isolated_root_is_fixed_before_later_cwd_changes() {
-    let original_path = std::env::current_dir().unwrap();
-    let root = IsolatedRoot::new("relative-root");
-    let changed = IsolatedRoot::new("changed-cwd");
-    let original = CurrentDirectoryGuard(original_path);
-    fs::write(root.path().join("note.txt"), "isolated").unwrap();
-    fs::write(changed.path().join("note.txt"), "wrong cwd").unwrap();
-    let canonical_root = root.path().canonicalize().unwrap();
-    let relative_root = relative_path(&original.0.canonicalize().unwrap(), &canonical_root);
-    assert!(relative_root.is_relative());
+    // TEMP and the checkout may be on different Windows drives, between
+    // which no relative path exists. Own both directories beneath one fixture
+    // and change cwd only in a separate compiled test process.
+    let fixture = IsolatedRoot::new("relative-root");
+    for (directory, contents) in [("relative-root", "isolated"), ("changed-cwd", "wrong cwd")] {
+        let directory = fixture.path().join(directory);
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("note.txt"), contents).unwrap();
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "relative_root_child",
+            "--ignored",
+            "--test-threads=1",
+        ])
+        .current_dir(fixture.path())
+        .env("XDG_CONFIG_HOME", fixture.path().join("config"))
+        .env("RUNYTE_HEADLESS_CWD_FIXTURE", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-    let mut editor = HeadlessEditor::new_in(&relative_root).unwrap();
-    std::env::set_current_dir(changed.path()).unwrap();
+#[test]
+#[ignore = "compiled subprocess fixture exercised by the parent test"]
+fn relative_root_child() {
+    if std::env::var_os("RUNYTE_HEADLESS_CWD_FIXTURE").is_none() {
+        return;
+    }
+    let mut editor = HeadlessEditor::new_in("relative-root").unwrap();
+    std::env::set_current_dir("changed-cwd").unwrap();
     editor
         .execute(CommandInvocation::open(PathBuf::from("note.txt")).unwrap())
         .unwrap();

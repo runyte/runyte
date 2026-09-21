@@ -208,3 +208,14 @@ is not claimed from the timeout alone.
 The GitHub CLI is now installed and authenticated; future CI diagnosis uses
 `gh` directly rather than requesting logs from the user. Both reviewed repair
 packages are followed by a fresh remote acceptance run.
+
+Repair commit `3ce94ae` clears the original Windows library failures and Linux
+MCP acceptance in run `35541629745`; Linux/macOS tests, lifecycle stress and
+both 89% coverage gates pass. Windows reaches an additional headless fixture
+failure: it assumed a relative path could connect the checkout and TEMP, which
+can be on different drives. The fixture now creates both directories beneath
+one temporary root and changes cwd only in a compiled test subprocess, with
+fixture-owned configuration. `review_wp1` found no actionable issue; all 25
+headless tests pass locally, including the parent that exercises the ignored
+child entry. This repair needs its own remote rerun before the Phase-1 gate is
+declared complete.
