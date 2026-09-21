@@ -125,6 +125,7 @@ impl Prepared {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn launch_for_test(self, executable: &OsStr) -> Result<(), Error> {
         launch_with(self, executable, active_openers())
     }

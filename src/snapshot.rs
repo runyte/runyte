@@ -2560,7 +2560,7 @@ mod tests {
             Some(TextRun {
                 text,
                 kind: TextRunKind::Hint,
-            }) if text.starts_with("-rw")
+            }) if !cfg!(unix) || text.starts_with("-rw")
         ));
         assert_eq!(
             file.runs

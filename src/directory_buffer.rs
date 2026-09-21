@@ -64,6 +64,8 @@ pub struct DirectoryTransfer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+// Windows Metadata enlarges the retained fingerprint; avoid an allocation per row.
+#[cfg_attr(windows, allow(clippy::large_enum_variant))]
 enum RowOrigin {
     Snapshot(EntryId),
     Transfer {
@@ -1034,7 +1036,10 @@ fn split_lines(text: &str) -> Vec<&str> {
 }
 
 fn parse_line(line: &str) -> Result<(PathBuf, EntryKind)> {
+    #[cfg(not(windows))]
     let line = line.trim_end();
+    #[cfg(windows)]
+    let line = line.trim_end_matches('\r');
     ensure!(
         !line.contains('\0'),
         "directory entries cannot contain NUL bytes"
@@ -1050,6 +1055,8 @@ fn parse_line(line: &str) -> Result<(PathBuf, EntryKind)> {
         "directory entries cannot contain control characters"
     );
     let path = PathBuf::from(name);
+    #[cfg(windows)]
+    crate::windows_fs::validate_relative(&path)?;
     let text = path
         .to_str()
         .with_context(|| format!("{} is not valid UTF-8", path.display()))?;

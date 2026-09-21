@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#[cfg(all(test, windows))]
+#[path = "tui/windows_console_acceptance.rs"]
+mod windows_console_acceptance;
+
 use std::{
     fs,
     io::{self, Write, stdout},
@@ -12,6 +16,8 @@ use std::{
 use std::thread;
 
 use anyhow::{Context, Result};
+#[cfg(not(windows))]
+use crossterm::event::EventStream;
 #[cfg(unix)]
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -21,7 +27,7 @@ use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event as CrosstermEvent, EventStream, KeyEventKind,
+        Event as CrosstermEvent, KeyEventKind,
     },
     style::{Attribute, Print, SetAttribute},
     terminal::{
@@ -29,10 +35,11 @@ use crossterm::{
         enable_raw_mode,
     },
 };
+#[cfg(not(windows))]
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use runyte::{
-    app::{App, PersistentExitRequest},
+    app::App,
     command::{
         CommandCategory, CommandExecutionContext, CommandInvocation, CommandInvocationError,
         EditorCommand,
@@ -41,10 +48,10 @@ use runyte::{
     external_open, file_monitor, file_picker,
     git::{GitCliProvider, GitService, GitServiceEvent},
     git_monitor,
-    input::{InputEvent, KeyStroke, PointerEvent, PointerEventKind},
+    input::{InputEvent, KeyStroke, PointerEventKind},
     key_hints::{HintEventResult, KeyHintState},
     keymap::{BindingTarget, KeySequence, Lookup},
-    launch::{LaunchArguments, LaunchMode, LaunchTarget},
+    launch::{LaunchArguments, LaunchMode},
     log::{self as diagnostic_log, Level as LogLevel, Role as LogRole},
     log_debug, log_error, log_info, log_trace, log_warn,
     lsp::{self, LspCommand, LspHandle},
@@ -57,6 +64,8 @@ use runyte::{
     ui, word_index,
     workspace::{HostCommand, HostEvent, HostInputOutcome, WorkspaceHost, workspace_id},
 };
+#[cfg(unix)]
+use runyte::{app::PersistentExitRequest, input::PointerEvent, launch::LaunchTarget};
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
 /// How often work that arrives faster than anyone can read it is allowed to
@@ -1525,8 +1534,13 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
+    // This is a signal-restoration guard on Unix and a unit value elsewhere.
+    #[allow(clippy::drop_non_drop)]
     drop(startup_signal_exit.take());
+    #[cfg(not(windows))]
     let mut terminal_events = EventStream::new();
+    #[cfg(windows)]
+    let mut terminal_events = runyte::tui::windows_input::EventStream::new()?;
     let mut git_refresh_tick = tokio::time::interval(MAINTENANCE_INTERVAL);
     git_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status_animation_tick = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
@@ -1911,6 +1925,7 @@ async fn resolve_attached_workspace(
 ///
 /// `display_selector` remains the spelling in an unknown-selector error even
 /// when a relative path has already been joined to the editor directory.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn initialize_attached_directory(
     requested: &Path,
     display_selector: &Path,
@@ -1928,6 +1943,7 @@ fn initialize_attached_directory(
     project_root::initialize(&directory, state, reserved_user_roots)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn workspace_selector_path(selector: &Path, working_directory: &Path) -> PathBuf {
     if selector.is_absolute() {
         selector.to_path_buf()
@@ -5032,7 +5048,7 @@ async fn context_timeout(delay: Option<Duration>) {
 }
 
 struct HostServices {
-    context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::transport::Event>,
+    context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::Event>,
     pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
     plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
     syntax_events: SyntaxEvents,
@@ -5077,7 +5093,12 @@ fn start_host_services(
     } else {
         None
     };
+    #[cfg(unix)]
     app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
+    #[cfg(windows)]
+    if app.config.lsp.enable {
+        app.report_host_error("LSP is unavailable in Windows Phase 1");
+    }
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);
@@ -5117,11 +5138,16 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = app.start_plugins();
     let pipe_events = app.start_pipe_service();
+    #[cfg(unix)]
     let context_events = app.start_context(if persistent {
         runyte::workspace::context::storage::HostMode::Persistent
     } else {
         runyte::workspace::context::storage::HostMode::Standalone
     });
+    #[cfg(not(unix))]
+    let context_events = tokio::sync::mpsc::channel(1).1;
+    #[cfg(not(unix))]
+    let _ = (config_path, persistent);
     Ok(HostServices {
         context_events,
         pipe_events,
@@ -5143,8 +5169,9 @@ fn start_host_services(
 
 fn write_cwd_file(path: &Path, directory: &Path) -> Result<()> {
     let mut contents = directory.as_os_str().as_encoded_bytes().to_vec();
-    #[cfg(unix)]
-    contents.push(0);
+    if cfg!(unix) {
+        contents.push(0);
+    }
     atomic_write_cwd_file(path, &contents)
         .with_context(|| format!("failed to write cwd file {}", path.display()))
 }
@@ -5266,6 +5293,7 @@ impl PointerBatcher {
     }
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn is_wheel_event(kind: PointerEventKind) -> bool {
     matches!(
         kind,
@@ -5433,7 +5461,10 @@ fn motion_repeat_dispatches(app: &App, input: &InputEvent, repeated: bool) -> us
 }
 
 struct TerminalGuard {
+    #[cfg(windows)]
+    _console_mode: runyte::tui::windows_input::ConsoleMode,
     mouse_enabled: bool,
+    #[cfg_attr(not(unix), allow(dead_code))]
     keyboard_enhancement: bool,
 }
 
@@ -5484,7 +5515,14 @@ fn keyboard_enhancement_flags_for(legacy_repeat_cadence: bool) -> KeyboardEnhanc
 
 impl TerminalGuard {
     fn enter(mouse_enabled: bool) -> Result<Self> {
+        #[cfg(windows)]
+        let console_mode = runyte::tui::windows_input::ConsoleMode::capture()?;
         enable_raw_mode().context("failed to enable terminal raw mode")?;
+        #[cfg(windows)]
+        if let Err(error) = console_mode.enable_vt() {
+            let _ = disable_raw_mode();
+            return Err(error).context("failed to enable Windows VT input");
+        }
         let mut output = stdout();
         if let Err(error) = output.execute(EnterAlternateScreen) {
             let _ = disable_raw_mode();
@@ -5524,10 +5562,17 @@ impl TerminalGuard {
             let _ = disable_raw_mode();
             return Err(error).context("failed to enable mouse capture");
         }
-        Ok(Self {
+        let guard = Self {
             mouse_enabled,
             keyboard_enhancement,
-        })
+            #[cfg(windows)]
+            _console_mode: console_mode,
+        };
+        // Crossterm's native mouse setup replaces the whole input mode. Restore
+        // VT input before accepting any editor input; guard owns rollback.
+        #[cfg(windows)]
+        guard._console_mode.enable_vt()?;
+        Ok(guard)
     }
 }
 
@@ -5583,6 +5628,7 @@ fn note_ended_service(
 /// Verbosity and destination are properties of host startup. Accepting `-v`
 /// or `--log` silently here would present an attachment as if it had
 /// reconfigured the host that owns the workspace.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn report_retained_logging(verbosity: u8, log: Option<&Path>) {
     if verbosity == 0 && log.is_none() {
         return;
@@ -5593,6 +5639,7 @@ restart it with --session-restart to change them"
     );
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn report_retained_host_logging(arguments: &LaunchArguments) {
     report_retained_logging(arguments.verbosity, arguments.log.as_deref());
 }
@@ -5604,6 +5651,21 @@ fn report_retained_host_logging(arguments: &LaunchArguments) {
 /// preventing a host from serving; a failed explicit `--log` is a startup
 /// error, because silently choosing another destination would make the
 /// requested capture misleading.
+#[cfg(windows)]
+fn initialize_logging(
+    arguments: &LaunchArguments,
+    role: LogRole,
+    _state_root: &Path,
+    _project_root: &Path,
+) -> Result<Option<String>> {
+    const REASON: &str = "Private diagnostic log storage is unavailable in Windows Phase 1; use :notifications or :service-health";
+    anyhow::ensure!(arguments.log.is_none(), "{REASON}");
+    diagnostic_log::note_unavailable(role, None, REASON.into());
+    diagnostic_log::note_failure_reported();
+    Ok(None)
+}
+
+#[cfg(not(windows))]
 fn initialize_logging(
     arguments: &LaunchArguments,
     role: LogRole,
@@ -5657,6 +5719,7 @@ fn initialize_logging(
 /// session listings show, so a record can be matched to a listed session
 /// without pasting a 32-character hash onto every line. The startup record
 /// carries the complete ID.
+#[cfg(not(windows))]
 const ABBREVIATED_LOG_WORKSPACE_ID: usize = 8;
 
 fn print_help() {
@@ -5769,6 +5832,165 @@ Inside the editor press Space+? for the complete key reference."
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires an isolated native console; run under the ConPTY acceptance harness"]
+    fn windows_console_paste_and_restoration() {
+        use windows_sys::Win32::System::Console::*;
+        let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        let mode = || {
+            let mut value = 0;
+            assert_ne!(unsafe { GetConsoleMode(input, &mut value) }, 0);
+            value
+        };
+        let original = mode();
+        let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+        let marker: Vec<u16> = "Runyte restoration marker".encode_utf16().collect();
+        let coordinate = COORD { X: 0, Y: 10 };
+        let mut written = 0;
+        assert_ne!(
+            unsafe {
+                WriteConsoleOutputCharacterW(
+                    output,
+                    marker.as_ptr(),
+                    marker.len() as u32,
+                    coordinate,
+                    &mut written,
+                )
+            },
+            0
+        );
+        assert_eq!(written as usize, marker.len());
+        let screen_restored = || {
+            let mut actual = vec![0; marker.len()];
+            let mut read = 0;
+            assert_ne!(
+                unsafe {
+                    ReadConsoleOutputCharacterW(
+                        output,
+                        actual.as_mut_ptr(),
+                        actual.len() as u32,
+                        coordinate,
+                        &mut read,
+                    )
+                },
+                0
+            );
+            assert_eq!(read as usize, marker.len());
+            assert_eq!(
+                actual, marker,
+                "the original screen returns after leaving the alternate screen"
+            );
+        };
+        {
+            let _guard = super::TerminalGuard::enter(true).unwrap();
+            assert_ne!(mode() & ENABLE_VIRTUAL_TERMINAL_INPUT, 0);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let mut events = runyte::tui::windows_input::EventStream::new().unwrap();
+            let records: Vec<_> = "\x1b[200~:quit!\r\ncafé 😀\x1b[201~"
+                .encode_utf16()
+                .map(|unit| INPUT_RECORD {
+                    EventType: KEY_EVENT as u16,
+                    Event: INPUT_RECORD_0 {
+                        KeyEvent: KEY_EVENT_RECORD {
+                            bKeyDown: 1,
+                            wRepeatCount: 1,
+                            wVirtualKeyCode: 0,
+                            wVirtualScanCode: 0,
+                            uChar: KEY_EVENT_RECORD_0 { UnicodeChar: unit },
+                            dwControlKeyState: 0,
+                        },
+                    },
+                })
+                .collect();
+            let mut written = 0;
+            assert_ne!(
+                unsafe {
+                    WriteConsoleInputW(input, records.as_ptr(), records.len() as u32, &mut written)
+                },
+                0
+            );
+            assert_eq!(written as usize, records.len());
+            runtime.block_on(async {
+                loop {
+                    let event = tokio::time::timeout(Duration::from_secs(2), events.next())
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .unwrap();
+                    if matches!(
+                        event,
+                        crossterm::event::Event::Resize(_, _)
+                            | crossterm::event::Event::FocusGained
+                            | crossterm::event::Event::FocusLost
+                    ) {
+                        continue;
+                    }
+                    assert_eq!(
+                        event,
+                        crossterm::event::Event::Paste(":quit!\r\ncafé 😀".into())
+                    );
+                    break;
+                }
+            });
+            let repeated = INPUT_RECORD {
+                EventType: KEY_EVENT as u16,
+                Event: INPUT_RECORD_0 {
+                    KeyEvent: KEY_EVENT_RECORD {
+                        bKeyDown: 1,
+                        wRepeatCount: 1024,
+                        wVirtualKeyCode: 0,
+                        wVirtualScanCode: 0,
+                        uChar: KEY_EVENT_RECORD_0 {
+                            UnicodeChar: b'x' as u16,
+                        },
+                        dwControlKeyState: 0,
+                    },
+                },
+            };
+            assert_ne!(
+                unsafe { WriteConsoleInputW(input, &repeated, 1, &mut written) },
+                0
+            );
+            runtime.block_on(async {
+                tokio::time::timeout(Duration::from_secs(2), events.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            });
+            let started = Instant::now();
+            drop(events); // Cancels a reader even when the event channel fills.
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
+        assert_eq!(mode(), original);
+        screen_restored();
+        let startup_failure: anyhow::Result<()> = (|| {
+            let _guard = super::TerminalGuard::enter(true)?;
+            assert_ne!(mode() & ENABLE_VIRTUAL_TERMINAL_INPUT, 0);
+            anyhow::bail!("injected failure after terminal setup")
+        })();
+        assert!(
+            startup_failure
+                .unwrap_err()
+                .to_string()
+                .contains("injected failure")
+        );
+        assert_eq!(
+            mode(),
+            original,
+            "startup failure restores the original input flags"
+        );
+        screen_restored();
+    }
+    #[cfg(unix)]
+    use runyte::{
+        selection::Selection, test_support::TestRuntimeRoot, text::Transaction,
+        workspace::WorkspaceHost,
+    };
     #[cfg(debug_assertions)]
     #[test]
     fn application_input_trace_redacts_keys_before_and_after_surface_closure() {
@@ -5831,11 +6053,7 @@ mod tests {
         config::{Config, WorkspaceMode},
         input::{InputEvent, KeyCode, KeyStroke, Modifiers, PointerEvent, PointerEventKind},
         key_hints::KeyHintState,
-        selection::Selection,
-        test_support::TestRuntimeRoot,
-        text::Transaction,
         tui::input::convert_event,
-        workspace::WorkspaceHost,
     };
 
     #[test]
@@ -6746,8 +6964,9 @@ mod tests {
         assert!(!destination.join("state/cwd").exists());
 
         let mut expected = selected_directory.as_os_str().as_encoded_bytes().to_vec();
-        #[cfg(unix)]
-        expected.push(0);
+        if cfg!(unix) {
+            expected.push(0);
+        }
         assert_eq!(fs::read(&first).unwrap(), expected);
 
         fs::remove_dir_all(root).unwrap();
@@ -6815,6 +7034,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn cwd_file_preserves_the_encoded_path_and_platform_terminator() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6829,8 +7049,9 @@ mod tests {
         fs::write(&output, b"stale").unwrap();
         write_cwd_file(&output, &directory).unwrap();
         let mut expected = directory.as_os_str().as_encoded_bytes().to_vec();
-        #[cfg(unix)]
-        expected.push(0);
+        if cfg!(unix) {
+            expected.push(0);
+        }
         assert_eq!(fs::read(&output).unwrap(), expected);
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(

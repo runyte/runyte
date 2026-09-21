@@ -52,12 +52,12 @@ gap rather than working around it.
 
 ## Help bring Runyte to Windows
 
-Runyte does not run on Windows yet. The known work is recorded in
-[`context/issues/windows_support.md`](context/issues/windows_support.md), with a
-suggested order. The first steps are small: the crate currently fails to compile
-for Windows, Git is never found because executable lookup ignores `PATHEXT`, and
-language-server URIs are built wrong for drive-letter paths. Integrated
-terminals, which need ConPTY, and persistent sessions are the large pieces.
+This source tree includes provisional Windows Phase-1 support. Remaining work
+and native acceptance evidence are recorded in
+[`context/issues/windows_support.md`](context/issues/windows_support.md).
+See the [Windows guide](docs/user-guide.md#windows-support) for the MSVC build
+and current limits. Phase 2 begins with integrated Git and a disabled state
+when Git is absent, then extends language services and the other integrations.
 
 Windows access for testing is limited on the maintainer's side, which shapes
 what a contribution should look like:

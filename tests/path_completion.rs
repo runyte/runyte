@@ -438,7 +438,7 @@ fn the_bounded_rows_are_the_ones_the_full_listing_would_lead_with() {
         .iter()
         .map(|(name, is_directory)| {
             let row = if *is_directory {
-                format!("{name}{}", std::path::MAIN_SEPARATOR)
+                format!("{name}/")
             } else {
                 name.clone()
             };
@@ -449,7 +449,7 @@ fn the_bounded_rows_are_the_ones_the_full_listing_would_lead_with() {
     rows.truncate(512);
     let expected = rows
         .into_iter()
-        .map(|(_, _, row)| format!("{base}{}{row}", std::path::MAIN_SEPARATOR))
+        .map(|(_, _, row)| format!("{base}/{row}"))
         .collect::<Vec<_>>();
     assert_eq!(palette_hints(&root, &format!("{base}/")), expected);
 
@@ -497,10 +497,7 @@ fn a_wide_directory_offers_every_name_typed_into_the_finder_path_prompt() {
     type_text(&mut app, &format!("{base}/dir_05990"));
     app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
         .unwrap();
-    assert_eq!(
-        app.command,
-        format!("{base}/dir_05990{}", std::path::MAIN_SEPARATOR)
-    );
+    assert_eq!(app.command, format!("{base}/dir_05990/"));
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -704,7 +701,7 @@ fn a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling(
     let (_, _, _, relative_rows) = hint_box(&relative);
     let folder = relative_rows
         .iter()
-        .find(|row| row.contains("folder/"))
+        .find(|row| row.contains(&format!("folder{}", std::path::MAIN_SEPARATOR)))
         .expect("the directory is offered");
     assert!(
         folder.contains("directory · ")
@@ -715,10 +712,7 @@ fn a_hint_row_shows_the_entry_name_while_tab_still_completes_the_whole_spelling(
     // What the row shows is a rendering decision; what Tab inserts is not.
     app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
         .unwrap();
-    assert_eq!(
-        app.command,
-        format!("{}/folder{}", root.display(), std::path::MAIN_SEPARATOR)
-    );
+    assert_eq!(app.command, format!("{}/folder/", root.display()));
 
     fs::remove_dir_all(root).unwrap();
 }

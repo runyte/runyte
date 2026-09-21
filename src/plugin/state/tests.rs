@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
+
+#![cfg(unix)]
 use super::*;
 use crate::test_support::TestRuntimeRoot;
 use std::{

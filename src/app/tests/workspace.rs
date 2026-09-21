@@ -10,6 +10,7 @@ fn open_session_manager_for_refresh(app: &mut App) {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     let root = temporary("session-attach-working-directory");
     let editor_directory = root.join("nested");
@@ -2613,6 +2614,7 @@ fn the_session_manager_initially_selects_the_current_session() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_session_number_answer_accepts_one_to_nine_and_an_empty_clearing() {
     assert_eq!(parse_session_number("3"), Ok(Some(3)));
     assert_eq!(parse_session_number(" 9 "), Ok(Some(9)));
@@ -3065,6 +3067,7 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn worktree_shift_d_confirms_cancels_and_removes_only_the_typed_path() {
     use crate::git::{MemoryGitProvider, Repository};
 

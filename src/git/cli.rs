@@ -142,6 +142,7 @@ impl TestPipePollObserver {
         self.changed.notify_all();
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn wait_for(&self, expected: usize, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
         let mut entered = self.entered.lock().unwrap();
@@ -679,6 +680,9 @@ impl GitCliProvider {
 
     /// Finds `git` on the current process's `PATH`.
     pub fn from_environment() -> Option<Self> {
+        if cfg!(windows) {
+            return None;
+        }
         Self::discover(std::env::var_os("PATH").as_deref())
     }
 
@@ -740,18 +744,21 @@ impl GitCliProvider {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn with_local_read_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.local_read_timeout = timeout;
         self
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn with_pipe_reader_gate(mut self, gate: Arc<TestPipeReaderGate>) -> Self {
         self.pipe_reader_gate = Some(gate);
         self
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn with_pipe_poll_observer(mut self, observer: Arc<TestPipePollObserver>) -> Self {
         self.pipe_poll_observer = Some(observer);
         self

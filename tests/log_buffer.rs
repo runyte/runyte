@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![cfg(not(windows))] // Service unavailable in Windows Phase 1.
+
 //! Opening this process's diagnostic log as an ordinary read-only page.
 //!
 //! Logging status is process-global: a logger can be installed once, and the

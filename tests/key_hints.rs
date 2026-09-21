@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Modifier};
+#[cfg(not(windows))]
+use runyte::external_open::ProgramCache;
 use runyte::{
     app::App,
     command::{CommandInvocation, EditorCommand, GrammarKind, HelpInvocation, Mode},
     config::Config,
-    external_open::ProgramCache,
     input::{KeyCode, KeyStroke, Modifiers},
     key_hints::{
         HintEventResult, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout,
@@ -1214,6 +1215,7 @@ fn exact_one_key_action_is_forwarded_without_a_post_factum_hint() {
 /// A binary file named on the command line is asked about, not opened, and the
 /// remembered programs are offered above the prompt.
 #[test]
+#[cfg(not(windows))]
 fn a_binary_argument_opens_the_open_with_prompt_over_its_hints() {
     let directory = std::env::temp_dir().join(format!("runyte-open-with-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();

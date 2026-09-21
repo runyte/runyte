@@ -1,6 +1,7 @@
 # Windows support
 
-Runyte does not run on Windows. Linux and macOS are the supported platforms.
+Windows support is incomplete; Linux and macOS provide the full feature set.
+The Phase-1 implementation and validation status are recorded below.
 Runyte may omit or disable features on Windows when a sound implementation would
 be disproportionately difficult. Platform-specific behavior must fail clearly
 and leave user data intact. Native Windows access was available for the
@@ -49,8 +50,64 @@ Keep commands in the shared registry and make availability agree between
 execution, help and the command palette. A runtime setting alone cannot remove
 an unconditional reference to a Unix-only type: phase 1 still needs coherent
 compile boundaries for deferred services and their frontend event channels.
-No implementation or feature-disabling change is part of this investigation.
+The investigation below did not implement or disable features.
 
+## Phase-1 implementation progress, 2026-09-20
+
+Delivery order: complete and review Phase 1, then commit and push it to
+`feat/windows-support`. Phase 2 begins immediately afterward and is divided
+into sub-phases. The first, Phase 2.1, restores integrated Git. Git is optional
+on Windows: check executable availability before enabling the integration, and
+keep it disabled with a clear unavailable state when Git is not installed.
+Missing Git must not cause repeated spawn failures or runtime errors. Each
+implementation work package receives subagent review and incorporates its
+actionable findings before the next package starts.
+
+Phase 1 is implemented in six reviewed work packages on `feat/windows-support`,
+after merging the 0.3.1 release from `main` (`e5d05da`) in `4bceec6`. Native
+formatting, Clippy, the full workspace suite (2,601 passed, zero failures), the
+optimized build and packaged executable smoke test pass. Remote Linux/macOS
+gates remain pending; detailed evidence is recorded in
+`context/plans/active/PLAN_WINDOWS_PHASE1.md`.
+
+The selected target is `x86_64-pc-windows-msvc`, Windows 11 24H2 or later with
+Windows Terminal. Native development uses Windows build `10.0.26200.9457`,
+PowerShell `5.1.26100.9444`, cmd.exe and Rust 1.97.1. ARM64, MinGW, older
+Windows, optional PowerShell 7/Git Bash and network shares remain unvalidated.
+
+The implementation provides native configuration discovery, console input and
+bounded text clipboard, Windows file identity and collision-safe filesystem
+plans, and independently owned ConPTY terminal sessions. Deferred service
+commands retain registry-backed unavailable states. LSP, integrated Git,
+persistent sessions, plugins, context access, shell filters, image paste,
+system opening, private diagnostic logs, `--wait` and `:quit-here` are unavailable
+in Phase 1. Configuring a deferred service cannot start it.
+
+Terminal cwd must have a verified equivalent ordinary Windows spelling shorter
+than 260 UTF-16 units. ConPTY stalled during the native extended-prefix cwd
+probe, so long/verbatim-only terminal cwd is refused before process creation.
+cmd.exe also refuses UNC cwd, since it would silently select another directory.
+These terminal restrictions do not disable editing files through extended paths.
+Filesystem plans reject cross-volume moves before mutation; network-share and
+unsupported-filesystem behavior remains outside the validated support claim.
+
+Native tests cover configuration precedence, key/text decoding, isolated native
+clipboard round trips and bounded failure, locked/read-only saves, case-only
+rename, hardlink/case/short-name collisions, rollback identity, shell quoting,
+Unicode arguments/output, resize, independent shells, saturated output, child
+and descendant cleanup, and failed starts. The real editor acceptance fixture
+runs inside ConPTY with its own configuration and temporary files. Unix-only
+service fixtures stay enabled on Unix, while unavailable-service expectations
+and native path spellings are explicit on Windows.
+
+The Linux/macOS 89% coverage gates remain unchanged. Native Windows coverage is
+provisional without a measured llvm-cov baseline. Windows CI runs formatting,
+all-target Clippy and tests; the release workflow adds an MSVC ZIP and includes
+it in SHA256SUMS. No release publication or version bump is part of this work.
+
+The investigation below records the pre-implementation state. Its compiler
+errors and "current" observations describe the inspected revisions, rather
+than the working tree after the Phase-1 changes.
 ## Native evidence, 2026-09-20
 
 Environment: Windows build `10.0.26200.0`, Windows PowerShell

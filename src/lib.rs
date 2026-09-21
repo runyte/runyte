@@ -73,6 +73,8 @@ pub mod tutorial;
 pub mod ui;
 #[cfg(unix)]
 pub(crate) mod user_paths;
+#[cfg(windows)]
+mod windows_fs;
 pub mod word_index;
 pub mod workspace;
 pub mod workspace_search;

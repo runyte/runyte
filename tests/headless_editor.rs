@@ -224,7 +224,7 @@ fn relative_isolated_root_is_fixed_before_later_cwd_changes() {
     fs::write(root.path().join("note.txt"), "isolated").unwrap();
     fs::write(changed.path().join("note.txt"), "wrong cwd").unwrap();
     let canonical_root = root.path().canonicalize().unwrap();
-    let relative_root = relative_path(&original.0, &canonical_root);
+    let relative_root = relative_path(&original.0.canonicalize().unwrap(), &canonical_root);
     assert!(relative_root.is_relative());
 
     let mut editor = HeadlessEditor::new_in(&relative_root).unwrap();

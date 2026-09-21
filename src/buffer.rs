@@ -456,7 +456,7 @@ impl DiskState {
             len: metadata.len(),
             modified: metadata.modified().ok(),
             digest: crate::hash::sha256_hex(contents),
-            identity: file_identity(metadata),
+            identity: file_identity(file, metadata)?,
             access: file_access_state(file, metadata)?,
         })
     }
@@ -497,10 +497,14 @@ impl DiskState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(not(windows))]
 struct FileIdentity {
     device: u64,
     inode: u64,
 }
+
+#[cfg(windows)]
+type FileIdentity = crate::windows_fs::Identity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileAccessState {
@@ -513,18 +517,23 @@ struct FileAccessState {
 }
 
 #[cfg(unix)]
-fn file_identity(metadata: &fs::Metadata) -> Option<FileIdentity> {
+fn file_identity(_file: &File, metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
     use std::os::unix::fs::MetadataExt;
 
-    Some(FileIdentity {
+    Ok(Some(FileIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
-    })
+    }))
 }
 
-#[cfg(not(unix))]
-fn file_identity(_metadata: &fs::Metadata) -> Option<FileIdentity> {
-    None
+#[cfg(windows)]
+fn file_identity(file: &File, _metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
+    crate::windows_fs::Identity::of(file).map(Some)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(_file: &File, _metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
+    Ok(None)
 }
 
 #[cfg(unix)]
@@ -628,6 +637,7 @@ fn file_acl_digest(file: &File) -> Result<Option<String>> {
 }
 
 #[cfg(not(any(
+    windows,
     target_os = "linux",
     target_os = "android",
     target_os = "macos",
@@ -764,7 +774,7 @@ pub(crate) fn inspect_file_metadata(path: &Path) -> Option<FileMetadataHint> {
     Some(FileMetadataHint {
         len: metadata.len(),
         modified: metadata.modified().ok(),
-        identity: file_identity(&metadata),
+        identity: file_identity(&file, &metadata).ok()?,
         access: file_access_state(&file, &metadata).ok()?,
     })
 }
@@ -813,6 +823,7 @@ enum ReplacePolicy<'a> {
 }
 
 impl<'a> ReplacePolicy<'a> {
+    #[cfg(unix)]
     fn expected(self) -> Option<&'a DiskState> {
         match self {
             Self::Expected(state) => Some(state),
@@ -922,8 +933,11 @@ fn atomic_write_with_identity(
             .open(&destination)
             .with_context(|| format!("failed to open {} for writing", path.display()))?;
     }
-    let (temporary, mut file) = create_save_temporary(parent)?;
+    let (temporary, file) = create_save_temporary(parent)?;
     let temporary = SaveTemporary(Some(temporary));
+    // Drop the writer before pathname cleanup on every early return. Windows
+    // cannot unlink this exclusively opened temporary while its handle lives.
+    let mut file = file;
     write_contents(&mut file, contents)
         .with_context(|| format!("failed to write {}", path.display()))?;
     if let Some(metadata) = metadata.as_ref() {
@@ -1075,74 +1089,7 @@ fn open_private_temporary(path: &Path) -> io::Result<File> {
 
 #[cfg(windows)]
 fn open_private_temporary(path: &Path) -> io::Result<File> {
-    use std::{
-        mem::size_of,
-        os::windows::{
-            ffi::OsStrExt,
-            io::{FromRawHandle, RawHandle},
-        },
-    };
-    use windows_sys::Win32::{
-        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree},
-        Security::{
-            Authorization::{
-                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-            },
-            PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
-        },
-        Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL},
-    };
-
-    let path = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let descriptor_text = "D:P(A;;GA;;;OW)\0".encode_utf16().collect::<Vec<_>>();
-    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-    // SAFETY: the SDDL and output pointer are valid for the call. Windows
-    // allocates the returned self-relative descriptor with LocalAlloc.
-    let converted = unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            descriptor_text.as_ptr(),
-            SDDL_REVISION_1,
-            &mut descriptor,
-            std::ptr::null_mut(),
-        )
-    };
-    if converted == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.cast(),
-        bInheritHandle: 0,
-    };
-    // SAFETY: the path and security descriptor are live, NUL-terminated
-    // buffers. CREATE_NEW provides the same collision protection as
-    // OpenOptions::create_new.
-    let handle = unsafe {
-        CreateFileW(
-            path.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            &attributes,
-            CREATE_NEW,
-            FILE_ATTRIBUTE_NORMAL,
-            std::ptr::null_mut(),
-        )
-    };
-    // SAFETY: ConvertStringSecurityDescriptorToSecurityDescriptorW allocated
-    // this descriptor with LocalAlloc, and CreateFileW no longer uses it.
-    unsafe {
-        LocalFree(descriptor.cast());
-    }
-    if handle == INVALID_HANDLE_VALUE {
-        Err(io::Error::last_os_error())
-    } else {
-        // SAFETY: CreateFileW returned a uniquely owned file handle.
-        Ok(unsafe { File::from_raw_handle(handle as RawHandle) })
-    }
+    crate::windows_fs::create_private_file(path)
 }
 
 #[cfg(unix)]
@@ -1570,7 +1517,8 @@ fn replace_file(
     };
 
     let destination_path = destination.to_path_buf();
-    let destination_exists = fs::symlink_metadata(destination).is_ok();
+    let destination_exists =
+        !matches!(policy, ReplacePolicy::NoReplace) && fs::symlink_metadata(destination).is_ok();
     let backup = destination_exists
         .then(|| create_save_backup_path(destination))
         .transpose()?;
@@ -4467,6 +4415,59 @@ mod tests {
         assert_ne!(buffer.path.as_deref(), Some(path.as_path()));
         assert_eq!(buffer.dirty, dirty_before);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_locked_destination_retains_original_and_recoverable_edit() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let root = crate::test_support::TestRuntimeRoot::new("locked-save").unwrap();
+        let path = root.join("café.txt");
+        fs::write(&path, "original\r\n").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        buffer.apply(&Transaction::insert(0, "edited "));
+        let lock = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&path)
+            .unwrap();
+        assert!(buffer.save(false).is_err());
+        assert!(buffer.dirty);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\r\n");
+        let retained = fs::read_dir(root.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".runyte-save-")
+            })
+            .unwrap();
+        assert_eq!(fs::read_to_string(retained).unwrap(), "edited original\r\n");
+        drop(lock);
+        buffer.save(false).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "edited original\r\n");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_readonly_destination_is_not_replaced() {
+        let root = crate::test_support::TestRuntimeRoot::new("readonly-save").unwrap();
+        let path = root.join("file.txt");
+        fs::write(&path, "original\n").unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        buffer.apply(&Transaction::insert(0, "edited "));
+        let original_permissions = fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original_permissions.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        let refused = buffer.save(true).is_err();
+        fs::set_permissions(&path, original_permissions).unwrap();
+        assert!(refused);
+        assert!(buffer.dirty);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
     }
 
     #[cfg(unix)]

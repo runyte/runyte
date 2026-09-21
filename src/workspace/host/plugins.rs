@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::WorkspaceHost;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use crate::app::plugin_workflows::Instance;
 use crate::{
     app::plugin_workflows::RuntimeCommand,
@@ -212,6 +212,14 @@ impl WorkspaceHost {
 
     /// Called once by host service startup; never by an attached frontend.
     pub fn start_plugins(&mut self) -> Option<tokio::sync::mpsc::Receiver<Event>> {
+        if cfg!(windows) {
+            if !self.plugins_started && self.app.config.plugins.iter().any(|config| config.enabled)
+            {
+                self.report_host_error("Plugins are unavailable in Windows Phase 1");
+            }
+            self.plugins_started = true;
+            return None;
+        }
         if self.plugins_started {
             return None;
         }

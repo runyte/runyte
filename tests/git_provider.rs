@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![cfg(not(windows))] // Service unavailable in Windows Phase 1.
+
 //! The Git command-line provider against real repositories.
 //!
 //! These tests create throwaway repositories under the system temporary

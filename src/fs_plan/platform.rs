@@ -113,7 +113,21 @@ pub(super) fn rename_noreplace(source: &Path, target: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+pub(super) fn rename_noreplace(source: &Path, target: &Path) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    let source = crate::windows_fs::wide(source)?;
+    let target = crate::windows_fs::wide(target)?;
+    // No REPLACE_EXISTING and no COPY_ALLOWED: collisions and cross-volume
+    // moves fail without deleting either entry.
+    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(super) fn rename_noreplace(_source: &Path, _target: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

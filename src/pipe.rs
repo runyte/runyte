@@ -13,6 +13,7 @@ use std::{
 };
 
 pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
+#[cfg(unix)]
 const STDERR_BYTES: usize = 16 * 1024;
 
 /// An opaque result delivered only to the workspace that started the job.

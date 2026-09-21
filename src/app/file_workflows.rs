@@ -735,6 +735,10 @@ impl App {
 
     /// Asks which program should be given a binary file.
     pub(super) fn ask_for_external_program(&mut self, path: PathBuf) {
+        if cfg!(windows) {
+            self.action_failed("External file opening is unavailable in Windows Phase 1");
+            return;
+        }
         if self.prompt_kind == PromptKind::ExternalProgram && self.external_target.is_some() {
             // A language server answering a goto with a binary file must not
             // replace the question already on screen, or a half-typed program

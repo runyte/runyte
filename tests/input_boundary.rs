@@ -18,11 +18,17 @@ fn crossterm_is_confined_to_terminal_acquisition_and_the_tui_adapter() {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let main = source_root.join("main.rs");
     let adapter = source_root.join("tui/input.rs");
+    let windows_adapter = source_root.join("tui/windows_input.rs");
+    let windows_tests = source_root.join("tui/windows_input");
     let mut sources = Vec::new();
     rust_sources_below(&source_root, &mut sources);
 
     for source in sources {
-        if source == main || source == adapter {
+        if source == main
+            || source == adapter
+            || source == windows_adapter
+            || source.starts_with(&windows_tests)
+        {
             continue;
         }
         let contents = fs::read_to_string(&source).unwrap();

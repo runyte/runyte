@@ -32,6 +32,8 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
       source_sha: ${{ steps.release.outputs.source_sha }}
+      targets: ${{ steps.release.outputs.targets }}
+      windows: ${{ steps.release.outputs.windows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,10 +75,20 @@ jobs:
             exit 1
           fi
 
+          targets='[{"target":"x86_64-unknown-linux-gnu","runner":"ubuntu-22.04"},{"target":"aarch64-unknown-linux-gnu","runner":"ubuntu-22.04-arm"},{"target":"x86_64-apple-darwin","runner":"macos-15-intel"},{"target":"aarch64-apple-darwin","runner":"macos-15"}]'
+          windows=false
+          # Retrying a historical tag must retain its original platform set.
+          if test -f src/terminal/pty_windows.rs; then
+            windows=true
+            targets="$(jq -c '. + [{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"}]' <<< "$targets")"
+          fi
+
           {
             echo "tag=$REQUESTED_TAG"
             echo "version=$version"
             echo "source_sha=$source_sha"
+            echo "targets=$targets"
+            echo "windows=$windows"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -87,15 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-          - target: aarch64-apple-darwin
-            runner: macos-15
+        include: ${{ fromJSON(needs.validate.outputs.targets) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,13 +121,15 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.validate.outputs.version }}
+          EXE_SUFFIX: ${{ runner.os == 'Windows' && '.exe' || '' }}
         shell: bash
         run: |
           set -euo pipefail
-          output="$("target/${TARGET}/release/runyte" --version)"
+          output="$("target/${TARGET}/release/runyte${EXE_SUFFIX}" --version)"
           test "$output" = "runyte $VERSION"
 
       - name: Package archive
+        if: runner.os != 'Windows'
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           TARGET: ${{ matrix.target }}
@@ -147,17 +153,39 @@ jobs:
             config.example.yaml \
             "$package_dir/"
           cp -R licenses "$package_dir/licenses"
+          mkdir -p "$package_dir/docs"
+          install -m 0644 docs/user-guide.md "$package_dir/docs/user-guide.md"
 
           COPYFILE_DISABLE=1 tar -C "$package_root" -cJf "$archive_path" \
             "runyte-${VERSION}-${TARGET}"
           tar -tJf "$archive_path"
           "$package_dir/runyte" --version
 
+      - name: Package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $packageName = "runyte-$env:VERSION-$env:TARGET"
+          $packageDir = Join-Path $env:RUNNER_TEMP $packageName
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+          Copy-Item -LiteralPath "target/$env:TARGET/release/runyte.exe" -Destination $packageDir
+          Copy-Item -LiteralPath README.md, LICENSE, NOTICE, THIRD_PARTY_NOTICES.md, config.example.yaml -Destination $packageDir
+          Copy-Item -LiteralPath licenses -Destination $packageDir -Recurse
+          New-Item -ItemType Directory -Path "$packageDir/docs" | Out-Null
+          Copy-Item -LiteralPath docs/user-guide.md -Destination "$packageDir/docs/user-guide.md"
+          Compress-Archive -LiteralPath $packageDir -DestinationPath "$env:RUNNER_TEMP/runyte-$env:RELEASE_TAG-$env:TARGET.zip"
+          & "$packageDir/runyte.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload packaged archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target }}
-          path: ${{ runner.temp }}/runyte-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.tar.xz
+          path: ${{ runner.temp }}/runyte-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.${{ runner.os == 'Windows' && 'zip' || 'tar.xz' }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -187,6 +215,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          WINDOWS: ${{ needs.validate.outputs.windows }}
         shell: bash
         run: |
           set -euo pipefail
@@ -203,12 +232,21 @@ jobs:
             test -f "dist/runyte-${RELEASE_TAG}-${target}.tar.xz"
           done
           test "$(find dist -maxdepth 1 -type f -name 'runyte-*.tar.xz' | wc -l)" -eq 4
+          expected=4
+          if [[ "$WINDOWS" == true ]]; then
+            test -f "dist/runyte-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
+            test "$(find dist -maxdepth 1 -type f -name 'runyte-*.zip' | wc -l)" -eq 1
+            expected=5
+          else
+            test "$(find dist -maxdepth 1 -type f -name 'runyte-*.zip' | wc -l)" -eq 0
+          fi
 
           (
             cd dist
-            sha256sum runyte-*.tar.xz | sort -k2 > SHA256SUMS
+            shopt -s nullglob
+            sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS
           )
-          test "$(wc -l < dist/SHA256SUMS)" -eq 4
+          test "$(wc -l < dist/SHA256SUMS)" -eq "$expected"
 
       - name: Create or update GitHub Release
         env:
@@ -227,5 +265,5 @@ jobs:
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
               --title "Runyte $VERSION" \
-              --notes "Prebuilt Linux and macOS archives are attached. Verify the selected archive with SHA256SUMS. The macOS executables are unsigned."
+              --notes "Prebuilt archives are attached. Verify the selected archive with SHA256SUMS. Supported platforms and limitations are documented in the packaged README and user guide. The macOS and Windows executables are unsigned."
           fi

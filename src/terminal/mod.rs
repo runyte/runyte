@@ -35,6 +35,22 @@ pub(crate) use pending::{
 };
 #[cfg(unix)]
 pub mod pty;
+#[cfg(windows)]
+#[path = "pty_windows.rs"]
+pub mod pty;
+#[cfg(windows)]
+pub(crate) mod windows_command;
+
+pub(crate) fn split_command(command: &str) -> Option<Vec<String>> {
+    #[cfg(windows)]
+    {
+        windows_command::split(command)
+    }
+    #[cfg(not(windows))]
+    {
+        shlex::split(command)
+    }
+}
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -140,6 +156,7 @@ pub const OUTPUT_QUEUE: usize = 32;
 /// child occupies one slot and cannot crowd quiet sessions out of readiness.
 /// A full queue blocks that reader, then the PTY and child, instead of growing
 /// host memory without limit.
+#[cfg_attr(not(unix), allow(dead_code))]
 const PER_SESSION_OUTPUT_QUEUE: usize = 8;
 
 /// A single host turn may parse at most this much terminal output in addition
@@ -148,6 +165,7 @@ const PER_SESSION_OUTPUT_QUEUE: usize = 8;
 const OUTPUT_BYTE_BUDGET: usize = 256 * 1024;
 
 #[derive(Debug, Default)]
+#[cfg_attr(not(unix), allow(dead_code))]
 struct PendingOutput {
     active: bool,
     bytes: VecDeque<Vec<u8>>,
@@ -171,6 +189,7 @@ struct OutputShared {
 #[derive(Clone, Debug)]
 struct TerminalEventSender(Arc<OutputShared>);
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl TerminalEventSender {
     fn wait_until_active(&self, id: TerminalId) -> bool {
         let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -477,7 +496,7 @@ pub struct TerminalSession {
     read_revision: u64,
     review: Option<TerminalReview>,
     emulator: Emulator,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pty: Option<pty::Pty>,
     /// Set once the child has ended, carrying its status code when known.
     exit: Option<Option<i32>>,
@@ -540,7 +559,12 @@ impl TerminalSession {
         &self.initial_directory
     }
 
-    #[cfg(unix)]
+    #[cfg(all(test, windows))]
+    pub(crate) fn cleanup_waiter(&self) -> Option<Box<dyn FnOnce()>> {
+        self.pty.as_ref().map(pty::Pty::cleanup_waiter)
+    }
+
+    #[cfg(any(unix, windows))]
     pub fn process_id(&self) -> Option<u32> {
         self.pty.as_ref().map(pty::Pty::process_id)
     }
@@ -1295,11 +1319,11 @@ impl TerminalSession {
             return false;
         }
         let bytes = Self::sgr_mouse_bytes_repeated(event, column, row, repetitions);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.pty.as_ref().is_some_and(|pty| pty.write(bytes))
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = bytes;
             false
@@ -1491,7 +1515,7 @@ impl TerminalSession {
     }
 
     fn write(&mut self, bytes: Vec<u8>) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(pty) = self.pty.as_ref() {
             return pty.write(bytes);
         }
@@ -1526,6 +1550,7 @@ impl TerminalSession {
 
     /// Native approval alone may call this after checking the captured target,
     /// grant, and input signature. It does not change native presentation state.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn enqueue_proposal(
         &mut self,
         text: &proposal::Text,
@@ -1538,7 +1563,7 @@ impl TerminalSession {
                 "Terminal has exited",
             ));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(pty) = &self.pty {
             let delivery = pty.enqueue_proposal(text, self.emulator.modes.bracketed_paste)?;
             self.proposal_deliveries.push(delivery.clone());
@@ -1705,7 +1730,7 @@ impl TerminalSession {
         }
         self.emulator.resize(columns, rows);
         self.read_revision = self.read_revision.wrapping_add(1);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(pty) = self.pty.as_ref() {
             let _ = pty.resize(columns as u16, rows as u16);
         }
@@ -2357,6 +2382,7 @@ pub fn drain(events: &mut TerminalEvents, mut apply: impl FnMut(TerminalOutput))
 #[derive(Debug)]
 pub struct TerminalSessions {
     sessions: BTreeMap<TerminalId, TerminalSession>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     next: u64,
     cell_budget: usize,
     external_retained_bytes: usize,
@@ -2385,6 +2411,7 @@ impl Drop for TerminalSessions {
 
 impl TerminalSessions {
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn insert_test_session(&mut self, columns: usize, rows: usize) -> TerminalId {
         let id = TerminalId(self.next);
         self.next += 1;
@@ -2537,7 +2564,7 @@ impl TerminalSessions {
     }
 
     /// Starts a child on a new pseudoterminal.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn open(
         &mut self,
         request: TerminalRequest,
@@ -2550,7 +2577,10 @@ impl TerminalSessions {
         events.register(id);
         let columns = columns.max(1);
         let rows = rows.max(1);
+        #[cfg(unix)]
         let parent_context = self.parent_launch.as_ref().map(|launch| launch.context(id));
+        #[cfg(windows)]
+        let parent_context: Option<String> = None;
         let child = match pty::Pty::spawn_in_context(
             &request.program,
             &request.arguments,
@@ -2608,7 +2638,7 @@ impl TerminalSessions {
         Ok(id)
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn open(
         &mut self,
         _request: TerminalRequest,
@@ -2633,7 +2663,7 @@ impl TerminalSessions {
                 if let Some(session) = self.sessions.get_mut(&id) {
                     // The reader thread reports the end without a status; the
                     // child itself has the code. Prefer whichever is known.
-                    #[cfg(unix)]
+                    #[cfg(any(unix, windows))]
                     let code = match code {
                         Some(code) => Some(code),
                         None => session.pty.as_mut().and_then(pty::Pty::finished).flatten(),
@@ -2644,7 +2674,7 @@ impl TerminalSessions {
                     session.read_revision = session.read_revision.wrapping_add(1);
                     session.last_activity = SystemTime::now();
                     session.unread_activity = true;
-                    #[cfg(unix)]
+                    #[cfg(any(unix, windows))]
                     {
                         session.pty = None;
                     }
@@ -2761,6 +2791,12 @@ fn validated_osc7_directory(report: &[u8]) -> Option<PathBuf> {
         return None;
     }
     let decoded = percent_decode(&rest[slash..])?;
+    #[cfg(windows)]
+    let decoded = if decoded.as_bytes().get(2) == Some(&b':') {
+        decoded.strip_prefix('/').unwrap_or(&decoded)
+    } else {
+        &decoded
+    };
     let path = PathBuf::from(decoded);
     (path.is_absolute() && path.is_dir()).then_some(path)
 }
@@ -2807,7 +2843,19 @@ fn local_hostname_is(value: &str) -> bool {
     std::str::from_utf8(&buffer[..end]).is_ok_and(|hostname| hostname == value)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn local_hostname_is(value: &str) -> bool {
+    use windows_sys::Win32::System::SystemInformation::{
+        ComputerNameDnsHostname, GetComputerNameExW,
+    };
+    let mut name = [0_u16; 256];
+    let mut length = name.len() as u32;
+    (unsafe { GetComputerNameExW(ComputerNameDnsHostname, name.as_mut_ptr(), &mut length) }) != 0
+        && String::from_utf16(&name[..length as usize])
+            .is_ok_and(|name| name.eq_ignore_ascii_case(value))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn local_hostname_is(_value: &str) -> bool {
     false
 }
@@ -2836,7 +2884,7 @@ mod tests {
             read_revision: 1,
             review: None,
             emulator: Emulator::new(columns, rows),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             pty: None,
             exit: None,
             sent_text: None,
@@ -3593,8 +3641,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let mut session = session(8, 2);
-        let encoded = root.to_string_lossy().replace(' ', "%20");
-        session.feed(format!("\x1b]7;file://{encoded}\x07").as_bytes());
+        let encoded = url::Url::from_directory_path(&root).unwrap();
+        session.feed(format!("\x1b]7;{encoded}\x07").as_bytes());
         assert_eq!(session.directory(), root);
 
         session.feed(b"\x1b]7;https://example.invalid/tmp\x07");

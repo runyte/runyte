@@ -10,3 +10,8 @@ pub mod wire;
 
 #[cfg(unix)]
 pub mod discovery;
+
+#[cfg(unix)]
+pub use transport::Event;
+#[cfg(not(unix))]
+pub type Event = std::convert::Infallible;

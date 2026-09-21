@@ -21,13 +21,22 @@ pub(super) struct Identity {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    #[cfg(windows)]
+    native: crate::windows_fs::Identity,
 }
 
 impl Identity {
     pub(super) fn read(path: &Path) -> io::Result<Self> {
+        #[cfg(windows)]
+        return Ok(Self {
+            kind: entry_kind(fs::symlink_metadata(path)?.file_type()),
+            native: crate::windows_fs::Identity::read(path)?,
+        });
+        #[cfg(not(windows))]
         Ok(Self::from_metadata(&fs::symlink_metadata(path)?))
     }
 
+    #[cfg(not(windows))]
     fn from_metadata(metadata: &fs::Metadata) -> Self {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
@@ -63,13 +72,20 @@ impl OwnedTree {
             let value = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
             let root = parent.join(format!(".runyte-{label}-{}-{value}", std::process::id()));
             io.before(IoStep::Allocate, parent, &root)?;
-            let mut builder = fs::DirBuilder::new();
+            #[cfg(not(windows))]
+            let builder = fs::DirBuilder::new();
             #[cfg(unix)]
-            {
+            let builder = {
                 use std::os::unix::fs::DirBuilderExt;
+                let mut builder = builder;
                 builder.mode(0o700);
-            }
-            match builder.create(&root) {
+                builder
+            };
+            #[cfg(not(windows))]
+            let created = builder.create(&root);
+            #[cfg(windows)]
+            let created = crate::windows_fs::create_private_directory(&root);
+            match created {
                 Ok(()) => {
                     let identity = Identity::read(&root)?;
                     return Ok(Self {
@@ -103,10 +119,14 @@ impl OwnedTree {
 
     fn create_file(&mut self, path: &Path) -> io::Result<File> {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
-        self.entries.push((
-            path.to_path_buf(),
-            Identity::from_metadata(&file.metadata()?),
-        ));
+        #[cfg(windows)]
+        let identity = Identity {
+            kind: EntryKind::File,
+            native: crate::windows_fs::Identity::of(&file)?,
+        };
+        #[cfg(not(windows))]
+        let identity = Identity::from_metadata(&file.metadata()?);
+        self.entries.push((path.to_path_buf(), identity));
         Ok(file)
     }
 

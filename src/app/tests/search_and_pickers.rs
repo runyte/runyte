@@ -1283,13 +1283,24 @@ fn pathless_buffer_content_is_scanned_in_bounded_slices() {
 
 #[test]
 fn finder_path_fields_include_project_home_and_basename_spellings() {
-    let home = Path::new("/home/person");
-    let root = home.join("code/runyte-dev");
-    let path = root.join("src/main.rs");
+    let home = Path::new(if cfg!(windows) {
+        r"C:\Users\person"
+    } else {
+        "/home/person"
+    });
+    let root = home.join("code").join("runyte-dev");
+    let relative = Path::new("src").join("main.rs");
+    let path = root.join(&relative);
     let fields = resource_path_fields(&path, &root, Some(home));
     assert!(fields.contains(&path.display().to_string()));
-    assert!(fields.contains(&"src/main.rs".to_owned()));
-    assert!(fields.contains(&"~/code/runyte-dev/src/main.rs".to_owned()));
+    assert!(fields.contains(&relative.display().to_string()));
+    assert!(fields.contains(&format!(
+            "~/{}",
+            Path::new("code")
+                .join("runyte-dev")
+                .join(relative)
+                .display()
+        )));
     assert!(fields.contains(&"main.rs".to_owned()));
 }
 
@@ -1305,7 +1316,7 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
     let note = root.join("note.txt");
     fs::write(&note, "kept behind the terminal").unwrap();
     app.open_file(note).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id,
@@ -1316,7 +1327,9 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
         .unwrap()
         .rename(Some("my_terminal_name".to_owned()))
         .unwrap();
+    let cleanup = terminal_cleanup(&app, id);
     app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
+    cleanup();
     assert!(
         app.terminals.get(id).is_some(),
         "exited output stays searchable"
@@ -1390,7 +1403,8 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
     assert_eq!(app.active_terminal(), Some(id));
     assert!(app.terminals.get(id).unwrap().reviewing());
     assert_eq!(app.mode, Mode::Normal);
-    app.close_terminal_id(id);
+    close_test_terminal(&mut app, id);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1406,7 +1420,7 @@ fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
     app.execute_command("buffer-new").unwrap();
     let scratch = app.active().buffer;
     app.buffers[scratch].apply(&Transaction::insert(0, "kept scratch"));
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.open_project_picker().unwrap();
     let item_count = app.finder.as_ref().unwrap().items.len();
@@ -1471,7 +1485,8 @@ fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {
     assert!(preview.lines().join("\n").contains("busy row 255"));
     assert!(preview.lines().len() <= 200);
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1484,7 +1499,7 @@ fn terminal_output_queues_a_bounded_incremental_finder_scan_for_the_refresh_tick
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().unwrap();
 
     app.open_project_picker().unwrap();
@@ -1520,6 +1535,7 @@ fn terminal_output_queues_a_bounded_incremental_finder_scan_for_the_refresh_tick
             ..
         })) if terminal == id
     ));
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1532,7 +1548,7 @@ fn a_busy_terminal_leaves_content_rows_standing_until_the_refresh_tick() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -1590,7 +1606,8 @@ fn a_busy_terminal_leaves_content_rows_standing_until_the_refresh_tick() {
     );
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1616,7 +1633,7 @@ fn repeated_terminal_output_does_not_starve_later_buffer_content() {
         .collect::<Vec<_>>()
         .join("\n");
     app.buffers[scratch].apply(&Transaction::insert(0, text));
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
 
     app.open_project_picker().unwrap();
@@ -1641,6 +1658,7 @@ fn repeated_terminal_output_does_not_starve_later_buffer_content() {
                 } if buffer == scratch
             )
         }) {
+            close_test_terminals(&mut app);
             fs::remove_dir_all(root).unwrap();
             return;
         }
@@ -1660,7 +1678,7 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
     app.execute_command("buffer-new").unwrap();
     let scratch = app.active().buffer;
     app.buffers[scratch].apply(&Transaction::insert(0, "preserved-needle in buffer"));
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -1725,7 +1743,8 @@ fn terminal_output_after_a_complete_scan_refreshes_only_that_terminal() {
             .selected_target(app.picker.as_ref().unwrap()),
         claimed
     );
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1738,7 +1757,7 @@ fn a_refilling_pass_is_marked_as_a_state_not_worth_showing() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -1771,7 +1790,8 @@ fn a_refilling_pass_is_marked_as_a_state_not_worth_showing() {
     assert_eq!(app.finder.as_ref().unwrap().matches.len(), settled);
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1784,7 +1804,7 @@ fn narrowing_a_terminal_reads_back_the_rows_it_truncated() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     // Nothing but the needle itself can spell the needle, so a truncated line
     // cannot go on matching by accident.
@@ -1842,7 +1862,8 @@ fn narrowing_a_terminal_reads_back_the_rows_it_truncated() {
     );
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1855,7 +1876,7 @@ fn a_terminal_refresh_reads_only_what_the_child_added() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     let keeper = crate::terminal::grid::SCROLLBACK_LIMIT;
     let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
@@ -1958,7 +1979,8 @@ fn a_terminal_refresh_reads_only_what_the_child_added() {
     );
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1971,7 +1993,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
         .map(|row| format!("stable-repeat {row}\r\n"))
@@ -2076,7 +2098,8 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
     }));
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2089,7 +2112,7 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -2154,7 +2177,8 @@ fn terminal_content_selection_does_not_cross_primary_and_alternate_screens() {
     );
 
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2167,7 +2191,7 @@ fn terminal_screen_clear_preserves_scrollback_match_identity() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     let output = std::iter::once("history-clear-match\r\n".to_owned())
         .chain((0..30).map(|row| format!("ordinary history {row}\r\n")))
@@ -2224,7 +2248,8 @@ fn terminal_screen_clear_preserves_scrollback_match_identity() {
     session.select_review_line(true, false);
     assert_eq!(session.review_selection_text(), "history-clear-match");
 
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2237,7 +2262,7 @@ fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -2265,7 +2290,8 @@ fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
     session.select_review_line(true, false);
     assert_eq!(session.review_selection_text(), "resize-identity-match");
 
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2278,7 +2304,7 @@ fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -2299,7 +2325,8 @@ fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
         "that terminal line exceeds the retained review budget"
     );
 
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2312,7 +2339,7 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.terminals.apply(TerminalOutput::Bytes {
         id: terminal,
@@ -2412,7 +2439,8 @@ fn dirty_terminal_rows_are_invalidated_when_another_source_reaches_the_limit() {
         finder.items.len() + app.picker.as_ref().unwrap().entries.len(),
         CONTENT_ENTRY_LIMIT
     );
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2868,7 +2896,7 @@ fn attached_terminal_refill_makes_remapped_rows_inert_before_rank_response() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.terminals.apply(TerminalOutput::Bytes {
         id: terminal,
@@ -2933,7 +2961,8 @@ fn attached_terminal_refill_makes_remapped_rows_inert_before_rank_response() {
             .is_none(),
         "Enter must not resolve a stale resource index while refill remaps items"
     );
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2945,7 +2974,7 @@ fn attached_terminal_refill_moves_its_large_index_and_advances_it_in_slices() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.terminals.apply(TerminalOutput::Bytes {
         id: terminal,
@@ -2999,7 +3028,8 @@ fn attached_terminal_refill_moves_its_large_index_and_advances_it_in_slices() {
         app.finder_content_scan.as_ref().unwrap().retirements[0].item,
         128
     );
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3012,7 +3042,7 @@ fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     let initial = (0..5_100)
         .map(|row| format!("stable-needle-{row}\r\n"))
@@ -3193,7 +3223,8 @@ fn attached_terminal_shift_during_retirement_forces_a_full_repair_pass() {
         "a recycled resource slot must not inherit the evicted stable-line claim"
     );
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3205,7 +3236,7 @@ fn replacing_a_large_live_content_cursor_drops_it_on_the_rank_worker() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.terminals.apply(TerminalOutput::Bytes {
         id: terminal,
@@ -3239,7 +3270,8 @@ fn replacing_a_large_live_content_cursor_drops_it_on_the_rank_worker() {
         .recv_timeout(std::time::Duration::from_secs(2))
         .expect("the replaced scan should be destroyed promptly");
     assert_ne!(worker_thread, editor_thread);
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3627,7 +3659,7 @@ fn terminal_content_preview_highlights_the_matched_text() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Bytes {
         id: terminal,
@@ -3653,7 +3685,8 @@ fn terminal_content_preview_highlights_the_matched_text() {
     let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
     assert_eq!(previewed_match(preview), "needle");
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3936,7 +3969,7 @@ fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.open_project_picker().unwrap();
     let before = app.finder.as_ref().unwrap().matches.clone();
@@ -3984,7 +4017,8 @@ fn output_that_leaves_a_terminal_item_unchanged_does_not_move_the_name_list() {
         Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal)))
     );
     app.close_file_picker();
-    app.close_terminal_id(terminal);
+    close_test_terminal(&mut app, terminal);
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 

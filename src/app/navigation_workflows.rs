@@ -121,21 +121,19 @@ impl App {
             .enumerate()
             .map(|(index, entry)| self.navigator_item(entry, index))
             .collect();
-        let mut context = self
+        let context = self
             .project_root
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
         #[cfg(unix)]
-        if let Some(name) = self
+        let context = self
             .workspace_rows
             .iter()
             .find(|row| row.project_root == self.project_root)
             .and_then(|row| row.name.clone())
-        {
-            context = name;
-        }
+            .unwrap_or(context);
         let mut picker = ListPicker::fuzzy(
             format!("Navigator — {context} · Open buffers and terminals"),
             items,

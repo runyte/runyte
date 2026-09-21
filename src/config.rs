@@ -17,7 +17,10 @@ mod core_themes;
 mod everforest;
 mod nightfox;
 mod one_off;
+mod paths;
 mod zenbones;
+
+pub use paths::default_config_root;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -1290,14 +1293,6 @@ fn syntax_theme(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     theme
 }
 
-/// Directory containing Runyte's default per-user configuration file.
-pub fn default_config_root() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|root| root.join("runyte"))
-}
-
 /// Absolute directory that owns a loaded or prospective configuration file.
 ///
 /// Existing files are canonicalized so a symlink into project storage cannot
@@ -1602,7 +1597,9 @@ mod tests {
         assert!(!target.exists());
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     const ABSOLUTE_CONFIG_HELPER_PATH: &str = "RUNYTE_TEST_ABSOLUTE_CONFIG_PATH";
+    #[cfg_attr(not(unix), allow(dead_code))]
     const ABSOLUTE_CONFIG_HELPER_CWD: &str = "RUNYTE_TEST_REMOVED_CONFIG_CWD";
 
     #[cfg(unix)]

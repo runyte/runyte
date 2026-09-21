@@ -98,6 +98,7 @@ impl Error for HostServiceSubmitError {}
 pub struct FrameId(u64);
 
 impl FrameId {
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) const fn from_raw(value: u64) -> Self {
         Self(value)
     }
@@ -248,12 +249,14 @@ mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
+#[cfg_attr(not(unix), path = "host/plugin_handoffs_unavailable.rs")]
 mod plugin_handoffs;
 mod plugin_interaction;
 mod plugin_manager;
 mod plugin_models;
 mod plugin_notifications;
 mod plugin_observations;
+#[cfg_attr(not(unix), path = "host/plugin_processes_unavailable.rs")]
 mod plugin_processes;
 mod plugin_provider_writes;
 mod plugin_providers;
@@ -286,6 +289,7 @@ pub struct WorkspaceHost {
     observation_buffers: Option<((usize, usize), Vec<usize>)>,
     plugin_events_sender: Option<tokio::sync::mpsc::Sender<crate::plugin::Event>>,
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     plugin_external_launcher: Option<std::path::PathBuf>,
     plugin_state_requests: std::collections::BTreeMap<String, plugin_state::Pending>,
     #[cfg(test)]
@@ -1696,6 +1700,17 @@ impl WorkspaceHost {
     }
 }
 
+#[cfg(not(unix))]
+impl WorkspaceHost {
+    pub fn sync_context(&mut self) {}
+    pub fn context_delay(&self) -> Option<Duration> {
+        None
+    }
+    pub fn handle_context_event(&mut self, event: super::context::Event) {
+        match event {}
+    }
+}
+
 fn bounded_utf8(value: &str, limit: usize) -> (String, bool) {
     if value.len() <= limit {
         return (value.to_owned(), false);
@@ -1749,30 +1764,29 @@ mod tests {
         buffer::BufferKind,
         clipboard::SystemClipboard,
         command::{CommandExecutionContext, EditorCommand, Mode},
-        config::Config,
         git::{
-            BaseContent, Divergence, GitCliProvider, GitError, GitMutation, GitOperation,
-            GitRequestId, GitResponse, GitService, GitServiceEvent, Head, Repository,
-            RepositorySnapshot, RepositoryStatus,
+            BaseContent, Divergence, GitError, GitMutation, GitOperation, GitRequestId,
+            GitResponse, GitServiceEvent, Head, Repository, RepositorySnapshot, RepositoryStatus,
         },
         git_monitor::GitInvalidation,
         input::{KeyStroke, Modifiers, PointerButton, PointerEventKind},
-        launch::LaunchTarget,
         layout::Rect,
         text::Transaction,
         workspace::{ServiceLane, ServiceOutcome, ServiceWorker},
     };
-    use anyhow::{Result, bail};
-    use std::{
-        fs,
-        process::Command,
-        sync::{
-            Arc, Condvar, Mutex,
-            atomic::{AtomicU64, Ordering},
-        },
-        thread,
-        time::SystemTime,
+    #[cfg(not(windows))]
+    use crate::{
+        config::Config,
+        git::{GitCliProvider, GitService},
+        launch::LaunchTarget,
     };
+    use anyhow::{Result, bail};
+    use std::sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    };
+    #[cfg(not(windows))]
+    use std::{fs, process::Command, thread, time::SystemTime};
 
     fn unique_test_id() -> u64 {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -1829,6 +1843,8 @@ mod tests {
             },
         }
     }
+
+    #[cfg(not(windows))]
 
     fn complete_git_refresh(
         host: &mut WorkspaceHost,
@@ -1959,6 +1975,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn git_invalidation_is_retained_until_visible_and_rate_limited_between_fallbacks() {
         let root = std::env::temp_dir().join(format!(
             "runyte-host-git-invalidation-{}-{}-{}",

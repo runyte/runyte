@@ -71,7 +71,7 @@ fn published_crate_contains_the_runtime_inputs_and_not_repository_context() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let files = String::from_utf8(output.stdout).unwrap();
+    let files = String::from_utf8(output.stdout).unwrap().replace('\\', "/");
     let files = files.lines().collect::<HashSet<_>>();
     for required in [
         "Cargo.lock",
@@ -168,9 +168,20 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
     );
     assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
 
-    let matrix = workflow["jobs"]["build"]["strategy"]["matrix"]["include"]
-        .as_sequence()
-        .unwrap()
+    assert_eq!(
+        workflow["jobs"]["build"]["strategy"]["matrix"]["include"],
+        "${{ fromJSON(needs.validate.outputs.targets) }}"
+    );
+    let retained = source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("targets='")
+                .and_then(|line| line.strip_suffix('\''))
+        })
+        .unwrap();
+    let entries: Vec<serde_json::Value> = serde_json::from_str(retained).unwrap();
+    let matrix = entries
         .iter()
         .map(|entry| {
             (
@@ -188,10 +199,13 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
             ("aarch64-apple-darwin", "macos-15"),
         ])
     );
+    assert!(source.contains("if test -f src/terminal/pty_windows.rs; then"));
+    assert!(source.contains(r#"{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"}"#));
 
     assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
     assert!(source.contains("runyte-${RELEASE_TAG}-${TARGET}.tar.xz"));
-    assert!(source.contains("sha256sum runyte-*.tar.xz | sort -k2 > SHA256SUMS"));
+    assert!(source.contains("sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS"));
+    assert!(source.contains("Compress-Archive -LiteralPath $packageDir"));
     assert!(source.contains("gh release upload \"$RELEASE_TAG\" dist/* --clobber"));
     assert!(!source.contains("${{ inputs.tag }}"));
     for required in [
@@ -201,6 +215,7 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
         "THIRD_PARTY_NOTICES.md",
         "config.example.yaml",
         "cp -R licenses",
+        "docs/user-guide.md",
     ] {
         assert!(source.contains(required), "archive omits {required}");
     }
@@ -224,6 +239,7 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
 
 #[test]
 fn editor_help_hides_internal_options_and_uses_workspace_modes() {
+    let root = runyte::test_support::TestRuntimeRoot::new("help").unwrap();
     // `--cwd-file` is an internal detail of the `runyte()` shell function
     // documented in README.md, not something anyone should pass by hand, so
     // it must not appear in the discoverable `OPTIONS:` list. `--help` must
@@ -231,6 +247,7 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     // naming the flag.
     let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .arg("--help")
+        .env("XDG_CONFIG_HOME", root.join("config"))
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -324,11 +341,14 @@ fn cwd_file_option_still_works_though_undocumented() {
         .env("XDG_CONFIG_HOME", &cache_dir)
         .output()
         .unwrap();
-    assert!(
+    assert_eq!(
         output.status.success(),
+        !cfg!(windows),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    #[cfg(windows)]
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not yet supported"));
     // --session-list never writes to the handoff file.
     assert!(!cwd_file.exists() || fs::read(&cwd_file).unwrap().is_empty());
 

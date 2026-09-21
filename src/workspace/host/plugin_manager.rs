@@ -36,6 +36,9 @@ impl WorkspaceHost {
     }
 
     pub(super) fn initialize_plugin_manager(&mut self) {
+        if cfg!(windows) {
+            return;
+        }
         if self.app.config.plugins.len() > plugin::manager::MAX_CONFIGS {
             self.report_host_error("At most 128 plugins may be configured");
             self.app.update_plugin_manager(vec![Entry {

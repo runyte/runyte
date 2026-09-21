@@ -205,6 +205,7 @@ impl App {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn create_plugin_view(
         &mut self,
         owner: usize,

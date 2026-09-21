@@ -71,7 +71,8 @@ keeps terminal output empty to establish its non-reaping zombie barrier.
 
 Deliberate limits:
 
-- Windows remains unsupported until a separately approved ConPTY backend.
+- Windows Phase 1 provides provisional standalone ConPTY support on x86-64
+  Windows 11 24H2 or later with Windows Terminal; see the native limits below.
 - Kitty graphics, sixel, iTerm images, and resize reflow are unsupported.
 - Read-only OSC 10/11 default-colour queries are supported. Colour setters,
   palette queries, and OSC 52 are ignored.
@@ -201,3 +202,22 @@ and other editor commands are preserved, as is standalone PTY behavior. The
 change applies at terminal creation; existing children retain their environment.
 This makes external-editor calls using a bare Runyte configuration use the
 parent wait lifecycle without changing ordinary CLI file-opening semantics.
+
+## Windows ConPTY boundary
+
+The Phase-1 port uses `src/terminal/pty_windows.rs` for independent native
+consoles on Windows 11 x86_64 MSVC. The default shell is `COMSPEC` or `cmd.exe`;
+no Unix utility is required. `windows_command.rs` preserves native quoted
+arguments, resolves PATH/PATHEXT without an implicit workspace lookup, and
+requires an explicit shell for batch files. Standalone terminals mark parent
+routing unavailable in their environment.
+
+Native tests in `src/terminal/tests/pty_windows.rs` exercise actual cmd.exe and
+the compiled test executable: Unicode output before exit, independent input,
+native resize, bounded input admission, process-tree termination, output-queue
+backpressure and cleanup after four failed-start checkpoints. The lifecycle
+thread closes ConPTY while its reader keeps draining; closing the manager
+wakes blocked output producers before requesting process termination. Job
+assignment happens while the child is suspended and precedes its first run.
+Windows host/attachment parity and compatibility with the optional programs
+in the Unix matrix above are not implied by these tests.

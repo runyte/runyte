@@ -75,6 +75,7 @@ fn multiple_binary_launch_targets_fail_before_one_can_be_silently_dropped() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn a_late_binary_startup_target_reaches_the_external_program_prompt() {
     let directory = temporary("launch-late-binary");
     fs::create_dir_all(&directory).unwrap();
@@ -1607,7 +1608,14 @@ fn working_directory_explorer_key_colon_and_direct_paths_are_equivalent() {
 fn terminal_entry_points_report_invalid_contexts_without_starting_a_child() {
     let mut app = App::new(Config::default(), None).unwrap();
 
-    app.open_terminal(Some("'unterminated".to_owned()));
+    app.open_terminal(Some(
+        if cfg!(windows) {
+            "bad\0command"
+        } else {
+            "'unterminated"
+        }
+        .to_owned(),
+    ));
     assert!(app.status_error && app.status.contains("cannot read"));
 
     app.open_terminal_file_directory(None);
@@ -1961,7 +1969,12 @@ fn unsupported_key_and_direct_routes_share_the_semantic_unavailable_boundary() {
     assert_eq!(direct.status_error, key_path.status_error);
     assert_eq!(
         direct.status,
-        "Pipe the selection through a shell command is unsupported: use :pipe <shell-command>"
+        CommandId::Editor(EditorCommand::ShellPipe)
+            .platform_unavailable()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!(
+                "Pipe the selection through a shell command is unsupported: {REASON}"
+            ))
     );
 }
 
@@ -2069,17 +2082,23 @@ fn path_commands_hint_files_and_open_selected_directories_as_explorers() {
             .iter()
             .map(|hint| (hint.value.as_str(), hint.is_directory))
             .collect::<Vec<_>>(),
-        [("alpha/", true), ("alpine.txt", false)]
+        [
+            (format!("alpha{}", std::path::MAIN_SEPARATOR).as_str(), true),
+            ("alpine.txt", false)
+        ]
     );
     assert!(hints.iter().all(|hint| hint.value != ".hidden"));
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    assert_eq!(app.command, "open alpha/");
+    assert_eq!(
+        app.command,
+        format!("open alpha{}", std::path::MAIN_SEPARATOR)
+    );
     assert!(
         app.matching_path_hints()
             .unwrap()
             .iter()
-            .any(|hint| hint.value == "alpha/inside.txt")
+            .any(|hint| hint.value == format!("alpha{}inside.txt", std::path::MAIN_SEPARATOR))
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -2133,12 +2152,15 @@ fn path_hint_quotes_spaces_and_keeps_the_cursor_inside_directory_quotes() {
     press(&mut app, ':');
     type_text(&mut app, "open spa");
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
-    assert_eq!(app.command, "open \"space dir/\"");
+    assert_eq!(
+        app.command,
+        format!("open \"space dir{}\"", std::path::MAIN_SEPARATOR)
+    );
     assert_eq!(app.command_cursor, app.command.chars().count() - 1);
     type_text(&mut app, "ch");
     assert_eq!(
         app.matching_path_hints().unwrap()[0].value,
-        "space dir/child/"
+        format!("space dir{0}child{0}", std::path::MAIN_SEPARATOR)
     );
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
 
@@ -2200,7 +2222,11 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
             .unwrap_or_else(|| panic!("{name} must remain in the command inventory"));
         assert_eq!(
             matched.availability.reason(),
-            Some(crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON)
+            Some(if cfg!(windows) {
+                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            } else {
+                crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
+            })
         );
     }
     assert!(
@@ -2583,6 +2609,7 @@ fn the_last_selected_theme_is_written_to_the_configuration() {
 /// Opening a binary file must not produce a buffer: a screenful of
 /// replacement characters cannot be saved back without destroying it.
 #[test]
+#[cfg(not(windows))]
 fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
     let directory = temporary("binary-open");
     fs::create_dir_all(&directory).unwrap();
@@ -2632,6 +2659,7 @@ fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
 /// The bounded probe is only an optimization. The bytes accepted by the
 /// final read still decide whether the file can safely become editable text.
 #[test]
+#[cfg(not(windows))]
 fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
     let directory = temporary("binary-beyond-probe");
     fs::create_dir_all(&directory).unwrap();
@@ -2654,6 +2682,7 @@ fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
     let directory = temporary("binary-program-cache");
     fs::create_dir_all(&directory).unwrap();
@@ -2727,6 +2756,7 @@ fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn a_program_that_cannot_run_is_reported_and_not_remembered() {
     let directory = temporary("binary-bad-program");
     fs::create_dir_all(&directory).unwrap();
@@ -3081,6 +3111,7 @@ fn control_q_does_nothing_inside_the_command_prompt() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
     let root = temporary("quit-here-file");
     let file_directory = root.join("files");
@@ -3112,6 +3143,7 @@ fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
     let root = temporary("quit-here-explorer");
     let visited = root.join("visited");
@@ -3133,6 +3165,7 @@ fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
     let mut app = App::new(Config::default(), None).unwrap();
 
@@ -3147,6 +3180,7 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn quit_here_refuses_to_exit_when_the_destination_no_longer_exists() {
     let root = temporary("quit-here-missing");
     let file = root.join("note.txt");
@@ -3400,8 +3434,12 @@ fn unsupported_key_binding_echoes_its_message_inline() {
     press(&mut app, '|');
     assert_eq!(
         app.displayed_status_message(),
-        "| (Pipe the selection through a shell command · unavailable: Pipe the selection \
-             through a shell command is unsupported: use :pipe <shell-command>)"
+        format!(
+            "| (Pipe the selection through a shell command · unavailable: {})",
+            CommandId::Editor(EditorCommand::ShellPipe)
+                .platform_unavailable()
+                .unwrap_or("Pipe the selection through a shell command is unsupported: use :pipe <shell-command>")
+        )
     );
     assert!(!app.displayed_status_message_is_error());
 }
@@ -3458,7 +3496,7 @@ fn a_terminal_started_from_a_place_runs_in_that_places_directory() {
     let nested = root.join("nested");
     let mut app = App::new(Config::default(), Some(root.join("note.txt"))).unwrap();
 
-    app.open_terminal_file_directory(Some("/bin/cat".to_owned()));
+    app.open_terminal_file_directory(Some(terminal_fixture_command()));
     let from_file = app.active_terminal().expect("a terminal opened");
     assert_eq!(app.terminals.get(from_file).unwrap().directory(), root);
 
@@ -3467,10 +3505,10 @@ fn a_terminal_started_from_a_place_runs_in_that_places_directory() {
     press(&mut app, 'e');
     assert!(app.active_buffer().is_directory());
 
-    app.open_terminal_file_directory(Some("/bin/cat".to_owned()));
+    app.open_terminal_file_directory(Some(terminal_fixture_command()));
     assert!(app.status_error && app.status.contains("terminal-directory-root"));
 
-    app.open_terminal_directory_root(Some("/bin/cat".to_owned()));
+    app.open_terminal_directory_root(Some(terminal_fixture_command()));
     let from_root = app.active_terminal().expect("a terminal opened");
     assert_ne!(from_root, from_file);
     assert_eq!(app.terminals.get(from_root).unwrap().directory(), root);
@@ -3478,7 +3516,7 @@ fn a_terminal_started_from_a_place_runs_in_that_places_directory() {
     app.leave_terminal();
     let nested_row = directory_row(&app, |entry| entry == Some(nested.as_path()));
     place_caret_on_row(&mut app, nested_row);
-    app.open_terminal_selected_directory(Some("/bin/cat".to_owned()));
+    app.open_terminal_selected_directory(Some(terminal_fixture_command()));
     let from_entry = app.active_terminal().expect("a terminal opened");
     assert_eq!(app.terminals.get(from_entry).unwrap().directory(), nested);
 
@@ -3486,6 +3524,8 @@ fn a_terminal_started_from_a_place_runs_in_that_places_directory() {
     let from_session = app.active_terminal().expect("a terminal opened");
     assert_ne!(from_session, from_entry);
     assert_eq!(app.terminals.get(from_session).unwrap().directory(), nested);
+
+    close_test_terminals(&mut app);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -3546,7 +3586,7 @@ fn showing_a_terminal_that_has_already_gone_is_refused() {
     let root = root.canonicalize().unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
     app.leave_terminal();
     app.terminals.close(id);
@@ -3554,6 +3594,8 @@ fn showing_a_terminal_that_has_already_gone_is_refused() {
     app.show_terminal(id);
     assert!(app.status_error && app.status.contains("that terminal is gone"));
     assert!(app.active_terminal().is_none());
+
+    close_test_terminals(&mut app);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -3575,7 +3617,7 @@ fn sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot() {
         app.status
     );
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
     app.send_to_terminal();
     assert!(
@@ -3596,13 +3638,19 @@ fn sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot() {
     app.send_to_terminal_target(Some("no-such-terminal"));
     assert!(app.status_error && app.status.contains("no-such-terminal"));
 
+    let cleanup = terminal_cleanup(&app, id);
+
     app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
+
+    cleanup();
     app.send_to_terminal_target(Some(&id.to_string()));
     assert!(
         app.status_error && app.status.contains("program has exited"),
         "{}",
         app.status
     );
+
+    close_test_terminals(&mut app);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -3615,11 +3663,12 @@ fn a_buffer_with_nothing_in_it_is_not_sent_to_a_terminal() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "   \n\t\n");
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     app.leave_terminal();
     app.send_to_terminal();
 
     assert!(app.status_error && app.status.contains("nothing to send"));
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3640,7 +3689,7 @@ fn copying_terminal_output_opens_a_page_and_refuses_when_there_is_no_session() {
         app.status
     );
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
     app.apply_terminal_output(TerminalOutput::Bytes {
         id,
@@ -3656,6 +3705,8 @@ fn copying_terminal_output_opens_a_page_and_refuses_when_there_is_no_session() {
         app.active_buffer().to_string()
     );
     assert!(app.active_buffer().is_read_only());
+
+    close_test_terminals(&mut app);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -3678,7 +3729,7 @@ fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
     app.open_terminal_rename_prompt();
     assert!(app.status_error && app.status.contains("not showing a terminal"));
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
 
     app.rename_active_terminal("build");
@@ -3706,6 +3757,8 @@ fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
     app.show_terminal_target(&id.to_string());
     assert!(app.status_error, "{}", app.status);
 
+    close_test_terminals(&mut app);
+
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3722,15 +3775,17 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
     assert!(app.list.is_none());
     assert!(app.status.contains("no terminals"), "{}", app.status);
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let shown = app.active_terminal().expect("a terminal opened");
     app.leave_terminal();
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let exited = app.active_terminal().expect("a second terminal opened");
+    let cleanup = terminal_cleanup(&app, exited);
     app.apply_terminal_output(TerminalOutput::Exited {
         id: exited,
         code: Some(1),
     });
+    cleanup();
     app.rename_terminal_id(shown, "builder");
     app.show_terminal(shown);
 
@@ -3773,6 +3828,8 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
         details[1]
     );
 
+    close_test_terminals(&mut app);
+
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3788,14 +3845,16 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
 
     let mut opened = Vec::new();
     for _ in 0..4 {
-        app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+        app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
         opened.push(app.active_terminal().expect("a terminal opened"));
         app.leave_terminal();
     }
     // The two oldest sessions exit, so identity order alone would put them at
     // the top of the list.
     for id in [opened[0], opened[1]] {
+        let cleanup = terminal_cleanup(&app, id);
         app.apply_terminal_output(TerminalOutput::Exited { id, code: None });
+        cleanup();
     }
 
     app.open_terminal_list();
@@ -3821,6 +3880,8 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
         vec![(true, false), (true, false), (false, true), (false, true)],
         "only the exited rows are dimmed"
     );
+
+    close_test_terminals(&mut app);
 
     fs::remove_dir_all(root).unwrap();
 }

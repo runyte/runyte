@@ -4,7 +4,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, feat/windows-support]
   pull_request:
     branches: [main, dev]
 
@@ -23,6 +23,28 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows:
+    name: Native Windows Phase 1
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: windows-msvc
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test native editing and ConPTY
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
+        run: cargo test --locked
+      # Windows coverage is provisional and has no measured baseline yet.
+      # The Linux/macOS jobs continue enforcing the unchanged 89% floor.
+
   security:
     name: Dependency advisories
     runs-on: ubuntu-latest

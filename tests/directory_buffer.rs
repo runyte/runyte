@@ -1030,16 +1030,34 @@ fn writing_whitespace_only_explorer_edits_refreshes_the_listing() {
         Change::new(canonical.len(), canonical.len(), " \n\n\t"),
     ])));
     assert!(app.buffers[0].dirty);
-    assert!(app.buffers[0].directory_plan().unwrap().is_empty());
+    #[cfg(windows)]
+    {
+        // A trailing space is an invalid native entry name, not a request to
+        // silently select the trimmed directory entry during a filesystem plan.
+        assert!(app.buffers[0].directory_plan().is_err());
+        app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+            .unwrap();
+        assert!(app.fs_confirmation.is_none());
+        assert!(app.buffers[0].dirty);
+        assert!(app.status_error);
+        assert_eq!(
+            fs::read_to_string(directory.path().join("note.txt")).unwrap(),
+            "text"
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        assert!(app.buffers[0].directory_plan().unwrap().is_empty());
 
-    app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
-        .unwrap();
+        app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
+            .unwrap();
 
-    assert!(app.fs_confirmation.is_none());
-    assert_eq!(app.buffers[0].to_string(), canonical);
-    assert!(!app.buffers[0].dirty);
-    assert_eq!(app.status, "directory has no filesystem changes");
-    assert!(!app.status_error);
+        assert!(app.fs_confirmation.is_none());
+        assert_eq!(app.buffers[0].to_string(), canonical);
+        assert!(!app.buffers[0].dirty);
+        assert_eq!(app.status, "directory has no filesystem changes");
+        assert!(!app.status_error);
+    }
 }
 
 #[cfg(unix)]

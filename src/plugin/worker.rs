@@ -160,6 +160,9 @@ async fn supervise(
     admission: OutputAdmission,
     control: WorkerControl,
 ) -> (Option<&'static str>, bool) {
+    if cfg!(windows) {
+        return (Some("Plugins are unavailable in Windows Phase 1"), true);
+    }
     let WorkerControl {
         mut cancellation,
         rejection,

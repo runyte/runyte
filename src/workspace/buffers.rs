@@ -12,6 +12,7 @@ impl BufferId {
         Self(index as u64 + 1)
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) const fn from_raw(value: u64) -> Self {
         Self(value)
     }
@@ -35,6 +36,7 @@ impl fmt::Display for BufferId {
 pub struct BufferRevision(u64);
 
 impl BufferRevision {
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) const fn from_raw(revision: u64) -> Self {
         Self(revision)
     }

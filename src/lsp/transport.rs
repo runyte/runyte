@@ -133,6 +133,12 @@ pub fn spawn(
     root: &Path,
     inbox: mpsc::Sender<(String, u64, Incoming)>,
 ) -> std::io::Result<Connection> {
+    if cfg!(windows) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "LSP is unavailable in Windows Phase 1",
+        ));
+    }
     let mut child = Command::new(command)
         .args(arguments)
         .current_dir(root)

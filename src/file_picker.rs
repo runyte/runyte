@@ -3489,13 +3489,14 @@ mod tests {
     use super::*;
 
     fn temporary(name: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         std::env::temp_dir()
             .canonicalize()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join(format!(
                 "runyte-file-picker-{name}-{}-{}",
                 std::process::id(),
-                std::thread::current().name().unwrap_or("test")
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ))
     }
 

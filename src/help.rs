@@ -354,13 +354,12 @@ pub(crate) fn render_document_with_descriptions(
         let _ = writeln!(out, "Buffer keys");
         let _ = writeln!(out, "  Only this view answers to these.\n");
         for binding in &scoped {
-            key_cells.push(row(
-                &mut out,
-                &binding.sequence.to_string(),
-                description(binding.target)
-                    .as_deref()
-                    .unwrap_or(&binding.description),
-            ));
+            let authored = description(binding.target);
+            let detail = platform_description(
+                binding.target,
+                authored.as_deref().unwrap_or(&binding.description),
+            );
+            key_cells.push(row(&mut out, &binding.sequence.to_string(), &detail));
         }
         if !actions.is_empty() {
             if !scoped.is_empty() {
@@ -374,7 +373,7 @@ pub(crate) fn render_document_with_descriptions(
                 key_cells.push(row(
                     &mut out,
                     &format!("Tab {}", action.mnemonic.label()),
-                    action.description,
+                    &platform_description(action.target, action.description),
                 ));
             }
         }
@@ -430,7 +429,13 @@ pub(crate) fn render_document_with_descriptions(
             }
             let _ = writeln!(out, "  {label}");
             for entry in group {
-                key_cells.push(row(&mut out, entry.key.label().as_str(), entry.description));
+                let detail = match keymap.lookup_in(mode, scope, &KeySequence::from(entry.key)) {
+                    Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                        platform_description(binding.target, entry.description)
+                    }
+                    _ => std::borrow::Cow::Borrowed(entry.description),
+                };
+                key_cells.push(row(&mut out, entry.key.label().as_str(), &detail));
             }
             out.push('\n');
         }
@@ -578,6 +583,13 @@ pub(crate) fn render_document_with_descriptions(
     }
 
     document.finish()
+}
+
+fn platform_description(target: BindingTarget, description: &str) -> std::borrow::Cow<'_, str> {
+    match target.id().platform_unavailable() {
+        Some(reason) => std::borrow::Cow::Owned(format!("{description} (unavailable: {reason})")),
+        None => std::borrow::Cow::Borrowed(description),
+    }
 }
 
 /// How a key is typed, which is how someone looks for it.

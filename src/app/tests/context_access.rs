@@ -19,6 +19,7 @@ fn ready() -> App {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn native_command_prompt_requests_named_and_default_context_identity() {
     for (command, identity) in [
         ("context-access codex", "codex"),
