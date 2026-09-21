@@ -54,6 +54,19 @@ impl Settings {
         })))
     }
 }
+/// Two settings blocks are the same when the values they carry are, which is
+/// what a configuration reload compares to decide whether a plugin has to be
+/// restarted. The encoded form is derived from the value, so it adds nothing.
+///
+/// Deliberately `PartialEq` only: `serde_json::Value` is not `Eq`, and
+/// claiming otherwise here would assert a property of every number a
+/// configuration could carry that nothing checks.
+impl PartialEq for Settings {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || self.0.value == other.0.value
+    }
+}
+
 impl<'de> Deserialize<'de> for Settings {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = json::deserialize(deserializer, LIMITS)

@@ -254,6 +254,73 @@ fn harness(script: Script) -> Harness {
     }
 }
 
+/// A configuration naming one command per language.
+fn config_with(servers: &[(&str, &str)]) -> LspConfig {
+    LspConfig {
+        enable: true,
+        servers: servers
+            .iter()
+            .map(|(language, command)| {
+                (
+                    (*language).to_owned(),
+                    LanguageServerConfig {
+                        command: PathBuf::from(*command),
+                        args: Vec::new(),
+                        initialization_options: None,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+/// Every command a launch was handed, in order, paired with its language.
+type Launches = Arc<Mutex<Vec<(String, PathBuf)>>>;
+
+/// Like [`harness`], but starts from an explicit configuration and records the
+/// command every launch was handed.
+///
+/// Reconfiguration is only meaningful as the process it would actually start,
+/// so the recorded commands are what these tests assert on.
+fn recording_harness(script: Script, config: LspConfig) -> (Harness, Launches) {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&sent);
+    let launched = Arc::new(Mutex::new(Vec::new()));
+    let launches = Arc::clone(&launched);
+    let script = Arc::new(script);
+    let launch: Launch = Box::new(move |language, generation, settings, _root, inbox| {
+        launches
+            .lock()
+            .unwrap()
+            .push((language.to_owned(), settings.command.clone()));
+        let (client_reader, server_writer) = tokio::io::duplex(PIPE);
+        let (server_reader, client_writer) = tokio::io::duplex(PIPE);
+        let connection = transport::connect(
+            language.to_owned(),
+            generation,
+            client_reader,
+            client_writer,
+            inbox as mpsc::Sender<(String, u64, Incoming)>,
+        );
+        tokio::spawn(mock_server(
+            Arc::clone(&script),
+            Arc::clone(&recorded),
+            server_reader,
+            server_writer,
+        ));
+        Ok(connection)
+    });
+    let (handle, events) = spawn_with(config, PathBuf::from("/tmp/runyte-lsp"), launch);
+    (
+        Harness {
+            handle,
+            events,
+            sent,
+        },
+        launched,
+    )
+}
+
 async fn mock_server(
     script: Arc<Script>,
     sent: Arc<Mutex<Vec<Value>>>,
@@ -2063,4 +2130,228 @@ async fn revocation_discards_queued_ready_and_edits_before_reapproval_events() {
         assert_eq!(edits.len(), 1);
         assert!(harness.handle.send(LspCommand::Shutdown));
     }
+}
+
+// -- Configuration reload ---------------------------------------------------
+
+#[tokio::test]
+async fn reconfiguring_an_unchanged_definition_leaves_its_server_running() {
+    let (mut harness, launched) =
+        recording_harness(Script::default(), config_with(&[("rust", "mock-analyzer")]));
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Reconfigure(Box::new(config_with(&[(
+                "rust",
+                "mock-analyzer"
+            )]))))
+    );
+    harness.settle().await;
+
+    // Nothing was restarted, so the handshake this server already completed
+    // still stands and its process was never launched a second time.
+    assert_eq!(launched.lock().unwrap().len(), 1);
+    harness.request(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0)));
+    assert!(!matches!(harness.response().await, Response::Failed(_)));
+}
+
+#[tokio::test]
+async fn reconfiguring_restarts_only_the_language_whose_definition_changed() {
+    let (mut harness, launched) = recording_harness(
+        Script::default(),
+        config_with(&[("rust", "mock-analyzer"), ("markdown", "old-marksman")]),
+    );
+    for language in ["rust", "markdown"] {
+        assert!(harness.handle.send(LspCommand::Ensure {
+            language: language.to_owned()
+        }));
+        harness.ready().await;
+    }
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Reconfigure(Box::new(config_with(&[
+                ("rust", "mock-analyzer"),
+                ("markdown", "new-marksman"),
+            ]))))
+    );
+    let restarted = harness
+        .next_matching(|event| match event {
+            LspEvent::Restarted { language } => Some(language.clone()),
+            _ => None,
+        })
+        .await;
+    assert_eq!(restarted, "markdown");
+    harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } if message.contains("reconfigured") => {
+                assert!(message.contains("markdown will restart"), "{message}");
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "markdown".to_owned()
+    }));
+    harness.ready().await;
+    let launched = launched.lock().unwrap().clone();
+    assert_eq!(
+        launched,
+        vec![
+            ("rust".to_owned(), PathBuf::from("mock-analyzer")),
+            ("markdown".to_owned(), PathBuf::from("old-marksman")),
+            ("markdown".to_owned(), PathBuf::from("new-marksman")),
+        ],
+        "only markdown is launched again, with the reloaded command"
+    );
+}
+
+#[tokio::test]
+async fn a_removed_definition_stops_its_server_and_reports_it_is_unconfigured() {
+    let (mut harness, launched) = recording_harness(
+        Script::default(),
+        config_with(&[("rust", "mock-analyzer"), ("markdown", "marksman")]),
+    );
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "markdown".to_owned()
+    }));
+    harness.ready().await;
+    assert_eq!(launched.lock().unwrap().len(), 1);
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Reconfigure(Box::new(config_with(&[(
+                "rust",
+                "mock-analyzer"
+            )]))))
+    );
+    // The process is actually retired, not merely dropped from the manager's
+    // definitions: the server sees the shutdown handshake.
+    harness
+        .wait_for_sent(|message| message.get("method").and_then(Value::as_str) == Some("shutdown"))
+        .await;
+    harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } if message.contains("reconfigured") => {
+                assert!(
+                    message.contains("markdown is no longer configured"),
+                    "{message}"
+                );
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+
+    // Asking for it again cannot start anything, because nothing describes it.
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "markdown".to_owned()
+    }));
+    harness.settle().await;
+    assert_eq!(
+        launched.lock().unwrap().len(),
+        1,
+        "a language with no definition is never launched again"
+    );
+}
+
+/// Two definitions changed at once, with one server exiting while the other is
+/// still shutting down.
+///
+/// A graceful stop keeps draining every other language, so the second server's
+/// own exit is observed in the middle of the first one's shutdown. That must
+/// not leave it recorded as failed, which would stop the corrected command
+/// from ever being tried.
+#[tokio::test]
+async fn a_server_that_exits_during_another_shutdown_still_takes_its_new_command() {
+    let (mut harness, launched) = recording_harness(
+        Script::default().die_on("textDocument/hover"),
+        config_with(&[("rust", "old-analyzer"), ("markdown", "old-marksman")]),
+    );
+    for language in ["rust", "markdown"] {
+        assert!(harness.handle.send(LspCommand::Ensure {
+            language: language.to_owned()
+        }));
+        harness.ready().await;
+    }
+    // Wedge rust into exiting as soon as it is next spoken to.
+    assert!(harness.handle.send(LspCommand::Request {
+        token: 7,
+        language: "rust".to_owned(),
+        path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
+        kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
+    }));
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Reconfigure(Box::new(config_with(&[
+                ("rust", "new-analyzer"),
+                ("markdown", "new-marksman"),
+            ]))))
+    );
+    harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } if message.contains("reconfigured") => Some(()),
+            _ => None,
+        })
+        .await;
+
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    assert_eq!(
+        launched.lock().unwrap().last().cloned(),
+        Some(("rust".to_owned(), PathBuf::from("new-analyzer"))),
+        "a stale failure recorded mid-shutdown must not outlive the reconfiguration"
+    );
+}
+
+#[tokio::test]
+async fn reconfiguring_clears_a_recorded_failure_so_the_new_command_is_tried() {
+    let (mut harness, launched) = recording_harness(
+        Script::default().die_on("textDocument/definition"),
+        config_with(&[("rust", "broken-analyzer")]),
+    );
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+    harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
+    harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { .. } => Some(()),
+            _ => None,
+        })
+        .await;
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Reconfigure(Box::new(config_with(&[(
+                "rust",
+                "fixed-analyzer"
+            )]))))
+    );
+    harness.settle().await;
+    assert!(harness.handle.send(LspCommand::Ensure {
+        language: "rust".to_owned()
+    }));
+    harness.ready().await;
+
+    assert_eq!(
+        launched.lock().unwrap().last().cloned(),
+        Some(("rust".to_owned(), PathBuf::from("fixed-analyzer"))),
+        "the corrected command replaces the one whose failure was recorded"
+    );
 }

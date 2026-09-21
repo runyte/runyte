@@ -463,6 +463,37 @@ their repository requirement and expose the retained failure with a
 `:git-refresh` hint. No discovery retry runs automatically or on persistent
 session reattachment. The service-health report includes Git discovery state.
 
+## Configuration reload
+
+`:config-reload` is Implemented, a command-only identity in the Configuration
+category with no default binding. Helix spells the same command the same way,
+so the name matches rather than being a Runyte addition; what it covers is
+wider, because Runyte's configuration also describes language servers and
+configured plugins. It re-reads the configuration file the running editor
+loaded, including an explicit `--config PATH`, and is the supported path for
+edits made outside the registry-backed `[config]` page. There is no file
+watching and no idle poll: the reload happens when the command runs, and only
+in the workspace it was run in.
+
+Runyte has no `:config-open`. `:config` and its `settings` alias open the
+registry-backed settings page rather than the YAML file, which is a Deviation
+recorded here because the two editors give the same word different subjects.
+
+A `keys` section is recompiled by the same code startup uses, so dispatch,
+help, and key hints continue to read one registry after a reload; rejected
+entries are counted in the result exactly as they are at startup, and the
+rebinding rules recorded above are unchanged by reloading. A replacement that
+cannot be parsed or validated leaves the compiled keymap, and the rest of the
+running configuration, untouched. The compiled maps also carry the keys of
+every plugin running at the time, which are laid back over the reloaded
+section; a section that collides with one of them is refused on its own and
+the bindings in use are left alone.
+
+`editor.mouse`, `lsp.enable`, `workspace.mode`, and `workspace.state` are read
+before the editor exists. A reload keeps their running values and names them as
+requiring a restart; the file's values still become the saved ones the settings
+page offers.
+
 ## Workspace LSP permission
 
 `:lsp-trust` is an added, command-only identity in the Language category. It

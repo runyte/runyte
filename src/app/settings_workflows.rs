@@ -381,7 +381,7 @@ impl App {
         self.mode = Mode::Normal;
     }
 
-    fn refresh_notification_buffers(&mut self) {
+    pub(super) fn refresh_notification_buffers(&mut self) {
         self.notifications_refresh_pending = false;
         let open = self
             .buffers
@@ -755,7 +755,7 @@ impl App {
         Ok(())
     }
 
-    fn replace_theme(&mut self, name: String, theme: Theme) {
+    pub(super) fn replace_theme(&mut self, name: String, theme: Theme) {
         self.theme = theme;
         self.theme_name = name;
         self.sync_terminal_default_colors();
@@ -971,6 +971,7 @@ impl App {
     /// grammars discovered during construction.
     pub fn note_loaded_config(&mut self, path: &Path) {
         self.config_path = Some(path.to_path_buf());
+        self.config_file_read = std::fs::symlink_metadata(path).is_ok();
         self.persisted_config = self.config.clone();
         let errors = self.registry.errors();
         let configured_grammar_error = None::<&str>;

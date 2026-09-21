@@ -281,8 +281,10 @@ async fn manager_config_admission_bounds_disabled_entries_without_hiding_enabled
         config.enabled = false;
         excessive.app.config.plugins.push(config);
     }
-    assert!(excessive.start_plugins().is_none());
-    assert!(excessive.plugin_events_sender.is_none());
+    // The event queue exists whatever the configuration admits, because a
+    // configuration reload can enable a plugin startup refused or disabled.
+    // Nothing is launched against it here.
+    assert!(excessive.start_plugins().is_some());
     assert!(excessive.plugin_workers.is_empty());
     assert_eq!(excessive.app.plugins.manager_entries.len(), 1);
     assert!(

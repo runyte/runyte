@@ -72,6 +72,10 @@ pub(crate) struct Plugins {
     pub alias_conflicts: BTreeMap<String, Vec<String>>,
     pub manager_entries: Vec<plugin::manager::Entry>,
     pub manager_intents: VecDeque<plugin::manager::Intent>,
+    /// Set when a configuration reload replaced `config.plugins`. The host
+    /// owns plugin processes and the work in flight that a restart would
+    /// interrupt, so it reconciles the change on its next turn.
+    pub configuration_reload: bool,
     pub(super) manager_return: Option<super::plugin_manager::ManagerReturn>,
     pub state_orphans: usize,
     pub document_saves: BTreeSet<usize>,

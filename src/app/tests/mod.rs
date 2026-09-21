@@ -170,6 +170,7 @@ fn production_source() -> String {
 mod async_syntax;
 mod commands;
 mod comparisons;
+mod config_reload;
 mod editing;
 mod editing_and_buffers;
 mod git;

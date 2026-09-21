@@ -88,6 +88,7 @@ pub enum ColonCommand {
     GitStageLines,
     GitUnstage,
     GitWorktrees,
+    ConfigReload,
     Grammar,
     LogOpen,
     LspTrust,
@@ -256,6 +257,7 @@ impl ColonCommand {
         Self::GitStageLines,
         Self::GitUnstage,
         Self::GitWorktrees,
+        Self::ConfigReload,
         Self::Grammar,
         Self::LspTrust,
         Self::ContextAccess,
@@ -345,7 +347,8 @@ impl ColonCommand {
             | Self::ForceQuitAll
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
-            Self::Grammar
+            Self::ConfigReload
+            | Self::Grammar
             | Self::ContextAccess
             | Self::LogOpen
             | Self::ServiceHealth
@@ -1745,6 +1748,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         Required(FreeText)
     ),
     spec!(
+        ColonId(Colon::ConfigReload),
+        "config-reload",
+        [],
+        "config-reload",
+        "Re-read the loaded configuration file without restarting",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::ServiceHealth),
         "service-health",
         ["health"],
@@ -2578,6 +2589,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::GitStageLines
             | Colon::GitUnstage
             | Colon::GitWorktrees
+            | Colon::ConfigReload
             | Colon::LogOpen
             | Colon::LspStatus
             | Colon::LspTrust
@@ -2948,6 +2960,7 @@ fn invocation_from_parts(
                 | ColonCommand::GitStageLines
                 | ColonCommand::GitUnstage
                 | ColonCommand::GitWorktrees
+                | ColonCommand::ConfigReload
                 | ColonCommand::LogOpen
                 | ColonCommand::LspStatus
                 | ColonCommand::LspTrust

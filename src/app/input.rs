@@ -5456,6 +5456,10 @@ impl App {
                 }
                 Ok(())
             }
+            (Colon::ConfigReload, InvocationParameters::None) => {
+                self.reload_configuration();
+                Ok(())
+            }
             (Colon::LspStatus, InvocationParameters::None) => {
                 if !self.lsp_send(LspCommand::Status) {
                     self.status("language servers are not running");

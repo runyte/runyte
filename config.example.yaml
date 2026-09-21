@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # Copy to ~/.config/runyte/config.yaml.
+#
+# Run :config-reload after editing this file to apply it to a running editor.
+# editor.mouse, lsp.enable, workspace.mode, and workspace.state are read at
+# startup and are reported as needing a restart instead.
 editor:
   line_numbers: true
   tab_width: 4

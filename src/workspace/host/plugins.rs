@@ -216,16 +216,15 @@ impl WorkspaceHost {
             return None;
         }
         self.plugins_started = true;
-        let enabled = self.app.config.plugins.iter().any(|config| config.enabled);
-        let receiver = if enabled {
-            let (events, receiver) = tokio::sync::mpsc::channel(plugin::EVENT_CAPACITY);
-            self.plugin_events_sender = Some(events);
-            Some(receiver)
-        } else {
-            None
-        };
+        // Created whatever the configuration enables. A reload can enable a
+        // plugin that startup found disabled, and a channel that only exists
+        // when one was enabled at startup would leave that plugin with nothing
+        // to deliver its events on. An empty queue costs one allocation and no
+        // wakeups.
+        let (events, receiver) = tokio::sync::mpsc::channel(plugin::EVENT_CAPACITY);
+        self.plugin_events_sender = Some(events);
         self.initialize_plugin_manager();
-        receiver
+        Some(receiver)
     }
 
     pub fn handle_plugin_event(&mut self, event: Event) -> bool {
