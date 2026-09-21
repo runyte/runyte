@@ -66,9 +66,12 @@ actionable findings before the next package starts.
 Phase 1 is implemented in six reviewed work packages on `feat/windows-support`,
 after merging the 0.3.1 release from `main` (`e5d05da`) in `4bceec6`. Native
 formatting, Clippy, the full workspace suite (2,601 passed, zero failures), the
-optimized build and packaged executable smoke test pass. Remote Linux/macOS
-gates remain pending; detailed evidence is recorded in
-`context/plans/active/PLAN_WINDOWS_PHASE1.md`.
+optimized build and packaged executable smoke test pass. After CI fixture
+repairs through `fc9c324`, remote run
+[`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
+passes every job, including native Windows tests, Linux/macOS regression suites,
+and both 89% coverage gates. Detailed evidence is recorded in
+`context/plans/completed/PLAN_WINDOWS_PHASE1.md`.
 
 The selected target is `x86_64-pc-windows-msvc`, Windows 11 24H2 or later with
 Windows Terminal. Native development uses Windows build `10.0.26200.9457`,
@@ -104,6 +107,21 @@ The Linux/macOS 89% coverage gates remain unchanged. Native Windows coverage is
 provisional without a measured llvm-cov baseline. Windows CI runs formatting,
 all-target Clippy and tests; the release workflow adds an MSVC ZIP and includes
 it in SHA256SUMS. No release publication or version bump is part of this work.
+
+## Next step: native Git process inheritance
+
+Phase 2 begins with optional integrated Git. The local prototype has executable
+discovery, native process ownership, and repository path work, but remains
+uncommitted and disabled. Its parallel provider tests are not green. The next
+package must reproduce mixed-launch handle inheritance on Windows and test
+delayed output-reader scheduling separately before selecting a correction.
+The ordered work packages, validation limits and continuation details are in
+[`PLAN_WINDOWS_PHASE2.md`](../plans/active/PLAN_WINDOWS_PHASE2.md).
+
+A separate Unix PTY allocation race is assigned to Linux work on `dev` through
+[issue commit `9b265aa`](https://github.com/runyte/runyte/blob/9b265aa122dea9637023cf1f4549f5ce75a8639c/context/issues/unix_pty_descriptor_inheritance.md).
+Its eventual fix and regression commits can be cherry-picked into this branch;
+it is not evidence of the cause of the Windows test failures.
 
 The investigation below records the pre-implementation state. Its compiler
 errors and "current" observations describe the inspected revisions, rather

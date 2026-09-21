@@ -46,9 +46,9 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. This source tree also includes
-provisional native Windows support for standalone editing, file management,
-text clipboard, and integrated terminals. See the
+Linux and macOS provide the full feature set. Work on native Windows support is
+ongoing; basic functionality is already available in this source tree: standalone
+editing, file management, text clipboard, and integrated terminals. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
@@ -245,17 +245,14 @@ the complete manual. `:log-open` and `:service-health` help diagnose failures.
 
 ## Status and contributing
 
-Runyte is ready for general use on Linux and macOS. Native Windows support is
-provisional and currently covers the standalone editor and integrated terminals.
+Contributions are welcome in the form of:
 
-Contributions are welcome, especially:
-
+- Feature requests through [GitHub Issues](https://github.com/runyte/runyte/issues).
 - Bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
-- New [plugins](docs/plugins/authoring.md), in any programming language.
-- Windows support.
+- [Plugin development](docs/plugins/authoring.md), in any programming language.
 
-See the [contributing guide](CONTRIBUTING.md) for what makes a useful report,
-how to share a plugin, and where Windows work stands.
+See the [contributing guide](CONTRIBUTING.md) for how to describe a feature
+request, report a bug, or share a plugin.
 
 ## The name
 

@@ -1,12 +1,16 @@
 # Contributing to Runyte
 
-Runyte is ready for general use on Linux and macOS. It is maintained by one
-person, so the most useful contributions are the ones a single maintainer cannot
-produce alone: reports from setups other than the maintainer's, plugins, and
-Windows support.
+Feature requests, bug reports, and plugin development are welcome.
 
 Suspected security vulnerabilities do not belong in any of the channels below.
 Follow the [security policy](SECURITY.md) instead.
+
+## Request a feature
+
+Open an issue on [GitHub Issues](https://github.com/runyte/runyte/issues).
+Describe the workflow you want to improve, what is difficult today, and how
+the proposed feature would help. Include a concrete example and check for an
+existing request before opening a new one.
 
 ## Report a bug
 
@@ -49,30 +53,6 @@ Publish a plugin from its own repository, under a license of your choice, and
 share it on [r/runyte](https://www.reddit.com/r/runyte/). If the contract is
 missing something a plugin needs, open an issue describing the plugin and the
 gap rather than working around it.
-
-## Help bring Runyte to Windows
-
-This source tree includes provisional Windows Phase-1 support. Remaining work
-and native acceptance evidence are recorded in
-[`context/issues/windows_support.md`](context/issues/windows_support.md).
-See the [Windows guide](docs/user-guide.md#windows-support) for the MSVC build
-and current limits. Phase 2 begins with integrated Git and a disabled state
-when Git is absent, then extends language services and the other integrations.
-
-Windows access for testing is limited on the maintainer's side, which shapes
-what a contribution should look like:
-
-- A feature without a sound Windows implementation may be reported as
-  unavailable rather than shipped half-working. The persistent session host is
-  the likeliest candidate.
-- An unsupported feature must fail with a clear message and leave user data
-  intact.
-- Automated tests should cover platform selection and those failure paths, and
-  a short manual smoke-test list should cover what automation cannot.
-
-Windows work touches most of the codebase. Open an issue describing the area
-you want to take on before starting a large change, so the approach can be
-agreed first.
 
 ## Code changes
 
