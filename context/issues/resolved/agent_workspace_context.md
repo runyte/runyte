@@ -55,6 +55,19 @@ bounded identity/method/resource metadata, never captured content. The completed
 record all nine steps and the review findings, including the native parser
 omission caught by the final real-editor workflow.
 
+Release validation on macOS exposed a race before the identity lock was
+acquired: concurrent `Directory::append` calls used nonexclusive `O_CREAT`,
+and `openat` could return `ENOENT` while another caller created `identity.lock`.
+Private append storage now creates exclusively and, on `AlreadyExists`, opens
+the existing inode without creation flags. Both paths retain descriptor-relative
+link, ownership and permission checks; an existing file is never truncated or
+replaced. This also protects other private append users such as plugin locks
+and diagnostic logs. The existing concurrent identity test covers the context
+storage caller. `concurrent_append_creation_keeps_one_inode_and_every_write`
+and `append_existing_rejects_links_and_preserves_unadmitted_files` in
+`src/private_storage/tests.rs` cover simultaneous creation, retained append
+contents and inode identity, private permissions, and unchanged linked targets.
+
 Validation: 3,740 Rust tests pass with 34 existing ignored tests; formatting and
 warnings-as-errors Clippy pass. Canonical workspace line coverage is 91.83%,
 above the unchanged 89% floor. All 29 plugin conformance suites pass, with eight
