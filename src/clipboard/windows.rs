@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! CF_UNICODETEXT without a shell or code-page conversion. Native delayed
+//! Native text and bounded image reads without a shell. Native delayed
 //! rendering can block for thirty seconds; at most one worker may be in the
 //! clipboard API, and the editor waits at most one second for its result.
 
@@ -21,8 +21,14 @@ use windows_sys::Win32::{
 };
 
 const UNICODE_TEXT: u32 = 13;
+const DIB: u32 = 8;
+const DIB_V5: u32 = 17;
 static BUSY: AtomicBool = AtomicBool::new(false);
 const DEADLINE: Duration = Duration::from_secs(1);
+mod image;
+
+#[cfg(test)]
+static TEST_DESKTOP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub(super) fn read() -> Result<String> {
     run(read_native)
@@ -30,6 +36,9 @@ pub(super) fn read() -> Result<String> {
 pub(super) fn write(text: &str) -> Result<()> {
     let units = encode(text)?;
     run(move || write_native(&units))
+}
+pub(super) fn read_image() -> Result<Option<Vec<u8>>> {
+    run(read_image_native)
 }
 
 fn run<T: Send + 'static>(operation: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
@@ -50,6 +59,9 @@ fn run<T: Send + 'static>(operation: impl FnOnce() -> Result<T> + Send + 'static
     thread::Builder::new()
         .name("clipboard".into())
         .spawn(move || {
+            #[cfg(test)]
+            let result = prepare_test_worker().and_then(|()| operation());
+            #[cfg(not(test))]
             let result = operation();
             drop(guard);
             let _ = sender.send(result);
@@ -58,6 +70,21 @@ fn run<T: Send + 'static>(operation: impl FnOnce() -> Result<T> + Send + 'static
     receiver
         .recv_timeout(DEADLINE)
         .context("Windows clipboard timed out; a copy may still finish")?
+}
+
+#[cfg(test)]
+fn prepare_test_worker() -> Result<()> {
+    // Native fixtures use a private station. Attach the worker before its
+    // first HWND is created; changing only the fixture thread is insufficient.
+    let desktop = TEST_DESKTOP.load(Ordering::Acquire);
+    if desktop != 0
+        && unsafe {
+            windows_sys::Win32::System::StationsAndDesktops::SetThreadDesktop(desktop as _)
+        } == 0
+    {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(())
 }
 
 struct Clipboard {
@@ -201,6 +228,100 @@ fn write_native(units: &[u16]) -> Result<()> {
     Ok(())
 }
 
+fn png_format() -> Result<u32> {
+    let name = [80u16, 78, 71, 0];
+    let format = unsafe { RegisterClipboardFormatW(name.as_ptr()) };
+    if format == 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(format)
+}
+
+fn read_image_native() -> Result<Option<Vec<u8>>> {
+    let (format, bytes) = {
+        let _clipboard = Clipboard::open()?;
+        // Windows advertises synthesized Unicode text for CF_TEXT/OEMTEXT.
+        // Rich-text applications also offer rendered bitmaps; ordinary paste
+        // must retain their text instead of silently pasting that rendering.
+        if unsafe { IsClipboardFormatAvailable(UNICODE_TEXT) } != 0 {
+            return Ok(None);
+        }
+        let png = png_format()?;
+        let Some(format) = [png, DIB_V5, DIB]
+            .into_iter()
+            .find(|format| unsafe { IsClipboardFormatAvailable(*format) } != 0)
+        else {
+            return Ok(None);
+        };
+        let memory = unsafe { GetClipboardData(format) };
+        if memory.is_null() {
+            return Err(io::Error::last_os_error()).context("cannot read clipboard image");
+        }
+        let length = unsafe { GlobalSize(memory) };
+        if length == 0 || length > crate::pasted_image::MAX_IMAGE_BYTES {
+            bail!("Windows clipboard image has an invalid size or exceeds 64 MiB");
+        }
+        let pointer = unsafe { GlobalLock(memory) };
+        if pointer.is_null() {
+            return Err(io::Error::last_os_error().into());
+        }
+        let _locked = Locked(memory);
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length)?;
+        // Borrow only while the clipboard is open and its allocation locked.
+        bytes
+            .extend_from_slice(unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), length) });
+        (format, bytes)
+    };
+    // Encoding never holds the system clipboard open. Its allocations and
+    // CPU work remain in the same single, deadline-bounded worker.
+    if format == DIB || format == DIB_V5 {
+        image::dib_to_png(&bytes, format == DIB_V5).map(Some)
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Ok(Some(bytes))
+    } else {
+        bail!("Windows clipboard PNG data has an invalid signature")
+    }
+}
+
+#[cfg(test)]
+fn isolate_test_desktop() {
+    // The compiled child owns these handles until process exit. Its private
+    // window station has a separate clipboard from the interactive station.
+    use windows_sys::Win32::System::StationsAndDesktops::*;
+    unsafe {
+        let station = CreateWindowStationW(ptr::null(), 0, 0x37f, ptr::null());
+        assert!(!station.is_null(), "{}", io::Error::last_os_error());
+        assert_ne!(
+            SetProcessWindowStation(station),
+            0,
+            "{}",
+            io::Error::last_os_error()
+        );
+        let name = [116u16, 101, 115, 116, 0];
+        let desktop = CreateDesktopW(
+            name.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+            0,
+            0x1ff,
+            ptr::null(),
+        );
+        assert!(!desktop.is_null(), "{}", io::Error::last_os_error());
+        assert_ne!(
+            SetThreadDesktop(desktop),
+            0,
+            "{}",
+            io::Error::last_os_error()
+        );
+        TEST_DESKTOP.store(desktop as usize, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+#[path = "windows/image_tests.rs"]
+mod image_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,35 +370,7 @@ mod tests {
             );
             return;
         }
-        // A private, noninteractive window station has its own clipboard.
-        // Never preserve/replace the person's clipboard as a test fixture.
-        use windows_sys::Win32::System::StationsAndDesktops::*;
-        unsafe {
-            let station = CreateWindowStationW(ptr::null(), 0, 0x37f, ptr::null());
-            assert!(!station.is_null(), "{}", io::Error::last_os_error());
-            assert_ne!(
-                SetProcessWindowStation(station),
-                0,
-                "{}",
-                io::Error::last_os_error()
-            );
-            let name = [116u16, 101, 115, 116, 0];
-            let desktop = CreateDesktopW(
-                name.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                0,
-                0x1ff,
-                ptr::null(),
-            );
-            assert!(!desktop.is_null(), "{}", io::Error::last_os_error());
-            assert_ne!(
-                SetThreadDesktop(desktop),
-                0,
-                "{}",
-                io::Error::last_os_error()
-            );
-        }
+        isolate_test_desktop();
         // Native operations stay on this thread and isolated desktop. The
         // child process owns and releases station/desktop handles on exit.
         for text in ["", "café 中文 😀", "line\n", "line\r\n\r\n"] {

@@ -104,6 +104,7 @@ unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+png = "0.18"
 windows-sys = { version = "0.61", features = [
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",

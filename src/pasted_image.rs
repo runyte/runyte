@@ -298,15 +298,8 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
-    #[cfg(not(windows))]
-    fn temporary_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "runyte-pasted-image-{name}-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
+    fn temporary_root(name: &str) -> crate::test_support::TestRuntimeRoot {
+        crate::test_support::TestRuntimeRoot::new(name).unwrap()
     }
 
     #[test]
@@ -336,7 +329,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_stored_image_is_named_by_its_content_and_written_once() {
         let root = temporary_root("store");
         let bytes = b"\x89PNG\r\n\x1a\nfirst".to_vec();
@@ -368,18 +360,15 @@ mod tests {
         // Different bytes get a different name.
         let other = store(&root, b"\x89PNG\r\n\x1a\nsecond", ImageFormat::Png).unwrap();
         assert_ne!(other, path);
-
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// A process killed between writing a pending file and renaming it cannot
     /// clean up after itself, and nothing else prunes this directory.
     #[test]
-    #[cfg(not(windows))]
     fn an_abandoned_write_is_swept_up_and_nothing_else_is() {
         let root = temporary_root("abandoned");
         let directory = cache_directory(&root);
-        fs::create_dir_all(&directory).unwrap();
+        let storage = crate::private_storage::Directory::open(&directory, true).unwrap();
 
         let abandoned = directory.join(".0123456789abcdef.png.4242");
         let recent = directory.join(".fedcba9876543210.png.4243");
@@ -397,7 +386,9 @@ mod tests {
             &stored,
             &unrelated,
         ] {
-            fs::write(path, b"x").unwrap();
+            storage
+                .atomic_write(path.file_name().unwrap(), b"x")
+                .unwrap();
         }
         let old = std::time::SystemTime::now() - ABANDONED_WRITE_AGE * 2;
         // Opened for writing rather than read: setting a timestamp needs
@@ -436,8 +427,23 @@ mod tests {
             unrelated.exists(),
             "a file this module never wrote was swept"
         );
+    }
 
-        fs::remove_dir_all(root).unwrap();
+    #[test]
+    fn reuse_refuses_changed_contents_and_hardlinks_without_overwriting_them() {
+        let root = temporary_root("image-reuse");
+        let bytes = b"\x89PNG\r\n\x1a\noriginal";
+        let path = store(&root, bytes, ImageFormat::Png).unwrap();
+        fs::write(&path, b"changed").unwrap();
+        assert!(store(&root, bytes, ImageFormat::Png).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"changed");
+
+        fs::write(&path, bytes).unwrap();
+        let alias = root.join("other-image.png");
+        fs::hard_link(&path, &alias).unwrap();
+        assert!(store(&root, bytes, ImageFormat::Png).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::read(&alias).unwrap(), bytes);
     }
 
     #[test]
@@ -470,14 +476,12 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn an_oversized_image_is_refused_rather_than_written() {
         let root = temporary_root("oversized");
         let bytes = vec![0_u8; MAX_IMAGE_BYTES + 1];
         let error = store(&root, &bytes, ImageFormat::Png).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(!cache_directory(&root).exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     fn numbering(document: &str) -> usize {

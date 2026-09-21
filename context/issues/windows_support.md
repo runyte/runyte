@@ -151,8 +151,12 @@ standalone integrations, persistent sessions, plugins and context access remain.
 Sub-phase 2.4's shell-filter package enables Windows PowerShell filters with
 bounded UTF-8 streams, cancellation and owned process-tree cleanup. Independent
 review has no remaining findings; formatting, Clippy, 2,957 native tests and
-required real rust-analyzer acceptance pass. Image paste, external opening and
-shell-directory handoff remain the following standalone work packages.
+required real rust-analyzer acceptance pass. The next package restores image
+paste through native PNG and DIB clipboard formats and private cache storage.
+Its independent reviews have no remaining findings; native clipboard, cache
+and editor tests, formatting, Clippy and the full suite (2,973 passed) succeed.
+External opening and shell-directory handoff are the following standalone
+work packages; cross-platform acceptance is pending.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

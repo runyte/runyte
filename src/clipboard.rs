@@ -23,8 +23,9 @@ pub trait SystemClipboard: Send {
     /// file, or nothing at all, and is distinct from an error: a paste key
     /// asks this first and falls back to text, so "no image here" must not
     /// read as "the clipboard is broken". The bytes are handed over exactly as
-    /// the platform produced them; nothing here decides what format they are
-    /// in.
+    /// the platform produced them, except native bitmap clipboard layouts may
+    /// be encoded into a portable image format. Storage still verifies the
+    /// image signature before choosing an extension.
     ///
     /// Clipboards that cannot produce an image at all default to `None` rather
     /// than to a failure, which is what keeps the inert and in-memory
@@ -65,7 +66,7 @@ impl SystemClipboard for CommandClipboard {
     fn read_image(&mut self) -> Result<Option<Vec<u8>>> {
         #[cfg(windows)]
         {
-            Ok(None)
+            windows::read_image()
         }
         #[cfg(not(windows))]
         {

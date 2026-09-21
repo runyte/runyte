@@ -1449,13 +1449,13 @@ does not bundle that runtime.
 | Editing | Unicode text, selections, search, undo/redo, save, LF/CRLF, buffers and panes |
 | Files | Explorer, create, rename, move, copy, confirmed deletion and collision refusal |
 | Syntax | Bundled Tree-sitter highlighting and syntax tools |
-| Input | Native console input, bracketed paste and Unicode text clipboard |
+| Input | Native console input, bracketed paste, Unicode text clipboard and image paste |
 | Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
 | Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
 | Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
-| Deferred | Plugins, context bridge, persistent sessions, image paste, external file/URL opening, `--wait` and `:quit-here` |
+| Deferred | Plugins, context bridge, persistent sessions, external file/URL opening, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -1495,7 +1495,7 @@ filesystem operations remain unvalidated; failures preserve recoverable edits.
 The outer terminal can reserve shortcuts such as `Ctrl-Shift-v` for paste.
 Bracketed text paste is delivered as text, including in Normal mode, so pasted
 command-looking lines do not execute editor commands. `Ctrl-v` uses the native
-text clipboard. Image paste is unavailable. Keyboard-layout and IME behavior
+clipboard for text and images. Keyboard-layout and IME behavior
 beyond the automated input cases still needs reports from native setups.
 
 ### Startup files and input
@@ -1865,10 +1865,19 @@ machine with no helper that can hand one over, or one whose display server is
 not answering — pastes text instead, exactly as `Space c p` does, so `Ctrl-v`
 stays useful wherever an ordinary paste works.
 
-On Linux and macOS, image-cache directories and images are private (`0700`
-and `0600`). Symlinked storage paths, hard-linked entries, and existing files
+Image-cache directories and images are private: `0700` and `0600` on Linux
+and macOS, and owner-only permissions on Windows local NTFS. Symlinked or
+reparse-point storage paths, hard-linked entries, and existing files
 whose bytes disagree with their content-hash name are refused. Temporary
 writes use exclusively created files and atomic publication.
+
+On Windows, image paste reads registered PNG data or converts supported native
+bitmap clipboard data to PNG. Plain text takes precedence, as below. Clipboard
+data and converted images are bounded to 64 MiB; bitmap dimensions must also
+fit within 64 MiB of RGBA pixels. Unsupported compressed bitmap layouts and
+custom color profiles report an error. The editor waits at most one second
+for a clipboard request; if Windows delays it longer, another request reports
+that the clipboard is still busy. Retry after the worker finishes.
 
 A clipboard offering text *as well as* a picture counts as holding text.
 Copying a range of spreadsheet cells or a formatted passage attaches a rendered

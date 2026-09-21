@@ -997,7 +997,6 @@ impl ImageClipboard {
         }
     }
 
-    #[cfg(not(windows))]
     fn text(text: &str) -> Self {
         Self {
             image: None,
@@ -1036,7 +1035,6 @@ fn png(tail: &str) -> Vec<u8> {
 /// taken from their own content, and the document gets a numbered reference to
 /// that file.
 #[test]
-#[cfg(not(windows))]
 fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
     let fixture = temporary("clipboard-image-paste");
     let project = fixture.join("project");
@@ -1103,7 +1101,6 @@ fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
 /// editor keeps, so a file reopened in a later session does not restart at
 /// one.
 #[test]
-#[cfg(not(windows))]
 fn image_numbering_continues_from_what_the_document_already_holds() {
     let fixture = temporary("clipboard-image-numbering");
     let project = fixture.join("project");
@@ -1193,7 +1190,6 @@ fn an_explorer_refuses_a_pasted_image() {
 
 /// In Normal mode, an image reference is pasted after a bare caret.
 #[test]
-#[cfg(not(windows))]
 fn a_normal_mode_image_paste_lands_after_a_bare_caret() {
     let fixture = temporary("clipboard-image-modal");
     let project = fixture.join("project");

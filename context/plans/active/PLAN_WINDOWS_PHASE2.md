@@ -453,7 +453,44 @@ The contract follows Microsoft's
 [clipboard format conversion](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
 and [bitmap header](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header)
 documentation. Two independent design reviews found no blocker; implementation
-and acceptance remain pending.
+and independent implementation review are now complete with no findings.
+Thirteen native clipboard tests, nine cache tests and 98 editing workflow tests
+pass. The native fixture reacquires clipboard handles after opening instead of
+retaining handles transferred to Windows; sequence and repeated-byte checks
+verify reads do not replace clipboard content. Formatting, all-target Clippy
+and the complete native suite pass: 2,973 passed, zero failures and 42 ignored
+entries across 42 libtest/doc groups, plus six harness-free transport cases.
+Cross-platform acceptance remains pending.
+
+#### Sub-phase 2.4 package 3 contract
+
+Default file/directory/HTTP(S) opening uses ShellExecuteEx on a bounded STA
+worker, suppressing ordinary shell error dialogs; Windows security prompts are
+not suppressed. NOASYNC requests worker-side file dispatch without relying on
+a message loop, but Windows does not apply that flag to URI/namespace items.
+The editor must observe dispatch acceptance asynchronously rather than
+wait for shell association lookup. A successful dispatch is not proof that the
+target application displayed the file. Unknown startup outcomes are never
+automatically retried, and outstanding calls retain admission slots.
+
+Explicit program choices use native executable discovery and Windows argument
+parsing, append the literal target as one argument, and launch without inherited
+handles or a kill-on-close job. Process/thread handles close after accepted
+creation; no worker waits for the viewer to exit. This permits the application
+to outlive the editor, subject to any externally imposed job restrictions.
+Default choices remain display labels rather than fabricated executables.
+Existing foreground-authority checks and validated plugin targets are retained.
+
+Tests must inject the shell association boundary instead of opening the user's
+browser or viewer or changing associations. Compiled native fixtures verify
+arguments, handle isolation and survival after the launching helper exits.
+The contract follows Microsoft's
+[ShellExecuteEx](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecuteexw)
+and [CreateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw)
+contracts. Two design reviews identify no decision blocker. Editor ports return
+accepted or pending dispatch, and cache updates require confirmed acceptance.
+The existing maintenance tick drains completions without adding an idle timer.
+Implementation follows the reviewed and natively validated package 2.
 
 ### Current implementation evidence
 
