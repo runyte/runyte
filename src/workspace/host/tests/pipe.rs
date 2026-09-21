@@ -10,6 +10,10 @@ use crate::{
 };
 
 struct Clipboard;
+
+fn shell(unix: &'static str, windows: &'static str) -> &'static str {
+    if cfg!(windows) { windows } else { unix }
+}
 impl SystemClipboard for Clipboard {
     fn read(&mut self) -> anyhow::Result<String> {
         anyhow::bail!("inert")
@@ -62,9 +66,16 @@ fn undo(host: &mut WorkspaceHost) {
 
 #[tokio::test]
 async fn both_spellings_preserve_newlines_and_undo_once_without_a_frame() {
-    for command in ["pipe sort", "| sort"] {
+    for prefix in ["pipe", "|"] {
+        let command = format!(
+            "{prefix} {}",
+            shell(
+                "sort",
+                r#"[Console]::Write((([Console]::In.ReadToEnd().TrimEnd([char]10).Split([char]10) | Sort-Object) -join "`n") + "`n")"#,
+            )
+        );
         let (_root, mut host, mut receiver) = host("b\na\n");
-        invoke(&mut host, command);
+        invoke(&mut host, &command);
         finish(&mut host, &mut receiver).await;
         assert_eq!(host.app.buffers[0].to_string(), "a\nb\n");
         assert!(host.current_frame_id().is_none());
@@ -78,7 +89,13 @@ async fn unicode_reversed_selections_remain_independent_across_panes_and_attachm
     let (root, mut host, mut receiver) = host("éß 😀xy");
     host.app.panes.get_mut(&0).unwrap().selection =
         Selection::new(vec![Range::new(1, 0), Range::new(3, 5)], 1);
-    invoke(&mut host, "pipe cat; printf '!\\n'");
+    invoke(
+        &mut host,
+        shell(
+            "pipe cat; printf '!\\n'",
+            r#"pipe [Console]::Write([Console]::In.ReadToEnd() + "!`n")"#,
+        ),
+    );
     host.note_plugin_frontend(false);
     host.sync_plugin_observers();
     host.app
@@ -100,7 +117,10 @@ async fn unicode_reversed_selections_remain_independent_across_panes_and_attachm
 async fn stale_closed_readonly_and_cancelled_results_never_apply() {
     for scenario in ["edit", "undo", "closed", "readonly", "cancel"] {
         let (_root, mut host, mut receiver) = host("abc");
-        invoke(&mut host, "pipe printf changed");
+        invoke(
+            &mut host,
+            shell("pipe printf changed", "pipe [Console]::Write('changed')"),
+        );
         let completion = receiver.recv().await.unwrap();
         match scenario {
             "edit" | "undo" => {
@@ -128,11 +148,17 @@ async fn failed_selection_is_atomic_and_empty_output_deletes() {
         Selection::new(vec![Range::new(0, 0), Range::new(2, 2)], 0);
     invoke(
         &mut host,
-        "pipe input=$(cat); if [ \"$input\" = b ]; then echo failed >&2; exit 3; fi; printf changed",
+        shell(
+            "pipe input=$(cat); if [ \"$input\" = b ]; then echo failed >&2; exit 3; fi; printf changed",
+            "pipe if ([Console]::In.ReadToEnd() -eq 'b') { [Console]::Error.Write('failed'); exit 3 }; [Console]::Write('changed')",
+        ),
     );
     finish(&mut host, &mut receiver).await;
     assert_eq!(host.app.buffers[0].to_string(), "a b");
-    invoke(&mut host, "| cat >/dev/null");
+    invoke(
+        &mut host,
+        shell("| cat >/dev/null", "| $null = [Console]::In.ReadToEnd()"),
+    );
     finish(&mut host, &mut receiver).await;
     assert_eq!(host.app.buffers[0].to_string(), " ");
     undo(&mut host);
@@ -142,7 +168,10 @@ async fn failed_selection_is_atomic_and_empty_output_deletes() {
 #[tokio::test]
 async fn admission_and_shutdown_bound_the_workspace_job() {
     let (_root, mut host, mut receiver) = host("abc");
-    invoke(&mut host, "pipe sleep 30");
+    invoke(
+        &mut host,
+        shell("pipe sleep 30", "pipe Start-Sleep -Seconds 30"),
+    );
     assert!(matches!(
         host.app
             .execute(parse_colon_command("pipe cat").unwrap())
@@ -167,7 +196,10 @@ async fn command_quotes_trailing_escapes_and_captured_directory_reach_the_shell(
     let (root, mut host, mut receiver) = host("abc");
     let invocation = host
         .app
-        .parse_command("pipe printf '%s' escaped\\ ")
+        .parse_command(shell(
+            "pipe printf '%s' escaped\\ ",
+            "pipe [Console]::Write('escaped ') ",
+        ))
         .unwrap();
     host.app.execute(invocation).unwrap();
     host.sync_pipe();
@@ -176,21 +208,37 @@ async fn command_quotes_trailing_escapes_and_captured_directory_reach_the_shell(
     host.app
         .execute(CommandInvocation::editor(EditorCommand::SelectAll, Default::default()).unwrap())
         .unwrap();
-    let invocation = host.app.parse_command("| pwd").unwrap();
+    let invocation = host
+        .app
+        .parse_command(shell(
+            "| pwd",
+            r#"| [Console]::Write([Environment]::CurrentDirectory + "`n")"#,
+        ))
+        .unwrap();
     host.app.execute(invocation).unwrap();
     host.app.project_root = root.join("not-the-captured-root");
     host.sync_pipe();
     finish(&mut host, &mut receiver).await;
+    let directory = host.app.buffers[0].to_string();
+    assert!(directory.ends_with('\n'));
     assert_eq!(
-        host.app.buffers[0].to_string(),
-        format!("{}\n", root.path().display())
+        std::path::Path::new(directory.trim_end_matches('\n'))
+            .canonicalize()
+            .unwrap(),
+        root.path().canonicalize().unwrap()
     );
 }
 
 #[tokio::test]
 async fn empty_buffer_empty_output_is_success_and_admission_limits_do_not_queue_work() {
     let (_root, mut host, mut receiver) = host("");
-    invoke(&mut host, "pipe cat");
+    invoke(
+        &mut host,
+        shell(
+            "pipe cat",
+            "pipe [Console]::Write([Console]::In.ReadToEnd())",
+        ),
+    );
     finish(&mut host, &mut receiver).await;
     assert_eq!(host.app.status, "Pipe completed");
     for command in ["pipe".to_owned(), format!("pipe {}", "x".repeat(16385))] {

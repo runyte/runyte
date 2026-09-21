@@ -23,7 +23,8 @@ incorporated their actionable findings before acceptance.
 
 Sub-phase 2.2's private storage and diagnostics are complete. Sub-phase 2.3
 restores language services with all three packages independently reviewed and
-native acceptance complete; cross-platform CI acceptance is pending. Sub-phase
+native acceptance complete; cross-platform CI acceptance passes at `4d43fa6`
+in run `35606557698`. Sub-phase
 2.4 restores the remaining standalone integrations. Combined
 branch/worktree deletion is explicitly refused without mutation on Windows;
 separate guarded worktree removal and branch deletion are supported. The
@@ -79,6 +80,11 @@ request an independent subagent review, incorporate actionable findings, then
 start the next package. Dependency and acceptance details are refined before
 each sub-phase begins. A deferred feature remains explicitly unavailable until
 its native boundary is ready; the Phase-2 label alone does not enable it.
+
+Local Windows validation is serialized with `CARGO_BUILD_JOBS=1` and
+`RUST_TEST_THREADS=2`; agents do not run simultaneous builds or full suites.
+This bounds memory pressure after a hard reboot during development. Memory
+exhaustion has not been established as the cause of that reboot.
 
 ## Sub-phase 2.1 work packages
 
@@ -350,7 +356,95 @@ limit. Formatting, denied-warning all-target Clippy and the full native suite
 pass: 2,940 passed, zero failures and 41 ignored entries across 42 libtest/doc
 groups, plus six harness-free native transport cases. The final required real
 server acceptance passes separately in 1.62 seconds with isolated Cargo home.
-Cross-platform CI acceptance remains pending for this checkpoint.
+Cross-platform run
+[`35593594927`](https://github.com/runyte/runyte/actions/runs/35593594927) passes
+all seventeen non-Windows jobs, including both unchanged coverage floors.
+The Windows suite finds a setup-prompt fixture assumption: the longer runner
+path wraps `[y/N]:` across display rows. Correction `4d43fa6` matches setup
+prompts across rows while retaining row boundaries for the editor screen.
+It chooses terminal width to force the regression without lengthening cwd.
+Independent review has no remaining findings, and native acceptance passes.
+Full cross-platform acceptance passes in
+[`35606557698`](https://github.com/runyte/runyte/actions/runs/35606557698).
+
+### Sub-phase 2.4 work packages
+
+1. Native shell filters: preserve admission limits, asynchronous host ownership,
+   exact UTF-8 output, atomic selection replacement, cancellation and cleanup.
+2. Native image clipboard formats and private image-cache storage, with isolated
+   clipboard fixtures and restored editor image-paste tests.
+3. Native system file/URL opening and explicit program selection, retaining
+   literal target arguments and detached ownership appropriate to GUI programs.
+4. Standalone `--wait` behavior and an explicit PowerShell directory-handoff
+   wrapper for `:quit-here`, with native editor and shell acceptance.
+
+Each package receives independent review until no findings remain before the
+next implementation begins. Sub-phase 2.3 checkpoint `9aa3a18` is pushed;
+the reviewed prompt-fixture correction and current acceptance run are recorded
+above.
+
+#### Sub-phase 2.4 package 1 contract
+
+Windows filters use the installed system Windows PowerShell with no profile and
+noninteractive text I/O, independently of the terminal's `COMSPEC`. A fixed
+encoded bootstrap reads the user command from a child-only environment entry,
+removes that entry, and invokes the script block. Selected text stays on stdin.
+This preserves the existing 16 KiB command limit: encoding the entire command
+could exceed the native command-line bound, and cmd has its own smaller bound.
+Console input/output and native-pipeline output encoding use UTF-8 without BOM.
+Commands can read exact input through `[Console]::In.ReadToEnd()`; ordinary
+PowerShell object pipelines retain their own formatting behavior.
+
+The process boundary reuses native jobs and isolated inherited handles, with
+the audited overlapped-pipe constructor extracted from LSP. One current-thread
+runtime in the existing background filter worker owns raw pipe I/O; framing
+remains specific to LSP. The job-wide deadline, aggregate stdout limit, bounded
+stderr, cancellation and leader-exit descendant cleanup remain required.
+Review specifically requires successful native stderr and failing native/cmdlet
+commands to be distinguished before adopting an error-action policy.
+
+The design review found no ownership blocker. Invocation and command limits
+follow Microsoft's [Windows PowerShell invocation contract](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1)
+and [cmd command-line limit](https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/command-line-string-limitation).
+Implementation and independent review are complete, with no remaining findings.
+Review added native regressions for invalid UTF-8 output, stderr flooding,
+blocked stdin and descendant-held output after leader exit. Eight backend
+tests, nine host workflow tests, five platform boundary tests and real ConPTY
+filter/undo acceptance pass. The shared pipe extraction also retains LSP's
+framing and lifecycle tests. Formatting, all-target Clippy with warnings denied
+and the complete native suite pass: 2,957 passed, zero failures and 42 ignored
+entries across 42 libtest/doc groups, plus six harness-free transport cases.
+Required real rust-analyzer acceptance passes separately after the extraction.
+
+The ConPTY save fixture now waits for the editor's successful write status
+before reading completed contents. A single pre-completion `NotFound` read is
+recorded separately in
+[`windows_save_path_visibility.md`](../../issues/windows_save_path_visibility.md);
+neither a persistent save failure nor its underlying cause is established.
+
+#### Sub-phase 2.4 package 2 contract
+
+Image paste retains text priority when the clipboard advertises plain text,
+including Windows-synthesized Unicode text. Otherwise it prefers registered
+PNG data, then DIBV5 and DIB bitmap data. Native reads share the existing one
+worker and one-second editor wait; bounded data is copied before the clipboard
+is released and conversion begins. PNG bytes pass through without decoding.
+Bitmap conversion bounds input, decoded RGBA dimensions and encoded output
+independently, each to 64 MiB, and streams rows into PNG encoding.
+
+Supported bitmap layouts have validated INFO/V4/V5 headers, palettes or
+nonoverlapping contiguous bit masks, aligned rows and explicit orientation.
+Unused BGRX bytes are opaque; alpha requires an explicit mask. Unsupported
+compression or color profiles are refused, never followed as filesystem paths.
+Advertised image read/conversion failures remain errors rather than text paste.
+Native fixtures use a private window station and explicitly associate worker
+threads with its desktop; they never replace the user's clipboard.
+
+The contract follows Microsoft's
+[clipboard format conversion](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
+and [bitmap header](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header)
+documentation. Two independent design reviews found no blocker; implementation
+and acceptance remain pending.
 
 ### Current implementation evidence
 

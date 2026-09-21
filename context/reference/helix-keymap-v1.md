@@ -10,7 +10,7 @@ verified 2026-07-27.
 Status meanings:
 
 The Windows port retains this command inventory. Plugins,
-persistent sessions, context access, shell filters, external opening,
+persistent sessions, context access, external opening,
 and parent-shell directory changes report their
 platform limitation through execution and discovery. Syntax commands remain
 independent of LSP. Integrated Git is available when native Git is installed;
@@ -21,6 +21,8 @@ No default key spelling changes as part of these platform boundaries.
 Private standalone diagnostic logs and `:log-open` are available on local NTFS.
 Language services are available with an installed native server and workspace
 approval; their commands, help and hints use the same capability checks as Unix.
+Shell filters use Windows PowerShell through `:pipe` and `:|`; the bare `|` key
+remains reserved, as on Unix.
 
 - **Implemented** — registered and dispatched by Runyte.
 - **Deviation** — implemented, but intentionally differs from Helix or retains

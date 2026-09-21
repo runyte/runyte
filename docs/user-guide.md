@@ -1454,7 +1454,8 @@ does not bundle that runtime.
 | Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
 | Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
-| Deferred | Plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, `--wait` and `:quit-here` |
+| Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
+| Deferred | Plugins, context bridge, persistent sessions, image paste, external file/URL opening, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -2281,11 +2282,21 @@ information, while an already captured review keeps its original links.
 | `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 
-`:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
+On Unix, `:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
 stdin and replaces it with stdout. Programs resolve through the inherited
 `PATH`; arguments, quotes and pipelines are interpreted by the shell. Runyte
 does not expand editor variables or interpolate selected text into the command.
 The working directory is the workspace root captured when the command starts.
+
+Windows uses the system Windows PowerShell with no profile, in noninteractive
+mode, independently of `COMSPEC`. Commands use PowerShell syntax. For example,
+`:pipe [Console]::Write([Console]::In.ReadToEnd().ToUpperInvariant())` replaces
+each selection with its uppercase text. Console input/output and native pipeline
+output use UTF-8 without a BOM. Use `[Console]::In.ReadToEnd()` and
+`[Console]::Write(...)` when exact newlines matter; PowerShell object pipelines
+apply their own text formatting. Selected text is supplied only as stdin and
+is never inserted into the command. The workspace cwd must have an equivalent
+ordinary Windows spelling shorter than 260 UTF-16 units.
 
 Selections run sequentially, with at most one pipe job per workspace and 256
 selections per job. Command text is limited to 16 KiB, selected input and combined
@@ -2301,8 +2312,9 @@ edit followed by undo), closed, or became read-only. Moving selections does not
 retarget the result. `:pipe-cancel` cancels the job. The workspace host owns it in
 both modes, so detaching and reattaching a persistent session does not restart or
 cancel it. Host shutdown cancels outstanding work. Cancellation, timeout, failure
-and shell completion kill the owned process group and reap the shell; processes
-that deliberately leave that group are outside cleanup’s scope. Inherited output
+and shell completion kill the owned process tree. Unix uses a process group and
+reaps the shell; processes that deliberately leave that group are outside its
+cleanup scope. Windows uses a job that disallows breakaway. Inherited output
 pipes cannot keep a completed shell’s job alive indefinitely. No default key
 binding is added; the bare `|` key remains reserved.
 

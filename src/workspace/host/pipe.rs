@@ -122,6 +122,6 @@ impl WorkspaceHost {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 #[path = "tests/pipe.rs"]
 mod tests;

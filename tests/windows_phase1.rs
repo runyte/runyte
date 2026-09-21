@@ -22,7 +22,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     };
     let root = TestRuntimeRoot::new("windows-keys").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    let commands = [EditorCommand::ShellPipe, EditorCommand::OpenExplorerSystem];
+    let commands = [EditorCommand::OpenExplorerSystem];
     let bindings = commands
         .iter()
         .enumerate()
@@ -72,20 +72,14 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
         default_keymap(),
         false,
     );
-    assert!(text.contains("Shell filters are unavailable in Windows Phase 1"));
+    assert!(!text.contains("Shell filters are unavailable in Windows Phase 1"));
 }
 
 #[test]
 fn deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in [
-        "plugins",
-        "context-access",
-        "pipe echo text",
-        "quit-here",
-        "session-list",
-    ] {
+    for spelling in ["plugins", "context-access", "quit-here", "session-list"] {
         let name = spelling.split_whitespace().next().unwrap();
         let spec = resolve_command(name).unwrap();
         let availability = app.command_capabilities().command_availability(spec);

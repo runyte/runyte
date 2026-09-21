@@ -191,18 +191,24 @@ fn native_editor_console_fixture() {
     editor.send("\x1b");
     editor.until("NOR");
     editor.send(":write\r");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let saved = std::fs::read_to_string(&file).unwrap();
-        if saved.contains("café 😀") {
-            // Paste preserves its LF bytes; the existing file's CRLF remains
-            // intact instead of normalizing the entire buffer during save.
-            assert_eq!(saved, "café 😀\nsecond-lineoriginal\r\n");
-            break;
-        }
-        assert!(Instant::now() < deadline, "file was not saved: {saved:?}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    editor.until("wrote");
+    // Inspect the completed save, after the editor acknowledges it. Paste
+    // preserves LF bytes alongside the existing CRLF without normalization.
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "café 😀\nsecond-lineoriginal\r\n"
+    );
+    editor.send("%:pipe [Console]::Write([Console]::In.ReadToEnd().ToUpperInvariant())\r");
+    editor.until("CAFÉ");
+    editor.until("SECOND-LINEORIGINAL");
+    // The whole filter is one undo transaction; its unsaved result must not
+    // change the previously saved bytes on disk.
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "café 😀\nsecond-lineoriginal\r\n"
+    );
+    editor.send("u");
+    editor.until("café");
     editor.send(":quit\r");
     editor.exit();
     assert!(

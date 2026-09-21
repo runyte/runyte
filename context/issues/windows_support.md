@@ -145,8 +145,14 @@ URIs and account-scoped permission storage. All three packages have independent
 reviews with no remaining findings. Formatting, Clippy and the full native suite
 pass (2,940 tests); required real rust-analyzer acceptance separately covers
 initialization, diagnostics, edits, restart and revocation cleanup. CI provisions
-and requires that acceptance. Cross-platform CI for this checkpoint is pending;
+and requires that acceptance. Cross-platform CI passes at `4d43fa6` in
+[run 35606557698](https://github.com/runyte/runyte/actions/runs/35606557698);
 standalone integrations, persistent sessions, plugins and context access remain.
+Sub-phase 2.4's shell-filter package enables Windows PowerShell filters with
+bounded UTF-8 streams, cancellation and owned process-tree cleanup. Independent
+review has no remaining findings; formatting, Clippy, 2,957 native tests and
+required real rust-analyzer acceptance pass. Image paste, external opening and
+shell-directory handoff remain the following standalone work packages.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

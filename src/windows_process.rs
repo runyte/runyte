@@ -3,6 +3,8 @@
 //! Native process ownership shared by terminals and background services.
 //! A job has no breakaway permission and closes every owned descendant.
 
+pub(crate) mod overlapped;
+
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
