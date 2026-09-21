@@ -2,8 +2,9 @@
 
 //! Typed Git worktree discovery values and porcelain parser.
 
+#[cfg(unix)]
+use std::ffi::OsString;
 use std::{
-    ffi::OsString,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -37,9 +38,9 @@ pub struct WorktreeCreate {
     pub upstream: Option<String>,
 }
 
-/// Parses `git worktree list --porcelain -z` without interpreting a path as
-/// UTF-8. Textual Git identities remain strict so malformed refs cannot be
-/// confused with a valid selectable branch.
+/// Parses `git worktree list --porcelain -z` losslessly: Unix retains path
+/// bytes; Windows requires UTF-8 rather than substituting another path.
+/// Textual Git identities remain strict on every platform.
 pub fn parse_worktree_porcelain(repository: &Repository, output: &[u8]) -> Result<Vec<Worktree>> {
     let mut result = Vec::new();
     let mut current: Option<Worktree> = None;
@@ -54,7 +55,10 @@ pub fn parse_worktree_porcelain(repository: &Repository, output: &[u8]) -> Resul
             if let Some(worktree) = current.take() {
                 result.push(worktree);
             }
-            let path = decode_path(path);
+            let path = decode_path(path).ok_or_else(|| GitError::Malformed {
+                command: "git worktree list --porcelain -z".to_owned(),
+                detail: "worktree path is not UTF-8".to_owned(),
+            })?;
             current = Some(Worktree {
                 missing: !path.exists(),
                 path,
@@ -122,14 +126,14 @@ fn text(value: &[u8], field: &str) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn decode_path(value: &[u8]) -> PathBuf {
+fn decode_path(value: &[u8]) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
-    PathBuf::from(OsString::from_vec(value.to_vec()))
+    Some(PathBuf::from(OsString::from_vec(value.to_vec())))
 }
 
 #[cfg(not(unix))]
-fn decode_path(value: &[u8]) -> PathBuf {
-    PathBuf::from(OsString::from(String::from_utf8_lossy(value).into_owned()))
+fn decode_path(value: &[u8]) -> Option<PathBuf> {
+    std::str::from_utf8(value).ok().map(PathBuf::from)
 }
 
 /// What a workspace directory's Git metadata says about it, read from files
@@ -203,7 +207,7 @@ fn read_gitdir_link(link: &Path) -> Option<PathBuf> {
     let contents = read_bounded(link, MAX_GIT_LINK_BYTES)?;
     let value = contents.strip_prefix(b"gitdir:")?;
     let value = trim_ascii_bytes(value);
-    (!value.is_empty()).then(|| decode_path(value))
+    (!value.is_empty()).then(|| decode_path(value)).flatten()
 }
 
 /// The directory shared with every other worktree of the same repository.
@@ -218,7 +222,9 @@ fn read_common_dir(git_dir: &Path) -> PathBuf {
     if value.is_empty() {
         return git_dir.to_path_buf();
     }
-    let target = decode_path(value);
+    let Some(target) = decode_path(value) else {
+        return git_dir.to_path_buf();
+    };
     let common = if target.is_absolute() {
         target
     } else {
@@ -336,7 +342,10 @@ mod tests {
         let repository = Repository::with_common_dir("/repo", "/common");
         let mut input =
             b"worktree /repo\0HEAD 0123\0branch refs/heads/main\0\0worktree /tmp/odd-".to_vec();
+        #[cfg(unix)]
         input.extend_from_slice(&[0xff]);
+        #[cfg(not(unix))]
+        input.extend_from_slice("café".as_bytes());
         input.extend_from_slice(
             b"\0HEAD abcd\0detached\0locked maintenance\0prunable missing gitdir\0\0worktree /bare\0bare\0\0",
         );
@@ -401,6 +410,39 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn malformed_native_paths_cannot_select_replacement_character_directories() {
+        let root = ScratchRoot::new("strict-native-paths");
+        let replacement = root.path().join("\u{fffd}");
+        fs::create_dir(&replacement).unwrap();
+        fs::write(replacement.join("HEAD"), "ref: refs/heads/wrong\n").unwrap();
+        fs::write(
+            replacement.join("config"),
+            "[remote \"origin\"]\nurl = wrong\n",
+        )
+        .unwrap();
+        let mut malformed = root.path().to_str().unwrap().as_bytes().to_vec();
+        malformed.extend_from_slice(b"/\xff");
+        let mut porcelain = b"worktree ".to_vec();
+        porcelain.extend_from_slice(&malformed);
+        porcelain.extend_from_slice(b"\0\0");
+        assert!(matches!(
+            parse_worktree_porcelain(&Repository::new(root.path()), &porcelain),
+            Err(GitError::Malformed { .. })
+        ));
+        let mut link = b"gitdir: ".to_vec();
+        link.extend_from_slice(&malformed);
+        fs::write(root.path().join(".git"), link).unwrap();
+        assert!(read_workspace_git_facts(root.path()).is_none());
+        fs::remove_file(root.path().join(".git")).unwrap();
+        fs::create_dir(root.path().join(".git")).unwrap();
+        fs::write(root.path().join(".git/commondir"), malformed).unwrap();
+        let facts = read_workspace_git_facts(root.path()).unwrap();
+        assert!(facts.remote.is_none());
+        assert!(facts.worktree.is_none());
     }
 
     #[test]

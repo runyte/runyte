@@ -75,6 +75,8 @@ pub mod ui;
 pub(crate) mod user_paths;
 #[cfg(windows)]
 mod windows_fs;
+#[cfg(windows)]
+mod windows_process;
 pub mod word_index;
 pub mod workspace;
 pub mod workspace_search;

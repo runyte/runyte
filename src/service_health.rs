@@ -325,11 +325,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.command_availability(git_status).reason(),
-            Some(if cfg!(windows) {
-                "Git is unavailable in Windows Phase 1"
-            } else {
-                "not a Git repository"
-            })
+            Some("not a Git repository")
         );
         assert_eq!(
             snapshot.command_availability(session_attach).reason(),

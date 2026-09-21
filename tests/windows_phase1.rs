@@ -88,7 +88,6 @@ fn deferred_commands_agree_with_palette_availability() {
         "lsp-status",
         "plugins",
         "context-access",
-        "git-status",
         "pipe echo text",
         "quit-here",
         "log-open",
@@ -130,7 +129,6 @@ fn enabled_plugins_cannot_start_even_without_a_runtime() {
     let mut host = WorkspaceHost::new(app);
     assert!(host.start_plugins().is_none());
     assert!(host.start_plugins().is_none());
-    assert!(runyte::git::GitCliProvider::from_environment().is_none());
 }
 
 #[test]

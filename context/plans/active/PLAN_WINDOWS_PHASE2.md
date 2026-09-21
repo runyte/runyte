@@ -4,39 +4,23 @@
 
 Phase 1 is complete and pushed through `fc9c324`; remote acceptance run
 [`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
-passes every job. This documentation checkpoint does not include the unfinished
-Phase-2 source. The package-1/2 implementation and partial package-3 results
-below describe the existing local prototype, not code available from a fresh
-checkout of this commit. Preserve that working tree when continuing; if it is
-unavailable, these records describe the design to reconstruct and revalidate.
+passes every job. Sub-phase 2.1 now includes the native Git implementation:
+executable discovery, isolated process ownership, native repository paths and
+editor availability. Earlier prototype records are retained below as history.
 
-The prototype changes `src/git/cli.rs`, `src/lib.rs`, `src/windows_fs.rs`,
-`src/terminal/pty_windows.rs`, `src/terminal/windows_command.rs`, and
-`tests/git_provider.rs`, and adds `src/windows_process.rs`,
-`src/git/executable_windows.rs`, and `src/git/paths_windows.rs`. Integrated Git
-remains disabled. The parallel provider suite has unresolved failures.
+Integrated Git is enabled when Git is installed. The process-ownership
+correction passes all 94 parallel native provider tests, and restored editor
+coverage passes 142 tests. Native handoff passes formatting, all-target Clippy
+with warnings denied, and the full suite: 2,874 passed, zero failures and 34
+ignored fixture/performance entries across 40 test binaries/doc-test groups.
+Cross-platform CI acceptance remains pending; broader Phase 2 integrations
+remain deferred.
 
-The immediate package returns to the process-ownership boundary:
-
-1. Add a deterministic native overlap test. Hold the custom launcher after it
-   creates inheritable child pipe handles but before CreateProcess. During that
-   interval, launch an unrelated compiled, long-lived fixture through ordinary
-   `std::process::Command`. Use acknowledgments and bounded control channels to
-   prove whether that sibling inherits a pipe and keeps it open after the
-   intended Git child and its owned descendants exit. Identify the actual pipe,
-   clean up all fixture processes on failure, and avoid timing sleeps or
-   executing test-written programs.
-2. Test delayed pipe-reader scheduling independently. An output-completion
-   timeout is not itself proof of inheritance; keep the two diagnoses separate.
-3. Request independent subagent review and incorporate findings before the
-   correction package. Select the smallest reliable native ownership strategy
-   from this evidence. An isolated helper parent and a shared native launch
-   boundary are candidates; no helper design is committed by this record.
-4. After the correction and its review, rerun the parallel real-repository
-   provider suite, then finish path and editor workflows. Native branch deletion
-   with a worktree must sequence removal before deletion; the existing non-Unix
-   cascade path must not silently skip that step. Verify absent-Git behavior,
-   full native gates and cross-platform CI before enabling integration.
+The next package completes cross-platform acceptance. Combined
+branch/worktree deletion is explicitly refused without mutation on Windows;
+separate guarded worktree removal and branch deletion are supported. The
+Unix session teardown coordinator remains unchanged. The missing-Git startup
+acceptance passes with an isolated empty executable search path.
 
 The Unix PTY investigation runs independently on `dev`, described by
 [issue commit `9b265aa`](https://github.com/runyte/runyte/blob/9b265aa122dea9637023cf1f4549f5ce75a8639c/context/issues/unix_pty_descriptor_inheritance.md).
@@ -109,6 +93,100 @@ its native boundary is ready; the Phase-2 label alone does not enable it.
    Document native limits before declaring the sub-phase complete.
 
 ## Progress
+
+### Sub-phase 2.2 preparation
+
+After Git acceptance, private storage and diagnostics proceed in four reviewed
+packages:
+
+1. Establish the native storage contract and regression fixtures: pinned
+   directory identity, rejection of reparse points and hardlinked files,
+   owner-only access, bounded reads, and behavior after names are replaced.
+   Select a handle-relative native boundary from these tests; pathname
+   validation alone is not an ownership boundary.
+2. Implement the Windows `private_storage::Directory` interface and
+   `OwnedFile` identity/cleanup. Preserve exclusive creation, nontruncating
+   append, atomic replacement, and existing-versus-creating open semantics.
+   Establish the native flush/rename guarantees explicitly before enabling
+   callers that require durable storage.
+3. Wire private diagnostic logs and their command availability to the verified
+   storage boundary. Keep cache/configuration roots injectable and keep language
+   permissions and other deferred integrations disabled until their own
+   sub-phases validate them.
+4. Validate replacement races, parallel writers, failure cleanup, bounded log
+   behavior, native permissions, full handoff gates and cross-platform CI.
+   Record any native durability limit rather than silently weakening the
+   existing contract.
+
+These packages are planned; native private storage and diagnostics are not
+implemented by the Git sub-phase.
+
+### Current implementation evidence
+
+Editor availability now depends on native executable discovery instead of a
+Windows-wide Git exclusion. Missing Git creates no Git service; commands,
+palette and health retain their ordinary absent-executable state. A compiled
+main-binary fixture invokes real `start_host_services` with empty child PATH
+and fixture-owned configuration, verifies no Git event receiver is created,
+and checks four Git commands remain unavailable without an editor exit.
+The test passes. The shared editor/discovery suite passes 142 native tests.
+`review_wp1` requested correction of the acceptance fixture's command API and
+explicit ConPTY cleanup in two restored editor tests; both were incorporated.
+Combined branch/worktree deletion now refuses instead of queuing branch
+deletion while skipping its worktree. This limit and optional-Git behavior are
+documented in the user guide and keymap register.
+
+Final repository-path review found a separate lossy Windows worktree decoder.
+Porcelain now rejects invalid UTF-8; malformed `.git` links yield absent facts
+and malformed `commondir` files retain the private Git directory as fallback.
+Unix preserves raw path bytes. The native regression creates an actual U+FFFD
+directory and verifies malformed bytes cannot redirect any of those reads into
+it. All ten metadata/parser tests pass. This incorporates `review_wp2`'s final
+required finding before editor enablement.
+
+The process correction uses an isolated inheritance parent created suspended
+with no inherited handles and atomic job membership. It never executes
+application code. Local pipe handles are noninheritable; their inheritable
+duplicates exist only in that parent's handle table. The actual Git child uses
+`PROC_THREAD_ATTRIBUTE_PARENT_PROCESS` and an explicit handle list, inheriting
+the same owned job before execution. The temporary parent is terminated after
+creation or on setup failure. This follows
+[Microsoft's isolated-parent approach](https://devblogs.microsoft.com/oldnewthing/20260511-00/?p=112313)
+without adding a helper executable or a runtime helper protocol. A separate
+suspended process is created per command; its cost is included in native
+provider acceptance, not a claimed startup benchmark.
+
+Windows Git output uses PeekNamedPipe to read only available bytes, then a final
+drain after leader exit and job termination. Reader scheduling no longer has a
+100 ms success deadline. The overlap regression now requires EOF while the
+unrelated child is still alive, and verifies it could not inject its marker.
+Eight native process tests pass (one ignored compiled fixture is exercised by
+them), including failure/unwind cleanup and job-close termination of the
+suspended parent. The gated output regression passes, and all 94 real provider
+tests pass concurrently in 42.82 seconds. `review_wp3` reviewed both packages;
+its bounded-read, live-sibling and finalizer-comment findings were incorporated.
+Final native handoff gates pass after the editor-workflow changes. The full
+suite also caught a stale Phase-1 test expecting every Windows Git command to
+be platform-disabled; it now leaves Git availability to the missing-executable
+acceptance fixture, which checks the exact nonfatal command outcome.
+
+The continuation diagnostics on 2026-09-21 confirm two separate problems.
+`mixed_standard_spawn_exposes_the_custom_pipe_inheritance_window` held the
+native launcher before CreateProcess, launched an unrelated compiled fixture
+through `std::process::Command`, and received that fixture's marker through the
+exact stdout pipe after the intended child and job exited. The marker read uses
+PeekNamedPipe and a bounded available-byte read; it does not wait for global EOF.
+`delayed_reader_deadline_is_not_evidence_of_inherited_pipes` held a reader behind
+an explicit gate until the existing completion deadline rejected it, then
+released it and recovered complete Git output and EOF. Both native diagnostics
+passed. This establishes inheritance and a separate scheduling false positive;
+it does not assign every prior provider failure to either cause.
+
+### Historical prototype checkpoint
+
+The entries below predate the corrections and acceptance results above.
+Their disabled-Git and failing-provider statements describe that earlier
+checkpoint, not the current implementation or next actions.
 
 Sub-phase 2.1 package 1 is implemented. `review_wp2` found no blocking issue
 and requested precise documentation of the public discovery method's ambient

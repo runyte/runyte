@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#[cfg(not(windows))]
 use std::rc::Rc;
 use std::{
     collections::HashSet,
@@ -58,7 +57,6 @@ fn open_filler_special_buffers(app: &mut App, count: usize) -> Vec<usize> {
         .collect()
 }
 
-#[cfg(not(windows))]
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);
@@ -175,9 +173,7 @@ mod comparisons;
 mod config_reload;
 mod editing;
 mod editing_and_buffers;
-#[cfg(not(windows))]
 mod git;
-#[cfg(not(windows))]
 mod git_discovery;
 mod language;
 mod markdown_positions;

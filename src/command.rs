@@ -1284,9 +1284,6 @@ impl CommandId {
         if !cfg!(windows) {
             return None;
         }
-        if matches!(self.category(), CommandCategory::Git) {
-            return Some("Git is unavailable in Windows Phase 1");
-        }
         if matches!(
             self.capability(),
             Some(CommandCapability::LspDocument | CommandCapability::LspManager)

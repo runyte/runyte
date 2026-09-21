@@ -1444,20 +1444,30 @@ MSVC builds require the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`).
 Install Microsoft's x64 Visual C++ Redistributable if it is absent; the ZIP
 does not bundle that runtime.
 
-| Area | Native Windows Phase 1 |
+| Area | Native Windows support |
 | --- | --- |
 | Editing | Unicode text, selections, search, undo/redo, save, LF/CRLF, buffers and panes |
 | Files | Explorer, create, rename, move, copy, confirmed deletion and collision refusal |
 | Syntax | Bundled Tree-sitter highlighting and syntax tools |
 | Input | Native console input, bracketed paste and Unicode text clipboard |
 | Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
-| Deferred | LSP, integrated Git, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, private diagnostic logs, `--wait` and `:quit-here` |
+| Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
+| Deferred | LSP, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, private diagnostic logs, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
-and `:service-health` for diagnostics. Ordinary Git commands can run in an
-integrated terminal when Git is installed; editor Git integration is planned
-as the first Phase-2 sub-phase and will remain disabled when Git is missing.
+and `:service-health` for diagnostics. Git integration is enabled when a native
+`git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
+Git is optional: if it is absent, Git commands are disabled with a clear reason,
+and editing still works. Restart Runyte after installing Git or changing `PATH`.
+Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
+
+Git working directories and worktree destinations need an equivalent ordinary
+Windows spelling shorter than 260 UTF-16 units. Unsupported paths are refused
+before worktree creation creates a branch. Worktree switching requires persistent
+sessions and remains unavailable. Combined deletion of a branch and its worktree
+is refused without changing either: remove the worktree from `:git-worktrees`,
+then delete the branch from `:git-branches` as two separately reviewed actions.
 
 Configuration defaults to `%APPDATA%\runyte\config.yaml`; a nonempty
 `XDG_CONFIG_HOME` takes precedence. `--config` selects an explicit file.

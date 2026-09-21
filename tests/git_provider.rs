@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#![cfg(not(windows))] // Service unavailable in Windows Phase 1.
-
 //! The Git command-line provider against real repositories.
 //!
 //! These tests create throwaway repositories under the system temporary
@@ -25,6 +23,24 @@ use runyte::git::{
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Fixture paths are canonical for editor assertions, but Git accepts ordinary
+/// drive paths as operands. These fixtures only create ordinary temp names.
+fn fixture_argument(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(ordinary) = path
+        .as_os_str()
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+    {
+        assert!(
+            !ordinary.starts_with("UNC\\"),
+            "fixtures use a local temp drive"
+        );
+        return PathBuf::from(ordinary);
+    }
+    path.to_path_buf()
+}
 
 struct TempRepository(PathBuf);
 
@@ -65,7 +81,11 @@ impl TempRepository {
 
     fn git(&self, arguments: &[&str]) {
         let output = Command::new("git")
-            .args(arguments)
+            .args(
+                arguments
+                    .iter()
+                    .map(|argument| fixture_argument(Path::new(argument))),
+            )
             .current_dir(&self.0)
             .output()
             .unwrap();
@@ -88,7 +108,11 @@ fn git_output(repository: &TempRepository, arguments: &[&str]) -> String {
 
 fn git_output_from(repository: &Path, arguments: &[&str]) -> String {
     let output = Command::new("git")
-        .args(arguments)
+        .args(
+            arguments
+                .iter()
+                .map(|argument| fixture_argument(Path::new(argument))),
+        )
         .current_dir(repository)
         .output()
         .unwrap();
@@ -141,7 +165,12 @@ impl TempClone {
         let clone = Self { origin, peer, work };
         clone.in_peer(&["config", "user.name", "Runyte Test"]);
         clone.in_peer(&["config", "user.email", "runyte@example.invalid"]);
-        clone.in_peer(&["remote", "add", "origin", clone.origin.to_str().unwrap()]);
+        clone.in_peer(&[
+            "remote",
+            "add",
+            "origin",
+            fixture_argument(&clone.origin).to_str().unwrap(),
+        ]);
         fs::write(clone.peer.join("source.rs"), "base\n").unwrap();
         clone.in_peer(&["add", "-A"]);
         clone.in_peer(&["commit", "-qm", "base"]);
@@ -149,9 +178,17 @@ impl TempClone {
 
         run(
             &base,
-            &["clone", "-q", clone.origin.to_str().unwrap()],
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "clone",
+                "-q",
+                fixture_argument(&clone.origin).to_str().unwrap(),
+            ],
             &clone.work,
         );
+        clone.git(&["config", "core.autocrlf", "false"]);
+        clone.git(&["config", "commit.gpgsign", "false"]);
         clone.git(&["config", "user.name", "Runyte Test"]);
         clone.git(&["config", "user.email", "runyte@example.invalid"]);
         clone
@@ -272,7 +309,11 @@ impl Drop for TempClone {
 
 fn run_in(directory: &Path, arguments: &[&str]) {
     let output = Command::new("git")
-        .args(arguments)
+        .args(
+            arguments
+                .iter()
+                .map(|argument| fixture_argument(Path::new(argument))),
+        )
         .current_dir(directory)
         .output()
         .unwrap();
@@ -287,8 +328,12 @@ fn run_in(directory: &Path, arguments: &[&str]) {
 /// Runs a Git command that creates `target`, from a directory that exists.
 fn run(directory: &Path, arguments: &[&str], target: &Path) {
     let output = Command::new("git")
-        .args(arguments)
-        .arg(target)
+        .args(
+            arguments
+                .iter()
+                .map(|argument| fixture_argument(Path::new(argument))),
+        )
+        .arg(fixture_argument(target))
         .current_dir(directory)
         .output()
         .unwrap();
@@ -314,10 +359,13 @@ fn initialize_repository(target: &Path, bare: bool) {
     }
     run(parent, &arguments, target);
     run_in(target, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    run_in(target, &["config", "core.autocrlf", "false"]);
+    run_in(target, &["config", "commit.gpgsign", "false"]);
 }
 
 fn provider() -> GitCliProvider {
-    GitCliProvider::from_environment().expect("these tests need `git` on PATH")
+    GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+        .expect("these tests need `git` on PATH")
 }
 
 /// Installs a program at `program` whose behavior is `behavior`.
@@ -594,6 +642,43 @@ fn typed_worktree_discovery_and_creation_preserve_paths_and_common_identity() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn invalid_native_worktree_destinations_are_refused_before_branch_creation() {
+    let fixture = TempRepository::new("invalid-native-destination");
+    fixture.write("source.rs", "base\n");
+    fixture.commit("base");
+    let provider = provider();
+    let repository = provider.discover(fixture.path()).unwrap().unwrap();
+    let before = git_output(
+        &fixture,
+        &["for-each-ref", "--format=%(refname):%(objectname)"],
+    );
+    for name in ["trailing.", "trailing ", "NUL", "stream:name", "wild*card"] {
+        assert!(
+            provider
+                .create_worktree(
+                    &repository,
+                    &WorktreeCreate {
+                        destination: fixture.path().join(name),
+                        start: "main".to_owned(),
+                        new_branch: Some("must-not-exist".to_owned()),
+                        upstream: None,
+                    }
+                )
+                .is_err(),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        git_output(
+            &fixture,
+            &["for-each-ref", "--format=%(refname):%(objectname)"]
+        ),
+        before
+    );
+}
+
 #[test]
 fn removing_a_clean_worktree_keeps_its_branch_and_clears_checkout_annotation() {
     let repository = TempRepository::new("worktree-remove");
@@ -764,8 +849,8 @@ fn a_separate_git_directory_is_not_reported_as_a_linked_worktree() {
     fs::create_dir_all(&work).unwrap();
     let output = Command::new("git")
         .args(["init", "-q", "--separate-git-dir"])
-        .arg(&git_dir)
-        .arg(&work)
+        .arg(fixture_argument(&git_dir))
+        .arg(fixture_argument(&work))
         .output()
         .unwrap();
     assert!(
@@ -1368,7 +1453,12 @@ fn awkward_paths_survive_status_and_staged_reads() {
 #[test]
 fn pathspec_magic_in_a_filename_never_broadens_staging() {
     let repository = TempRepository::new("literal-pathspec");
+    #[cfg(not(windows))]
     let magic = ":(glob)*";
+    // Windows forbids colon and star in filenames; brackets still exercise
+    // Git's pathspec expansion against a distinct, existing victim.
+    #[cfg(windows)]
+    let magic = "[v]ictim.txt";
     repository.write(magic, "old magic\n");
     repository.write("victim.txt", "old victim\n");
     repository.commit("base");
@@ -2298,7 +2388,7 @@ fn pushing_refuses_an_option_shaped_tracked_remote() {
         "add",
         "--",
         remote,
-        clone.origin.to_str().unwrap(),
+        fixture_argument(&clone.origin).to_str().unwrap(),
     ]);
     clone.git(&["push", "--", remote, "main"]);
     clone.git(&["config", "branch.main.remote", remote]);
@@ -3189,7 +3279,7 @@ fn history_pages_continue_by_object_identity_and_details_are_bounded_values() {
         Err(GitError::Failed { .. })
     ));
     assert!(matches!(
-        GitCliProvider::new("git")
+        self::provider()
             .with_max_output_bytes(16)
             .commit_detail(&repository.repository(), &first.commits[0].oid),
         Err(GitError::TooLarge { .. })
@@ -3275,7 +3365,7 @@ fn commit_detail_honors_a_patch_limit_lowered_below_the_default() {
             },
         )
         .unwrap();
-    let error = GitCliProvider::new("git")
+    let error = provider()
         .with_max_output_bytes(512)
         .commit_detail(&repository.repository(), &head.commits[0].oid)
         .unwrap_err();

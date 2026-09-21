@@ -270,7 +270,6 @@ fn active_buffer_syntax_availability_tracks_current_tree() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn git_project_availability_distinguishes_missing_git_and_non_repository() {
     let mut app = App::new(Config::default(), None).unwrap();
     assert_eq!(

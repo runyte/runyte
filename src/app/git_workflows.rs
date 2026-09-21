@@ -205,19 +205,16 @@ impl GitWorkflowState {
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn set_discovery_complete(&mut self, complete: bool) {
         self.discovery_complete = complete;
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn progress(&self) -> &HashMap<GitRequestId, GitServiceProgress> {
         &self.progress
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn progress_mut(&mut self) -> &mut HashMap<GitRequestId, GitServiceProgress> {
         &mut self.progress
     }
@@ -233,49 +230,41 @@ impl GitWorkflowState {
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn index_buffer(&self) -> Option<usize> {
         self.index_buffer
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn log_rows(&self) -> &[CommitSummary] {
         &self.log_rows
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn log_cursors(&self) -> &[Option<LogCursor>] {
         &self.log_cursors
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn log_page(&self) -> usize {
         self.log_page
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn log_requests_mut(&mut self) -> &mut HashMap<GitRequestId, LogViewRequest> {
         &mut self.log_requests
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn stash_rows(&self) -> &[StashEntry] {
         &self.stash_rows
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn partial_guards(&self) -> &HashMap<usize, Vec<BufferRevisionGuard>> {
         &self.partial_guards
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(super) fn partial_guards_mut(&mut self) -> &mut HashMap<usize, Vec<BufferRevisionGuard>> {
         &mut self.partial_guards
     }
@@ -4967,8 +4956,8 @@ impl App {
         self.begin_worktree_teardown(cascade.worktree, authorization, None, Some(plan));
         #[cfg(not(unix))]
         {
-            let _ = cascade;
-            let _ = self.queue_branch_deletion(plan, authorization);
+            let _ = (plan, cascade, authorization);
+            self.action_failed("Removing a worktree and its branch together is not supported on this platform; remove the worktree with :git-worktrees first, then delete the branch");
         }
     }
 

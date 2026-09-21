@@ -24,7 +24,7 @@ env:
 
 jobs:
   windows:
-    name: Native Windows Phase 1
+    name: Native Windows
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -38,7 +38,7 @@ jobs:
         run: cargo fmt --check
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Test native editing and ConPTY
+      - name: Test native editing, Git and ConPTY
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
         run: cargo test --locked

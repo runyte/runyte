@@ -4,6 +4,10 @@
 #[path = "tui/windows_console_acceptance.rs"]
 mod windows_console_acceptance;
 
+#[cfg(all(test, windows))]
+#[path = "tui/windows_git_acceptance.rs"]
+mod windows_git_acceptance;
+
 use std::{
     fs,
     io::{self, Write, stdout},

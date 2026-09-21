@@ -319,22 +319,7 @@ impl Pty {
             #[cfg(test)]
             completed: event(true)?,
         });
-        let job = Arc::new(owned(unsafe {
-            CreateJobObjectW(ptr::null(), ptr::null())
-        })?);
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if unsafe {
-            SetInformationJobObject(
-                job.as_raw_handle(),
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of_val(&limits) as u32,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        let job = Arc::new(crate::windows_process::new_job()?);
         let (input_read, input_write) = pipe()?;
         let (output_read, output_write) = pipe()?;
         let mut console = 0;

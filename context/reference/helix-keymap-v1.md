@@ -9,11 +9,15 @@ verified 2026-07-27.
 
 Status meanings:
 
-The Windows port retains this command inventory. During Phase 1, LSP, Git,
+The Windows port retains this command inventory. LSP,
 plugins, persistent sessions, context access, shell filters, external opening,
 parent-shell directory changes and private diagnostic-log opening report their
 platform limitation through execution and discovery. Syntax commands remain
-independent of LSP. No default key spelling changes as part of this exclusion.
+independent of LSP. Integrated Git is available when native Git is installed;
+missing Git disables its capabilities without starting a worker. Worktree
+switching still requires persistent sessions, and combined branch/worktree
+deletion is refused on Windows; remove the worktree and branch separately.
+No default key spelling changes as part of these platform boundaries.
 
 - **Implemented** — registered and dispatched by Runyte.
 - **Deviation** — implemented, but intentionally differs from Helix or retains

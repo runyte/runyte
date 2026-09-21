@@ -262,9 +262,7 @@ impl App {
             }
             Some(_) => CommandAvailability::Available,
         };
-        let git_project = if cfg!(windows) {
-            CommandAvailability::Unavailable("Git is unavailable in Windows Phase 1".to_owned())
-        } else if !self.has_git() {
+        let git_project = if !self.has_git() {
             CommandAvailability::Unavailable("no `git` executable was found".to_owned())
         } else if let Some(message) = self.git_state.discovery_failure_message() {
             CommandAvailability::Unavailable(message)

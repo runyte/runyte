@@ -23,6 +23,11 @@ use std::{
     },
 };
 
+#[cfg(windows)]
+use crate::windows_process::Child;
+#[cfg(not(windows))]
+use std::process::Child;
+
 use super::{
     BaseContent, BlameLine, BlameRequest, Branch, BranchDeletionPlan, CommitDetail,
     CommitSearchResult, DeletionAuthorization, DiffScope, Divergence, FileComparison, GitError,
@@ -163,6 +168,13 @@ impl TestPipePollObserver {
 trait NonblockingPipe {
     fn make_nonblocking(&self) -> io::Result<()>;
 
+    fn read_available(&mut self, buffer: &mut [u8]) -> io::Result<usize>
+    where
+        Self: Read,
+    {
+        self.read(buffer)
+    }
+
     #[cfg(unix)]
     fn raw_fd(&self) -> std::os::fd::RawFd;
 }
@@ -246,6 +258,44 @@ impl_nonblocking_pipe!(
     std::process::ChildStdin,
 );
 
+#[cfg(windows)]
+impl NonblockingPipe for std::fs::File {
+    fn make_nonblocking(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn read_available(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::ERROR_BROKEN_PIPE, System::Pipes::PeekNamedPipe};
+        let mut available = 0;
+        if unsafe {
+            PeekNamedPipe(
+                self.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            return if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+                Ok(0)
+            } else {
+                Err(error)
+            };
+        }
+        if available == 0 {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        // Each captured endpoint has one reader. A bounded read cannot wait
+        // for bytes another reader consumed after the peek.
+        let count = buffer.len().min(available as usize);
+        self.read(&mut buffer[..count])
+    }
+}
+
 impl PipeFinalizer {
     fn new() -> io::Result<Self> {
         #[cfg(unix)]
@@ -298,13 +348,12 @@ impl PipeFinalizer {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn finish(&self) {
-        // `try_finish_child` has observed the leader without reaping it, ended
-        // that still-anchored process group, and then collected its status.
-        // The readers can now drain everything the owned group wrote and use
-        // this signal only to escape a pipe retained by a descendant which
-        // created a different session.
+        // The leader has exited and its owned process group (Unix) or job
+        // (Windows) has been stopped. Drain all already-written output before
+        // this signal ends an otherwise unready read, including a pipe kept
+        // open by an escaped Unix descendant. Scheduling is not an EOF test.
         self.request_finish();
         self.release_reader_gate();
     }
@@ -422,6 +471,7 @@ fn wait_for_pipe(
     {
         let _ = (pipe, events);
         signal.note_poll();
+        std::thread::sleep(std::time::Duration::from_millis(1));
         Ok(!signal.should_finish())
     }
 }
@@ -440,7 +490,7 @@ fn read_bounded_stderr(
     let mut settled = false;
     let mut finalizing = false;
     loop {
-        let read = match reader.read(&mut buffer) {
+        let read = match reader.read_available(&mut buffer) {
             Ok(0) => {
                 settled = true;
                 break;
@@ -494,7 +544,7 @@ fn read_bounded_output(
     }
     let mut finalizing = false;
     loop {
-        let read = match reader.read(&mut buffer) {
+        let read = match reader.read_available(&mut buffer) {
             Ok(0) => return (output, Ok(()), true),
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -669,20 +719,22 @@ impl GitCliProvider {
 
     /// Finds `git` on the supplied search path, without running it.
     ///
-    /// The path is a parameter rather than an environment read so tests and
-    /// headless hosts can answer the question without touching the process
-    /// environment, and so the empty-entry rule that keeps a repository from
-    /// supplying its own `git` applies here too.
+    /// PATH is supplied by the caller. Windows also reads PATHEXT, accepting
+    /// only native .exe/.com candidates; its internal resolver takes both
+    /// values explicitly for isolated tests. No executable is launched here.
+    /// Empty entries never let the workspace supply its own `git`.
     pub fn discover(search_path: Option<&OsStr>) -> Option<Self> {
+        #[cfg(windows)]
+        {
+            executable::discover(search_path, std::env::var_os("PATHEXT").as_deref()).map(Self::new)
+        }
+        #[cfg(not(windows))]
         crate::service_health::resolve_configured_executable(Path::new(PROGRAM), search_path)
             .map(Self::new)
     }
 
     /// Finds `git` on the current process's `PATH`.
     pub fn from_environment() -> Option<Self> {
-        if cfg!(windows) {
-            return None;
-        }
         Self::discover(std::env::var_os("PATH").as_deref())
     }
 
@@ -852,11 +904,11 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         pipe_finalizer.release_reader_gate();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         pipe_finalizer.finish();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
@@ -959,11 +1011,11 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         pipe_finalizer.release_reader_gate();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         pipe_finalizer.finish();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
@@ -1060,11 +1112,11 @@ impl GitCliProvider {
             }
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         pipe_finalizer.release_reader_gate();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         pipe_finalizer.finish();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if !finish_readers_or_stop(&mut child, || {
             stdin_writer.is_finished() && stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
@@ -1124,7 +1176,7 @@ impl GitCliProvider {
         arguments: &[S],
         network: bool,
         pipe_stdin: bool,
-    ) -> Result<(std::process::Child, ChildExitObserver)> {
+    ) -> Result<(Child, ChildExitObserver)> {
         if !directory.is_dir() {
             return Err(GitError::Io {
                 action: "start Git in",
@@ -1132,9 +1184,10 @@ impl GitCliProvider {
                 detail: "the working directory is not a directory".to_owned(),
             });
         }
-        let mut command = self.command(directory, arguments, network, pipe_stdin);
+        let command = self.command(directory, arguments, network, pipe_stdin);
         #[cfg(unix)]
-        {
+        let mut command = {
+            let mut command = command;
             use std::os::unix::process::CommandExt;
             // Hooks and filters can outlive Git just like network helpers.
             // Every service-owned command therefore gets a process group that
@@ -1143,8 +1196,13 @@ impl GitCliProvider {
             // `pre_exec` hook; on macOS that avoids forking a multithreaded
             // editor before exec, where libSystem's at-fork handlers can abort.
             command.process_group(0);
-        }
-        let child = command.spawn().map_err(|error| GitError::Unavailable {
+            command
+        };
+        #[cfg(windows)]
+        let spawned = crate::windows_process::spawn(&command, pipe_stdin);
+        #[cfg(not(windows))]
+        let spawned = command.spawn();
+        let child = spawned.map_err(|error| GitError::Unavailable {
             detail: format!("cannot start `{}`: {error}", self.program.display()),
         })?;
         #[cfg(unix)]
@@ -1307,11 +1365,11 @@ impl GitCliProvider {
             std::thread::sleep(NETWORK_POLL_INTERVAL);
         };
 
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         pipe_finalizer.release_reader_gate();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         pipe_finalizer.finish();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if !finish_readers_or_stop(&mut child, || {
             stdout_reader.is_finished() && stderr_reader.is_finished()
         }) {
@@ -1676,7 +1734,7 @@ struct ChildExitObserver;
 /// anchored through cleanup.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn try_finish_child(
-    child: &mut std::process::Child,
+    child: &mut Child,
     _observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
     let Some(observed) = crate::process_group::completed_without_reaping(child)? else {
@@ -1695,7 +1753,7 @@ fn try_finish_child(
 
 #[cfg(target_os = "macos")]
 fn try_finish_child(
-    child: &mut std::process::Child,
+    child: &mut Child,
     observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
     let Some(observed) = observer.completion()? else {
@@ -1731,7 +1789,7 @@ fn try_finish_child(
 
 #[cfg(not(unix))]
 fn try_finish_child(
-    child: &mut std::process::Child,
+    child: &mut Child,
     _observer: &ChildExitObserver,
 ) -> io::Result<Option<std::process::ExitStatus>> {
     child.try_wait()
@@ -1743,7 +1801,7 @@ fn try_finish_child(
 /// number Runyte's: probing again would reap the leader and hand the identity
 /// straight back to the kernel for reuse.
 #[cfg(unix)]
-fn stop_anchored_child_group(child: &std::process::Child) {
+fn stop_anchored_child_group(child: &Child) {
     let Ok(pid) = libc::pid_t::try_from(child.id()) else {
         return;
     };
@@ -1762,7 +1820,7 @@ fn stop_anchored_child_group(child: &std::process::Child) {
 /// leader, and a Git child leads its own process group, so a stale `-pid` here
 /// would name whichever later group inherited that number — including another
 /// Git command of Runyte's own.
-fn stop_child_tree(child: &mut std::process::Child) {
+fn stop_child_tree(child: &mut Child) {
     #[cfg(unix)]
     crate::process_group::signal_child_group(
         crate::process_group::Site::new("git", "stop_child_tree"),
@@ -1781,11 +1839,8 @@ fn stop_child_tree(child: &mut std::process::Child) {
 /// command has completed. A descendant that escaped the process group can
 /// keep its detached reader thread until it closes the pipe, but never the
 /// caller waiting on an unbounded join.
-#[cfg(not(unix))]
-fn finish_readers_or_stop(
-    child: &mut std::process::Child,
-    mut readers_finished: impl FnMut() -> bool,
-) -> bool {
+#[cfg(not(any(unix, windows)))]
+fn finish_readers_or_stop(child: &mut Child, mut readers_finished: impl FnMut() -> bool) -> bool {
     let deadline = std::time::Instant::now() + NETWORK_POLL_INTERVAL;
     while !readers_finished() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -1799,6 +1854,36 @@ fn finish_readers_or_stop(
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     readers_finished()
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_output_survives_readers_held_until_after_child_exit() {
+    let root = crate::test_support::TestRuntimeRoot::new("git-delayed-reader").unwrap();
+    let provider = GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+        .expect("native Git fixture requires Git");
+    let (mut child, _) = provider
+        .spawn(root.path(), &["--version"], false, false)
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let gate = Arc::new(TestPipeReaderGate::default());
+    let finalizer = PipeFinalizer::with_test_hooks(Some(gate.clone()), None).unwrap();
+    let signal = finalizer.signal();
+    let (completed, completion) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let result = read_bounded_output(stdout, 4096, &AtomicBool::new(false), &signal);
+        completed.send(result).unwrap();
+    });
+    assert!(child.wait().unwrap().success());
+    // Completion is a final drain, independent of when the reader gets CPU.
+    finalizer.finish();
+    let (output, result, eof) = completion
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    reader.join().unwrap();
+    result.unwrap();
+    assert!(eof);
+    assert!(output.starts_with(b"git version "));
 }
 
 fn unclosed_output_error(directory: &Path) -> GitError {
@@ -2008,6 +2093,17 @@ impl GitCliProvider {
         if !marker_probe(start)? {
             return Ok(None);
         }
+        // The worker reports an unsupported native cwd once; discovery errors
+        // remain latched until an explicit refresh, without a failed spawn loop.
+        #[cfg(windows)]
+        paths_windows::argument(
+            start,
+            &std::path::absolute(start).map_err(|error| GitError::Io {
+                action: "resolve a native Git directory at",
+                path: start.to_path_buf(),
+                detail: error.to_string(),
+            })?,
+        )?;
         // Discovery, including explicit retries, is a read with the same
         // deadline and output ceiling as other bounded local reads.
         let read = |directory: &Path, argument: &str| -> Result<String> {
@@ -2024,6 +2120,8 @@ impl GitCliProvider {
             });
         }
         let workdir = PathBuf::from(toplevel);
+        #[cfg(windows)]
+        let workdir = paths_windows::identity(&workdir)?;
         let git_dir_text = read(&workdir, "--git-dir")?;
         if git_dir_text.is_empty() {
             return Err(GitError::Malformed {
@@ -2304,10 +2402,23 @@ impl GitProvider for GitCliProvider {
     fn worktrees(&self, repository: &Repository) -> Result<Vec<Worktree>> {
         let arguments = ["worktree", "list", "--porcelain", "-z"];
         let output = self.run(repository.workdir(), &arguments)?;
-        parse_worktree_porcelain(repository, &output)
+        let worktrees = parse_worktree_porcelain(repository, &output)?;
+        #[cfg(windows)]
+        let worktrees = worktrees
+            .into_iter()
+            .map(|mut worktree| {
+                worktree.path = paths_windows::worktree_identity(&worktree.path, worktree.missing)?;
+                Ok(worktree)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(worktrees)
     }
 
     fn create_worktree(&self, repository: &Repository, request: &WorktreeCreate) -> Result<()> {
+        #[cfg(windows)]
+        let destination = paths_windows::argument(repository.workdir(), &request.destination)?;
+        #[cfg(not(windows))]
+        let destination = &request.destination;
         if request.start.starts_with('-')
             || request
                 .upstream
@@ -2351,7 +2462,7 @@ impl GitProvider for GitCliProvider {
                     OsStr::new("worktree"),
                     OsStr::new("add"),
                     OsStr::new("--"),
-                    request.destination.as_os_str(),
+                    destination.as_os_str(),
                     OsStr::new(branch),
                 ],
             );
@@ -2378,12 +2489,14 @@ impl GitProvider for GitCliProvider {
             });
         }
         arguments.push(OsString::from("--"));
-        arguments.push(request.destination.as_os_str().to_owned());
+        arguments.push(destination.as_os_str().to_owned());
         arguments.push(OsString::from(&request.start));
         self.run(repository.workdir(), &arguments).map(|_| ())
     }
 
     fn remove_worktree(&self, repository: &Repository, path: &Path) -> Result<()> {
+        #[cfg(windows)]
+        let path = paths_windows::argument(repository.workdir(), path)?;
         self.run(
             repository.workdir(),
             &[
@@ -3911,6 +4024,14 @@ fn stale_partial<T>() -> Result<T> {
     })
 }
 
+#[cfg(windows)]
+#[path = "executable_windows.rs"]
+mod executable;
+
+#[cfg(windows)]
+#[path = "paths_windows.rs"]
+mod paths_windows;
+
 #[cfg(all(test, unix))]
 #[path = "tests/discovery.rs"]
 mod discovery_tests;
@@ -4977,5 +5098,33 @@ mod tests {
     fn discovery_looks_for_git_without_starting_it() {
         assert!(GitCliProvider::discover(Some(OsStr::new(""))).is_none());
         assert!(GitCliProvider::discover(None).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_git_process_bounds_output_and_delivers_stdin() {
+        let Some(provider) = GitCliProvider::discover(std::env::var_os("PATH").as_deref()) else {
+            // Git is optional; the compiled process fixture covers ownership
+            // and pipe behavior on machines without it.
+            return;
+        };
+        let root = crate::test_support::TestRuntimeRoot::new("native-git-process").unwrap();
+        assert!(
+            provider
+                .run_text(root.path(), &["--version"])
+                .unwrap()
+                .starts_with("git version ")
+        );
+        assert!(matches!(
+            provider.run_bounded(root.path(), &["--version"], 1),
+            Err(GitError::TooLarge { limit: 1, .. })
+        ));
+        let output = provider
+            .run_with_input_bounded(root.path(), &["hash-object", "--stdin"], b"hello\n", 128)
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap().trim(),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
     }
 }

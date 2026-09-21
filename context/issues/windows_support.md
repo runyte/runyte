@@ -114,13 +114,20 @@ provisional without a measured llvm-cov baseline. Windows CI runs formatting,
 all-target Clippy and tests; the release workflow adds an MSVC ZIP and includes
 it in SHA256SUMS. No release publication or version bump is part of this work.
 
-## Next step: native Git process inheritance
+## Phase 2: native Git acceptance
 
-Phase 2 begins with optional integrated Git. The local prototype has executable
-discovery, native process ownership, and repository path work, but remains
-uncommitted and disabled. Its parallel provider tests are not green. The next
-package must reproduce mixed-launch handle inheritance on Windows and test
-delayed output-reader scheduling separately before selecting a correction.
+Phase 2 begins with optional integrated Git. The local implementation now has
+native executable discovery, isolated process ownership, strict repository
+paths and editor availability. Git remains optional; absent Git does not start
+a worker. The mixed-launch inheritance and delayed-reader failures have separate
+regressions and reviewed corrections, and all 94 parallel provider tests pass.
+The restored native editor/discovery suite passes 142 tests. Native handoff
+passes formatting, all-target Clippy with warnings denied, and the full suite
+(2,874 passed, zero failures, 34 ignored fixture/performance entries).
+Cross-platform CI acceptance remains pending.
+Combined branch/worktree deletion is explicitly refused without mutation on
+Windows: remove the worktree first, then delete its branch. Worktree switching
+remains deferred with persistent sessions.
 The ordered work packages, validation limits and continuation details are in
 [`PLAN_WINDOWS_PHASE2.md`](../plans/active/PLAN_WINDOWS_PHASE2.md).
 
