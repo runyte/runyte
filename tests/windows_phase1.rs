@@ -22,11 +22,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     };
     let root = TestRuntimeRoot::new("windows-keys").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    let commands = [
-        EditorCommand::ShellPipe,
-        EditorCommand::OpenExplorerSystem,
-        EditorCommand::Diagnostics,
-    ];
+    let commands = [EditorCommand::ShellPipe, EditorCommand::OpenExplorerSystem];
     let bindings = commands
         .iter()
         .enumerate()
@@ -46,7 +42,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     for row in &mut rows {
         row.apply_capabilities(&app.command_capabilities());
     }
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), commands.len());
     for (index, command) in commands.iter().enumerate() {
         let reason = runyte::command::CommandId::Editor(*command)
             .platform_unavailable()
@@ -84,8 +80,6 @@ fn deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
     for spelling in [
-        "lsp-trust",
-        "lsp-status",
         "plugins",
         "context-access",
         "pipe echo text",
@@ -112,6 +106,15 @@ fn deferred_commands_agree_with_palette_availability() {
     );
     assert!(
         runyte::command::CommandId::Editor(runyte::command::EditorCommand::DocumentOutline)
+            .platform_unavailable()
+            .is_none()
+    );
+    for spelling in ["lsp-trust", "lsp-status", "lsp-restart"] {
+        let spec = resolve_command(spelling).unwrap();
+        assert!(spec.id.platform_unavailable().is_none());
+    }
+    assert!(
+        runyte::command::CommandId::Editor(runyte::command::EditorCommand::Diagnostics)
             .platform_unavailable()
             .is_none()
     );
@@ -152,47 +155,76 @@ fn binary_open_refuses_without_offering_an_unusable_program_prompt() {
 }
 
 #[tokio::test]
-async fn enabled_lsp_configuration_stays_disabled_after_permission_and_restart() {
+async fn native_lsp_requires_permission_and_missing_servers_fail_nonfatally_after_restart() {
+    use runyte::input::{InputEvent, KeyCode, KeyStroke};
     let root = TestRuntimeRoot::new("windows-lsp").unwrap();
-    let marker = root.path().join("unexpected-server-start");
-    let mut config = Config::default().lsp;
-    config.enable = true;
-    config.servers.insert(
+    let project = root.create_private_dir("project").unwrap();
+    let file = project.join("main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let mut config = Config::default();
+    config.lsp.enable = true;
+    config.lsp.servers.insert(
         "rust".into(),
         LanguageServerConfig {
-            command: "cmd.exe".into(),
-            args: vec![
-                "/d".into(),
-                "/c".into(),
-                "echo started>unexpected-server-start".into(),
-            ],
+            command: root.join("missing-native-language-server.exe"),
             ..Default::default()
         },
     );
-    let (handle, mut events) = lsp::spawn(config, root.path().to_owned());
-    handle.set_allowed(true);
-    assert!(handle.send(LspCommand::Ensure {
-        language: "rust".into()
-    }));
-    assert!(handle.send(LspCommand::Restart(Some("rust".into()))));
-    assert!(handle.send(LspCommand::Status));
-    // Status is processed after the ensure/restart requests, providing a barrier.
-    loop {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        if let LspEvent::Status { message, .. } = event {
-            if message.contains("no language servers running") {
-                break;
-            }
-        } else {
-            assert!(
-                !matches!(event, LspEvent::Ready { .. } | LspEvent::Stopped { .. }),
-                "{event:?}"
-            );
+    let (handle, mut events) = lsp::spawn(config.lsp.clone(), project.clone());
+    let mut app = App::new_in_project(config, Some(file), &project).unwrap();
+    app.configure_lsp_trust(Some(root.join("cache/lsp-trust")));
+    app.attach_lsp(handle.clone());
+    assert_eq!(
+        app.command_capabilities().lsp_manager.reason(),
+        Some("LSP is disabled for this workspace; use :lsp-trust")
+    );
+    assert!(
+        app.command_capabilities()
+            .command_availability(resolve_command("lsp-trust").unwrap())
+            .is_available()
+    );
+    assert!(matches!(
+        app.execute(parse_colon_command("lsp-status").unwrap())
+            .unwrap(),
+        CommandOutcome::Unavailable(_)
+    ));
+    // Physical choice input grants this run; attaching the manager and asking
+    // for status above cannot grant permission or queue a server start.
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Down)))
+        .unwrap();
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(app.command_capabilities().lsp_manager.is_available());
+    for attempt in 0..2 {
+        if attempt != 0 {
+            app.execute(parse_colon_command("lsp-restart").unwrap())
+                .unwrap();
+            assert!(handle.send(LspCommand::Ensure {
+                language: "rust".into()
+            }));
         }
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let event = events.recv().await.expect("manager remains alive");
+                assert!(!matches!(event, LspEvent::Ready { .. }), "{event:?}");
+                if matches!(event, LspEvent::Stopped { .. }) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(&event, LspEvent::Stopped { language, message }
+            if language == "rust" && message.contains("cannot start missing-native-language-server.exe")));
+        app.apply_lsp_event(event);
+        assert!(!app.should_quit);
+        assert!(app.command_capabilities().lsp_manager.is_available());
+        assert_eq!(app.active_buffer().to_string(), "fn main() {}\n");
     }
-    assert!(!marker.exists());
+    app.handle_input(InputEvent::Key(KeyStroke::char('i')))
+        .unwrap();
+    app.handle_input(InputEvent::Text("// still editing\n".into()))
+        .unwrap();
+    assert!(app.active_buffer().to_string().contains("// still editing"));
     assert!(handle.send(LspCommand::Shutdown));
 }

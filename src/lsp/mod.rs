@@ -13,12 +13,17 @@
 //! editor sees paths, character offsets, and plain Rust values.
 
 pub mod diagnostics;
+#[cfg(windows)]
+mod executable_windows;
 pub mod transport;
+#[cfg(windows)]
+mod uri_windows;
 
+#[cfg(any(not(windows), test))]
+use std::str::FromStr;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    str::FromStr,
     time::Duration,
 };
 
@@ -223,44 +228,54 @@ pub fn checked_lsp_range(
 
 /// Percent-encodes an absolute path into a `file:` URI.
 ///
-/// Written here rather than pulled from a URL crate because the only case that
-/// matters is an absolute local path, and the encoding rules for that case are
-/// short enough that a dependency would cost more than it saves.
+/// Windows uses the local-drive URI contract; Unix preserves its existing
+/// absolute local path encoding.
 pub fn path_to_uri(path: &Path) -> Option<Uri> {
-    if !path.is_absolute() {
-        return None;
-    }
-    let text = path.to_str()?;
-    let mut encoded = String::from("file://");
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
+    #[cfg(windows)]
+    return uri_windows::path_to_uri(path);
+    #[cfg(not(windows))]
+    {
+        if !path.is_absolute() {
+            return None;
         }
+        let text = path.to_str()?;
+        let mut encoded = String::from("file://");
+        for byte in text.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                    encoded.push(byte as char);
+                }
+                _ => encoded.push_str(&format!("%{byte:02X}")),
+            }
+        }
+        Uri::from_str(&encoded).ok()
     }
-    Uri::from_str(&encoded).ok()
 }
 
 /// Decodes a `file:` URI back into a path. Returns `None` for any other scheme,
 /// because a server pointing at a non-file resource has nothing the editor can
 /// open.
 pub fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
-    let text = uri.as_str();
-    let rest = text.strip_prefix("file://")?;
-    let rest = if rest.starts_with('/') {
-        rest
-    } else {
-        let rest = rest.strip_prefix("localhost/")?;
-        // Preserve the leading slash consumed with the authority separator.
-        // `file://localhost/etc` and `file:///etc` name the same local file.
-        // Any other authority is a remote resource, not a local pathname.
-        return uri_path(&format!("/{rest}"));
-    };
-    uri_path(rest)
+    #[cfg(windows)]
+    return uri_windows::uri_to_path(uri);
+    #[cfg(not(windows))]
+    {
+        let text = uri.as_str();
+        let rest = text.strip_prefix("file://")?;
+        let rest = if rest.starts_with('/') {
+            rest
+        } else {
+            let rest = rest.strip_prefix("localhost/")?;
+            // Preserve the leading slash consumed with the authority separator.
+            // `file://localhost/etc` and `file:///etc` name the same local file.
+            // Any other authority is a remote resource, not a local pathname.
+            return uri_path(&format!("/{rest}"));
+        };
+        uri_path(rest)
+    }
 }
 
+#[cfg(not(windows))]
 fn uri_path(rest: &str) -> Option<PathBuf> {
     let mut bytes = Vec::with_capacity(rest.len());
     let mut characters = rest.bytes();
@@ -973,10 +988,23 @@ pub type Launch = Box<
 
 fn process_launcher() -> Launch {
     Box::new(|language, generation, settings, root, inbox| {
+        #[cfg(windows)]
+        let resolved = executable_windows::resolve(
+            &settings.command,
+            std::env::var_os("PATH").as_deref(),
+            std::env::var_os("PATHEXT").as_deref(),
+        )
+        .ok_or_else(|| {
+            "language server must name an installed native executable or an absolute .exe/.com path; configure script interpreters explicitly in command and args".to_owned()
+        })?;
+        #[cfg(windows)]
+        let command = resolved.as_path();
+        #[cfg(not(windows))]
+        let command = settings.command.as_path();
         transport::spawn(
             language.to_owned(),
             generation,
-            &settings.command,
+            command,
             &settings.args,
             root,
             inbox,
@@ -988,11 +1016,6 @@ fn process_launcher() -> Launch {
 /// Starts a denied manager. The owning host must call `set_allowed(true)`
 /// after workspace approval. Must be called inside a Tokio runtime.
 pub fn spawn(config: LspConfig, root: PathBuf) -> (LspHandle, LspEvents) {
-    #[cfg(windows)]
-    let config = LspConfig {
-        enable: false,
-        ..config
-    };
     spawn_with_permission(config, root, process_launcher(), false)
 }
 
@@ -3247,17 +3270,21 @@ mod tests {
         );
     }
 
+    fn uri_fixture_path(name: &str) -> PathBuf {
+        #[cfg(windows)]
+        let root = Path::new(r"C:\tmp");
+        #[cfg(not(windows))]
+        let root = Path::new("/tmp");
+        root.join(name)
+    }
+
     #[test]
-    #[cfg(not(windows))]
     fn paths_round_trip_through_file_uris() {
-        for path in [
-            "/tmp/plain.rs",
-            "/tmp/with space/é.rs",
-            "/tmp/percent%20literal.rs",
-        ] {
-            let uri = path_to_uri(Path::new(path)).expect(path);
+        for name in ["plain.rs", "with space/é.rs", "percent%20literal.rs"] {
+            let path = uri_fixture_path(name);
+            let uri = path_to_uri(&path).expect(name);
             assert!(uri.as_str().starts_with("file:///"));
-            assert_eq!(uri_to_path(&uri).as_deref(), Some(Path::new(path)));
+            assert_eq!(uri_to_path(&uri), Some(path));
         }
     }
 
@@ -3268,7 +3295,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn file_uris_accept_only_absolute_local_paths() {
         assert!(path_to_uri(Path::new("relative.rs")).is_none());
         for uri in [
@@ -3278,10 +3304,13 @@ mod tests {
         ] {
             assert_eq!(uri_to_path(&Uri::from_str(uri).unwrap()), None, "{uri}");
         }
-        assert_eq!(
-            uri_to_path(&Uri::from_str("file://localhost/tmp/a.rs").unwrap()).as_deref(),
-            Some(Path::new("/tmp/a.rs"))
-        );
+        let expected = uri_fixture_path("a.rs");
+        let local =
+            path_to_uri(&expected)
+                .unwrap()
+                .as_str()
+                .replacen("file://", "file://localhost", 1);
+        assert_eq!(uri_to_path(&Uri::from_str(&local).unwrap()), Some(expected));
     }
 
     #[test]
@@ -3301,14 +3330,15 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn location_links_and_scalars_decode_alike() {
+        let path = uri_fixture_path("a.rs");
+        let uri = path_to_uri(&path).unwrap();
         let scalar = json!({
-            "uri": "file:///tmp/a.rs",
+            "uri": uri.as_str(),
             "range": {"start": {"line": 1, "character": 2}, "end": {"line": 1, "character": 5}},
         });
         let link = json!([{
-            "targetUri": "file:///tmp/a.rs",
+            "targetUri": uri.as_str(),
             "targetRange": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 9}},
             "targetSelectionRange": {"start": {"line": 1, "character": 2}, "end": {"line": 1, "character": 5}},
         }]);
@@ -3318,19 +3348,20 @@ mod tests {
                 panic!("expected locations");
             };
             assert_eq!(locations.len(), 1);
-            assert_eq!(locations[0].path, PathBuf::from("/tmp/a.rs"));
+            assert_eq!(locations[0].path, path);
             assert_eq!(locations[0].range.start.character, 2);
         }
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn resource_operations_are_counted_rather_than_applied() {
+        let path = uri_fixture_path("a.rs");
+        let uri = path_to_uri(&path).unwrap();
         let edit: WorkspaceEdit = serde_json::from_value(json!({
             "documentChanges": [
                 {"kind": "create", "uri": "file:///tmp/new.rs"},
                 {
-                    "textDocument": {"uri": "file:///tmp/a.rs", "version": 1},
+                    "textDocument": {"uri": uri.as_str(), "version": 1},
                     "edits": [{
                         "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
                         "newText": "x",
@@ -3342,7 +3373,7 @@ mod tests {
         let (edits, skipped) = flatten_workspace_edit(edit).unwrap();
         assert_eq!(skipped, 1);
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].path, PathBuf::from("/tmp/a.rs"));
+        assert_eq!(edits[0].path, path);
         assert_eq!(edits[0].version, Some(1));
     }
 
@@ -3521,10 +3552,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_signature_request_carries_the_context_its_retrigger_needs() {
-        let uri = path_to_uri(Path::new("/tmp/a.rs")).expect("a file uri");
-        let root = Path::new("/tmp");
+        let path = uri_fixture_path("a.rs");
+        let uri = path_to_uri(&path).expect("a file uri");
+        let root = path.parent().unwrap();
         let position = lsp_types::Position {
             line: 0,
             character: 0,

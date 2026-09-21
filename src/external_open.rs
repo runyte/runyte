@@ -130,24 +130,28 @@ pub fn looks_binary(path: &Path) -> bool {
 /// An explicit `XDG_CACHE_HOME` wins on every platform. Otherwise Linux and
 /// other Unix systems use `<account-home>/.cache/runyte`, macOS uses
 /// `<account-home>/Library/Caches/runyte`, and Windows uses
-/// `%LOCALAPPDATA%/runyte/cache`. Unix account home comes from the effective
-/// user's account record rather than inherited `$HOME`, so a privileged
-/// invocation cannot leave its files in another user's default cache.
+/// `<account-local-app-data>/runyte/cache`. Account defaults come from the
+/// operating system rather than inherited `$HOME` or `%LOCALAPPDATA%`, so a
+/// privileged invocation cannot select another user's default cache.
 pub fn cache_root() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
     let environment_home = std::env::var_os("HOME").map(PathBuf::from);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let account_home = crate::user_paths::system_home_directory();
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let account_home = None;
+    #[cfg(windows)]
+    let local_app_data = crate::user_paths::system_local_app_data_directory();
+    #[cfg(not(windows))]
+    let local_app_data = None;
     cache_root_for(
         CachePlatform::CURRENT,
         std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
         environment_home,
         account_home,
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        local_app_data,
     )
 }
 
@@ -459,6 +463,38 @@ mod tests {
                 None,
             ),
             Some(PathBuf::from("/custom/cache/runyte"))
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_cache_defaults_use_account_local_data_and_explicit_xdg_only() {
+        let account_local = PathBuf::from(r"C:\Users\account\RedirectedLocalData");
+        let inherited_home = PathBuf::from(r"C:\Users\invoking");
+        let resolve = |xdg, local| {
+            cache_root_for(
+                CachePlatform::Windows,
+                xdg,
+                Some(inherited_home.clone()),
+                None,
+                local,
+            )
+        };
+        assert_eq!(
+            resolve(None, Some(account_local.clone())),
+            Some(account_local.join("runyte/cache"))
+        );
+        assert_eq!(resolve(None, None), None);
+        assert_eq!(resolve(Some(PathBuf::from("relative")), None), None);
+        let explicit = PathBuf::from(r"D:\explicit-cache");
+        assert_eq!(
+            resolve(Some(explicit.clone()), None),
+            Some(explicit.join("runyte"))
+        );
+        assert_eq!(
+            cache_root(),
+            None,
+            "unit tests cannot use the actual account cache"
         );
     }
 

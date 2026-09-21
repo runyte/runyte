@@ -49,7 +49,8 @@ Project goals:
 Linux and macOS provide the full feature set. Work on native Windows support is
 ongoing; basic functionality is already available in this source tree: standalone
 editing, file management, text clipboard, integrated terminals, private diagnostic
-logs, and optional Git integration when Git is installed. See the
+logs, language services after workspace approval, and optional Git integration
+when Git is installed. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 

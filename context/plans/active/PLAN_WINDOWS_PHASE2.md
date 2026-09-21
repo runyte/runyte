@@ -21,8 +21,10 @@ Broader Phase 2 integrations remain deferred. The Git implementation is
 `cdd3b8b`; all implementation packages received independent review and
 incorporated their actionable findings before acceptance.
 
-Sub-phase 2.2's private storage and diagnostics are implemented and undergoing
-final acceptance. The next sub-phase restores language services. Combined
+Sub-phase 2.2's private storage and diagnostics are complete. Sub-phase 2.3
+restores language services with all three packages independently reviewed and
+native acceptance complete; cross-platform CI acceptance is pending. Sub-phase
+2.4 restores the remaining standalone integrations. Combined
 branch/worktree deletion is explicitly refused without mutation on Windows;
 separate guarded worktree removal and branch deletion are supported. The
 Unix session teardown coordinator remains unchanged. The missing-Git startup
@@ -146,8 +148,21 @@ All four packages are reviewed with no remaining findings. Native formatting,
 all-target Clippy with warnings denied and the full workspace suite pass:
 2,907 passed, zero failures and 39 ignored fixture/performance entries across
 41 test binaries/doc-test groups. Real-editor logging acceptance passes.
-Cross-platform CI remains pending. Other dependent services remain disabled
-pending their own sub-phases.
+Cross-platform CI passes at `ccaeda6` in
+[run 35590400592](https://github.com/runyte/runyte/actions/runs/35590400592).
+Other dependent services remain disabled pending their own sub-phases.
+
+Storage/diagnostics checkpoint `f0d7c8c` passes native Windows, ordinary Linux
+and macOS suites, plugin/context acceptance and both unchanged coverage floors
+in [run 35589383537](https://github.com/runyte/runyte/actions/runs/35589383537).
+Its Linux lifecycle stress exposed an existing endpoint-directory cleanup race.
+The independently reviewed correction `ccaeda6` moves directory preparation
+under the stable identity lock and adds a deterministic retiring-host cleanup
+regression. Its cross-platform run passes all jobs, including both unchanged
+89% coverage gates. The Linux plugin-conformance job initially timed out during
+the first Node registration; an isolated same-commit rerun passes unchanged.
+The diagnostic gap and separate buffered-response test issue remain recorded
+in `context/issues/node_conformance_readiness.md` for the plugin package.
 
 #### Sub-phase 2.2 package 1: native storage contract
 
@@ -238,6 +253,104 @@ default-log refusal, and explicit-log startup failure. It also exposed a
 workspace-root spelling bug: startup now canonicalizes the launch directory as
 well as the requested root before checking containment. The fixture uses the
 terminal emulator to inspect incremental screen updates.
+
+### Sub-phase 2.3 preparation
+
+Language services proceed in three reviewed packages:
+
+1. Native executable discovery and process/transport ownership. Bare names use
+   absolute PATH entries and native `.exe`/`.com` PATHEXT entries; explicit
+   commands must be absolute native paths. Relative commands and implicit
+   `.cmd`/`.bat` shells are refused. Script servers use an explicitly configured
+   interpreter and argument vector. Discovery never executes a probe, and
+   workspace permission precedes server execution. Preserve framing and stderr
+   bounds, own pending pipe I/O, and test blocked stdin, saturated inboxes,
+   leader-exit descendants, restart, connection drop and runtime shutdown.
+2. Lossless Windows file URIs and exact-workspace permission storage. Define
+   drive/extended-prefix/UNC handling and normalize server-returned identities;
+   reject paths that cannot be represented without replacement characters.
+   Trust identity uses exact native path encoding and account paths independent
+   of inherited environment. Preserve project-local store rejection, remembered
+   denial, one-time approval revocation and fail-closed storage errors.
+3. Editor enablement, real rust-analyzer acceptance, documentation and full
+   native/cross-platform gates. Required Windows CI provisions the server and
+   exercises approval, initialization, diagnostics, edits, restart and cleanup.
+   Other services keep their existing gates until their own sub-phases.
+
+Independent preparation review accepted the decomposition and added the
+executable, cancellation, URI identity and permission acceptance requirements
+above. No user decision is needed for these implementation choices.
+
+#### Sub-phase 2.3 package 1: native language-server processes
+
+The process boundary reuses the owned native job and isolated inheritance
+parent. LSP supplies private, overlapped named-pipe endpoints; no synchronous
+pipe operation occupies a Tokio blocking worker. Pipe creation uses an
+owner-only descriptor, a random name, first-instance admission, remote-client
+refusal and verification that both initial endpoints belong to the launcher.
+Connection drop aborts framing tasks even when their inbox is full. A guard
+owned by the runtime stops the process tree when the runtime shuts down,
+including before the monitor's first poll. Leader-exit observation terminates
+descendants while allowing remaining stdout/stderr to drain.
+
+Review removed an unnecessary blocking wait for the suspended inheritance
+parent during launch. The job retains ownership through its termination;
+Windows process handles need no Unix-style reap. Native acceptance passes six
+lifecycle cases, eight process tests, eight framing tests and all 94 real Git
+provider tests. Two executable-discovery tests also pass. Formatting and
+denied-warning all-target Clippy pass. Final independent review has no remaining
+findings. Editor language services remain disabled until URI and trust acceptance.
+
+#### Sub-phase 2.3 package 2: document identity and workspace permissions
+
+Windows document URIs accept absolute drive paths and their equivalent
+extended-prefix spelling, including long paths and Unicode. Conversion refuses
+UNC/device namespaces, remote authorities, alternate data streams, unpaired
+UTF-16 and names that need verbatim-only interpretation. Raw escapes and decoded
+components are checked before URL normalization. Server-returned locations are
+matched to existing buffer identities while accepting the response, so picker
+previews retain unsaved text without reading file contents. Diagnostics and
+edits retain their existing version and containment checks.
+
+Account profile/cache roots come from known-folder records, not inherited
+environment defaults. Scoped COM initialization preserves existing apartments
+and balances only its own successful initialization. Trust identity uses exact
+canonical UTF-16LE bytes. The home-workspace exception takes an independently
+resolved standard cache, including redirection; arbitrary workspace-local
+overrides remain rejected even with several nonexistent path components.
+Storage still admits the original path through its reparse/ownership boundary.
+
+Forty-three LSP tests, one native live-buffer identity test, seven trust tests,
+one COM lifecycle test and one cache mapping test pass. Formatting and
+denied-warning all-target Clippy pass. URI/identity and account reviews have no
+remaining findings after the COM prerequisite correction and its regressions.
+
+#### Sub-phase 2.3 package 3: editor enablement and real-server acceptance
+
+The Windows manager now retains configured LSP
+enablement, and standalone startup loads exact-workspace permission before
+attaching it. Command dispatch, help, hints and health use the ordinary manager
+and document capabilities. Native executable discovery and permission remain
+separate: approval is required before attempting a server launch, and a missing
+server leaves editing available.
+
+One hundred restored editor language tests, five native platform-boundary tests
+and real ConPTY paste/save acceptance pass. A separately required native
+rust-analyzer test passes permission denial/approval, initialization, syntax
+diagnostics, formatting edits, restart, revocation and process-tree cleanup.
+The same compiled fixture drives the real editor's permission chooser and
+missing-server error through ConPTY. Its config, cache, Cargo home and target
+directories are temporary, and native process handles observe only descendants
+of its enclosing fixture job. CI provisions the server and checks that the
+explicitly selected acceptance actually ran.
+
+Independent final review has no remaining findings after documenting Windows
+config paths, script interpreter configuration and the shared process cwd
+limit. Formatting, denied-warning all-target Clippy and the full native suite
+pass: 2,940 passed, zero failures and 41 ignored entries across 42 libtest/doc
+groups, plus six harness-free native transport cases. The final required real
+server acceptance passes separately in 1.62 seconds with isolated Cargo home.
+Cross-platform CI acceptance remains pending for this checkpoint.
 
 ### Current implementation evidence
 

@@ -311,17 +311,10 @@ mod tests {
             snapshot.command_availability(outline).reason(),
             Some("plain text buffer")
         );
-        assert_eq!(
-            snapshot.command_availability(status).is_available(),
-            !cfg!(windows)
-        );
+        assert!(snapshot.command_availability(status).is_available());
         assert_eq!(
             snapshot.command_availability(format).reason(),
-            Some(if cfg!(windows) {
-                "LSP is unavailable in Windows Phase 1"
-            } else {
-                "no configured server"
-            })
+            Some("no configured server")
         );
         assert_eq!(
             snapshot.command_availability(git_status).reason(),

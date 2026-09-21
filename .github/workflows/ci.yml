@@ -42,6 +42,20 @@ jobs:
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
         run: cargo test --locked
+      - name: Provision the required native language server
+        run: |
+          rustup component add rust-analyzer rustfmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rust-analyzer --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Accept native language-server approval and lifecycle
+        run: |
+          cargo test --locked --test lsp_windows_acceptance real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup -- --ignored --exact 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-lsp-acceptance.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $acceptance = Get-Content -Raw "$env:RUNNER_TEMP/native-lsp-acceptance.log"
+          if ($acceptance -notmatch 'test real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup \.\.\. ok') {
+            throw 'Required native language-server acceptance did not run'
+          }
       # Windows coverage is provisional and has no measured baseline yet.
       # The Linux/macOS jobs continue enforcing the unchanged 89% floor.
 

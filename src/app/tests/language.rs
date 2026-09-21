@@ -202,7 +202,6 @@ fn status_stop_and_restart_clear_every_language_owned_transient() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn active_document_lsp_availability_tracks_server_lifecycle() {
     let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
     assert_eq!(
@@ -318,6 +317,107 @@ fn diagnostic(row: u32, from: u32, to: u32, message: &str) -> crate::lsp::Diagno
         message: message.to_owned(),
         ..Default::default()
     })
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_server_path_spellings_preserve_live_buffer_identity() {
+    let root = crate::test_support::TestRuntimeRoot::new("lsp-path-identity").unwrap();
+    let path = root.join("Mixed café.rs");
+    fs::write(&path, "fn main() {}\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(path.clone()), root.path()).unwrap();
+    let file = app.active().buffer;
+    let canonical = app.buffers[file].path.clone().unwrap();
+    let (handle, mut queue) = crate::lsp::command_channel();
+    app.lsp_workspace_allowed = true;
+    app.attach_lsp(handle);
+    ready(&mut app, Encoding::Utf8);
+    assert!(app.edit(Transaction::insert(0, "// unsaved preview\n")));
+    drain(&mut queue);
+    let version = app.lsp_documents[&file].version;
+    let ordinary = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+    let spelling = PathBuf::from(ordinary.to_uppercase());
+    let uri = crate::lsp::path_to_uri(&spelling).unwrap();
+    let returned = crate::lsp::uri_to_path(&uri).unwrap();
+    assert_ne!(returned, canonical);
+    assert_eq!(returned.canonicalize().unwrap(), canonical);
+
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: returned.clone(),
+        version: Some(version),
+        diagnostics: vec![diagnostic(0, 0, 2, "current")],
+    });
+    assert_eq!(app.diagnostics.for_path(&canonical).len(), 1);
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: returned.clone(),
+        version: Some(version - 1),
+        diagnostics: Vec::new(),
+    });
+    assert_eq!(
+        app.diagnostics.for_path(&canonical).len(),
+        1,
+        "stale spelling alias cannot clear current diagnostics"
+    );
+
+    let location = crate::lsp::Location {
+        path: returned.clone(),
+        range: LspRange::new(LspPosition::new(0, 0), LspPosition::new(0, 2)),
+        encoding: Encoding::Utf8,
+    };
+    app.lsp_requests.insert(
+        93,
+        tracked(
+            &app,
+            PendingRequest::Goto {
+                label: "references",
+            },
+        ),
+    );
+    app.apply_lsp_event(LspEvent::Response {
+        token: 93,
+        response: Response::Locations(vec![location.clone(), location.clone()]),
+    });
+    assert_eq!(
+        app.list.as_ref().unwrap().items[0].detail,
+        "// unsaved preview"
+    );
+    assert!(matches!(&app.list_actions[0], ListAction::Jump(target) if target.path == canonical));
+    let count = app.buffers.len();
+    app.lsp_requests.insert(
+        94,
+        tracked(
+            &app,
+            PendingRequest::Goto {
+                label: "definition",
+            },
+        ),
+    );
+    app.apply_lsp_event(LspEvent::Response {
+        token: 94,
+        response: Response::Locations(vec![location]),
+    });
+    assert_eq!(app.active().buffer, file);
+    assert_eq!(app.buffers.len(), count);
+
+    deliver_document_edits(
+        &mut app,
+        &mut queue,
+        vec![DocumentEdit {
+            path: returned,
+            version: Some(version),
+            edits: vec![edit(0, 0, 0, "// server\n")],
+        }],
+        true,
+    );
+    assert!(
+        app.buffers[file]
+            .to_string()
+            .starts_with("// server\n// unsaved preview\n")
+    );
+    assert_eq!(app.buffers.len(), count);
+    assert_eq!(fs::read_to_string(path).unwrap(), "fn main() {}\n");
 }
 
 fn edit(row: u32, from: u32, to: u32, text: &str) -> crate::lsp::TextEdit {
@@ -1948,7 +2048,6 @@ fn server_lifecycle_does_not_close_a_picker_that_replaced_code_actions() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn tab_requests_code_actions_in_an_ordinary_language_buffer() {
     let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
     ready(&mut app, Encoding::Utf8);
@@ -2675,7 +2774,6 @@ fn completion_filters_while_typing_and_inserts_with_its_extra_edits() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn explicit_completion_filters_the_existing_prefix_and_replaces_it() {
     let (mut app, _, mut queue) = rust_app("left_at\n");
     ready(&mut app, Encoding::Utf8);
@@ -2757,7 +2855,6 @@ fn explicit_completion_filters_the_existing_prefix_and_replaces_it() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn explicit_completion_stays_pinned_without_matches_and_rejects_late_responses() {
     let (mut app, _, mut queue) = rust_app("left\n");
     ready(&mut app, Encoding::Utf8);
@@ -2858,7 +2955,6 @@ fn explicit_completion_stays_pinned_without_matches_and_rejects_late_responses()
 }
 
 #[test]
-#[cfg(not(windows))]
 fn explicit_completion_refreshes_context_and_ends_at_editing_boundaries() {
     let (mut app, _, mut queue) = rust_app("left\n");
     ready(&mut app, Encoding::Utf8);
@@ -3735,7 +3831,6 @@ fn a_stale_completion_response_is_discarded_rather_than_shown() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn language_completion_enters_insert_mode_and_requests_candidates() {
     let (mut app, _, mut queue) = rust_app("value\n");
     ready(&mut app, Encoding::Utf8);
@@ -3863,7 +3958,6 @@ fn a_response_nothing_is_waiting_for_is_ignored() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn language_server_commands_degrade_to_a_message_without_a_server() {
     let mut app = App::new(Config::default(), None).unwrap();
     let sequences: &[&[char]] = &[
@@ -3897,7 +3991,6 @@ fn language_server_commands_degrade_to_a_message_without_a_server() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn the_rename_prompt_seeds_the_word_under_the_caret() {
     let (mut app, _, mut queue) = rust_app("let value = 1;\n");
     ready(&mut app, Encoding::Utf8);
@@ -3979,7 +4072,6 @@ fn a_document_symbol_picker_filters_and_jumps() {
 
 /// The `lsp` row of a service-health report, which is the row the state of a
 /// language server actually reaches a person through.
-#[cfg(not(windows))]
 fn lsp_health(app: &App) -> (ServiceState, String) {
     let entry = app
         .service_health_snapshot()
@@ -3991,7 +4083,6 @@ fn lsp_health(app: &App) -> (ServiceState, String) {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn service_health_distinguishes_every_language_server_state_a_buffer_can_be_in() {
     let mut disabled_config = Config::default();
     disabled_config.lsp.enable = false;
@@ -4085,12 +4176,10 @@ fn service_health_reports_syntax_ready_only_once_the_active_buffer_has_a_tree() 
 }
 
 #[test]
-#[cfg(not(windows))]
 fn workspace_lsp_permission_gates_all_servers_and_remembers_both_answers() {
-    let root = temporary("workspace-permission");
-    let project = root.join("project");
+    let root = crate::test_support::TestRuntimeRoot::new("workspace-permission").unwrap();
+    let project = root.create_private_dir("project").unwrap();
     let storage = root.join("private/trust");
-    std::fs::create_dir_all(&project).unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
     app.project_root = project.clone();
     app.buffers[0].path = Some(project.join("main.rs"));
@@ -4188,7 +4277,6 @@ fn workspace_lsp_permission_gates_all_servers_and_remembers_both_answers() {
     assert!(!app.lsp_workspace_allowed);
     assert!(app.lsp_documents.is_empty());
     assert!(app.lsp_servers.is_empty());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -4216,15 +4304,21 @@ fn workspace_lsp_permission_fails_closed_without_storage_and_respects_configurat
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn home_workspace_lsp_choices_accept_enter_and_restore_only_remembered_decisions() {
     use crate::{lsp_trust::TrustStore, test_support::TestRuntimeRoot};
     for choice in 0..3 {
         let home = TestRuntimeRoot::new("lsp-home").unwrap();
-        let storage = home.join(TrustStore::HOME_CACHE);
-        let store = || TrustStore::new_with_home(Some(storage.clone()), &home, Some(&home));
-        let mut app = App::new_in_project(Config::default(), None, &home).unwrap();
+        let storage = home.join("account-cache/lsp-trust");
+        let store = || {
+            TrustStore::new_with_account_paths(
+                Some(storage.clone()),
+                home.path(),
+                Some(home.path()),
+                Some(&storage),
+            )
+        };
+        let mut app = App::new_in_project(Config::default(), None, home.path()).unwrap();
         app.configure_lsp_trust_store(store());
         assert_eq!(app.list.as_ref().unwrap().items.len(), 3);
         for _ in 0..choice {
@@ -4241,19 +4335,18 @@ fn home_workspace_lsp_choices_accept_enter_and_restore_only_remembered_decisions
                 _ => Some(true),
             }
         );
-        let mut reopened = App::new_in_project(Config::default(), None, &home).unwrap();
+        let mut reopened = App::new_in_project(Config::default(), None, home.path()).unwrap();
         reopened.configure_lsp_trust_store(store());
         assert_eq!(reopened.lsp_workspace_allowed, choice == 2);
         assert_eq!(reopened.list.is_some(), choice == 1);
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn unavailable_lsp_storage_offers_working_temporary_choices() {
     let root = crate::test_support::TestRuntimeRoot::new("lsp-unavailable").unwrap();
     for storage in [None, Some(root.join("project-cache"))] {
-        let mut app = App::new_in_project(Config::default(), None, &root).unwrap();
+        let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
         app.configure_lsp_trust(storage.clone());
         let list = app.list.as_ref().unwrap();
         assert_eq!(list.items.len(), 2);
@@ -4283,7 +4376,6 @@ fn unavailable_lsp_storage_offers_working_temporary_choices() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn lsp_storage_failure_stays_visible_and_temporary_refusal_still_works() {
     let root = crate::test_support::TestRuntimeRoot::new("lsp-failure").unwrap();
@@ -4343,20 +4435,23 @@ fn lsp_storage_failure_stays_visible_and_temporary_refusal_still_works() {
     assert!(app.lsp_workspace_allowed);
     assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
 
-    // An unreadable saved grant must not silently become an enduring "once".
-    let moved = root.join("saved-trust");
-    std::fs::rename(&storage, &moved).unwrap();
-    std::os::unix::fs::symlink(&moved, &storage).unwrap();
-    app.configure_lsp_trust(Some(storage.clone()));
-    assert!(!app.lsp_workspace_allowed);
-    assert_eq!(app.list.as_ref().unwrap().items.len(), 2);
-    app.handle_key(KeyStroke::plain(KeyCode::Down)).unwrap();
-    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
-    assert!(!app.lsp_workspace_allowed);
-    assert!(app.list.is_some());
-    app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
-    assert!(app.list.is_none());
-    std::fs::remove_file(&storage).unwrap();
-    std::fs::rename(moved, &storage).unwrap();
-    assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
+    #[cfg(unix)]
+    {
+        // An unreadable saved grant must not silently become an enduring "once".
+        let moved = root.join("saved-trust");
+        std::fs::rename(&storage, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &storage).unwrap();
+        app.configure_lsp_trust(Some(storage.clone()));
+        assert!(!app.lsp_workspace_allowed);
+        assert_eq!(app.list.as_ref().unwrap().items.len(), 2);
+        app.handle_key(KeyStroke::plain(KeyCode::Down)).unwrap();
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(!app.lsp_workspace_allowed);
+        assert!(app.list.is_some());
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.list.is_none());
+        std::fs::remove_file(&storage).unwrap();
+        std::fs::rename(moved, &storage).unwrap();
+        assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
+    }
 }

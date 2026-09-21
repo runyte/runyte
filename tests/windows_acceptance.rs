@@ -21,6 +21,7 @@ fn real_editor_paste_and_save() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_ACCEPTANCE_ROOT", root.path())
         .stdin(Stdio::null())
         .stdout(output.try_clone().unwrap())
@@ -136,12 +137,26 @@ fn native_editor_console_fixture() {
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
     );
-    let file = root.join("unicode note.txt");
+    assert_eq!(
+        std::env::var_os("XDG_CACHE_HOME").unwrap(),
+        root.join("cache")
+    );
+    let project = root.join("project");
+    let config = root.join("config/config.yaml");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, "lsp:\n  enable: false\n").unwrap();
+    let file = project.join("unicode note.txt");
     std::fs::write(&file, "original\r\n").unwrap();
     let mut editor = Console::spawn(
         Path::new(env!("CARGO_BIN_EXE_runyte")),
-        &["--standalone".into(), file.display().to_string()],
-        &root,
+        &[
+            "--standalone".into(),
+            "--config".into(),
+            config.display().to_string(),
+            file.display().to_string(),
+        ],
+        &project,
     );
     editor.until("Project directory [");
     editor.send("\r");

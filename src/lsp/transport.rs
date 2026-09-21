@@ -9,14 +9,19 @@
 
 use std::{
     path::Path,
-    process::Stdio,
     sync::{Arc, Mutex},
 };
+
+#[cfg(not(windows))]
+use std::process::Stdio;
+#[cfg(not(windows))]
+use tokio::process::{Child, Command};
+#[cfg(windows)]
+mod windows;
 
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    process::{Child, Command},
     sync::mpsc,
 };
 
@@ -56,7 +61,12 @@ pub enum Incoming {
 pub struct Connection {
     outgoing: mpsc::Sender<Value>,
     stderr: Arc<Mutex<String>>,
+    #[cfg(not(windows))]
     child: Option<Child>,
+    #[cfg(windows)]
+    native: Option<windows::Native>,
+    #[cfg(windows)]
+    tasks: Vec<tokio::task::AbortHandle>,
 }
 
 impl Connection {
@@ -78,6 +88,7 @@ impl Connection {
     /// Drops the write half and kills the child if it does not leave on its
     /// own. Killing is deliberate: a language server that ignores `exit` must
     /// not outlive the editor.
+    #[cfg(not(windows))]
     pub async fn stop(mut self) {
         drop(self.outgoing);
         let Some(mut child) = self.child.take() else {
@@ -91,6 +102,29 @@ impl Connection {
         }
         let _ = child.start_kill();
         let _ = child.wait().await;
+    }
+
+    #[cfg(windows)]
+    pub async fn stop(mut self) {
+        let (closed, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.outgoing, closed));
+        if let Some(native) = &self.native {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+            while !native.finished() && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        // Drop aborts framing tasks even when an inbox send is backpressured.
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Connection {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+        drop(self.native.take());
     }
 }
 
@@ -110,17 +144,24 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let (outgoing, queue) = mpsc::channel(OUTGOING_CAPACITY);
-    tokio::spawn(read_loop(
+    let reader_task = tokio::spawn(read_loop(
         key.clone(),
         generation,
         tokio::io::BufReader::new(reader),
         inbox.clone(),
     ));
-    tokio::spawn(write_loop(key, generation, writer, queue, inbox));
+    let writer_task = tokio::spawn(write_loop(key, generation, writer, queue, inbox));
+    #[cfg(not(windows))]
+    let _ = (reader_task, writer_task);
     Connection {
         outgoing,
         stderr: Arc::new(Mutex::new(String::new())),
+        #[cfg(not(windows))]
         child: None,
+        #[cfg(windows)]
+        native: None,
+        #[cfg(windows)]
+        tasks: vec![reader_task.abort_handle(), writer_task.abort_handle()],
     }
 }
 
@@ -133,31 +174,31 @@ pub fn spawn(
     root: &Path,
     inbox: mpsc::Sender<(String, u64, Incoming)>,
 ) -> std::io::Result<Connection> {
-    if cfg!(windows) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "LSP is unavailable in Windows Phase 1",
-        ));
-    }
-    let mut child = Command::new(command)
-        .args(arguments)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-    let stdin = child.stdin.take().ok_or_else(missing_pipe)?;
-    let stdout = child.stdout.take().ok_or_else(missing_pipe)?;
-    let stderr = child.stderr.take().ok_or_else(missing_pipe)?;
+    #[cfg(windows)]
+    return windows::spawn(key, generation, command, arguments, root, inbox);
+    #[cfg(not(windows))]
+    {
+        let mut child = Command::new(command)
+            .args(arguments)
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let stdin = child.stdin.take().ok_or_else(missing_pipe)?;
+        let stdout = child.stdout.take().ok_or_else(missing_pipe)?;
+        let stderr = child.stderr.take().ok_or_else(missing_pipe)?;
 
-    let mut connection = connect(key, generation, stdout, stdin, inbox);
-    let tail = Arc::clone(&connection.stderr);
-    tokio::spawn(drain_stderr(stderr, tail));
-    connection.child = Some(child);
-    Ok(connection)
+        let mut connection = connect(key, generation, stdout, stdin, inbox);
+        let tail = Arc::clone(&connection.stderr);
+        tokio::spawn(drain_stderr(stderr, tail));
+        connection.child = Some(child);
+        Ok(connection)
+    }
 }
 
+#[cfg(not(windows))]
 fn missing_pipe() -> std::io::Error {
     std::io::Error::other("language server stdio was not piped")
 }

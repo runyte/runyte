@@ -1453,7 +1453,8 @@ does not bundle that runtime.
 | Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
 | Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
 | Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
-| Deferred | LSP, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, `--wait` and `:quit-here` |
+| Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
+| Deferred | Plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -1462,6 +1463,19 @@ and `:service-health` for diagnostics. Git integration is enabled when a native
 Git is optional: if it is absent, Git commands are disabled with a clear reason,
 and editing still works. Restart Runyte after installing Git or changing `PATH`.
 Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
+
+Language servers also use native `.exe` or `.com` executables, specified by an
+absolute path or discovered through absolute `PATH` entries. To run a script,
+configure its native interpreter as the executable and supply the script in
+`args`. Servers start only after [workspace approval](#language-servers).
+Missing servers leave editing available and report their failure through LSP
+status. File URIs support local drive paths, including equivalent extended
+paths, Unicode and spaces; network authorities, device paths and alternate
+data streams are refused. Remembered decisions use the Windows account's
+profile and local application-data folders, with private storage on local NTFS.
+The workspace working directory must have an equivalent ordinary Windows
+spelling shorter than 260 UTF-16 units, as for Git and terminal processes;
+unsupported working directories report a server launch failure.
 
 Git working directories and worktree destinations need an equivalent ordinary
 Windows spelling shorter than 260 UTF-16 units. Unsupported paths are refused

@@ -115,6 +115,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
+    "Win32_System_Com",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_JobObjects",
@@ -130,3 +131,8 @@ windows-sys = { version = "0.61", features = [
 [profile.release]
 lto = true
 strip = true
+
+[[test]]
+name = "lsp_windows_transport"
+path = "tests/lsp_windows_transport.rs"
+harness = false

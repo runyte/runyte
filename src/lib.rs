@@ -71,7 +71,7 @@ pub mod text;
 pub mod tui;
 pub mod tutorial;
 pub mod ui;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) mod user_paths;
 #[cfg(windows)]
 mod windows_fs;

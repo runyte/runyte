@@ -1286,15 +1286,6 @@ impl CommandId {
         }
         if matches!(
             self.capability(),
-            Some(CommandCapability::LspDocument | CommandCapability::LspManager)
-        ) || matches!(
-            self,
-            Self::Colon(ColonCommand::LspTrust) | Self::Editor(EditorCommand::Diagnostics)
-        ) {
-            return Some("LSP is unavailable in Windows Phase 1");
-        }
-        if matches!(
-            self.capability(),
             Some(CommandCapability::PersistentSession)
         ) {
             return Some("persistent mode is not supported on this platform");

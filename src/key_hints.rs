@@ -1005,21 +1005,14 @@ mod tests {
             .iter()
             .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::LspStatus)))
             .expect("the Language namespace lists LSP status");
-        assert_eq!(
-            status.unavailable_reason.as_deref(),
-            cfg!(windows).then_some("LSP is unavailable in Windows Phase 1")
-        );
+        assert_eq!(status.unavailable_reason.as_deref(), None);
         let completion = children
             .iter()
             .find(|row| row.target == Some(BindingTarget::Editor(EditorCommand::TriggerCompletion)))
             .expect("the Language namespace lists completion");
         assert_eq!(
             completion.unavailable_reason.as_deref(),
-            Some(if cfg!(windows) {
-                "LSP is unavailable in Windows Phase 1"
-            } else {
-                "the active file is not attached"
-            })
+            Some("the active file is not attached")
         );
     }
 

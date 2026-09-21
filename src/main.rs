@@ -5103,12 +5103,8 @@ fn start_host_services(
     } else {
         None
     };
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
-    #[cfg(windows)]
-    if app.config.lsp.enable {
-        app.report_host_error("LSP is unavailable in Windows Phase 1");
-    }
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);

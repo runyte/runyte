@@ -216,9 +216,7 @@ impl App {
         } else {
             CommandAvailability::Unavailable("syntax is unavailable for this buffer".to_owned())
         };
-        let lsp_manager = if cfg!(windows) {
-            CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
-        } else if !self.config.lsp.enable {
+        let lsp_manager = if !self.config.lsp.enable {
             CommandAvailability::Unavailable("language servers are disabled in settings".to_owned())
         } else if !self.lsp_workspace_allowed {
             CommandAvailability::Unavailable(
@@ -230,9 +228,6 @@ impl App {
             CommandAvailability::Available
         };
         let lsp_document = match self.language_of(buffer_id) {
-            _ if cfg!(windows) => {
-                CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
-            }
             None => CommandAvailability::Unavailable(
                 "the active buffer has no recognized language".to_owned(),
             ),

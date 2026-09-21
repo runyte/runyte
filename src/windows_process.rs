@@ -266,8 +266,9 @@ impl Drop for InheritanceParent {
     fn drop(&mut self) {
         unsafe {
             TerminateProcess(self.0.as_raw_handle(), 0);
-            WaitForSingleObject(self.0.as_raw_handle(), 5000);
         }
+        // The suspended surrogate remains job-owned until termination. No
+        // Windows reaping is required, and launch must not wait on its exit.
     }
 }
 
@@ -279,9 +280,25 @@ pub(crate) fn spawn(command: &Command, pipe_stdin: bool) -> io::Result<Child> {
     spawn_inner(command, pipe_stdin, |_, _| {})
 }
 
+/// Launch with caller-owned native stdin/stdout/stderr endpoints. Their peer
+/// handles stay with the caller (for example an overlapped async transport).
+/// The endpoints are inherited through the same isolated parent and job as Git.
+pub(crate) fn spawn_with_stdio(command: &Command, stdio: [OwnedHandle; 3]) -> io::Result<Child> {
+    spawn_with_stdio_inner(command, true, Some(stdio), |_, _| {})
+}
+
 fn spawn_inner(
     command: &Command,
     pipe_stdin: bool,
+    before_create: impl FnOnce(HANDLE, HANDLE),
+) -> io::Result<Child> {
+    spawn_with_stdio_inner(command, pipe_stdin, None, before_create)
+}
+
+fn spawn_with_stdio_inner(
+    command: &Command,
+    pipe_stdin: bool,
+    stdio: Option<[OwnedHandle; 3]>,
     before_create: impl FnOnce(HANDLE, HANDLE),
 ) -> io::Result<Child> {
     let program = std::path::Path::new(command.get_program());
@@ -337,18 +354,28 @@ fn spawn_inner(
     }
     block.push(0);
     let job = new_job()?;
-    let (stdin, child_stdin) = pipe(false)?;
-    let (stdout, child_stdout) = pipe(true)?;
-    let (stderr, child_stderr) = pipe(true)?;
+    let (stdin, stdout, stderr, stdio) = match stdio {
+        Some(stdio) => (None, None, None, stdio),
+        None => {
+            let (stdin, child_stdin) = pipe(false)?;
+            let (stdout, child_stdout) = pipe(true)?;
+            let (stderr, child_stderr) = pipe(true)?;
+            // A closed writer provides immediate EOF when no input was requested.
+            (
+                pipe_stdin.then(|| File::from(stdin)),
+                Some(File::from(stdout)),
+                Some(File::from(stderr)),
+                [child_stdin, child_stdout, child_stderr],
+            )
+        }
+    };
     let parent = InheritanceParent::new(&job, directory.as_deref())?;
-    // A closed writer provides immediate EOF when no input was requested.
-    let stdin = pipe_stdin.then(|| File::from(stdin));
     let handles = [
-        parent.inherit(&child_stdin)?,
-        parent.inherit(&child_stdout)?,
-        parent.inherit(&child_stderr)?,
+        parent.inherit(&stdio[0])?,
+        parent.inherit(&stdio[1])?,
+        parent.inherit(&stdio[2])?,
     ];
-    before_create(child_stdout.as_raw_handle(), parent.0.as_raw_handle());
+    before_create(stdio[1].as_raw_handle(), parent.0.as_raw_handle());
     let parents = [parent.0.as_raw_handle()];
     let mut attributes = Attributes::new()?;
     // Inheritable handles exist ONLY in the isolated parent's table. This
@@ -390,8 +417,8 @@ fn spawn_inner(
     drop(owned(info.hThread)?);
     Ok(Child {
         stdin,
-        stdout: Some(File::from(stdout)),
-        stderr: Some(File::from(stderr)),
+        stdout,
+        stderr,
         process,
         job,
     })

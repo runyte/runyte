@@ -133,10 +133,20 @@ Sub-phase 2.2 adds native private storage and standalone diagnostics on local
 NTFS. Ownership, reparse refusal, pinned identity, atomic replacement and
 cleanup have native coverage. Logs retain exclusive writer ownership across
 rotation while remaining readable; real ConPTY acceptance covers `:log-open`,
-default-log degradation and explicit-log refusal. Three implementation packages
-have independent reviews with no remaining findings. Full native and
-cross-platform acceptance is pending and will be recorded in the active Phase-2 plan. Language
-services and the remaining sub-phases are still pending.
+default-log degradation and explicit-log refusal. All four packages have
+independent reviews with no remaining findings. Native formatting, Clippy and
+2,907 tests pass. All jobs in cross-platform acceptance run
+[`35590400592`](https://github.com/runyte/runyte/actions/runs/35590400592) pass,
+including both unchanged Unix coverage gates.
+
+Sub-phase 2.3 restores language services after workspace permission, with native
+executable discovery, owned asynchronous pipes/process trees, local-drive file
+URIs and account-scoped permission storage. All three packages have independent
+reviews with no remaining findings. Formatting, Clippy and the full native suite
+pass (2,940 tests); required real rust-analyzer acceptance separately covers
+initialization, diagnostics, edits, restart and revocation cleanup. CI provisions
+and requires that acceptance. Cross-platform CI for this checkpoint is pending;
+standalone integrations, persistent sessions, plugins and context access remain.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

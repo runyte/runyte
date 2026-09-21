@@ -1640,6 +1640,8 @@ impl App {
         } = tracked;
         match (pending, response) {
             (PendingRequest::Goto { label }, Response::Locations(locations)) => {
+                #[cfg(windows)]
+                let locations = self.resolve_open_lsp_locations(locations);
                 match locations.len() {
                     0 => self.status(format!("no {label} found")),
                     1 => {
@@ -1861,6 +1863,35 @@ impl App {
         self.completion
             .as_ref()
             .is_some_and(|state| state.source == CompletionSource::Path)
+    }
+
+    /// Resolve server path spellings while accepting the response. Picker
+    /// construction and preview rendering continue to read only live buffers.
+    #[cfg(windows)]
+    fn resolve_open_lsp_locations(
+        &self,
+        mut locations: Vec<crate::lsp::Location>,
+    ) -> Vec<crate::lsp::Location> {
+        let open: HashMap<_, _> = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.closed_buffers.contains(index))
+            .filter_map(|(_, buffer)| buffer.path.as_ref())
+            .filter_map(|path| {
+                workspace_edit_path_identity(path)
+                    .ok()
+                    .map(|identity| (identity, path))
+            })
+            .collect();
+        for location in &mut locations {
+            if let Ok(identity) = workspace_edit_path_identity(&location.path)
+                && let Some(path) = open.get(&identity)
+            {
+                location.path = (*path).clone();
+            }
+        }
+        locations
     }
 
     fn open_location_picker(&mut self, label: &'static str, locations: Vec<crate::lsp::Location>) {
