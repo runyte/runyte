@@ -167,3 +167,10 @@ keyboard-layout/IME testing and optional PowerShell 7/Git Bash remain unclaimed.
 Linux/macOS checks and their 89% coverage gates will run remotely on the reviewed
 Phase-1 commit. No passing remote result is claimed before that run completes.
 Phase 2 starts with optional integrated Git as recorded in the delivery order.
+
+The first pushed implementation is `3203878`. Remote run `35538777457`
+passed Linux coverage, macOS tests, MSRV and the release build floor. Linux
+Clippy failed: review by `review_wp1` identified four blank lines after outer
+conditional attributes on items excluded from Windows. The lint was reproduced
+independently; those blank lines were removed without changing behavior, and
+formatting passes. The complete remote gate result remains pending.

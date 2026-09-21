@@ -998,7 +998,6 @@ impl ImageClipboard {
     }
 
     #[cfg(not(windows))]
-
     fn text(text: &str) -> Self {
         Self {
             image: None,

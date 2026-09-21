@@ -299,7 +299,6 @@ mod tests {
     use super::*;
 
     #[cfg(not(windows))]
-
     fn temporary_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "runyte-pasted-image-{name}-{}-{:?}",

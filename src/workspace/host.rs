@@ -1845,7 +1845,6 @@ mod tests {
     }
 
     #[cfg(not(windows))]
-
     fn complete_git_refresh(
         host: &mut WorkspaceHost,
         events: &mut tokio::sync::mpsc::Receiver<GitServiceEvent>,

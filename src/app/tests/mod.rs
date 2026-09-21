@@ -59,7 +59,6 @@ fn open_filler_special_buffers(app: &mut App, count: usize) -> Vec<usize> {
 }
 
 #[cfg(not(windows))]
-
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);
