@@ -4,6 +4,8 @@ use super::*;
 use std::{io, sync::atomic::Ordering};
 mod plugin_budget_review;
 mod recursive_limits;
+#[cfg(windows)]
+mod windows;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -559,7 +561,10 @@ fn missing_source_parent_during_restore_retains_original() {
     })
     .unwrap_err();
     assert_eq!(error.report.recovery[0].kind, RecoveryKind::Original);
+    #[cfg(not(windows))]
     assert!(error.report.recovery[0].reason.contains("No such file"));
+    #[cfg(windows)]
+    assert!(error.report.recovery[0].reason.contains("os error 3"));
     let retained = error.report.recovery[0]
         .retained
         .strip_prefix(dir.join("source-dir"))

@@ -17,7 +17,9 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+#[cfg(not(any(unix, windows)))]
+use anyhow::bail;
+use anyhow::{Context, Result, anyhow, ensure};
 
 mod platform;
 mod staging;
@@ -115,6 +117,8 @@ struct EntryFingerprint {
     symlink_target: Option<PathBuf>,
     readonly: bool,
     unix: Option<UnixFingerprint>,
+    #[cfg(windows)]
+    native: crate::windows_fs::Identity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -266,6 +270,8 @@ impl EntryFingerprint {
             symlink_target,
             readonly: metadata.permissions().readonly(),
             unix: unix_fingerprint(&metadata),
+            #[cfg(windows)]
+            native: crate::windows_fs::Identity::read(path)?,
         })
     }
 
@@ -893,8 +899,25 @@ impl FsPlan {
                 Ok(entry)
             })
             .collect::<Result<Vec<_>>>()?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            let mut names: Vec<Vec<u16>> = desired
+                .iter()
+                .map(|entry| entry.path.as_os_str().encode_wide().collect())
+                .collect();
+            names.sort_unstable_by(|left, right| crate::windows_fs::compare_names(left, right));
+            ensure!(
+                !names
+                    .windows(2)
+                    .any(|pair| crate::windows_fs::compare_names(&pair[0], &pair[1]).is_eq()),
+                "duplicate Windows directory entry (case-insensitive)"
+            );
+        }
+        #[cfg(not(windows))]
         let mut paths = HashSet::new();
         for entry in &desired {
+            #[cfg(not(windows))]
             ensure!(
                 paths.insert(entry.path.clone()),
                 "duplicate directory entry: {}",
@@ -955,7 +978,7 @@ impl FsPlan {
             let source = lexical_normalize(&root.join(&transfer.path));
             let target = lexical_normalize(&root.join(&entry.path));
             ensure!(
-                entry.kind != EntryKind::Directory || !target.starts_with(&source),
+                entry.kind != EntryKind::Directory || !directory_contains(&source, &target, false)?,
                 "cannot {} {} inside itself",
                 match transfer.mode {
                     TransferMode::Copy => "copy",
@@ -996,7 +1019,11 @@ impl FsPlan {
             if original.path != primary.path {
                 ensure!(
                     original.kind != EntryKind::Directory
-                        || !primary.path.starts_with(&original.path),
+                        || !directory_contains(
+                            &root.join(&original.path),
+                            &root.join(&primary.path),
+                            true
+                        )?,
                     "cannot move {} inside itself",
                     original.path.display()
                 );
@@ -1021,7 +1048,11 @@ impl FsPlan {
             {
                 ensure!(
                     original.kind != EntryKind::Directory
-                        || !duplicate.path.starts_with(&primary.path),
+                        || !directory_contains(
+                            &root.join(&primary.path),
+                            &root.join(&duplicate.path),
+                            false
+                        )?,
                     "cannot copy {} inside itself",
                     primary.path.display()
                 );
@@ -1421,15 +1452,24 @@ impl FsPlan {
                 FsOperation::Create { .. } | FsOperation::Copy { .. } => None,
             })
             .collect::<HashSet<_>>();
+        #[cfg(windows)]
+        let vacated_entries = vacated
+            .iter()
+            .map(|path| crate::windows_fs::entry_path(&self.root.join(path)))
+            .collect::<std::io::Result<HashSet<_>>>()?;
         for operation in &self.operations {
             let Some(target) = operation.target() else {
                 continue;
             };
             match fs::symlink_metadata(self.root.join(target)) {
-                Ok(_) if !vacated.contains(target) => {
-                    bail!("target already exists: {}", target.display());
+                Ok(_) => {
+                    #[cfg(not(windows))]
+                    let will_vacate = vacated.contains(target);
+                    #[cfg(windows)]
+                    let will_vacate = vacated_entries
+                        .contains(&crate::windows_fs::entry_path(&self.root.join(target))?);
+                    ensure!(will_vacate, "target already exists: {}", target.display());
                 }
-                Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(error)
@@ -1549,6 +1589,17 @@ impl FsPlan {
                 }
             }
         }
+        #[cfg(windows)]
+        if !move_sources.is_empty() {
+            let volume = crate::windows_fs::Identity::read(&self.root)?.volume;
+            for path in move_sources.iter().chain(&move_targets) {
+                ensure!(
+                    crate::windows_fs::Identity::read(path)?.volume == volume,
+                    "cross-filesystem move is unsupported: {}",
+                    path.display()
+                );
+            }
+        }
         let mut parents = parents.into_iter().collect::<Vec<_>>();
         parents.sort();
         for parent in parents {
@@ -1609,6 +1660,8 @@ impl FsPlan {
 }
 
 fn normalize_desired_path(root: &Path, path: &Path) -> Result<PathBuf> {
+    #[cfg(windows)]
+    crate::windows_fs::validate_relative(path)?;
     ensure!(
         !path.as_os_str().is_empty(),
         "directory entries cannot be empty"
@@ -1650,6 +1703,18 @@ pub(crate) fn relative_from_root(root: &Path, target: &Path) -> Result<PathBuf> 
         relative.push(component.as_os_str());
     }
     Ok(relative)
+}
+
+fn directory_contains(source: &Path, target: &Path, allow_same: bool) -> std::io::Result<bool> {
+    #[cfg(windows)]
+    {
+        crate::windows_fs::contains_proposal(source, target, allow_same)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = allow_same;
+        Ok(target.starts_with(source))
+    }
 }
 
 fn lexical_normalize(path: &Path) -> PathBuf {

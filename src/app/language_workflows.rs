@@ -802,10 +802,16 @@ impl App {
         let buffer = self.active().buffer;
         let head = self.active().head();
         let token = path_token_before(&self.buffers[buffer], head);
-        let Some(slash_at) = token.rfind('/') else {
+        let Some(slash_at) = token.rfind(super::is_path_separator) else {
             return;
         };
         let (directory_part, fragment) = token.split_at(slash_at + 1);
+        let separator = directory_part.chars().next_back().unwrap();
+        #[cfg(windows)]
+        let native_directory = directory_part.replace('/', "\\");
+        #[cfg(windows)]
+        let requested = Path::new(&native_directory);
+        #[cfg(not(windows))]
         let requested = Path::new(directory_part);
         let mut directories = Vec::new();
         if requested.is_absolute() {
@@ -846,13 +852,13 @@ impl App {
                 // last row kept can change the answer.
                 if kept.len() >= PATH_COMPLETION_ITEM_LIMIT_PER_ROOT
                     && kept.last_key_value().is_some_and(|(last, _)| {
-                        row_is_not_before(&entry.name, is_directory, '/', last)
+                        row_is_not_before(&entry.name, is_directory, separator, last)
                     })
                 {
                     continue;
                 }
                 let label = if is_directory {
-                    format!("{}/", entry.name)
+                    format!("{}{separator}", entry.name)
                 } else {
                     entry.name.clone()
                 };
@@ -2534,7 +2540,7 @@ impl App {
         }
         self.report_new_registry_errors();
         self.signature = None;
-        if source == CompletionSource::Path && item.insert.ends_with('/') {
+        if source == CompletionSource::Path && item.insert.ends_with(super::is_path_separator) {
             self.path_completion();
         }
     }
@@ -2709,6 +2715,8 @@ impl App {
                     self.attach_numbered_session(character);
                     return Ok(());
                 }
+                // Unix session-number admission above must run before filtering.
+                #[cfg_attr(not(unix), allow(clippy::collapsible_match))]
                 if self
                     .list
                     .as_ref()

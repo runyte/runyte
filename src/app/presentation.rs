@@ -1298,7 +1298,8 @@ impl App {
                     // relative prefix was expanded. Against an absolute
                     // spelling it is the row's own name with the base back in
                     // front of it, which is what the row stopped showing.
-                    let resolved = if hint.detail == hint.value.trim_end_matches(is_path_separator)
+                    let resolved = if Path::new(&hint.detail)
+                        == Path::new(hint.value.trim_end_matches(is_path_separator))
                     {
                         String::new()
                     } else {

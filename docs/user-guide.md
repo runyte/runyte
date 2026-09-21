@@ -960,10 +960,29 @@ no gutter and no branch in the status line.
 ### Terminals
 
 `:terminal` runs a program in the active pane. With no argument it runs
-`$SHELL`; `:terminal htop` runs a command line, split the way a shell splits
-it. `:term` and `:t` are the same command. `Space t n` and `Ctrl-w t` are the
+`$SHELL` on Unix or `%COMSPEC%` (falling back to `cmd.exe`) on Windows.
+`:terminal htop` runs a command line. Unix uses shell-style argument splitting;
+Windows uses native double-quote/backslash argument syntax. `:term` and `:t`
+are the same command. `Space t n` and `Ctrl-w t` are the
 same command on a key, and the pane's own buffer stays where it is — leaving
 the terminal shows it again.
+
+Windows terminals use ConPTY and require no Bash installation. Executables are
+found on absolute `PATH` entries using `PATHEXT`; the workspace is not searched
+implicitly. Quote program paths containing spaces, for example
+`:terminal "C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`. Operators and
+batch files require an explicit shell, such as `:terminal cmd.exe /d /c "echo hello"`.
+For `cmd.exe /c` or `/k`, supply exactly one command-string argument. Runyte
+uses `/s` and preserves that string as shell text, including nested quotes.
+For example, `:terminal cmd.exe /d /c "echo \"a b\""` prints `"a b"`;
+`:terminal cmd.exe /d /c "\"C:\scripts\my task.cmd\""` runs a batch path with spaces.
+PowerShell 7 and Git Bash are optional installations. Each terminal owns an
+independent process tree; closing it or quitting the editor ends that tree.
+Terminal working directories must have an equivalent ordinary Windows path
+shorter than 260 UTF-16 units. Paths requiring extended-name semantics are
+refused before launch. `cmd.exe` also refuses UNC working directories; use a
+shell that supports UNC directories. These terminal limits do not change
+which paths the editor can open as files.
 
 Bare `:terminal` keeps using the editor working directory. The explicit
 variants are `:terminal-file-directory [command]`,
@@ -1115,10 +1134,9 @@ Primary-screen inline TUIs may keep a composer or status area fixed while
 scrolling completed output through a top-anchored region; those completed rows
 remain ordinary scrollback, including Codex output when it runs in inline mode.
 
-Known limitations. Terminals are Unix only: Windows needs ConPTY, which is a
-second implementation of the hardest part, and
-`context/issues/windows_support.md` already records that Runyte disables a
-feature there rather than shipping an unsound one. SGR mouse reporting is
+Known limitations. Windows Phase 1 provides standalone ConPTY terminals;
+persistent-session parent navigation and external-editor waits remain
+unavailable there. SGR mouse reporting is
 forwarded inside terminal pane bodies when a child requests it; borders remain
 Runyte's, and the wheel scrolls review history when the child has not requested
 the pointer. A cell retains up to three combining marks without consuming
@@ -1231,11 +1249,18 @@ child directory does not stale the explorer. If an operation fails midway, an
 ERROR notification names the failed operation and every operation already
 applied.
 
-On Linux and macOS, installing a move, rename, or copy refuses to overwrite
+On Linux, macOS and Windows, installing a move, rename, or copy refuses to overwrite
 an entry that appeared after the plan was checked. Creation and rollback also
 require an empty destination name, including when the competing entry is a
 dangling symlink. A filesystem that cannot provide exclusive rename is refused
 for operations that need it; Runyte does not fall back to overwriting rename.
+
+On Windows, explorer names reject reserved device names, alternate data stream
+syntax, trailing spaces or dots, and names that differ only in case. Renaming
+one existing entry by changing its case is supported. Moves between volumes
+are refused before staging; copy and then delete the source after checking the
+copy. Quoted command paths retain literal backslashes, including UNC roots and
+a trailing directory separator, for example `:open "C:\work files\note.txt"`.
 
 If rollback finds that an original name has been recreated, both entries are
 preserved. The ERROR notification gives the original path and the absolute
@@ -1361,10 +1386,9 @@ The active theme is not among them; `Space o t` shows and changes it.
 
 ## Install and run
 
-Runyte currently supports Linux and macOS. Windows support is planned for a
-future release, but current releases should not be considered Windows-supported.
-The [contributing guide](../CONTRIBUTING.md#help-bring-runyte-to-windows)
-describes where that work stands.
+Linux and macOS provide the full feature set. This source tree also includes
+provisional [native Windows support](#windows-support). The released 0.3.1
+packages predate that work; use a build from this branch to try it.
 
 Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
 [GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
@@ -1396,6 +1420,59 @@ To build from a clone instead:
 ./build.sh --release
 ./target/release/runyte README.md
 ```
+
+### Windows support
+
+The initial native target is x86-64 Windows 11 24H2 or later, in Windows
+Terminal, using `x86_64-pc-windows-msvc`. Windows support is provisional;
+ARM64, MinGW, older Windows and other outer terminals have not been validated.
+Build with Rust 1.88 or newer and Visual Studio Build Tools with the C++
+toolchain and Windows SDK. The bundled grammars require the C compiler.
+
+```powershell
+cargo build --release --locked
+.\target\release\runyte.exe --standalone README.md
+```
+
+The Windows release workflow produces a ZIP containing `runyte.exe`, the
+configuration example and license material, with its hash in `SHA256SUMS`.
+Compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with that entry before
+extracting. Executables are unsigned. No Windows archive is added retroactively
+to the 0.3.1 release by this source change.
+
+MSVC builds require the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`).
+Install Microsoft's x64 Visual C++ Redistributable if it is absent; the ZIP
+does not bundle that runtime.
+
+| Area | Native Windows Phase 1 |
+| --- | --- |
+| Editing | Unicode text, selections, search, undo/redo, save, LF/CRLF, buffers and panes |
+| Files | Explorer, create, rename, move, copy, confirmed deletion and collision refusal |
+| Syntax | Bundled Tree-sitter highlighting and syntax tools |
+| Input | Native console input, bracketed paste and Unicode text clipboard |
+| Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
+| Deferred | LSP, integrated Git, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, private diagnostic logs, `--wait` and `:quit-here` |
+
+Deferred commands remain discoverable and report why they are unavailable.
+Existing configuration cannot enable deferred services. Use `:notifications`
+and `:service-health` for diagnostics. Ordinary Git commands can run in an
+integrated terminal when Git is installed; editor Git integration is planned
+as the first Phase-2 sub-phase and will remain disabled when Git is missing.
+
+Configuration defaults to `%APPDATA%\runyte\config.yaml`; a nonempty
+`XDG_CONFIG_HOME` takes precedence. `--config` selects an explicit file.
+`COMSPEC` selects the default terminal shell, with `cmd.exe` as the fallback.
+PowerShell and Git Bash are optional. See [terminals](#terminals) for command
+quoting and terminal working-directory limits. Network shares and long-path
+filesystem operations remain unvalidated; failures preserve recoverable edits.
+
+The outer terminal can reserve shortcuts such as `Ctrl-Shift-v` for paste.
+Bracketed text paste is delivered as text, including in Normal mode, so pasted
+command-looking lines do not execute editor commands. `Ctrl-v` uses the native
+text clipboard. Image paste is unavailable. Keyboard-layout and IME behavior
+beyond the automated input cases still needs reports from native setups.
+
+### Startup files and input
 
 Runyte accepts multiple startup text files and leaves the first text file
 active. Standalone launches show a stable `Opening workspace…` presentation
@@ -2510,7 +2587,7 @@ Runyte through a privileged launcher therefore cannot put its cache files in
 another account's home. The program is started detached with no terminal of
 its own: viewers and GUI applications work, a terminal program cannot take
 over the screen.
-System clipboard commands use `pbcopy`/`pbpaste` on macOS, PowerShell on
+System clipboard commands use `pbcopy`/`pbpaste` on macOS, native Unicode APIs on
 Windows, and the first available of `wl-clipboard`, `xclip`, or `xsel` on
 Linux and other Unix systems. A missing helper produces an actionable status
 message without affecting the internal registers.
@@ -3737,8 +3814,12 @@ The default path is:
 $XDG_CONFIG_HOME/runyte/config.yaml
 ```
 
-or `~/.config/runyte/config.yaml` when `XDG_CONFIG_HOME` is unset. Use
-`--config <path>` to load another file. A relative path is anchored to the
+When `XDG_CONFIG_HOME` is unset or empty, Linux and macOS use
+`~/.config/runyte/config.yaml`. The Windows port uses
+`%APPDATA%\runyte\config.yaml`; Windows support is provisional.
+Empty environment values are ignored. If neither the override nor the
+platform default is available, no default configuration file is selected.
+Use `--config <path>` to load another file. A relative path is anchored to the
 directory where Runyte was launched, even when workspace initialization later
 enters another directory. All fields are optional.
 

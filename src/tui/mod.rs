@@ -3,3 +3,6 @@
 //! Terminal-frontend adapters.
 
 pub mod input;
+
+#[cfg(windows)]
+pub mod windows_input;

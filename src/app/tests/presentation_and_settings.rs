@@ -1572,8 +1572,11 @@ fn opening_the_log_without_one_installed_reports_it_rather_than_opening_a_page()
 
     assert_eq!(app.buffers.len(), before, "no buffer was opened");
     assert_ne!(app.active_buffer().display_name(), "[log]");
-    assert!(app.status.contains("no diagnostic log"), "{}", app.status);
-    assert!(app.status_error);
+    let reason = CommandId::Colon(ColonCommand::LogOpen)
+        .platform_unavailable()
+        .unwrap_or("no diagnostic log");
+    assert!(app.status.contains(reason), "{}", app.status);
+    assert_eq!(app.status_error, !cfg!(windows));
 }
 
 /// `acknowledge` in `NotificationCenter` only marks read what already
@@ -1732,6 +1735,7 @@ fn asynchronous_git_success_updates_its_echo_and_retains_multiline_output() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn successful_worktree_creation_attaches_only_in_persistent_mode() {
     let destination = PathBuf::from("/repository/linked");
     let mutation = || {

@@ -9,6 +9,12 @@ verified 2026-07-27.
 
 Status meanings:
 
+The Windows port retains this command inventory. During Phase 1, LSP, Git,
+plugins, persistent sessions, context access, shell filters, external opening,
+parent-shell directory changes and private diagnostic-log opening report their
+platform limitation through execution and discovery. Syntax commands remain
+independent of LSP. No default key spelling changes as part of this exclusion.
+
 - **Implemented** — registered and dispatched by Runyte.
 - **Deviation** — implemented, but intentionally differs from Helix or retains
   an older Runyte shortcut.

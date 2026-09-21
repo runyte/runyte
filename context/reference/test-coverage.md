@@ -13,6 +13,11 @@ cargo llvm-cov --locked --workspace
 
 ## Target measure
 
+Native Windows Phase 1 adds a required MSVC build/lint/test job. Its coverage is
+provisional: no native Windows `cargo llvm-cov --locked --workspace` baseline has
+been measured. The coverage badge and 89% enforced floor continue to describe
+Linux and macOS. Windows tests do not replace either existing coverage gate.
+
 The above-95% target applies to the total **Lines** percentage printed by that
 canonical command. It is the only current measure that `cargo-llvm-cov` can
 enforce directly and identically in a local run and in CI. It is a reported

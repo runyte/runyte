@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![cfg(unix)]
+
 use runyte::{
     app::FrameGeometry,
     input::{

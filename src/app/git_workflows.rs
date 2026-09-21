@@ -205,16 +205,19 @@ impl GitWorkflowState {
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn set_discovery_complete(&mut self, complete: bool) {
         self.discovery_complete = complete;
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn progress(&self) -> &HashMap<GitRequestId, GitServiceProgress> {
         &self.progress
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn progress_mut(&mut self) -> &mut HashMap<GitRequestId, GitServiceProgress> {
         &mut self.progress
     }
@@ -230,41 +233,49 @@ impl GitWorkflowState {
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn index_buffer(&self) -> Option<usize> {
         self.index_buffer
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn log_rows(&self) -> &[CommitSummary] {
         &self.log_rows
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn log_cursors(&self) -> &[Option<LogCursor>] {
         &self.log_cursors
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn log_page(&self) -> usize {
         self.log_page
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn log_requests_mut(&mut self) -> &mut HashMap<GitRequestId, LogViewRequest> {
         &mut self.log_requests
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn stash_rows(&self) -> &[StashEntry] {
         &self.stash_rows
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn partial_guards(&self) -> &HashMap<usize, Vec<BufferRevisionGuard>> {
         &self.partial_guards
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(super) fn partial_guards_mut(&mut self) -> &mut HashMap<usize, Vec<BufferRevisionGuard>> {
         &mut self.partial_guards
     }
@@ -933,6 +944,8 @@ impl App {
         action: Option<u64>,
     ) {
         let (request, state) = completion;
+        #[cfg(not(unix))]
+        let _ = request;
         match response {
             GitResponse::Discovered(repository) => {
                 let retried = self.git_state.discovery_error.is_some();
@@ -1196,6 +1209,8 @@ impl App {
         action: Option<u64>,
     ) {
         let (request, state) = completion;
+        #[cfg(not(unix))]
+        let _ = request;
         let created_worktree = match &mutation {
             GitMutation::CreateWorktree(request) => Some(request.destination.clone()),
             _ => None,
@@ -1344,6 +1359,8 @@ impl App {
                         .unwrap_or_else(|| Self::completed_branch_cascade(&teardown))
                 })
         });
+        #[cfg(not(unix))]
+        let branch_cascade_summary: Option<String> = None;
         let producer_summary = summary
             .map(|summary| summary.trim().to_owned())
             .filter(|summary| !summary.is_empty());

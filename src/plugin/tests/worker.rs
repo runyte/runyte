@@ -203,6 +203,7 @@ fn inbound_and_deadline_events_share_owner_permits_and_release_on_consumption() 
 }
 
 #[test]
+#[cfg(unix)]
 fn all_noisy_owner_quotas_leave_the_quiet_owner_and_local_io_their_full_admission() {
     let (events, mut receiver) = mpsc::channel(EVENT_CAPACITY);
     for plugin in 0..MAX_PLUGINS {

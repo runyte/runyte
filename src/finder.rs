@@ -524,6 +524,7 @@ impl ResourceFinder {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn selection_is_user_owned(&self) -> bool {
         self.selection_user_owned
     }

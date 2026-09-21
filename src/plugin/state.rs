@@ -84,6 +84,7 @@ pub(crate) struct Control {
 #[cfg(test)]
 pub(crate) type Hook = Arc<dyn Fn(Checkpoint) -> Result<(), Error> + Send + Sync>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) enum Checkpoint {
     BeforeMutation,
     AfterMutation,
@@ -111,6 +112,7 @@ impl Control {
             Ok(())
         }
     }
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn begin_mutation(&self) -> Result<(), Error> {
         self.checkpoint(Checkpoint::BeforeMutation)?;
         self.phase
@@ -118,6 +120,7 @@ impl Control {
             .map(|_| ())
             .map_err(|_| Error::new(Code::Cancelled, "State operation cancelled"))
     }
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn checkpoint(&self, point: Checkpoint) -> Result<(), Error> {
         #[cfg(test)]
         if let Some(hook) = self.hook.lock().unwrap().clone() {
@@ -134,18 +137,21 @@ impl Control {
 fn invalid() -> Error {
     Error::new(Code::InvalidArgument, "Invalid state document")
 }
+#[cfg_attr(not(unix), allow(dead_code))]
 fn unavailable() -> Error {
     Error::new(
         Code::Unavailable,
         "Private plugin state storage is unavailable",
     )
 }
+#[cfg_attr(not(unix), allow(dead_code))]
 fn unknown() -> Error {
     Error::new(
         Code::OutcomeUnknown,
         "State mutation outcome is unknown; read state before retrying",
     )
 }
+#[cfg_attr(not(unix), allow(dead_code))]
 fn stale() -> Error {
     Error::new(Code::Conflict, "Plugin state content changed")
 }
@@ -161,6 +167,7 @@ fn canonical(document: Document) -> Result<Info, Error> {
     json::validate_value(&object, LIMITS)?;
     Info::canonical(serde_json::to_string(&object).map_err(|_| invalid())?)
 }
+#[cfg_attr(not(unix), allow(dead_code))]
 fn decode(bytes: &[u8]) -> Result<Info, Error> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid())?;
     json::validate(text, LIMITS)?;

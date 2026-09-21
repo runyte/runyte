@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#[cfg(not(windows))]
+use std::rc::Rc;
 use std::{
     collections::HashSet,
     fs,
-    rc::Rc,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -57,6 +58,7 @@ fn open_filler_special_buffers(app: &mut App, count: usize) -> Vec<usize> {
         .collect()
 }
 
+#[cfg(not(windows))]
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);
@@ -173,7 +175,9 @@ mod comparisons;
 mod config_reload;
 mod editing;
 mod editing_and_buffers;
+#[cfg(not(windows))]
 mod git;
+#[cfg(not(windows))]
 mod git_discovery;
 mod language;
 mod markdown_positions;
@@ -182,6 +186,7 @@ mod mouse_autoscroll;
 mod navigation_and_files;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;
+#[cfg(not(windows))]
 mod plugin_manager;
 mod plugin_provider_inspection;
 mod plugin_provider_overwrite;
@@ -206,6 +211,52 @@ use commands::{type_command, type_text, vim_app};
 use editing_and_buffers::MemoryClipboard;
 use language::{drain, ready, rust_app, temporary, tracked};
 
+fn terminal_fixture_command() -> String {
+    #[cfg(windows)]
+    {
+        format!(
+            "\"{}\" --exact terminal::pty::tests::native_console_fixture --ignored --nocapture",
+            std::env::current_exe().unwrap().display()
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        "/bin/cat".into()
+    }
+}
+
+fn terminal_cleanup(app: &App, id: TerminalId) -> Box<dyn FnOnce()> {
+    #[cfg(windows)]
+    {
+        app.terminals
+            .get(id)
+            .and_then(|terminal| terminal.cleanup_waiter())
+            .unwrap_or_else(|| Box::new(|| {}))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, id);
+        Box::new(|| {})
+    }
+}
+
+fn close_test_terminal(app: &mut App, id: TerminalId) {
+    let cleanup = terminal_cleanup(app, id);
+    app.close_terminal_id(id);
+    cleanup();
+}
+
+fn close_test_terminals(app: &mut App) {
+    let cleanups: Vec<_> = app
+        .terminals
+        .iter()
+        .map(|terminal| terminal_cleanup(app, terminal.id()))
+        .collect();
+    app.terminals.close_all();
+    for cleanup in cleanups {
+        cleanup();
+    }
+}
 #[test]
 fn configured_leader_is_owned_by_the_app_and_space_becomes_insertable() {
     let config = Config {

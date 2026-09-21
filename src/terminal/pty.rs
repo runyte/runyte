@@ -5,10 +5,8 @@
 //! The only place in Runyte that forks a process onto a tty. Everything above
 //! it sees bytes in, bytes out, a size, and an exit — never a file descriptor.
 //!
-//! Unix only. Windows needs ConPTY, which is a second implementation of the
-//! hardest part of this file; `context/issues/windows_support.md` already
-//! records that Runyte disables a feature there rather than shipping an
-//! unsound one.
+//! Unix implementation. Windows uses the same byte/size/exit boundary through
+//! `pty_windows.rs`, with ConPTY and native process-tree ownership.
 
 use std::{
     ffi::{CString, OsStr},

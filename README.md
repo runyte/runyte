@@ -46,8 +46,11 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Runyte currently supports Linux and macOS.
-On Windows it's best to use WSL.
+Linux and macOS provide the full feature set. This source tree also includes
+provisional native Windows support for standalone editing, file management,
+text clipboard, and integrated terminals. See the
+[Windows scope and requirements](docs/user-guide.md#windows-support).
+The released 0.3.1 packages predate this Windows work.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·
@@ -242,8 +245,8 @@ the complete manual. `:log-open` and `:service-health` help diagnose failures.
 
 ## Status and contributing
 
-Runyte is ready for general use on Linux and macOS. Windows is not supported
-yet.
+Runyte is ready for general use on Linux and macOS. Native Windows support is
+provisional and currently covers the standalone editor and integrated terminals.
 
 Contributions are welcome, especially:
 

@@ -6,9 +6,10 @@
 //! probe processes or the filesystem; the application coordinator gathers
 //! those facts before opening the surface and owns the resulting snapshot.
 
+#[cfg(any(not(windows), test))]
+use std::fs;
 use std::{
     ffi::OsStr,
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -81,6 +82,9 @@ pub struct AppCapabilitySnapshot {
 
 impl AppCapabilitySnapshot {
     pub fn command_availability(&self, spec: &CommandSpec) -> CommandAvailability {
+        if let Some(reason) = spec.id.platform_unavailable() {
+            return CommandAvailability::Unavailable(reason.to_owned());
+        }
         match spec.capability() {
             Some(capability) => self.capability_availability(capability),
             None => CommandAvailability::Available,
@@ -154,12 +158,23 @@ pub fn resolve_configured_executable(
     command: &Path,
     search_path: Option<&OsStr>,
 ) -> Option<PathBuf> {
-    if command.is_absolute() || command.components().count() > 1 {
-        return executable(command).then(|| command.to_path_buf());
+    #[cfg(windows)]
+    {
+        crate::terminal::windows_command::resolve(
+            command,
+            search_path,
+            std::env::var_os("PATHEXT").as_deref(),
+        )
     }
-    search_directories(search_path?)
-        .map(|directory| directory.join(command))
-        .find(|candidate| executable(candidate))
+    #[cfg(not(windows))]
+    {
+        if command.is_absolute() || command.components().count() > 1 {
+            return executable(command).then(|| command.to_path_buf());
+        }
+        search_directories(search_path?)
+            .map(|directory| directory.join(command))
+            .find(|candidate| executable(candidate))
+    }
 }
 
 /// The directories a PATH value actually names.
@@ -173,6 +188,7 @@ pub fn search_directories(search_path: &OsStr) -> impl Iterator<Item = PathBuf> 
     std::env::split_paths(search_path).filter(|directory| !directory.as_os_str().is_empty())
 }
 
+#[cfg(not(windows))]
 fn executable(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
@@ -236,23 +252,31 @@ mod tests {
     /// the project Runyte was opened on rather than a search directory.
     #[test]
     fn empty_path_entries_name_no_search_directory() {
-        let joined = search_directories(OsStr::new(":/first::/second:"))
+        let first = std::env::temp_dir().join("first");
+        let second = std::env::temp_dir().join("second");
+        let path = std::env::join_paths([
+            Path::new(""),
+            first.as_path(),
+            Path::new(""),
+            second.as_path(),
+            Path::new(""),
+        ])
+        .unwrap();
+        let joined = search_directories(&path)
             .map(|directory| directory.join("test-tool"))
             .collect::<Vec<_>>();
 
         assert_eq!(
             joined,
-            vec![
-                PathBuf::from("/first/test-tool"),
-                PathBuf::from("/second/test-tool"),
-            ]
+            vec![first.join("test-tool"), second.join("test-tool"),]
         );
         assert!(
             joined.iter().all(|candidate| candidate.is_absolute()),
             "a relative candidate would resolve against the project"
         );
         assert_eq!(search_directories(OsStr::new("")).count(), 0);
-        assert_eq!(search_directories(OsStr::new("::")).count(), 0);
+        let empty = std::env::join_paths(["", "", ""]).unwrap();
+        assert_eq!(search_directories(&empty).count(), 0);
     }
 
     #[test]
@@ -287,14 +311,25 @@ mod tests {
             snapshot.command_availability(outline).reason(),
             Some("plain text buffer")
         );
-        assert!(snapshot.command_availability(status).is_available());
+        assert_eq!(
+            snapshot.command_availability(status).is_available(),
+            !cfg!(windows)
+        );
         assert_eq!(
             snapshot.command_availability(format).reason(),
-            Some("no configured server")
+            Some(if cfg!(windows) {
+                "LSP is unavailable in Windows Phase 1"
+            } else {
+                "no configured server"
+            })
         );
         assert_eq!(
             snapshot.command_availability(git_status).reason(),
-            Some("not a Git repository")
+            Some(if cfg!(windows) {
+                "Git is unavailable in Windows Phase 1"
+            } else {
+                "not a Git repository"
+            })
         );
         assert_eq!(
             snapshot.command_availability(session_attach).reason(),

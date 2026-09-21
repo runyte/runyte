@@ -909,6 +909,7 @@ fn session_activity_now() -> u64 {
 /// UI observation is independent from manager request generations and does not
 /// retain documents, terminals, or remote contents.
 #[derive(Default)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(super) struct SessionNavigationState {
     observation_pending: bool,
     observation_invalidated: bool,
@@ -922,10 +923,14 @@ pub(super) struct SessionNavigationState {
 }
 
 struct SessionInventory {
+    #[cfg(unix)]
     path: PathBuf,
+    #[cfg(unix)]
     generation: u64,
     saved_picker: super::ListPicker,
+    #[cfg(unix)]
     incarnation: Option<String>,
+    #[cfg(unix)]
     entries: Vec<crate::protocol::OpenDestinationEntry>,
 }
 
@@ -1521,6 +1526,7 @@ impl App {
                     picker.last();
                 }
             }
+            #[cfg(unix)]
             (KeyCode::Enter, _) => {
                 let inventory = self.session_navigation.inventory.as_ref().unwrap();
                 let selected = self

@@ -105,8 +105,15 @@ impl KeyHintRow {
     }
 
     /// Applies one active-buffer capability snapshot to this presentation row.
-    /// Static planned/unsupported metadata remains authoritative when present.
+    /// Platform refusal takes precedence; other planned/unsupported metadata remains authoritative.
     pub fn apply_capabilities(&mut self, capabilities: &AppCapabilitySnapshot) {
+        if let Some(reason) = self
+            .target
+            .and_then(|target| target.id().platform_unavailable())
+        {
+            self.unavailable_reason = Some(reason.to_owned());
+            return;
+        }
         self.unavailable_reason = if self.availability.is_implemented() {
             self.capability.and_then(|capability| {
                 capabilities
@@ -154,7 +161,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         if row.exact { "=" } else { "" }
     );
     let full_availability = match (&row.unavailable_reason, row.availability) {
-        (Some(reason), BindingAvailability::Implemented) => {
+        (Some(reason), _) => {
             format!("  unavailable: {reason}")
         }
         (_, BindingAvailability::Implemented) => String::new(),
@@ -189,7 +196,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
     }
 
     let compact_availability = match (&row.unavailable_reason, row.availability) {
-        (Some(_), BindingAvailability::Implemented) => match row.capability {
+        (Some(_), _) => match row.capability {
             Some(crate::command::CommandCapability::Syntax) => {
                 if row.unavailable_reason.as_deref() == Some("Syntax is still parsing") {
                     " parsing"
@@ -998,14 +1005,21 @@ mod tests {
             .iter()
             .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::LspStatus)))
             .expect("the Language namespace lists LSP status");
-        assert_eq!(status.unavailable_reason, None);
+        assert_eq!(
+            status.unavailable_reason.as_deref(),
+            cfg!(windows).then_some("LSP is unavailable in Windows Phase 1")
+        );
         let completion = children
             .iter()
             .find(|row| row.target == Some(BindingTarget::Editor(EditorCommand::TriggerCompletion)))
             .expect("the Language namespace lists completion");
         assert_eq!(
             completion.unavailable_reason.as_deref(),
-            Some("the active file is not attached")
+            Some(if cfg!(windows) {
+                "LSP is unavailable in Windows Phase 1"
+            } else {
+                "the active file is not attached"
+            })
         );
     }
 
@@ -1040,11 +1054,17 @@ mod tests {
             )))
             .unavailable_reason
             .as_deref(),
-            Some(crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON)
+            Some(if cfg!(windows) {
+                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            } else {
+                crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
+            })
         );
         assert_eq!(
-            manager_row(&snapshot(CommandAvailability::Available)).unavailable_reason,
-            None
+            manager_row(&snapshot(CommandAvailability::Available))
+                .unavailable_reason
+                .as_deref(),
+            cfg!(windows).then_some(crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON)
         );
     }
 

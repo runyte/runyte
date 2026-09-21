@@ -298,6 +298,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     fn temporary_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "runyte-pasted-image-{name}-{}-{:?}",
@@ -335,6 +336,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn a_stored_image_is_named_by_its_content_and_written_once() {
         let root = temporary_root("store");
         let bytes = b"\x89PNG\r\n\x1a\nfirst".to_vec();
@@ -373,6 +375,7 @@ mod tests {
     /// A process killed between writing a pending file and renaming it cannot
     /// clean up after itself, and nothing else prunes this directory.
     #[test]
+    #[cfg(not(windows))]
     fn an_abandoned_write_is_swept_up_and_nothing_else_is() {
         let root = temporary_root("abandoned");
         let directory = cache_directory(&root);
@@ -467,6 +470,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn an_oversized_image_is_refused_rather_than_written() {
         let root = temporary_root("oversized");
         let bytes = vec![0_u8; MAX_IMAGE_BYTES + 1];

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![cfg(not(windows))] // Service unavailable in Windows Phase 1.
+
 //! Language server client lifecycle, exercised against an in-process mock.
 //!
 //! The mock speaks real JSON-RPC over in-memory pipes, so the handshake, a

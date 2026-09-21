@@ -216,7 +216,9 @@ impl App {
         } else {
             CommandAvailability::Unavailable("syntax is unavailable for this buffer".to_owned())
         };
-        let lsp_manager = if !self.config.lsp.enable {
+        let lsp_manager = if cfg!(windows) {
+            CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
+        } else if !self.config.lsp.enable {
             CommandAvailability::Unavailable("language servers are disabled in settings".to_owned())
         } else if !self.lsp_workspace_allowed {
             CommandAvailability::Unavailable(
@@ -228,6 +230,9 @@ impl App {
             CommandAvailability::Available
         };
         let lsp_document = match self.language_of(buffer_id) {
+            _ if cfg!(windows) => {
+                CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
+            }
             None => CommandAvailability::Unavailable(
                 "the active buffer has no recognized language".to_owned(),
             ),
@@ -257,7 +262,9 @@ impl App {
             }
             Some(_) => CommandAvailability::Available,
         };
-        let git_project = if !self.has_git() {
+        let git_project = if cfg!(windows) {
+            CommandAvailability::Unavailable("Git is unavailable in Windows Phase 1".to_owned())
+        } else if !self.has_git() {
             CommandAvailability::Unavailable("no `git` executable was found".to_owned())
         } else if let Some(message) = self.git_state.discovery_failure_message() {
             CommandAvailability::Unavailable(message)
@@ -412,7 +419,11 @@ impl App {
                 root.join(path)
             }
         };
-        let separator = std::path::MAIN_SEPARATOR;
+        let separator = raw
+            .chars()
+            .rev()
+            .find(|character| is_path_separator(*character))
+            .unwrap_or(std::path::MAIN_SEPARATOR);
         if raw == "~"
             && expand_home
             && let Some(home) = &self.home_directory
@@ -3217,7 +3228,9 @@ impl App {
         if let Some(source) = self.completion.as_ref().map(|state| state.source) {
             let keeps_popup = match source {
                 CompletionSource::Language => character.is_alphanumeric() || character == '_',
-                CompletionSource::Path => !is_path_token_boundary(character) && character != '/',
+                CompletionSource::Path => {
+                    !is_path_token_boundary(character) && !super::is_path_separator(character)
+                }
                 CompletionSource::Word => is_word_completion_character(character),
             };
             // A path popup is rebuilt from the directory below rather than
@@ -3235,7 +3248,7 @@ impl App {
                 }
             }
         }
-        if character == '/' || self.completion.is_none() {
+        if super::is_path_separator(character) || self.completion.is_none() {
             self.path_completion();
         }
         if was_path_completion || self.path_completion_active() {
@@ -3793,6 +3806,10 @@ impl App {
 
     fn execute_editor_command(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
+        if let Some(reason) = CommandId::Editor(command).platform_unavailable() {
+            self.mark_unavailable(reason);
+            return Ok(());
+        }
 
         // Before the read-only check, because a terminal is not read only —
         // it is not a document at all, and the buffer whose permissions that
@@ -4864,6 +4881,10 @@ impl App {
         self.status_error = false;
         let before = CommandState::capture(self);
         let (id, parameters, execution, unavailable) = invocation.into_parts();
+        if let Some(reason) = id.platform_unavailable() {
+            self.mark_unavailable(reason);
+            return Ok(CommandOutcome::Unavailable(self.status.clone()));
+        }
         if let CommandId::Plugin(id) = id {
             let arguments = match &parameters {
                 InvocationParameters::OptionalText(Some(text)) => text.as_str(),

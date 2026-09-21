@@ -32,7 +32,7 @@ impl TrustStore {
         #[cfg(unix)]
         let home = crate::user_paths::system_home_directory();
         #[cfg(not(unix))]
-        let home = None;
+        let home: Option<PathBuf> = None;
         Self::new_with_home(directory, project, home.as_deref())
     }
 

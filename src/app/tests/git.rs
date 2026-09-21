@@ -3006,7 +3006,10 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    #[cfg(unix)]
     let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    #[cfg(not(unix))]
+    let transported = InputEvent::Text("feature".to_owned());
     app.handle_input(transported).unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -3114,7 +3117,10 @@ fn confirmed_terminal_branch_checkout_is_submitted_to_the_git_service() {
 
     let (service, operations) = GitServiceHandle::recording_for_test();
     app.attach_git_service(service);
+    #[cfg(unix)]
     let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    #[cfg(not(unix))]
+    let transported = InputEvent::Text("feature".to_owned());
     app.handle_input(transported).unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -3344,7 +3350,10 @@ fn shift_d_deletes_a_branch_only_after_a_confirmation() {
     assert_eq!(app.status, "delete cancelled; the branch is still there");
 
     context_action(&mut app, 'D');
+    #[cfg(unix)]
     let transported: InputEvent = crate::protocol::InputEvent::Text("feature".to_owned()).into();
+    #[cfg(not(unix))]
+    let transported = InputEvent::Text("feature".to_owned());
     app.handle_input(transported).unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 

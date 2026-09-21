@@ -47,6 +47,11 @@ impl WorkspaceHost {
     }
 
     pub(super) fn initialize_plugin_manager(&mut self) {
+        // Phase 1 has no plugin worker on Windows, so no manager is published
+        // and nothing is launched; see `plugin::worker`.
+        if cfg!(windows) {
+            return;
+        }
         if self.refuse_excessive_plugin_configs() {
             return;
         }
@@ -283,6 +288,11 @@ impl WorkspaceHost {
     /// `:plugin-stop` only bring that forward. Nothing is stopped to make a
     /// reload take effect sooner.
     fn reconcile_plugin_configuration(&mut self) {
+        // Startup publishes no manager on Windows, so a reload has nothing to
+        // reconcile against and must not launch what Phase 1 cannot run.
+        if cfg!(windows) {
+            return;
+        }
         if self.app.config.plugins.len() > plugin::manager::MAX_CONFIGS {
             // Deliberately not the synthetic startup entry: the manager is
             // already published from real records, and replacing it with one

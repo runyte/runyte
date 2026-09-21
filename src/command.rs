@@ -1279,6 +1279,54 @@ impl From<ColonCommand> for CommandId {
 }
 
 impl CommandId {
+    /// Platform exclusions shared by execution, the palette, help and hints.
+    pub const fn platform_unavailable(self) -> Option<&'static str> {
+        if !cfg!(windows) {
+            return None;
+        }
+        if matches!(self.category(), CommandCategory::Git) {
+            return Some("Git is unavailable in Windows Phase 1");
+        }
+        if matches!(
+            self.capability(),
+            Some(CommandCapability::LspDocument | CommandCapability::LspManager)
+        ) || matches!(
+            self,
+            Self::Colon(ColonCommand::LspTrust) | Self::Editor(EditorCommand::Diagnostics)
+        ) {
+            return Some("LSP is unavailable in Windows Phase 1");
+        }
+        if matches!(
+            self.capability(),
+            Some(CommandCapability::PersistentSession)
+        ) {
+            return Some("persistent mode is not supported on this platform");
+        }
+        match self {
+            Self::Editor(EditorCommand::OpenExplorerSystem) => {
+                Some("External file opening is unavailable in Windows Phase 1")
+            }
+            Self::Colon(ColonCommand::ContextAccess) => {
+                Some("External context access is unavailable in Windows Phase 1")
+            }
+            Self::Plugin(_)
+            | Self::Colon(
+                ColonCommand::Plugins | ColonCommand::PluginStop | ColonCommand::PluginRestart,
+            ) => Some("Plugins are unavailable in Windows Phase 1"),
+            Self::Colon(ColonCommand::Pipe | ColonCommand::PipeCancel)
+            | Self::Editor(EditorCommand::ShellPipe) => {
+                Some("Shell filters are unavailable in Windows Phase 1")
+            }
+            Self::Colon(ColonCommand::QuitHere | ColonCommand::ForceQuitHere) => {
+                Some("Changing the parent shell directory is unavailable in Windows Phase 1")
+            }
+            Self::Colon(ColonCommand::LogOpen) => Some(
+                "Private diagnostic log storage is unavailable in Windows Phase 1; use :notifications or :service-health",
+            ),
+            _ => None,
+        }
+    }
+
     pub const fn category(self) -> CommandCategory {
         match self {
             Self::Plugin(_) => CommandCategory::Editing,
@@ -2767,27 +2815,37 @@ fn parse_path_argument(command: &'static str, value: &str) -> Result<PathBuf, Co
         return Err(CommandParseError::UnbalancedPathQuote(command));
     }
     let inner = &value[quote.len_utf8()..value.len() - quote.len_utf8()];
-    let mut unquoted = String::with_capacity(inner.len());
-    let mut escaped = false;
-    for character in inner.chars() {
-        if escaped {
-            if character != quote && character != '\\' {
-                unquoted.push('\\');
-            }
-            unquoted.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == quote {
+    #[cfg(windows)]
+    {
+        if inner.contains(quote) {
             return Err(CommandParseError::UnbalancedPathQuote(command));
-        } else {
-            unquoted.push(character);
         }
+        Ok(PathBuf::from(inner))
     }
-    if escaped {
-        return Err(CommandParseError::UnbalancedPathQuote(command));
+    #[cfg(not(windows))]
+    {
+        let mut unquoted = String::with_capacity(inner.len());
+        let mut escaped = false;
+        for character in inner.chars() {
+            if escaped {
+                if character != quote && character != '\\' {
+                    unquoted.push('\\');
+                }
+                unquoted.push(character);
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote {
+                return Err(CommandParseError::UnbalancedPathQuote(command));
+            } else {
+                unquoted.push(character);
+            }
+        }
+        if escaped {
+            return Err(CommandParseError::UnbalancedPathQuote(command));
+        }
+        Ok(PathBuf::from(unquoted))
     }
-    Ok(PathBuf::from(unquoted))
 }
 
 fn invocation_from_parts(
@@ -3378,6 +3436,7 @@ mod tests {
                 "folder with spaces/note.txt"
             ))))
         );
+        #[cfg(not(windows))]
         assert_eq!(
             parse_colon_command(r#"open "folder/quote\"name.txt""#),
             Ok(CommandInvocation::new(
@@ -3389,6 +3448,23 @@ mod tests {
             parse_colon_command(r#"open "unterminated"#),
             Err(CommandParseError::UnbalancedPathQuote("open"))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn quoted_windows_paths_preserve_backslashes_and_unc_roots() {
+        for path in [
+            r"C:\folder with spaces\café.txt",
+            r"\\server\share\file.txt",
+            r"\\?\C:\long path\",
+            r"C:\",
+        ] {
+            let invocation = parse_colon_command(&format!("open \"{path}\"")).unwrap();
+            assert_eq!(
+                invocation.parameters(),
+                &InvocationParameters::Path(PathBuf::from(path))
+            );
+        }
     }
 
     #[test]

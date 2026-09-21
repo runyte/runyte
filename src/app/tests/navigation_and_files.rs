@@ -148,10 +148,13 @@ fn stale_state_is_shared_by_panes_and_transported_snapshots() {
         crate::buffer::ExternalFileStatus::Changed
     );
     assert_eq!(app.unread_notification_counts().warnings, 1);
-    let wire: crate::protocol::EditorSnapshot = snapshot.into();
-    assert!(wire.panes.iter().all(|pane| {
-        pane.title.external_file_status == crate::protocol::ExternalFileStatus::Changed
-    }));
+    #[cfg(unix)]
+    {
+        let wire: crate::protocol::EditorSnapshot = snapshot.into();
+        assert!(wire.panes.iter().all(|pane| {
+            pane.title.external_file_status == crate::protocol::ExternalFileStatus::Changed
+        }));
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -711,7 +714,9 @@ fn goto_file_infers_the_complete_absolute_path_at_every_kind_of_character() {
 
     for column in [
         path.chars().position(|character| character == 'i').unwrap(),
-        path.chars().position(|character| character == '/').unwrap(),
+        path.chars()
+            .position(|character| character == std::path::MAIN_SEPARATOR)
+            .unwrap(),
         path.chars().count() - 1,
     ] {
         let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
@@ -3234,6 +3239,7 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
     let root = temporary("explorer-system");
     let directory = root.join("space and 界");
@@ -3277,6 +3283,7 @@ fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
     let root = temporary("explorer-system-errors");
     fs::create_dir_all(&root).unwrap();
@@ -3300,4 +3307,17 @@ fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
     app.execute_command("open-explorer-system").unwrap();
     assert!(app.status.contains("not a directory buffer"));
     fs::remove_dir_all(root).unwrap();
+}
+#[cfg(windows)]
+#[test]
+fn quoted_path_completion_preserves_apostrophe_and_backslashes() {
+    let (hint, directory) = super::super::quote_path_hint(r"C:\Bob's notes.txt", Some('\''), false);
+    assert_eq!(hint, "\"C:\\Bob's notes.txt\"");
+    assert!(!directory);
+    assert_eq!(
+        crate::command::parse_colon_command(&format!("open {hint}"))
+            .unwrap()
+            .parameters(),
+        &crate::command::InvocationParameters::Path(PathBuf::from(r"C:\Bob's notes.txt"))
+    );
 }

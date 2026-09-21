@@ -53,6 +53,7 @@ pub fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
 /// cannot yet be resolved keeps its component sequence: in particular,
 /// `missing/../file` is not equivalent to `file` until the missing directory
 /// exists and the filesystem can actually traverse it.
+/// Windows follows its native lexical parent-component resolution instead.
 pub fn path_identity(path: &Path) -> Result<PathBuf> {
     path_identity_with_depth(path, 0)
 }
@@ -93,10 +94,26 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
 
+        #[cfg(not(windows))]
         assert_ne!(
             path_identity(&root.join("missing/../note.txt")).unwrap(),
             path_identity(&root.join("note.txt")).unwrap()
         );
+        #[cfg(windows)]
+        {
+            // Win32 resolves parent components before opening the path, even
+            // if the removed component does not name an existing directory.
+            let spelling = root.join("missing/../note.txt");
+            std::fs::write(&spelling, "native resolution").unwrap();
+            assert_eq!(
+                path_identity(&spelling).unwrap(),
+                path_identity(&root.join("note.txt")).unwrap()
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("note.txt")).unwrap(),
+                "native resolution"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

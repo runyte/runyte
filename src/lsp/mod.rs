@@ -988,6 +988,11 @@ fn process_launcher() -> Launch {
 /// Starts a denied manager. The owning host must call `set_allowed(true)`
 /// after workspace approval. Must be called inside a Tokio runtime.
 pub fn spawn(config: LspConfig, root: PathBuf) -> (LspHandle, LspEvents) {
+    #[cfg(windows)]
+    let config = LspConfig {
+        enable: false,
+        ..config
+    };
     spawn_with_permission(config, root, process_launcher(), false)
 }
 
@@ -3243,6 +3248,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn paths_round_trip_through_file_uris() {
         for path in [
             "/tmp/plain.rs",
@@ -3262,6 +3268,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn file_uris_accept_only_absolute_local_paths() {
         assert!(path_to_uri(Path::new("relative.rs")).is_none());
         for uri in [
@@ -3294,6 +3301,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn location_links_and_scalars_decode_alike() {
         let scalar = json!({
             "uri": "file:///tmp/a.rs",
@@ -3316,6 +3324,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn resource_operations_are_counted_rather_than_applied() {
         let edit: WorkspaceEdit = serde_json::from_value(json!({
             "documentChanges": [
@@ -3512,6 +3521,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn a_signature_request_carries_the_context_its_retrigger_needs() {
         let uri = path_to_uri(Path::new("/tmp/a.rs")).expect("a file uri");
         let root = Path::new("/tmp");

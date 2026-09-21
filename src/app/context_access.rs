@@ -2,6 +2,9 @@
 
 //! Native ownership of workspace grants and one-shot terminal text review.
 
+// Presentation values remain shared while the native context owner is Unix-only.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use super::App;
 use crate::{
     input::{InputEvent, KeyCode},

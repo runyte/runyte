@@ -5,6 +5,12 @@
 
 use std::{ffi::OsStr, path::PathBuf};
 
+#[cfg(windows)]
+#[path = "test_support/windows.rs"]
+mod windows;
+#[cfg(windows)]
+pub use windows::TestRuntimeRoot;
+
 #[cfg(unix)]
 use std::{
     fs, io,

@@ -372,6 +372,7 @@ mod platform {
             "private runtime storage is not supported on this platform",
         ))
     }
+    #[allow(dead_code)] // Mirrors the Unix storage interface while storage is unavailable.
     impl Directory {
         pub fn open(_: &Path, _: bool) -> io::Result<Self> {
             unsupported()

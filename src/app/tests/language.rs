@@ -202,6 +202,7 @@ fn status_stop_and_restart_clear_every_language_owned_transient() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn active_document_lsp_availability_tracks_server_lifecycle() {
     let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
     assert_eq!(
@@ -269,6 +270,7 @@ fn active_buffer_syntax_availability_tracks_current_tree() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn git_project_availability_distinguishes_missing_git_and_non_repository() {
     let mut app = App::new(Config::default(), None).unwrap();
     assert_eq!(
@@ -1947,6 +1949,7 @@ fn server_lifecycle_does_not_close_a_picker_that_replaced_code_actions() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn tab_requests_code_actions_in_an_ordinary_language_buffer() {
     let (mut app, _path, mut queue) = rust_app("fn main() {}\n");
     ready(&mut app, Encoding::Utf8);
@@ -2673,6 +2676,7 @@ fn completion_filters_while_typing_and_inserts_with_its_extra_edits() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn explicit_completion_filters_the_existing_prefix_and_replaces_it() {
     let (mut app, _, mut queue) = rust_app("left_at\n");
     ready(&mut app, Encoding::Utf8);
@@ -2754,6 +2758,7 @@ fn explicit_completion_filters_the_existing_prefix_and_replaces_it() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn explicit_completion_stays_pinned_without_matches_and_rejects_late_responses() {
     let (mut app, _, mut queue) = rust_app("left\n");
     ready(&mut app, Encoding::Utf8);
@@ -2854,6 +2859,7 @@ fn explicit_completion_stays_pinned_without_matches_and_rejects_late_responses()
 }
 
 #[test]
+#[cfg(not(windows))]
 fn explicit_completion_refreshes_context_and_ends_at_editing_boundaries() {
     let (mut app, _, mut queue) = rust_app("left\n");
     ready(&mut app, Encoding::Utf8);
@@ -3730,6 +3736,7 @@ fn a_stale_completion_response_is_discarded_rather_than_shown() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn language_completion_enters_insert_mode_and_requests_candidates() {
     let (mut app, _, mut queue) = rust_app("value\n");
     ready(&mut app, Encoding::Utf8);
@@ -3857,6 +3864,7 @@ fn a_response_nothing_is_waiting_for_is_ignored() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn language_server_commands_degrade_to_a_message_without_a_server() {
     let mut app = App::new(Config::default(), None).unwrap();
     let sequences: &[&[char]] = &[
@@ -3890,6 +3898,7 @@ fn language_server_commands_degrade_to_a_message_without_a_server() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn the_rename_prompt_seeds_the_word_under_the_caret() {
     let (mut app, _, mut queue) = rust_app("let value = 1;\n");
     ready(&mut app, Encoding::Utf8);
@@ -3971,6 +3980,7 @@ fn a_document_symbol_picker_filters_and_jumps() {
 
 /// The `lsp` row of a service-health report, which is the row the state of a
 /// language server actually reaches a person through.
+#[cfg(not(windows))]
 fn lsp_health(app: &App) -> (ServiceState, String) {
     let entry = app
         .service_health_snapshot()
@@ -3982,6 +3992,7 @@ fn lsp_health(app: &App) -> (ServiceState, String) {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn service_health_distinguishes_every_language_server_state_a_buffer_can_be_in() {
     let mut disabled_config = Config::default();
     disabled_config.lsp.enable = false;
@@ -4075,6 +4086,7 @@ fn service_health_reports_syntax_ready_only_once_the_active_buffer_has_a_tree() 
 }
 
 #[test]
+#[cfg(not(windows))]
 fn workspace_lsp_permission_gates_all_servers_and_remembers_both_answers() {
     let root = temporary("workspace-permission");
     let project = root.join("project");

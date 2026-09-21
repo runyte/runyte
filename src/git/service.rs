@@ -575,6 +575,8 @@ pub struct GitServiceProgress {
 }
 
 #[derive(Clone, Debug)]
+// Native metadata enlarges operations on Windows; the bounded queue owns them inline.
+#[cfg_attr(windows, allow(clippy::large_enum_variant))]
 pub enum GitServiceEvent {
     Progress(GitServiceProgress),
     Completed {
@@ -594,12 +596,12 @@ pub struct GitServiceHandle {
     ordered_with_worktrees: bool,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 pub(crate) struct PausedGitService {
     requests: Receiver<Request>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 impl PausedGitService {
     pub(crate) fn next_operation(&self) -> GitOperation {
         self.requests
@@ -611,6 +613,7 @@ impl PausedGitService {
 
 impl GitServiceHandle {
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
         let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
         let (operations, recorded) = channel();
@@ -633,6 +636,7 @@ impl GitServiceHandle {
     }
 
     #[cfg(test)]
+    #[cfg(not(windows))]
     pub(crate) fn saturated_for_test() -> (Self, PausedGitService) {
         let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
         let handle = Self {

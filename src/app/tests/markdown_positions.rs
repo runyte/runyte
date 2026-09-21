@@ -38,11 +38,21 @@ fn goto_file_follows_markdown_image_labels_in_source_and_rendered_pages() {
                     .replace_selection(Selection::point(start + column));
                 press(&mut app, 'g');
                 press(&mut app, 'f');
+                #[cfg(not(windows))]
                 assert_eq!(
                     app.external_target.as_ref(),
                     Some(&image),
                     "{markdown}, rendered={rendered}, column={column}"
                 );
+                #[cfg(windows)]
+                {
+                    assert!(app.external_target.is_none());
+                    assert!(
+                        app.status.contains("External file opening is unavailable"),
+                        "{}",
+                        app.status
+                    );
+                }
                 assert_eq!(app.active().buffer, page);
                 key(&mut app, KeyCode::Escape, Modifiers::NONE);
             }

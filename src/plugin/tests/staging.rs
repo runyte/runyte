@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#![cfg(unix)]
+
 use super::*;
 use crate::fs_plan::{DeletionMode, DirectorySnapshot, FsOperation};
 use std::{

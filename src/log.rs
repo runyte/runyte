@@ -1091,6 +1091,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn an_inherited_full_file_is_rotated_before_the_first_record() {
         let directory = temporary("startup-rotation");
         fs::create_dir_all(&directory).unwrap();
@@ -1118,6 +1119,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn rotation_keeps_one_previous_file_and_never_a_second() {
         let directory = temporary("rotation-bound");
         fs::create_dir_all(&directory).unwrap();

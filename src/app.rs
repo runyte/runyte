@@ -1848,6 +1848,7 @@ impl ContextActionMenu {
 
 /// What the workspace picker offers for one row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(unix), allow(dead_code))]
 enum SessionAction {
     Open,
     Rename,
@@ -1857,6 +1858,7 @@ enum SessionAction {
     Forget,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl SessionAction {
     fn label(self) -> &'static str {
         match self {
@@ -1903,6 +1905,7 @@ fn parse_session_number(value: &str) -> Result<Option<u8>, String> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(not(unix), allow(dead_code))]
 struct SessionActionMenu {
     row: usize,
     actions: Vec<SessionAction>,
@@ -1963,6 +1966,7 @@ impl TerminalActionMenu {
     }
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl SessionActionMenu {
     fn selected_action(&self) -> Option<SessionAction> {
         self.actions
@@ -3899,11 +3903,11 @@ fn buffer_preview(buffer: &Buffer) -> String {
 
 /// The program a bare terminal request runs.
 fn default_terminal_program() -> OsString {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         crate::terminal::pty::default_shell()
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         OsString::from("cmd.exe")
     }
@@ -4466,13 +4470,19 @@ fn is_path_separator(character: char) -> bool {
 }
 
 fn quote_path_hint(value: &str, preferred_quote: Option<char>, directory: bool) -> (String, bool) {
+    let preferred_quote = if cfg!(windows) && preferred_quote == Some('\'') && value.contains('\'')
+    {
+        Some('"')
+    } else {
+        preferred_quote
+    };
     let quote = preferred_quote.or_else(|| value.chars().any(char::is_whitespace).then_some('"'));
     let Some(quote) = quote else {
         return (value.to_owned(), false);
     };
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
-        if character == quote || character == '\\' {
+        if !cfg!(windows) && (character == quote || character == '\\') {
             escaped.push('\\');
         }
         escaped.push(character);

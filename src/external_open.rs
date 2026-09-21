@@ -155,6 +155,7 @@ pub fn cache_root() -> Option<PathBuf> {
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CachePlatform {
+    #[cfg_attr(windows, allow(dead_code))]
     MacOs,
     Windows,
     Unix,
@@ -348,6 +349,10 @@ pub fn launch_browser(url: &str) -> Result<()> {
 /// program may carry arguments, split on whitespace, so `feh` and `code -w`
 /// are both spellable. The path is always passed as one final argument.
 pub fn launch(program: &str, path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        !cfg!(windows),
+        "External file opening is unavailable in Windows Phase 1"
+    );
     let program = launch_program_for(program, OpenPlatform::CURRENT)?;
     let mut words = program.split_whitespace();
     let executable = words.next().context("no program was given")?;
@@ -409,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn cache_paths_follow_effective_account_conventions_and_honor_xdg() {
         let environment_home = PathBuf::from("/home/invoking");
         let account_home = PathBuf::from("/home/effective");

@@ -17,9 +17,9 @@ curated `## Changes` list describing what changed since the previous version,
 not a dump of commit subjects. Release notes are drafted outside the working
 tree, so they do not become a third file in the release commit.
 
-The `Binary release` GitHub Actions workflow attaches four prebuilt archives
+The `Binary release` GitHub Actions workflow attaches five prebuilt archives
 and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
-native x86-64 and ARM64 Linux and macOS runners. Cargo publishing remains a
+native x86-64 and ARM64 Linux/macOS runners and an x86-64 Windows MSVC runner. Cargo publishing remains a
 manual local operation; the workflow never publishes to crates.io.
 
 The public Git history was reset after version 0.0.51. Earlier versions remain
@@ -174,7 +174,7 @@ The example version below is 0.2.1. Substitute the real one.
    ```
 
     Pushing the tag starts the `Binary release` workflow. It validates the tag
-    and package version, builds and smoke-tests all four native targets, then
+    and package version, builds and smoke-tests all five native targets, then
     creates or updates the GitHub Release and its binary assets. It does not
     move or create the tag.
 
@@ -196,7 +196,7 @@ The example version below is 0.2.1. Substitute the real one.
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    rendered `Changes` list, four archives, and `SHA256SUMS`. The GitHub Release
+    rendered `Changes` list, five archives, and `SHA256SUMS`. The GitHub Release
     is the published changes record; the temporary draft may then be removed.
 
 14. **Carry the release commit back to `dev`**, so the branches do not diverge
@@ -274,26 +274,27 @@ The tag workflow publishes these files, where `<version>` includes its leading
 - `runyte-<version>-x86_64-unknown-linux-gnu.tar.xz`;
 - `runyte-<version>-aarch64-unknown-linux-gnu.tar.xz`;
 - `runyte-<version>-x86_64-apple-darwin.tar.xz`;
-- `runyte-<version>-aarch64-apple-darwin.tar.xz`; and
-- `SHA256SUMS`, covering all four archives.
+- `runyte-<version>-aarch64-apple-darwin.tar.xz`;
+- `runyte-<version>-x86_64-pc-windows-msvc.zip`; and
+- `SHA256SUMS`, covering all five archives.
 
 Each archive has one top-level directory named
 `runyte-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, the complete `licenses/`
 directory, and `config.example.yaml`. Linux archives are built on Ubuntu 22.04
 to retain the glibc 2.35 floor. The macOS executables are unsigned and are not
-notarized.
+notarized. Windows executables are also unsigned. Windows Phase-1 scope is documented in the packaged README.
 
 To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
 `shasum -a 256 <archive>` on macOS and compare the complete digest with the
-archive's line in `SHA256SUMS`. Downloading all four archives permits the
+archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all five archives permits the
 direct `sha256sum -c SHA256SUMS` or `shasum -a 256 -c SHA256SUMS` form.
 
 Build jobs keep only read access to repository contents. The final publishing
 job alone receives `contents: write`, through the workflow-provided
 `GITHUB_TOKEN`. Actions are pinned to complete commit hashes. A rerun checks
 out the immutable commit resolved from the requested tag, replaces only the
-five expected assets, and neither recreates nor moves the tag. Build-provenance
+six expected assets, and neither recreates nor moves the tag. Build-provenance
 attestations are deliberately omitted for now because they require additional
 permissions; archive checksums and exact-tag validation add no such authority.
 

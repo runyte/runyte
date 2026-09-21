@@ -142,7 +142,7 @@ impl App {
                 label,
             });
         };
-        let Some(words) = shlex::split(&command) else {
+        let Some(words) = crate::terminal::split_command(&command) else {
             return Err(format!("cannot read {command} as a command line"));
         };
         let Some((program, arguments)) = words.split_first() else {

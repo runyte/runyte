@@ -71,7 +71,10 @@ fn local_path_completion_preserves_literal_paths_and_form_submission() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     type_text(&mut app, "dat");
     let snapshot = form_snapshot(&app);
-    assert_eq!(snapshot.rows[0].label, "data space/");
+    assert_eq!(
+        snapshot.rows[0].label,
+        format!("data space{}", std::path::MAIN_SEPARATOR)
+    );
     assert!(
         snapshot
             .actions
@@ -81,7 +84,7 @@ fn local_path_completion_preserves_literal_paths_and_form_submission() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(
         app.plugins.input.as_ref().unwrap().values[1],
-        Value::Text("data space/".into())
+        Value::Text(format!("data space{}", std::path::MAIN_SEPARATOR))
     );
     assert_eq!(form_snapshot(&app).rows[0].label, "ledger.sqlite");
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -95,7 +98,10 @@ fn local_path_completion_preserves_literal_paths_and_form_submission() {
     assert_eq!(submission.values["name"], Value::Text("ledger".into()));
     assert_eq!(
         submission.values["path"],
-        Value::Text("data space/ledger.sqlite".into())
+        Value::Text(format!(
+            "data space{}ledger.sqlite",
+            std::path::MAIN_SEPARATOR
+        ))
     );
 }
 
@@ -110,6 +116,9 @@ fn local_path_completion_bounds_candidates_and_keeps_navigation_and_validation_c
         " file",
         "bad\nname",
     ] {
+        if cfg!(windows) && name.contains('\n') {
+            continue; // Windows refuses control characters in filenames.
+        }
         std::fs::write(root.path().join(name), "fixture").unwrap();
     }
     std::fs::create_dir(root.path().join("~")).unwrap();
@@ -124,7 +133,15 @@ fn local_path_completion_bounds_candidates_and_keeps_navigation_and_validation_c
         .into_iter()
         .map(|hint| hint.name)
         .collect::<Vec<_>>();
-    assert_eq!(names, ["~/", " file", "alpha", "beta"]);
+    assert_eq!(
+        names,
+        [
+            format!("~{}", std::path::MAIN_SEPARATOR),
+            " file".into(),
+            "alpha".into(),
+            "beta".into()
+        ]
+    );
     key(&mut app, KeyCode::Up, Modifiers::NONE);
     assert_eq!(form_snapshot(&app).selected, Some(3));
     key(&mut app, KeyCode::Down, Modifiers::NONE);

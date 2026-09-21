@@ -31,6 +31,7 @@ pub enum DeliveryState {
 /// Cloneable cancellation and acknowledgment for one exact queued insertion.
 #[derive(Clone, Debug)]
 pub struct Delivery(Arc<AtomicU8>);
+#[cfg_attr(not(unix), allow(dead_code))]
 impl Delivery {
     pub(super) fn queued() -> Self {
         Self(Arc::new(AtomicU8::new(DeliveryState::Queued as u8)))
@@ -89,6 +90,7 @@ pub enum TextError {
 #[derive(Clone, Eq, PartialEq)]
 pub struct Text(String);
 
+#[cfg_attr(not(unix), allow(dead_code))]
 impl Text {
     pub fn new(text: &str) -> Result<Self, TextError> {
         if text.is_empty() {

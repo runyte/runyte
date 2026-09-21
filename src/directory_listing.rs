@@ -341,12 +341,19 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("a.txt"), "").unwrap();
 
+        // A simulated future read cannot make the filesystem clock advance.
+        // Set distinct, settled times so this tests invalidation rather than
+        // whether two immediate writes happen in different filesystem ticks.
+        let modified = SystemTime::now() - Duration::from_secs(60);
+        set_times(&root, modified);
         let mut listings = DirectoryListings::default();
-        let first = listings.read_at(&root, later()).unwrap();
+        let now = SystemTime::now();
+        let first = listings.read_at(&root, now).unwrap();
         assert_eq!(first.len(), 1);
 
         fs::write(root.join("b.txt"), "").unwrap();
-        let second = listings.read_at(&root, later()).unwrap();
+        set_times(&root, modified + Duration::from_secs(10));
+        let second = listings.read_at(&root, now).unwrap();
         assert_eq!(second.len(), 2);
         assert!(!Arc::ptr_eq(&first, &second));
 
@@ -416,12 +423,11 @@ mod tests {
         fs::write(root.join("a.txt"), "").unwrap();
 
         let now = SystemTime::now();
+        set_times(&root, now - VOLATILE / 2);
         let mut listings = DirectoryListings::default();
         let first = listings.read_at(&root, now).unwrap();
-        // Waited out by the filesystem's own clock rather than by ours: the
-        // point is a modification time that differs from the one held.
-        std::thread::sleep(Duration::from_millis(20));
         fs::write(root.join("b.txt"), "").unwrap();
+        set_times(&root, now);
         let second = listings.read_at(&root, now + VOLATILE / 2).unwrap();
 
         assert!(!Arc::ptr_eq(&first, &second));
@@ -636,20 +642,23 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     fn set_times(path: &Path, time: SystemTime) {
-        use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
-        let duration = time.duration_since(UNIX_EPOCH).unwrap();
-        let instant = libc::timespec {
-            tv_sec: duration.as_secs().try_into().unwrap(),
-            tv_nsec: duration.subsec_nanos().into(),
-        };
-        let times = [instant, instant];
-        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
-        // SAFETY: `path` is NUL terminated and `times` holds the two live
-        // timestamps required by utimensat for the duration of the call.
-        let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
-        assert_eq!(result, 0, "failed to set directory timestamps");
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_WRITE_ATTRIBUTES,
+            };
+            options
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+        }
+        options
+            .open(path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_accessed(time).set_modified(time))
+            .unwrap();
     }
 }
