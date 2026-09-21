@@ -21,6 +21,7 @@ import unittest
 
 from test_bridge import MCPClient, PACKAGE, REPO
 from native_pty import spawn as spawn_pty
+from workspace_readiness import wait_for_workspaces
 from runyte_context.client import FRAME_BYTES, decode, encode
 from runyte_context.server import PROTOCOL
 
@@ -257,11 +258,11 @@ class RealMCPClient(MCPClient):
             self.close()
             raise
 
-    def rpc(self, method, params):
+    def rpc(self, method, params, *, seconds=10):
         self.counter += 1
         self.process.stdin.write(encode({'jsonrpc': '2.0', 'id': self.counter, 'method': method, 'params': params}))
         self.process.stdin.flush()
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + seconds
         with selectors.DefaultSelector() as poll:
             poll.register(self.process.stdout, selectors.EVENT_READ)
             while True:
@@ -285,8 +286,9 @@ class RealMCPClient(MCPClient):
                     raise AssertionError('Real MCP bridge exited early')
                 self.buffer.extend(chunk)
 
-    def data(self, name, **arguments):
-        result = self.tool(name, **arguments)
+    def data(self, name, *, response_seconds=10, **arguments):
+        result = self.rpc('tools/call', {'name': name, 'arguments': arguments},
+                          seconds=response_seconds)['result']
         if result.get('isError'):
             raise AssertionError('Real MCP tool failed: ' + name)
         structured = result['structuredContent']
@@ -328,9 +330,15 @@ class RealRunyteTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
-    def workspaces(self, client):
-        rows = client.data('list_workspaces')['workspaces']
-        self.assertEqual(len(rows), 2)
+    def workspaces(self, client, projects=None):
+        projects = self.projects if projects is None else projects
+        # The first standalone frame precedes optional host services. Wait for
+        # successful live discovery and grants, not merely rendered file text.
+        inventory = wait_for_workspaces(
+            lambda seconds: client.data('list_workspaces', response_seconds=min(10, seconds)), projects)
+        rows = inventory['workspaces']
+        self.assertEqual({Path(row['root']) for row in rows}, set(projects))
+        self.assertEqual(len(rows), len(projects))
         self.assertTrue(all(row['readable'] for row in rows))
         return {Path(row['root']).name: row['workspace'] for row in rows}
 
@@ -393,8 +401,7 @@ class RealRunyteTests(unittest.TestCase):
         codex, claude = self.client('codex'), self.client('claude')
         targets = []
         for client in (codex, claude):
-            rows = client.data('list_workspaces')['workspaces']
-            workspace = next(row['workspace'] for row in rows if Path(row['root']).name == 'one')
+            workspace = self.workspaces(client, [self.projects[0]])['one']
             buffers = client.data('list_buffers', workspace=workspace)['buffers']
             targets.append((client, workspace, next(row for row in buffers if row['name'].endswith('note.txt'))))
         errors, results = [], [[], []]
