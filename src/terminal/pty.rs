@@ -252,7 +252,7 @@ impl Pty {
         // Nothing below runs in the parent: `pre_exec` is on the child side of
         // the fork, where only async-signal-safe calls are allowed. Opening the
         // already-open slave here becomes the controlling terminal only after
-        // `setsid`; opening it with `O_NOCTTY` in `openpty` keeps the parent
+        // `setsid`; opening it with `O_NOCTTY` keeps the parent
         // from acquiring it. Keeping both endpoints open before the fork also
         // lets macOS apply the initial window size to the slave, as its PTY API
         // requires.
@@ -520,6 +520,47 @@ impl Drop for Pty {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+    open_pair_with_checkpoints(columns, rows, |_, _| Ok(()))
+}
+
+#[cfg(target_os = "linux")]
+fn open_pair_with_checkpoints(
+    columns: u16,
+    rows: u16,
+    mut checkpoint: impl FnMut(RawFd, Option<RawFd>) -> io::Result<()>,
+) -> io::Result<(OwnedFd, OwnedFd)> {
+    // Each endpoint must be CLOEXEC from the syscall that creates it. A
+    // subsequent fcntl leaves a window for unrelated Command spawns to inherit
+    // the endpoint; a local lock cannot serialize those standard-library calls.
+    let flags = libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC;
+    let master = unsafe { libc::posix_openpt(flags) };
+    if master < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Own every successful allocation before any fallible setup or checkpoint.
+    let master = unsafe { OwnedFd::from_raw_fd(master) };
+    checkpoint(master.as_raw_fd(), None)?;
+    if unsafe { libc::grantpt(master.as_raw_fd()) } < 0
+        || unsafe { libc::unlockpt(master.as_raw_fd()) } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // Linux >= 4.13 opens the peer directly, without a pathname lookup or an
+    // inheritable intermediate descriptor. Do not fall back to openpty if this
+    // fails: that would silently restore the inheritance race.
+    let slave = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCGPTPEER, flags) };
+    if slave < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+    checkpoint(master.as_raw_fd(), Some(slave.as_raw_fd()))?;
+    set_size(slave.as_raw_fd(), columns, rows)?;
+    Ok((master, slave))
+}
+
+#[cfg(not(target_os = "linux"))]
 fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     let mut master = -1;
     let mut slave = -1;
@@ -541,10 +582,10 @@ fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     }
     let master = unsafe { OwnedFd::from_raw_fd(master) };
     let slave = unsafe { OwnedFd::from_raw_fd(slave) };
-    // Neither endpoint may survive into an unrelated child: an editor that
-    // spawns a language server while a terminal is open would otherwise hand
-    // it descriptors it has no business holding. `dup2` clears this flag on
-    // the child's three standard descriptors.
+    // Preserve the native openpty sizing/controlling-terminal behavior here.
+    // Unlike the Linux path, this leaves an allocation-to-fcntl inheritance
+    // window on macOS. These flags only protect launches after setup completes.
+    // `dup2` clears the flag on the intended child's standard descriptors.
     for descriptor in [master.as_raw_fd(), slave.as_raw_fd()] {
         if unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
             return Err(io::Error::last_os_error());
@@ -839,3 +880,7 @@ mod tests {
 #[cfg(test)]
 #[path = "tests/proposal_delivery.rs"]
 mod proposal_delivery;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "tests/pty_descriptors.rs"]
+mod descriptor_tests;
