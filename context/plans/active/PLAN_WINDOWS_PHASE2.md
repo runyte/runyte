@@ -416,6 +416,15 @@ and the complete native suite pass: 2,957 passed, zero failures and 42 ignored
 entries across 42 libtest/doc groups, plus six harness-free transport cases.
 Required real rust-analyzer acceptance passes separately after the extraction.
 
+Checkpoint `275a650` passes the Linux CI gates, but native run `35608605740`
+reports eight PowerShell-dependent filter test timeouts and a separate existing
+log rotation acknowledgement timeout. The direct compiled-fixture pipe tests
+pass. This does not establish RAM exhaustion, shell startup latency or a pipe
+deadlock. Windows CI now uses the locally validated one-build/two-test-thread
+resource envelope; explicit concurrency tests retain their own overlapping
+children. Independent review has no findings. Product and fixture deadlines
+are unchanged, and remote acceptance of the resource bound remains pending.
+
 The ConPTY save fixture now waits for the editor's successful write status
 before reading completed contents. A single pre-completion `NotFound` read is
 recorded separately in

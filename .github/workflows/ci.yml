@@ -27,6 +27,11 @@ jobs:
     name: Native Windows
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      # Match native acceptance's resource envelope. Tests that verify process
+      # overlap create their own concurrent children within this runner limit.
+      CARGO_BUILD_JOBS: 1
+      RUST_TEST_THREADS: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
