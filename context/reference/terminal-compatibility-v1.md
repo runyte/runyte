@@ -31,6 +31,37 @@ top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
 
+## Unix PTY descriptor ownership
+
+Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`
+and the slave with `TIOCGPTPEER` using the same flags. Close-on-exec is atomic
+at both allocation boundaries; unrelated executed children cannot retain the
+endpoints. The peer ioctl requires Linux 4.13 or newer (below the supported
+Ubuntu 22.04 release-build environment). An unavailable or rejected ioctl fails
+terminal creation; there is no fallback to inheritable allocation. The initial
+size is applied to the open slave before launch. The intended child still calls
+`setsid`, acquires its controlling terminal, and duplicates the slave onto its
+three standard descriptors. Later resizes use the master.
+
+`allocation_endpoints_do_not_survive_unrelated_exec` in
+`src/terminal/tests/pty_descriptors.rs` holds allocation after each endpoint is
+created while a compiled fixture executes and acknowledges its descriptor
+inventory through an owned socket. Linux master identity includes `TIOCGPTN`,
+since `fstat` alone can describe the shared `/dev/ptmx` device. Failure-injection
+coverage checks that partially allocated endpoints close on return.
+
+Known limitation: macOS retains native `openpty` and subsequent `FD_CLOEXEC`
+updates, preserving its slave-sizing and controlling-terminal behavior. That
+path still has an allocation-to-flag-update inheritance window; this is a
+Linux fix, not a Unix-wide inheritance guarantee. Close-on-exec also does not
+prevent temporary inheritance between fork and exec on either platform.
+
+The native contracts are documented by the
+[Linux peer ioctl manual](https://man7.org/linux/man-pages/man2/TIOCGPTPEER.2const.html)
+and [Apple's openpty implementation](https://github.com/apple-oss-distributions/Libc/blob/main/util/pty.c).
+
+## Emulator and lifecycle coverage
+
 `terminal_sequences` needs no child. It feeds fixed sequences straight to the
 emulator and checks the screen they produce: cursor addressing and its screen
 and scroll-region bounds, origin mode and the cursor report, tab stops and
