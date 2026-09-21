@@ -453,8 +453,20 @@ impl LocalEndpoint {
     }
 
     pub async fn bind(&self) -> Result<UnixListener> {
-        self.prepare_directory()?;
+        self.bind_with_before_identity_lock(|| Ok(())).await
+    }
+
+    async fn bind_with_before_identity_lock(
+        &self,
+        before_identity_lock: impl FnOnce() -> Result<()>,
+    ) -> Result<UnixListener> {
+        before_identity_lock()?;
         let identity_lock = self.lock_identity()?;
+        // A retiring host may clean up again when LocalServer drops, after
+        // restart has already observed its unpublished endpoint. Preparing
+        // outside this lock lets that cleanup remove the replacement's empty
+        // directory before bind creates its socket.
+        self.prepare_directory()?;
         self.ensure_no_registered_host()?;
         if self.socket.exists() {
             if self.listener_is_live().await? {
@@ -899,9 +911,8 @@ impl LocalEndpoint {
     }
 
     fn prepare_directory(&self) -> Result<()> {
-        // Two host children may race before either reaches the identity lock.
-        // The common helper accepts a directory another child just created
-        // only after applying the same ownership, mode, and symlink checks.
+        // Bind holds the identity lock against retiring-host cleanup while
+        // creating and verifying the directory through socket publication.
         prepare_private_directory(&self.directory)
     }
 
@@ -3249,6 +3260,34 @@ mod tests {
 
         endpoint.cleanup().unwrap();
         drop(root);
+    }
+
+    #[tokio::test]
+    async fn retiring_host_cleanup_before_bind_lock_cannot_remove_the_replacement_directory() {
+        let (_root, endpoint) = endpoint("bind-cleanup-race");
+        let Some(server) = bind_or_skip(&endpoint).await else {
+            return;
+        };
+        // Host shutdown unpublishes before flushing connections. The old
+        // LocalServer then performs a second cleanup when it finally drops.
+        endpoint.cleanup().unwrap();
+        assert!(!endpoint.directory.exists());
+        let replacement = endpoint
+            .bind_with_before_identity_lock(|| {
+                // Force the second cleanup at the exact ownership boundary.
+                // Previously bind had already prepared its empty directory
+                // here, and cleanup removed it, making socket bind fail ENOENT.
+                drop(server);
+                assert!(!endpoint.directory.exists());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(endpoint.verify_for_connect().is_ok());
+        let connection = UnixStream::connect(endpoint.socket()).await.unwrap();
+        drop(connection);
+        drop(replacement);
+        endpoint.cleanup().unwrap();
     }
 
     #[tokio::test]
