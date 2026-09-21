@@ -1,4 +1,33 @@
-# Persistent host restart can lose its endpoint directory before bind
+---
+title: "Persistent host restart can lose its endpoint directory before bind"
+status: resolved
+reported: 2026-09-21
+resolved: 2026-09-21
+commit: ccaeda6
+---
+
+## Resolution
+
+`ccaeda6` (`Serialize endpoint directory preparation with retiring host cleanup`)
+moves `LocalEndpoint::bind` directory preparation inside the stable workspace
+identity lock. Previously, the retiring host's second cleanup could remove the
+replacement's newly prepared but still empty endpoint directory before bind.
+The same critical section now covers preparation, socket binding and metadata
+publication as well as cleanup. The lock lives under a separate stable parent,
+so preparing the endpoint directory does not become a lock prerequisite.
+
+`retiring_host_cleanup_before_bind_lock_cannot_remove_the_replacement_directory`
+in `src/workspace/transport.rs` forces the retiring server's second cleanup at
+the former race boundary, then verifies replacement publication and a real
+socket connection. The existing
+`restart_keeps_a_fallback_host_on_its_original_endpoint` in
+`tests/persistent_host.rs` covers native restart and endpoint preservation.
+Linux and macOS lifecycle stress and both coverage suites pass at `ccaeda6`
+in [CI run 35590400592](https://github.com/runyte/runyte/actions/runs/35590400592).
+The separate Node conformance startup timeout in that run is recorded in
+[`node_conformance_readiness.md`](../node_conformance_readiness.md).
+
+## Report
 
 The Linux lifecycle stress job in
 [CI run 35589383537](https://github.com/runyte/runyte/actions/runs/35589383537)
