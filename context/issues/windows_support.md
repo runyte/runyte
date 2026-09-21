@@ -131,10 +131,11 @@ remains deferred with persistent sessions.
 The ordered work packages, validation limits and continuation details are in
 [`PLAN_WINDOWS_PHASE2.md`](../plans/active/PLAN_WINDOWS_PHASE2.md).
 
-A separate Unix PTY allocation race is assigned to Linux work on `dev` through
-[issue commit `9b265aa`](https://github.com/runyte/runyte/blob/9b265aa122dea9637023cf1f4549f5ce75a8639c/context/issues/unix_pty_descriptor_inheritance.md).
-Its eventual fix and regression commits can be cherry-picked into this branch;
-it is not evidence of the cause of the Windows test failures.
+The independently validated Linux PTY allocation fix and resolution are
+included as `8e2bd5d` and `c6ca884`, cherry-picked from `5e30ffb` and `6e6f270`
+after integration review. Its regression is separate from the Windows process
+inheritance regression. The remaining macOS gap is tracked in
+[`macos_pty_descriptor_inheritance.md`](macos_pty_descriptor_inheritance.md).
 
 The investigation below records the pre-implementation state. Its compiler
 errors and "current" observations describe the inspected revisions, rather

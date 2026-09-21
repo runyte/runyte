@@ -22,11 +22,12 @@ separate guarded worktree removal and branch deletion are supported. The
 Unix session teardown coordinator remains unchanged. The missing-Git startup
 acceptance passes with an isolated empty executable search path.
 
-The Unix PTY investigation runs independently on `dev`, described by
-[issue commit `9b265aa`](https://github.com/runyte/runyte/blob/9b265aa122dea9637023cf1f4549f5ce75a8639c/context/issues/unix_pty_descriptor_inheritance.md).
-Bring its focused fix and regression commits into `feat/windows-support` by
-cherry-pick after native Linux validation and review. The separate issue does
-not establish a common cause for the Linux and Windows paths.
+The independent Linux PTY fix and resolution from `5e30ffb` and `6e6f270` are
+included here as `8e2bd5d` and `c6ca884` after integration review by `review_wp3`.
+Their native Linux/macOS CI passed, including both unchanged coverage floors.
+The Linux allocation race and Windows process inheritance failure have separate
+regressions and fixes. The remaining macOS allocation window is recorded in
+[`macos_pty_descriptor_inheritance.md`](../../issues/macos_pty_descriptor_inheritance.md).
 
 ## Phase-1 delivery history
 
