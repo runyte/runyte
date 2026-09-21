@@ -173,4 +173,38 @@ passed Linux coverage, macOS tests, MSRV and the release build floor. Linux
 Clippy failed: review by `review_wp1` identified four blank lines after outer
 conditional attributes on items excluded from Windows. The lint was reproduced
 independently; those blank lines were removed without changing behavior, and
-formatting passes. The complete remote gate result remains pending.
+formatting passes. The correction was pushed as `c6fd317`.
+
+Follow-up run `35539278558` passes Linux formatting/Clippy/tests and both
+Linux/macOS 89% coverage gates. Its native Windows test step and Linux MCP
+acceptance step fail; Windows formatting and Clippy pass. The complete local
+native suite had passed. Exact remote test output requires authentication and
+was requested; neither failure is dismissed as infrastructure or fixture
+flakiness without its diagnostic. The complete Phase-1 remote gate is not green.
+
+The supplied diagnostics identify two Windows fixture assumptions. Directory
+listing invalidation used a simulated future clock but depended on immediate
+real writes receiving different filesystem timestamps. The test now sets
+distinct directory timestamps explicitly, as does the neighboring within-window
+case that previously slept. No production cache policy changed. The native
+argument fixture hard-linked the compiled executable into TEMP, although CI
+can put them on different drives. Its owned temporary directory now sits beside
+the executable, and complete ConPTY cleanup precedes removal. `review_wp1`
+reviewed both repairs with no findings; nine directory tests and the repaired
+native argument test pass locally.
+
+Linux MCP acceptance timed out starting its second editor after Python warned
+about forkpty in a multithreaded process. The harness already had active PTY
+reader threads and configured terminal geometry only after launch. It now
+configures an open PTY before Popen starts a fresh helper interpreter, which
+acquires the controlling terminal and execs the editor. No Python preexec
+callback runs in the threaded parent's fork. Popen owns poll/wait/kill, and
+startup failures report bounded output and exit status. New tests cover an
+active parent thread, controlling-terminal/foreground ownership, initial
+geometry and failed exec. `review_wp2` found no blocking issue; native Unix
+execution requires the next CI run. The precise original deadlock mechanism
+is not claimed from the timeout alone.
+
+The GitHub CLI is now installed and authenticated; future CI diagnosis uses
+`gh` directly rather than requesting logs from the user. Both reviewed repair
+packages are followed by a fresh remote acceptance run.

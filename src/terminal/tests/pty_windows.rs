@@ -291,12 +291,15 @@ fn failed_process_creation_closes_undrained_console() {
 
 #[test]
 fn native_child_receives_arguments_from_requested_directory() {
-    let root = crate::test_support::TestRuntimeRoot::new("native-arguments").unwrap();
-    std::fs::hard_link(
-        std::env::current_exe().unwrap(),
-        root.join("native helper.exe"),
+    let executable = std::env::current_exe().unwrap();
+    // CI can put TEMP and the build on different drives. Hard links require
+    // one volume; keep this owned temporary fixture beside the compiled image.
+    let root = crate::test_support::TestRuntimeRoot::new_in(
+        "native-arguments",
+        executable.parent().unwrap(),
     )
     .unwrap();
+    std::fs::hard_link(&executable, root.join("native helper.exe")).unwrap();
     let values = [
         r"C:\folder with spaces\",
         "embedded \"quotes\"",
@@ -324,6 +327,7 @@ fn native_child_receives_arguments_from_requested_directory() {
         },
     )
     .unwrap();
+    let cleanup = child.cleanup_waiter();
     let output = read_until(&events, "READY");
     for value in values {
         assert!(
@@ -336,6 +340,8 @@ fn native_child_receives_arguments_from_requested_directory() {
         events.recv_timeout(Duration::from_secs(10)).unwrap(),
         PtyEvent::Exited(_)
     ) {}
+    drop(child);
+    cleanup();
 }
 
 #[test]

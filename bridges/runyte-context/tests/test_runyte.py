@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import pty
 import secrets
 import selectors
 import shlex
@@ -21,6 +20,7 @@ import time
 import unittest
 
 from test_bridge import MCPClient, PACKAGE, REPO
+from native_pty import spawn as spawn_pty
 from runyte_context.client import FRAME_BYTES, decode, encode
 from runyte_context.server import PROTOCOL
 
@@ -83,21 +83,16 @@ class NativeEditor:
                      '--project-root', str(project), '--config', str(config)]
         if not persistent:
             arguments.append('note.txt')
-        self.pid = self.fd = None
+        self.process = self.fd = None
         try:
-            self.pid, self.fd = pty.fork()
-            if self.pid == 0:
-                try:
-                    os.chdir(project)
-                    os.execve(binary, arguments, {**env, 'TERM': 'xterm-256color'})
-                except OSError:
-                    os._exit(127)
-            ptybench._configure(self.fd)
+            self.process, self.fd = spawn_pty(
+                arguments, cwd=project, env={**env, 'TERM': 'xterm-256color'},
+                configure=ptybench._configure,
+            )
             self.pump = threading.Thread(target=self.drain, daemon=True)
             self.pump.start()
         except BaseException:
-            if self.pid:
-                ptybench._reap(self.pid)
+            self.reap()
             if self.fd is not None:
                 os.close(self.fd)
             if self.host is not None:
@@ -151,8 +146,20 @@ class NativeEditor:
                     return
             if self.errors:
                 raise AssertionError('Native PTY reader failed: ' + self.errors[0])
+            if self.process.poll() is not None:
+                self.reaped = True
+                raise self.missing_marker(marker)
             time.sleep(.02)
-        raise AssertionError('Native editor did not display required fixture marker')
+        raise self.missing_marker(marker)
+
+    def missing_marker(self, marker):
+        with self.lock:
+            output = CONTROL.sub(b'', bytes(self.output)).decode('utf-8', 'replace')[-2048:]
+            size = len(self.output)
+        return AssertionError(
+            f'Native editor did not display {marker!r}; '
+            f'exit={self.process.poll()}, output_bytes={size}, tail={output!r}'
+        )
 
     def command(self, command):
         if self.terminal_input:
@@ -183,16 +190,20 @@ class NativeEditor:
         self.wait_exit()
 
     def wait_exit(self, seconds=10):
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            pid, status = os.waitpid(self.pid, os.WNOHANG)
-            if pid:
-                self.reaped = True
-                if status:
-                    raise AssertionError('Native editor exited unsuccessfully')
-                return
-            time.sleep(.02)
-        raise AssertionError('Native editor exit exceeded deadline')
+        try:
+            status = self.process.wait(timeout=seconds)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError('Native editor exit exceeded deadline') from error
+        self.reaped = True
+        if status:
+            raise AssertionError(f'Native editor exited unsuccessfully: {status}')
+
+    def reap(self):
+        if self.process is not None:
+            if self.process.poll() is None:
+                self.process.kill()
+            self.process.wait(timeout=5)
+            self.reaped = True
 
     def close(self):
         for stop in self.stop_files:
@@ -221,8 +232,7 @@ class NativeEditor:
                     self.host.wait(timeout=5)
             self.stop.set()
             if not self.reaped:
-                ptybench._reap(self.pid)
-                self.reaped = True
+                self.reap()
             self.pump.join(1)
             os.close(self.fd)
         if failure:
