@@ -205,7 +205,7 @@ impl<'de> Deserialize<'de> for LspConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct LanguageServerConfig {
     pub command: PathBuf,
@@ -967,7 +967,43 @@ impl Config {
             }
         }
 
-        let source = fs::read_to_string(&path)
+        let config = Self::read(&path)?;
+        Ok((config, Some(path)))
+    }
+
+    /// Re-reads a configuration file that a running editor already loaded.
+    ///
+    /// `Ok(None)` means there is no file at that path. The caller decides what
+    /// that is worth: at startup an absent file is simply the built-in
+    /// defaults, but replacing a running editor's whole configuration with
+    /// defaults because a file was deleted mid-session would be a far larger
+    /// change than a reload was asked to make.
+    ///
+    /// Reading through the path is what makes an atomically replaced file
+    /// reload correctly: the rename is observed as the new contents, never as
+    /// a half-written document. An editor that truncates and rewrites in place
+    /// can still be caught mid-write, which fails here as invalid YAML and so
+    /// leaves the working configuration untouched.
+    pub fn reload(path: &Path) -> Result<Option<Self>> {
+        anyhow::ensure!(
+            path.is_absolute(),
+            "config path {} is not absolute",
+            path.display()
+        );
+        match fs::symlink_metadata(path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to inspect config {}", path.display()));
+            }
+        }
+        Self::read(path).map(Some)
+    }
+
+    /// The one parse, merge, and validation path every load shares.
+    fn read(path: &Path) -> Result<Self> {
+        let source = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: Self = serde_yaml::from_str(&source)
             .with_context(|| format!("invalid YAML in {}", path.display()))?;
@@ -976,7 +1012,7 @@ impl Config {
             .validate_settings()
             .map_err(anyhow::Error::msg)
             .with_context(|| format!("invalid settings in {}", path.display()))?;
-        Ok((config, Some(path)))
+        Ok(config)
     }
 
     /// Merge additive built-ins after deserializing a user configuration.
@@ -1574,6 +1610,46 @@ mod tests {
             assert!(error.contains(expected), "{error}");
             assert_eq!(fs::read_to_string(path).unwrap(), source);
         }
+    }
+
+    #[test]
+    fn reloading_distinguishes_an_absent_file_from_an_unusable_one() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+
+        // Absent is reported as absent rather than as the built-in defaults,
+        // so a caller holding a working configuration can decide what it means.
+        assert!(Config::reload(&path).unwrap().is_none());
+
+        fs::write(&path, "editor:\n  tab_width: 6\n").unwrap();
+        let reloaded = Config::reload(&path).unwrap().unwrap();
+        assert_eq!(reloaded.editor.tab_width, 6);
+        // Built-in themes and servers are merged exactly as at startup.
+        assert!(reloaded.themes.contains_key(DEFAULT_THEME));
+
+        fs::write(&path, "editor:\n  tab_width: 0\n").unwrap();
+        let error = format!("{:#}", Config::reload(&path).unwrap_err());
+        assert!(
+            error.contains("tab_width must be between 1 and 16"),
+            "{error}"
+        );
+
+        fs::write(&path, "editor: [not, a, table]\n").unwrap();
+        let error = format!("{:#}", Config::reload(&path).unwrap_err());
+        assert!(error.contains("invalid YAML"), "{error}");
+    }
+
+    #[test]
+    fn reloading_reads_an_atomically_replaced_file_as_its_new_contents() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+        fs::write(&path, "editor:\n  tab_width: 2\n").unwrap();
+        let staged = directory.path("config.yaml.tmp");
+        fs::write(&staged, "editor:\n  tab_width: 12\n").unwrap();
+
+        fs::rename(&staged, &path).unwrap();
+
+        assert_eq!(Config::reload(&path).unwrap().unwrap().editor.tab_width, 12);
     }
 
     #[cfg(unix)]

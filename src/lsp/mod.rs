@@ -806,6 +806,14 @@ pub enum LspCommand {
         id: Value,
         applied: bool,
     },
+    /// Replaces the manager's server definitions after a configuration
+    /// reload.
+    ///
+    /// Only languages whose definition actually changed are disturbed. A
+    /// server whose command, arguments, and initialization options are
+    /// unchanged keeps running with its handshake, open documents, and
+    /// diagnostics intact, because nothing about it was reconfigured.
+    Reconfigure(Box<LspConfig>),
     /// Restarts one language's server, or every stopped server when `None`.
     Restart(Option<String>),
     Status,
@@ -1179,7 +1187,7 @@ impl Server {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_manager(
-    config: LspConfig,
+    mut config: LspConfig,
     root: PathBuf,
     mut launch: Launch,
     mut commands: mpsc::Receiver<LspCommand>,
@@ -1240,6 +1248,24 @@ async fn run_manager(
                 if matches!(command, LspCommand::Shutdown) {
                     break;
                 }
+                // Reconfiguration owns `config` itself, so it cannot be one of
+                // the commands handled against a shared borrow of it. It is
+                // also applied while the workspace denies LSP: the definitions
+                // are what a later approval would start servers from, and
+                // dropping them would leave a granted workspace running the
+                // configuration the editor no longer has.
+                if let LspCommand::Reconfigure(replacement) = command {
+                    reconfigure(
+                        *replacement,
+                        &mut config,
+                        &mut servers,
+                        &mut failed,
+                        &mut inbox,
+                        &events,
+                    )
+                    .await;
+                    continue;
+                }
                 if !approval.borrow().0 { continue; }
                 handle_command(
                     command,
@@ -1276,6 +1302,107 @@ async fn run_manager(
     for language in languages {
         graceful_stop_server(&language, &mut servers, &mut failed, &mut inbox, &events).await;
     }
+}
+
+/// Adopts replacement server definitions, restarting only what changed.
+///
+/// A language whose definition is identical keeps its live process: a reload
+/// triggered by an unrelated edit elsewhere in the file must not cost every
+/// server its handshake, open documents, and diagnostics. A language whose
+/// definition changed is stopped and its recorded failure forgotten, so the
+/// next request for it starts the newly configured command instead of
+/// reporting the old one's failure forever. Removal is the same stop with no
+/// definition left to start from.
+async fn reconfigure(
+    replacement: LspConfig,
+    config: &mut LspConfig,
+    servers: &mut HashMap<String, Server>,
+    failed: &mut HashMap<String, String>,
+    inbox: &mut mpsc::Receiver<(String, u64, Incoming)>,
+    events: &EventSender,
+) {
+    let changed =
+        |language: &String| config.servers.get(language) != replacement.servers.get(language);
+    let mut restarting = servers
+        .keys()
+        .filter(|l| changed(l))
+        .cloned()
+        .collect::<Vec<_>>();
+    restarting.sort_unstable();
+    failed.retain(|language, _| !changed(language));
+    *config = replacement;
+
+    for language in &restarting {
+        if let Some(server) = servers.get_mut(language) {
+            let pending = std::mem::take(&mut server.pending);
+            let name = server.name.clone();
+            for (_, pending) in pending {
+                if pending.shape != Shape::Initialize {
+                    emit(
+                        events,
+                        LspEvent::Response {
+                            token: pending.token,
+                            response: Response::Failed(format!("{name} was reconfigured")),
+                        },
+                    )
+                    .await;
+                }
+            }
+            graceful_stop_server(language, servers, failed, inbox, events).await;
+            emit(
+                events,
+                LspEvent::Restarted {
+                    language: language.clone(),
+                },
+            )
+            .await;
+        }
+    }
+    // Clearing failures before the stops is not enough. A graceful stop keeps
+    // draining every other language while it waits for its own shutdown reply,
+    // so a server whose turn has not come yet can exit in the meantime and be
+    // recorded as failed all over again — after which its own iteration finds
+    // nothing to stop and leaves it failed for good. A deliberate stop is not
+    // a failure whichever order they land in.
+    for language in &restarting {
+        failed.remove(language);
+    }
+    if restarting.is_empty() {
+        return;
+    }
+    let (configured, removed): (Vec<&String>, Vec<&String>) = restarting
+        .iter()
+        .partition(|language| config.servers.contains_key(*language));
+    let mut parts = Vec::new();
+    if !configured.is_empty() {
+        parts.push(format!(
+            "{} will restart on the next edit",
+            names(&configured)
+        ));
+    }
+    if !removed.is_empty() {
+        parts.push(format!(
+            "{} {} no longer configured",
+            names(&removed),
+            if removed.len() == 1 { "is" } else { "are" }
+        ));
+    }
+    emit(
+        events,
+        LspEvent::Status {
+            message: format!("reconfigured language servers: {}", parts.join("; ")),
+            error: false,
+        },
+    )
+    .await;
+}
+
+fn names(languages: &[&String]) -> String {
+    languages
+        .iter()
+        .map(|language| language.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Performs the LSP shutdown handshake without ever involving the editor
@@ -1377,6 +1504,9 @@ async fn handle_command(
 ) {
     match command {
         LspCommand::Shutdown => {}
+        // Intercepted by the manager loop, which owns the configuration this
+        // function only borrows.
+        LspCommand::Reconfigure(_) => {}
         LspCommand::Ensure { language } => {
             ensure_server(
                 &language,

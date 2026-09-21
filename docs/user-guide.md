@@ -61,9 +61,16 @@ For the project overview and quick start, see the [main README](../README.md).
 - Undo/redo, yank/paste, dirty-buffer protection, and save-as
 - Operating-system clipboard yank and paste
 
-This is intentionally a compact editor, not a complete Helix clone. Some Helix
-behavior is deliberately absent and some of it deliberately differs; the
-[key bindings](#key-bindings) section records what each binding does here.
+Runyte is not a Helix clone, and it is not a subset of one. The editing model
+and much of the keymap language come from Helix; the surrounding scope does
+not. Terminal multiplexing, an editable file manager, a detachable
+client-server host for unsaved buffers and live processes, rendered Markdown,
+image pasting, and a plugin runtime are all listed above and have no Helix
+counterpart. In the other direction a few Helix behaviors are deliberately
+absent and a number deliberately differ: the [key bindings](#key-bindings)
+section records what each binding does here, and
+`context/reference/helix-keymap-v1.md` is the register of which bindings match
+Helix and which do not.
 
 ### Syntax highlighting
 
@@ -277,12 +284,14 @@ lsp:
 list passed to that executable; Runyte starts it directly rather than through
 a shell. Server definitions currently remain a YAML-only setting, while
 `Space o o` can enable or disable LSP as a whole. After adding or changing a
-definition, exit and reopen standalone Runyte. A persistent session retains
-the configuration its host loaded, so restart it with
-`runyte --session-restart [WORKSPACE]`; include the same `--config PATH` when
-the host used a non-default configuration. `:lsp-restart` restarts a server
-from the configuration already loaded by the running editor; it does not
-reread YAML.
+definition, run `:config-reload`: the manager adopts the new definitions and
+restarts only the languages whose definition changed. `:lsp-restart` restarts a
+server from the configuration already loaded by the running editor and does not
+reread YAML, so it is the wrong command for a file that has just been edited.
+`lsp.enable` is still decided at startup, so turning LSP on or off means
+reopening standalone Runyte, or restarting a persistent session with
+`runyte --session-restart [WORKSPACE]`, including the same `--config PATH` when
+the host used a non-default configuration.
 
 Servers are keyed by the language names in `src/syntax/grammars.rs`, so a
 buffer's language is the same question for highlighting and for LSP. The
@@ -3453,6 +3462,7 @@ are enabled.
 :outline                open the immediate Tree-sitter document outline
                         (alias: document-outline)
 :config                 open the settings menu (alias: settings)
+:config-reload          re-read the loaded configuration file into this session
 :terminal [command]     run a program in this pane, or $SHELL (aliases: t, term)
 :terminal-file-directory [command]
                         run from the active file's parent
@@ -3858,6 +3868,61 @@ diagnostic log's owner role, level, resolved path, and any failure. The
 report probes paths only and remains useful when every optional service is
 absent. In persistent mode its `log` row describes the host that owns the
 workspace, not the client process that opened the report.
+
+### Reloading configuration
+
+`:config-reload` re-reads the configuration file this editor loaded, including
+an explicit `--config PATH`, and brings the running editor into line with it.
+It is the supported path for changes made anywhere other than the `[config]`
+page: an edit in another editor, a file written by a script, or a correction to
+a plugin entry the host refused at startup. Nothing is watched or polled;
+the reload happens when the command runs, and only for the workspace the
+command was run in. Another running session reloads when you run it there.
+
+A reload that cannot be used changes nothing. Invalid YAML, a value outside its
+registry bounds, and a file that has been deleted are all reported with the
+running configuration left exactly as it was, so a half-written file cannot
+break a live editor. A file replaced atomically by a rename is read as its new
+contents; one truncated and rewritten in place can be caught mid-write, which
+fails as invalid YAML and can simply be reloaded again. A path that never had a
+file says so without treating it as a deletion, so creating the file and
+reloading again is the way to start using one mid-session.
+
+Settings that were read before the editor existed are reported rather than
+adopted. `editor.mouse`, `lsp.enable`, `workspace.mode`, and `workspace.state`
+keep the value this process started with, and the status line names them as
+requiring a restart. The `[config]` page then shows the file's value as saved
+while the effective value stays what the editor is actually doing. Everything
+else applies immediately, including the theme, the `keys` section — dispatch,
+help, and key hints are all rebuilt from it together, with the keys of every
+running plugin laid back over it — and `notifications.history_limit`. A `keys`
+section that collides with a running plugin's binding is refused on its own,
+leaving the bindings in use alone while the rest of the file still applies. A `theme:` naming something that cannot be built
+keeps the theme already on screen and says so, rather than repainting the
+editor with the default.
+
+Language servers are reconfigured rather than restarted wholesale. A server
+whose `command`, `args`, and `initialization_options` are unchanged keeps its
+process, handshake, open documents, and diagnostics; only a language whose
+definition changed stops and starts again on the next request, and a language
+removed from the file simply stops. A recorded launch failure is forgotten for
+any definition that changed, so a corrected command is tried instead of the
+broken one being reported forever.
+
+Configured plugins are reconciled by their `id`, so moving an entry in the file
+is not a change to the plugin it describes. An entry whose configuration is
+unchanged keeps its running process untouched. A changed entry restarts its
+plugin, and a removed or disabled one stops it — but never while work is in
+flight. A plugin with a running job, an activity lease, a helper process,
+outstanding cleanup, an unsaved remote document, an unanswered command, local
+filesystem work, or a prompt you are part-way through keeps running exactly as
+it was; the change waits on its record, `:plugins` shows the pending state, and a
+notification says so. The wait ends by itself: as soon as that work is gone the
+saved entry takes effect and is reported. `:plugin-restart <id>`, or
+`:plugin-stop <id>` for an entry the file no longer enables, applies it sooner
+if you would rather not wait. An entry added to the file starts from the reload, and one that
+was disabled or refused at startup can be corrected and started the same way,
+without restarting the editor.
 
 ```yaml
 editor:

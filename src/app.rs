@@ -259,6 +259,7 @@ impl FinderContentSource {
 // over Git processes, LSP transport, terminal emulation, buffer mutation, or
 // snapshot rendering from those existing boundaries.
 mod completion_support;
+mod config_reload;
 mod editing;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
@@ -2678,6 +2679,12 @@ pub struct App {
     /// The exact YAML document settings writes patch. Set only by the config
     /// loader, and injectable through `note_loaded_config` for isolated tests.
     config_path: Option<PathBuf>,
+    /// Whether a file has ever been read from [`Self::config_path`] in this
+    /// session. It separates the two things an absent file can mean to a
+    /// reload: a configuration that was deleted, which must not silently reset
+    /// a running editor, and one that was never there, where reloading a file
+    /// created since startup is exactly what someone is asking for.
+    config_file_read: bool,
     pub buffers: Vec<Buffer>,
     /// Current syntax trees, indexed alongside `buffers`. `None` means the
     /// buffer has no known language, its parse failed, or its tree is held by
@@ -3282,42 +3289,11 @@ impl App {
         panes.insert(0, Pane::new(0));
         let persisted_config = config.clone();
         let notification_limit = config.notifications.history_limit;
-        let mut key_errors = Vec::new();
-        let mut key_rejection_count = 0;
-        let configured_keymaps = config.keys.as_ref().map(|section| {
-            let defaults = keymap_for(false);
-            let fast = keymap_for(true);
-            let normal = crate::keymap::configured::compile(section, &defaults);
-            let fast = crate::keymap::configured::compile(section, &fast);
-            if normal.errors == fast.errors {
-                key_errors.extend(normal.errors.iter().cloned());
-            } else {
-                for error in normal
-                    .errors
-                    .iter()
-                    .filter(|error| fast.errors.contains(error))
-                {
-                    key_errors.push(error.clone());
-                }
-                key_errors.extend(
-                    normal
-                        .errors
-                        .iter()
-                        .filter(|error| !fast.errors.contains(error))
-                        .map(|error| format!("fast_pane_keys=false: {error}")),
-                );
-                key_errors.extend(
-                    fast.errors
-                        .iter()
-                        .filter(|error| !normal.errors.contains(error))
-                        .map(|error| format!("fast_pane_keys=true: {error}")),
-                );
-            }
-            key_rejection_count = crate::keymap::configured::rejected_entry_count(
-                normal.errors.iter().chain(&fast.errors).map(String::as_str),
-            );
-            [normal.keymap, fast.keymap]
-        });
+        let ConfiguredKeymaps {
+            keymaps: configured_keymaps,
+            errors: key_errors,
+            rejected: key_rejection_count,
+        } = compile_configured_keymaps(config.keys.as_ref());
         if !key_errors.is_empty() {
             status.push_str(&format!(
                 " · {} key binding entries rejected",
@@ -3341,6 +3317,7 @@ impl App {
             theme,
             theme_name,
             config_path: None,
+            config_file_read: false,
             buffers,
             syntax,
             generated_highlights: HashMap::new(),
@@ -4693,6 +4670,66 @@ fn buffer_language(buffer: &Buffer, registry: &Registry) -> Option<LanguageId> {
 fn parse_buffer(buffer: &Buffer, registry: &Registry) -> Option<DocumentSyntax> {
     let language = buffer_language(buffer, registry)?;
     DocumentSyntax::new(buffer.text(), language, registry)
+}
+
+/// The two keymaps a `keys` section compiles to, and why entries were refused.
+///
+/// `fast_pane_keys` selects between them at dispatch time, so both are built
+/// from the same section and an error is attributed to a variant only when it
+/// belongs to just one of them.
+pub(crate) struct ConfiguredKeymaps {
+    pub keymaps: Option<[Arc<Keymap>; 2]>,
+    pub errors: Vec<String>,
+    pub rejected: usize,
+}
+
+/// Compiles the `keys` section exactly as startup does.
+///
+/// Startup and configuration reload share this so a binding accepted at one
+/// cannot be refused at the other, which is what keeps dispatch, help, and
+/// key hints reading the same registry after a reload.
+pub(crate) fn compile_configured_keymaps(section: Option<&serde_yaml::Value>) -> ConfiguredKeymaps {
+    let mut errors = Vec::new();
+    let mut rejected = 0;
+    let keymaps = section.map(|section| {
+        let defaults = keymap_for(false);
+        let fast = keymap_for(true);
+        let normal = crate::keymap::configured::compile(section, &defaults);
+        let fast = crate::keymap::configured::compile(section, &fast);
+        if normal.errors == fast.errors {
+            errors.extend(normal.errors.iter().cloned());
+        } else {
+            for error in normal
+                .errors
+                .iter()
+                .filter(|error| fast.errors.contains(error))
+            {
+                errors.push(error.clone());
+            }
+            errors.extend(
+                normal
+                    .errors
+                    .iter()
+                    .filter(|error| !fast.errors.contains(error))
+                    .map(|error| format!("fast_pane_keys=false: {error}")),
+            );
+            errors.extend(
+                fast.errors
+                    .iter()
+                    .filter(|error| !normal.errors.contains(error))
+                    .map(|error| format!("fast_pane_keys=true: {error}")),
+            );
+        }
+        rejected = crate::keymap::configured::rejected_entry_count(
+            normal.errors.iter().chain(&fast.errors).map(String::as_str),
+        );
+        [normal.keymap, fast.keymap]
+    });
+    ConfiguredKeymaps {
+        keymaps,
+        errors,
+        rejected,
+    }
 }
 
 fn startup_status(errors: &[RegistryError], help: &str) -> String {

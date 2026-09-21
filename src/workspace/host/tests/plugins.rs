@@ -215,7 +215,9 @@ async fn disabled_spawn_failure_and_host_attachment_do_not_duplicate_instances()
     let mut disabled = config("off");
     disabled.enabled = false;
     host.app.config.plugins.push(disabled);
-    assert!(host.start_plugins().is_none());
+    // The queue exists whatever is enabled, so a configuration reload can
+    // start a plugin this launch left disabled. Nothing is spawned for it.
+    assert!(host.start_plugins().is_some());
     assert!(host.plugin_workers.is_empty());
     let (_root, mut host) = self::host();
     host.app.config.plugins.push(config("missing"));
@@ -653,6 +655,8 @@ mod applications;
 #[path = "plugin_aliases.rs"]
 mod aliases;
 
+#[path = "plugin_configuration_reload.rs"]
+mod configuration_reload;
 #[path = "plugin_manager.rs"]
 mod manager;
 #[path = "plugin_manager_review.rs"]

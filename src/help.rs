@@ -148,6 +148,7 @@ impl HelpTopic {
             ],
             Self::Config => &[
                 "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",
+                "Edits made to the configuration file outside this page reach the running editor through :config-reload. Nothing is watched, an unusable file leaves the running configuration alone, and a setting read at startup is named as needing a restart rather than shown as already in effect.",
             ],
             Self::Notifications => &[
                 "The notification center is a single read-only, searchable history page. Newest notifications appear first with their local timestamp, Runyte-assigned severity, source, and complete details.",

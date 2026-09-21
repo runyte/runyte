@@ -12,6 +12,11 @@ Describe the workflow you want to improve, what is difficult today, and how
 the proposed feature would help. Include a concrete example and check for an
 existing request before opening a new one.
 
+Runyte's selection-first model and its keymap are deliberate, so a request that
+works with them lands more easily than one that adds a second way to do
+something already bound. Anything an external process could do is better as a
+plugin than as an editor feature.
+
 ## Report a bug
 
 Open an issue on [GitHub Issues](https://github.com/runyte/runyte/issues).
