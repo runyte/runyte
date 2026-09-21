@@ -285,13 +285,78 @@ fn read_image_native() -> Result<Option<Vec<u8>>> {
 }
 
 #[cfg(test)]
-fn isolate_test_desktop() {
+fn test_station_name(station: windows_sys::Win32::System::StationsAndDesktops::HWINSTA) -> String {
+    use windows_sys::Win32::System::StationsAndDesktops::{GetUserObjectInformationW, UOI_NAME};
+    let mut name = [0u16; 128];
+    let mut needed = 0;
+    assert_ne!(
+        unsafe {
+            GetUserObjectInformationW(
+                station,
+                UOI_NAME,
+                name.as_mut_ptr().cast(),
+                std::mem::size_of_val(&name) as u32,
+                &mut needed,
+            )
+        },
+        0,
+        "{}",
+        io::Error::last_os_error()
+    );
+    let end = name.iter().position(|unit| *unit == 0).unwrap();
+    String::from_utf16(&name[..end]).unwrap()
+}
+
+#[cfg(test)]
+fn isolate_test_desktop() -> String {
     // The compiled child owns these handles until process exit. Its private
-    // window station has a separate clipboard from the interactive station.
+    // station must also be distinct from other fixture children: a NULL name
+    // reopens the logon session's shared station, not a fresh unnamed object.
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    };
     use windows_sys::Win32::System::StationsAndDesktops::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CWF_CREATE_ONLY, WINSTA_ACCESSCLIPBOARD, WINSTA_ACCESSGLOBALATOMS, WINSTA_CREATEDESKTOP,
+        WINSTA_READATTRIBUTES,
+    };
+    let mut nonce = [0u8; 16];
+    let status = unsafe {
+        BCryptGenRandom(
+            ptr::null_mut(),
+            nonce.as_mut_ptr(),
+            nonce.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    assert!(
+        status >= 0,
+        "clipboard fixture randomness failed: {status:#x}"
+    );
+    let nonce = nonce
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let station_name = format!("runyte-clipboard-test-{}-{nonce}", std::process::id());
+    let wide: Vec<_> = station_name.encode_utf16().chain(Some(0)).collect();
+    let station = crate::windows_fs::with_private_security(|security| {
+        let access = (WINSTA_ACCESSCLIPBOARD
+            | WINSTA_ACCESSGLOBALATOMS
+            | WINSTA_CREATEDESKTOP
+            | WINSTA_READATTRIBUTES) as u32;
+        let station =
+            unsafe { CreateWindowStationW(wide.as_ptr(), CWF_CREATE_ONLY, access, security) };
+        if station.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(station)
+        }
+    })
+    .expect(
+        "cannot create a distinct private clipboard fixture station; no shared-station fallback",
+    );
+    assert_eq!(test_station_name(station), station_name);
     unsafe {
-        let station = CreateWindowStationW(ptr::null(), 0, 0x37f, ptr::null());
-        assert!(!station.is_null(), "{}", io::Error::last_os_error());
         assert_ne!(
             SetProcessWindowStation(station),
             0,
@@ -315,7 +380,9 @@ fn isolate_test_desktop() {
             io::Error::last_os_error()
         );
         TEST_DESKTOP.store(desktop as usize, Ordering::Release);
+        assert_eq!(test_station_name(GetProcessWindowStation()), station_name);
     }
+    station_name
 }
 
 #[cfg(test)]
@@ -325,6 +392,94 @@ mod image_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "required Windows CI acceptance; creating private window stations requires administrator privileges"]
+    fn concurrent_fixture_children_keep_distinct_clipboards() {
+        use std::{fs, path::Path, process::Command};
+        const ROLE: &str = "RUNYTE_CLIPBOARD_ISOLATION_ROLE";
+        const ROOT: &str = "RUNYTE_CLIPBOARD_ISOLATION_ROOT";
+
+        fn wait_for(path: &Path) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !path.exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "fixture barrier timed out: {path:?}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        if let Some(role) = std::env::var_os(ROLE) {
+            let role = role.to_str().unwrap();
+            assert!(matches!(role, "first" | "second"));
+            let root = std::path::PathBuf::from(std::env::var_os(ROOT).unwrap());
+            let name = isolate_test_desktop();
+            fs::write(root.join(format!("{role}.station")), name).unwrap();
+            if role == "second" {
+                wait_for(&root.join("first.published"));
+            }
+            write_native(&encode(role).unwrap()).unwrap();
+            fs::write(root.join(format!("{role}.published")), []).unwrap();
+            if role == "first" {
+                wait_for(&root.join("second.published"));
+            }
+            // The second child has now replaced its clipboard. With a shared
+            // station, the first child deterministically reads "second" here.
+            assert_eq!(read_native().unwrap(), role);
+            return;
+        }
+
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let root = crate::test_support::TestRuntimeRoot::new("clipboard-isolation").unwrap();
+        let children = ["first", "second"].map(|role| {
+            let child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "clipboard::windows::tests::concurrent_fixture_children_keep_distinct_clipboards",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(ROLE, role)
+                .env(ROOT, root.path())
+                .env("XDG_CONFIG_HOME", root.path().join(role).join("config"))
+                .env("XDG_CACHE_HOME", root.path().join(role).join("cache"))
+                .stdout(fs::File::create(root.path().join(format!("{role}.stdout"))).unwrap())
+                .stderr(fs::File::create(root.path().join(format!("{role}.stderr"))).unwrap())
+                .spawn()
+                .unwrap();
+            (role, Child(child))
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        for (role, mut child) in children {
+            let status = loop {
+                if let Some(status) = child.0.try_wait().unwrap() {
+                    break status;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "clipboard fixture child timed out: {role}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            };
+            assert!(
+                status.success(),
+                "{role}: {}\n{}",
+                fs::read_to_string(root.path().join(format!("{role}.stdout"))).unwrap(),
+                fs::read_to_string(root.path().join(format!("{role}.stderr"))).unwrap()
+            );
+        }
+        let first = fs::read_to_string(root.path().join("first.station")).unwrap();
+        let second = fs::read_to_string(root.path().join("second.station")).unwrap();
+        assert_ne!(first, second, "fixture children share a window station");
+    }
+
     #[test]
     fn timed_out_work_does_not_accumulate_workers() {
         let (release, wait) = mpsc::channel();
@@ -348,6 +503,7 @@ mod tests {
         assert_eq!(run(|| Ok(42)).unwrap(), 42);
     }
     #[test]
+    #[ignore = "required Windows CI acceptance; creating private window stations requires administrator privileges"]
     fn native_clipboard_round_trip() {
         const CHILD: &str = "RUNYTE_ISOLATED_CLIPBOARD_TEST";
         if std::env::var_os(CHILD).is_none() {
@@ -356,6 +512,7 @@ mod tests {
                 .args([
                     "--exact",
                     "clipboard::windows::tests::native_clipboard_round_trip",
+                    "--ignored",
                     "--nocapture",
                 ])
                 .env(CHILD, "1")

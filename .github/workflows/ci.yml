@@ -47,6 +47,24 @@ jobs:
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
         run: cargo test --locked
+      - name: Accept isolated native clipboard operations
+        # Named private window stations require administrator privileges;
+        # hosted Windows runners provide them. Never use the user's clipboard.
+        run: |
+          $cases = @(
+            'clipboard::windows::tests::native_clipboard_round_trip',
+            'clipboard::windows::image_tests::native_images_use_the_bounded_worker_on_an_isolated_desktop',
+            'clipboard::windows::tests::concurrent_fixture_children_keep_distinct_clipboards'
+          )
+          foreach ($case in $cases) {
+            cargo test --locked --lib $case -- --ignored --exact 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-clipboard-acceptance.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $acceptance = Get-Content -Raw "$env:RUNNER_TEMP/native-clipboard-acceptance.log"
+            $required = 'test ' + [regex]::Escape($case) + ' \.\.\. ok'
+            if ($acceptance -notmatch $required) {
+              throw "Required native clipboard acceptance did not run: $case"
+            }
+          }
       - name: Provision the required native language server
         run: |
           rustup component add rust-analyzer rustfmt

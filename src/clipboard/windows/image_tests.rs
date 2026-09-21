@@ -66,6 +66,7 @@ fn assert_pixels(bytes: Vec<u8>, expected: &[u8]) {
 }
 
 #[test]
+#[ignore = "required Windows CI acceptance; creating private window stations requires administrator privileges"]
 fn native_images_use_the_bounded_worker_on_an_isolated_desktop() {
     const CHILD: &str = "RUNYTE_ISOLATED_IMAGE_CLIPBOARD_TEST";
     if std::env::var_os(CHILD).is_none() {
@@ -74,6 +75,7 @@ fn native_images_use_the_bounded_worker_on_an_isolated_desktop() {
             .args([
                 "--exact",
                 "clipboard::windows::image_tests::native_images_use_the_bounded_worker_on_an_isolated_desktop",
+                "--ignored",
                 "--nocapture",
             ])
             .env(CHILD, "1")

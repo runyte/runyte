@@ -18,6 +18,15 @@ provisional: no native Windows `cargo llvm-cov --locked --workspace` baseline ha
 been measured. The coverage badge and 89% enforced floor continue to describe
 Linux and macOS. Windows tests do not replace either existing coverage gate.
 
+The Windows job separately requires three native clipboard acceptance tests:
+text round-trip, image reads, and isolation between concurrent fixtures.
+They are ignored by the ordinary suite because creating named private window
+stations requires administrator privileges. The CI step runs each explicitly
+with `--ignored --exact` and requires its passing result; a missing or refused
+test fails the job. Pure conversion and worker tests remain in the ordinary
+suite. Fixtures never fall back to a shared window station or user clipboard.
+This privilege requirement belongs to test isolation, not editor clipboard use.
+
 The above-95% target applies to the total **Lines** percentage printed by that
 canonical command. It is the only current measure that `cargo-llvm-cov` can
 enforce directly and identically in a local run and in CI. It is a reported
