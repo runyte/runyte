@@ -124,7 +124,10 @@ regressions and reviewed corrections, and all 94 parallel provider tests pass.
 The restored native editor/discovery suite passes 142 tests. Native handoff
 passes formatting, all-target Clippy with warnings denied, and the full suite
 (2,874 passed, zero failures, 34 ignored fixture/performance entries).
-Cross-platform CI acceptance remains pending.
+Cross-platform CI acceptance passes at `dbd30fc` in
+[`35578396537`](https://github.com/runyte/runyte/actions/runs/35578396537),
+including native Windows, Linux/macOS tests and both unchanged 89% coverage
+gates. Sub-phase 2.1 is complete; the broader Phase 2 remains open.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

@@ -4,7 +4,7 @@
 
 Phase 1 is complete and pushed through `fc9c324`; remote acceptance run
 [`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
-passes every job. Sub-phase 2.1 now includes the native Git implementation:
+passes every job. Sub-phase 2.1 is complete and includes the native Git implementation:
 executable discovery, isolated process ownership, native repository paths and
 editor availability. Earlier prototype records are retained below as history.
 
@@ -13,10 +13,15 @@ correction passes all 94 parallel native provider tests, and restored editor
 coverage passes 142 tests. Native handoff passes formatting, all-target Clippy
 with warnings denied, and the full suite: 2,874 passed, zero failures and 34
 ignored fixture/performance entries across 40 test binaries/doc-test groups.
-Cross-platform CI acceptance remains pending; broader Phase 2 integrations
-remain deferred.
+Cross-platform CI acceptance passes at `dbd30fc` in
+[`35578396537`](https://github.com/runyte/runyte/actions/runs/35578396537),
+including native Windows, Linux/macOS tests, lifecycle and plugin acceptance,
+and both unchanged 89% coverage gates (91.92% lines on Linux, 91.83% on macOS).
+Broader Phase 2 integrations remain deferred. The Git implementation is
+`cdd3b8b`; all implementation packages received independent review and
+incorporated their actionable findings before acceptance.
 
-The next package completes cross-platform acceptance. Combined
+The next package starts sub-phase 2.2's native private storage contract. Combined
 branch/worktree deletion is explicitly refused without mutation on Windows;
 separate guarded worktree removal and branch deletion are supported. The
 Unix session teardown coordinator remains unchanged. The missing-Git startup

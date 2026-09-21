@@ -7,9 +7,9 @@ file management, text clipboard and integrated ConPTY terminals. The released
 0.3.1 packages predate this work. See the [Windows guide](user-guide.md#windows-support)
 for build requirements and the explicit feature limits.
 
-Integrated Git is deferred from Phase 1. Phase 2 begins with optional Git
-integration: machines without Git keep it disabled. Git commands can already
-run inside a terminal when Git is installed.
+Integrated Git is available when a native Git executable is found on PATH;
+machines without Git keep it disabled. Restart Runyte after installing Git.
+The Windows guide lists native path and worktree limitations.
 
 ## Why don't Alt-based keybindings work on macOS?
 
