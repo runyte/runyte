@@ -250,12 +250,12 @@ provisional and currently covers the standalone editor and integrated terminals.
 
 Contributions are welcome, especially:
 
-- Bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
+- Bug reports and feature requests through
+  [GitHub Issues](https://github.com/runyte/runyte/issues).
 - New [plugins](docs/plugins/authoring.md), in any programming language.
-- Windows support.
 
-See the [contributing guide](CONTRIBUTING.md) for what makes a useful report,
-how to share a plugin, and where Windows work stands.
+See the [contributing guide](CONTRIBUTING.md) for what makes a useful report
+and how to write and share a plugin.
 
 ## The name
 
