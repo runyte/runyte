@@ -54,7 +54,9 @@ Known limitation: macOS retains native `openpty` and subsequent `FD_CLOEXEC`
 updates, preserving its slave-sizing and controlling-terminal behavior. That
 path still has an allocation-to-flag-update inheritance window; this is a
 Linux fix, not a Unix-wide inheritance guarantee. Close-on-exec also does not
-prevent temporary inheritance between fork and exec on either platform.
+prevent temporary inheritance between fork and exec on either platform. The
+remaining macOS work is tracked in
+[`macos_pty_descriptor_inheritance.md`](../issues/macos_pty_descriptor_inheritance.md).
 
 The native contracts are documented by the
 [Linux peer ioctl manual](https://man7.org/linux/man-pages/man2/TIOCGPTPEER.2const.html)

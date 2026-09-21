@@ -48,6 +48,35 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-21 — Linux PTY descriptor inheritance
+
+For implementation commit `5e30ffb`, native
+[CI run 35575280176](https://github.com/runyte/runyte/actions/runs/35575280176)
+passed the canonical instrumented workspace suites and the unchanged 89% line
+floor on both first-class targets:
+
+| Target | Covered lines | Total lines | Coverage |
+| --- | ---: | ---: | ---: |
+| Linux x86-64 | 126,018 | 137,092 | 91.92% |
+| macOS ARM64 | 126,088 | 137,297 | 91.84% |
+
+The deterministic Linux regression in `src/terminal/tests/pty_descriptors.rs`
+forces an unrelated compiled fixture to exec at both PTY allocation boundaries,
+checks exact endpoint identity, and covers partial-allocation cleanup. Ordinary
+Linux and macOS tests and both repeated lifecycle jobs passed in CI. Local
+Linux formatting, denied-warning all-target Clippy, and all 3,851 ordinary tests
+passed (36 ignored); test builds used one Cargo job and two test threads.
+
+The local Linux command
+`CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 89`
+also passed at **91.92%** total lines (126,013 of 137,092). The coverage floor,
+CI threshold, and README badge remain unchanged.
+
+The macOS allocator is unchanged. Its separate inheritance gap remains open in
+[`macos_pty_descriptor_inheritance.md`](../issues/macos_pty_descriptor_inheritance.md);
+passing native behavior and coverage checks does not establish atomic macOS
+allocation.
+
 ## 2026-09-20 — native plugin path completion
 
 The optional `input-path-completion` extension adds literal local path suggestions
