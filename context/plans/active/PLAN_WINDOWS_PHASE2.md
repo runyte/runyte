@@ -21,7 +21,8 @@ Broader Phase 2 integrations remain deferred. The Git implementation is
 `cdd3b8b`; all implementation packages received independent review and
 incorporated their actionable findings before acceptance.
 
-The next package starts sub-phase 2.2's native private storage contract. Combined
+Sub-phase 2.2's private storage and diagnostics are implemented and undergoing
+final acceptance. The next sub-phase restores language services. Combined
 branch/worktree deletion is explicitly refused without mutation on Windows;
 separate guarded worktree removal and branch deletion are supported. The
 Unix session teardown coordinator remains unchanged. The missing-Git startup
@@ -113,6 +114,9 @@ after both paste-safety findings were corrected. The final review has no
 findings. Thirteen decoder/editor tests and two real ConPTY console tests pass.
 Native formatting, all-target Clippy with warnings denied and the full suite
 pass (2,881 tests, zero failures, 36 ignored fixture/performance entries).
+The fix is `af2218e`, with its resolution recorded in `7524c5d`. All jobs pass
+in [CI run 35584148523](https://github.com/runyte/runyte/actions/runs/35584148523),
+including native Windows and both unchanged Unix coverage gates.
 
 ### Sub-phase 2.2 preparation
 
@@ -138,8 +142,102 @@ packages:
    Record any native durability limit rather than silently weakening the
    existing contract.
 
-These packages are planned; native private storage and diagnostics are not
-implemented by the Git sub-phase.
+All four packages are reviewed with no remaining findings. Native formatting,
+all-target Clippy with warnings denied and the full workspace suite pass:
+2,907 passed, zero failures and 39 ignored fixture/performance entries across
+41 test binaries/doc-test groups. Real-editor logging acceptance passes.
+Cross-platform CI remains pending. Other dependent services remain disabled
+pending their own sub-phases.
+
+#### Sub-phase 2.2 package 1: native storage contract
+
+The selected boundary is `NtCreateFile` with a pinned parent directory handle,
+one validated leaf component, synchronous access rights, no handle inheritance,
+and reparse refusal plus handle metadata validation. A replaced directory name
+must not redirect an operation. Paths are walked component by component; a
+canonicalized pathname alone is not sufficient. Existing regular files need
+one hard link and the current user's ownership before any write or ACL change.
+New private files/directories receive a protected owner-only DACL at creation;
+existing private leaves may be hardened only after identity and owner checks.
+Read-only admission must not create entries or silently change permissions.
+
+The implementation package must preserve exclusive creation, nontruncating
+append, bounded reads, atomic same-directory replacement, and cleanup of only
+the issued identity. Directory rename and replacement operate relative to the
+pinned handle, not a reconstructed path. A published `OwnedFile` pathname must
+still identify its issued file; replacements fail verification. Random names
+use the system cryptographic generator. Windows byte-range locks establish
+single-writer ownership for diagnostics before logging is enabled.
+
+Durable operations flush file contents and directory metadata with the native
+flush primitive. Contract acceptance distinguishes successful flush calls from
+power-loss testing; it does not claim hardware behavior beyond the operating
+system's contract. Initial private-storage support targets local NTFS with
+persistent ACLs; unsupported filesystems must fail explicitly. No deferred
+service is enabled by the contract probes.
+
+`src/private_storage/windows_contract.rs` exercises pinned-directory replacement,
+exclusive creation, invalid names, hardlink refusal, native directory flush,
+junction refusal and the existing protected owner-only creation primitive.
+The remaining operations receive behavior tests with the production interface
+in package 2. `windows-sys` supplies native declarations through its existing
+dependency; no new crate or minimum Rust version is introduced.
+
+Native contracts: [directory-relative NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile),
+[metadata flushing](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers),
+and [Windows file caching](https://learn.microsoft.com/en-us/windows/win32/fileio/file-caching).
+
+#### Sub-phase 2.2 package 2: native storage implementation
+
+The implementation uses handle-relative native opens and renames, checks the
+pinned volume's remote-device flag, and validates current-user ownership before
+permission hardening. Append handles request append access without write-data
+access; replacement uses native POSIX semantics so existing readers retain the
+old file. Cleanup deletes through an admitted identity and preserves substituted
+entries. Read-only admission neither creates directories nor changes ACLs.
+
+Review requested retrying failed ancestor flushes, remote-volume refusal,
+post-creation failure cleanup, and replacement while a reader retains the old
+file. Regression tests accompany these corrections. ACL helper review requested
+no further changes after the ownership and access-mask tests were added.
+
+Native probing confirmed that append access suffices for metadata flushing on
+NTFS, but the ordinary development token cannot acquire it on the shared
+`C:\Users` ancestor. `open_durable` therefore retains its full-ancestry contract
+and propagates that refusal. `open_durable_beneath` instead takes an explicit
+independently provisioned, already durable anchor and commits only its relative
+subtree. It never infers an anchor from the nearest existing directory, creates
+the anchor, or claims to persist the anchor's ancestry. It flushes the anchor
+before mutation and each relative parent on every retry. Caller migrations,
+especially plugin state, must establish that precondition before enablement.
+Independent design review accepted this boundary without weakening the original
+interface. Native [directory flush semantics](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/0de7dc40-9627-437e-a4df-c4696cdc3d02)
+and [append-access flushing](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntflushbuffersfileex)
+define the guarantee; a successful call is not a power-loss test.
+
+Final review also corrected ACL propagation into existing children and explicit
+creation ownership. Hardening uses the native per-object setter and changes no
+descendant ACL. Creation names `TokenUser` explicitly rather than inheriting a
+possibly group-valued default owner. Windows fixture roots use the same private
+creation boundary. The descriptor regression passes; independent review has no
+remaining findings. Formatting and full validation continue with diagnostics.
+
+#### Sub-phase 2.2 package 3: diagnostics
+
+Native logs use an exclusive lock outside their bounded content range, allowing
+readers to open the log while its writer retains ownership. Rotation truncates
+the issued file through a separately reopened native handle while preserving
+the original locking handle. Process liveness is conservative on inaccessible
+or unknown PIDs. Startup restores default logging and explicit `--log` behavior;
+the normal registry enables `:log-open`. Native acceptance exercises real editor
+startup, the log page, default degradation and explicit-destination refusal.
+Independent review has no remaining findings. Fourteen logging tests pass;
+two ignored compiled fixtures are exercised by the ownership and liveness
+parents. Real ConPTY acceptance passes log opening, continued editing after
+default-log refusal, and explicit-log startup failure. It also exposed a
+workspace-root spelling bug: startup now canonicalizes the launch directory as
+well as the requested root before checking containment. The fixture uses the
+terminal emulator to inspect incremental screen updates.
 
 ### Current implementation evidence
 

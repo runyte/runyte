@@ -1317,9 +1317,6 @@ impl CommandId {
             Self::Colon(ColonCommand::QuitHere | ColonCommand::ForceQuitHere) => {
                 Some("Changing the parent shell directory is unavailable in Windows Phase 1")
             }
-            Self::Colon(ColonCommand::LogOpen) => Some(
-                "Private diagnostic log storage is unavailable in Windows Phase 1; use :notifications or :service-health",
-            ),
             _ => None,
         }
     }

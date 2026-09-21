@@ -3,6 +3,7 @@
 //! Descriptor-relative storage for private runtime files. Paths supplied by a
 //! workspace must never turn a cache or log write into a write through a link.
 
+#[cfg(not(windows))]
 use std::{fs::File, io, path::Path};
 
 #[cfg(unix)]
@@ -360,7 +361,14 @@ mod platform {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+#[path = "private_storage/windows.rs"]
+mod platform;
+
+#[cfg(windows)]
+mod windows_security;
+
+#[cfg(not(any(unix, windows)))]
 mod platform {
     use super::*;
     use std::ffi::OsStr;
@@ -417,9 +425,14 @@ mod platform {
 }
 
 pub(crate) use platform::Directory;
+#[cfg(windows)]
+pub(crate) use platform::truncate;
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, windows))]
+mod windows_contract;
 
 mod owned_file;
 pub(crate) use owned_file::OwnedFile;

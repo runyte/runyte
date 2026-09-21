@@ -1576,7 +1576,7 @@ fn opening_the_log_without_one_installed_reports_it_rather_than_opening_a_page()
         .platform_unavailable()
         .unwrap_or("no diagnostic log");
     assert!(app.status.contains(reason), "{}", app.status);
-    assert_eq!(app.status_error, !cfg!(windows));
+    assert!(app.status_error);
 }
 
 /// `acknowledge` in `NotificationCenter` only marks read what already

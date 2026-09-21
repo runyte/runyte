@@ -1964,6 +1964,12 @@ fn workspace_selector_path(selector: &Path, working_directory: &Path) -> PathBuf
 /// different project from the one it is running in. Failing here keeps that
 /// mismatch from reaching workspace identity, which is derived from the root.
 fn resolve_requested_project_root(launch_directory: &Path, requested: &Path) -> Result<PathBuf> {
+    let canonical_launch = launch_directory.canonicalize().with_context(|| {
+        format!(
+            "cannot resolve launch directory {}",
+            launch_directory.display()
+        )
+    })?;
     let project_root = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve project root {}", requested.display()))?;
@@ -1973,7 +1979,7 @@ fn resolve_requested_project_root(launch_directory: &Path, requested: &Path) -> 
         project_root.display()
     );
     anyhow::ensure!(
-        launch_directory.starts_with(&project_root),
+        canonical_launch.starts_with(&project_root),
         "launch directory {} is outside project root {}",
         launch_directory.display(),
         project_root.display()
@@ -5666,21 +5672,6 @@ fn report_retained_host_logging(arguments: &LaunchArguments) {
 /// preventing a host from serving; a failed explicit `--log` is a startup
 /// error, because silently choosing another destination would make the
 /// requested capture misleading.
-#[cfg(windows)]
-fn initialize_logging(
-    arguments: &LaunchArguments,
-    role: LogRole,
-    _state_root: &Path,
-    _project_root: &Path,
-) -> Result<Option<String>> {
-    const REASON: &str = "Private diagnostic log storage is unavailable in Windows Phase 1; use :notifications or :service-health";
-    anyhow::ensure!(arguments.log.is_none(), "{REASON}");
-    diagnostic_log::note_unavailable(role, None, REASON.into());
-    diagnostic_log::note_failure_reported();
-    Ok(None)
-}
-
-#[cfg(not(windows))]
 fn initialize_logging(
     arguments: &LaunchArguments,
     role: LogRole,
@@ -5734,7 +5725,6 @@ fn initialize_logging(
 /// session listings show, so a record can be matched to a listed session
 /// without pasting a 32-character hash onto every line. The startup record
 /// carries the complete ID.
-#[cfg(not(windows))]
 const ABBREVIATED_LOG_WORKSPACE_ID: usize = 8;
 
 fn print_help() {

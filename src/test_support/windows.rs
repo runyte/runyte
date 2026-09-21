@@ -32,7 +32,7 @@ impl TestRuntimeRoot {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             );
             let path = base.join(format!("ryt-{label}-{owner}"));
-            match fs::create_dir(&path) {
+            match crate::windows_fs::create_private_directory(&path) {
                 Ok(()) => {
                     fs::write(path.join(".runyte-test-owner"), &owner)?;
                     return Ok(Self { path, owner });
@@ -61,7 +61,7 @@ impl TestRuntimeRoot {
             ));
         }
         let path = self.path.join(relative);
-        fs::create_dir(&path)?;
+        crate::windows_fs::create_private_directory(&path)?;
         Ok(path)
     }
     pub fn cleanup_if_owned(&self) {

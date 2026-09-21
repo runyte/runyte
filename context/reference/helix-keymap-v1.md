@@ -11,13 +11,14 @@ Status meanings:
 
 The Windows port retains this command inventory. LSP,
 plugins, persistent sessions, context access, shell filters, external opening,
-parent-shell directory changes and private diagnostic-log opening report their
+and parent-shell directory changes report their
 platform limitation through execution and discovery. Syntax commands remain
 independent of LSP. Integrated Git is available when native Git is installed;
 missing Git disables its capabilities without starting a worker. Worktree
 switching still requires persistent sessions, and combined branch/worktree
 deletion is refused on Windows; remove the worktree and branch separately.
 No default key spelling changes as part of these platform boundaries.
+Private standalone diagnostic logs and `:log-open` are available on local NTFS.
 
 - **Implemented** — registered and dispatched by Runyte.
 - **Deviation** — implemented, but intentionally differs from Helix or retains

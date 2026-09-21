@@ -1452,7 +1452,8 @@ does not bundle that runtime.
 | Input | Native console input, bracketed paste and Unicode text clipboard |
 | Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
 | Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
-| Deferred | LSP, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, private diagnostic logs, `--wait` and `:quit-here` |
+| Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
+| Deferred | LSP, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -3690,6 +3691,9 @@ written.
 ### Who owns the log
 
 On Linux and macOS, logs are created with owner-only permissions (`0600`).
+On Windows, logs use a protected ACL granting access to their owning user.
+Native private storage currently requires local NTFS; network volumes, reparse
+points and hardlinked files are refused. Other filesystem types remain unsupported.
 Runtime writes reject symlinked parent directories, symlinked file targets,
 hard-linked files, and special files such as FIFOs. Rotation uses the opened
 file and directory even if their original pathnames change. A refused default
@@ -3750,7 +3754,7 @@ high-volume trace. Each `-v` raises the level and the cap is trace:
 
 `--log PATH` selects an explicit destination. Failing to honour it is a startup
 error, because silently choosing another file would make the requested capture
-misleading. On Unix, a path already owned by another running Runyte process is
+misleading. A path already owned by another running Runyte process is
 refused after a two-second handover window; choose a different path or let the
 first process exit. An unwritable *default* destination only degrades logging:
 editing continues, a persistent host still serves, and the failure appears on

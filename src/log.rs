@@ -10,8 +10,8 @@
 //!
 //! Ownership follows editor-state ownership. The process that owns `App` owns
 //! one file: a standalone editor writes `standalone-<pid>.log`, a persistent
-//! host writes `host.log`. Default names cannot collide; on Unix, an explicit
-//! path takes an advisory ownership lock so two processes cannot append or
+//! host writes `host.log`. Default names cannot collide; an explicit
+//! path takes an ownership lock so two processes cannot append or
 //! rotate the same destination.
 //!
 //! Producers never wait for disk. A record is formatted, handed to a bounded
@@ -35,6 +35,11 @@ use std::{
 };
 
 use chrono::{Local, SecondsFormat};
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::{process_is_live, try_lock_exclusive};
 
 /// Bytes retained in the active file, and in the one previous file kept
 /// beside it. Both bounds are applied to bytes rather than characters: record
@@ -562,6 +567,11 @@ fn rotate(
     let mut bytes = Vec::new();
     file.take(MAX_LOG_BYTES).read_to_end(&mut bytes)?;
     directory.atomic_write(previous_path(path).file_name().unwrap(), &bytes)?;
+    #[cfg(windows)]
+    {
+        crate::private_storage::truncate(file)
+    }
+    #[cfg(not(windows))]
     file.set_len(0)
 }
 
@@ -598,9 +608,8 @@ process; choose a different --log path",
 
 /// `Ok(false)` means another process holds the lock.
 ///
-/// Advisory locking is a Unix facility here. On other platforms an explicit
-/// destination is opened without one, so two processes given the same `--log`
-/// path there still share it.
+/// Unix locks are advisory; Windows reserves a byte beyond log content so
+/// ownership never prevents readers from opening the diagnostic text.
 #[cfg(unix)]
 fn try_lock_exclusive(file: &File) -> std::io::Result<bool> {
     use std::os::fd::AsRawFd;
@@ -616,7 +625,7 @@ fn try_lock_exclusive(file: &File) -> std::io::Result<bool> {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn try_lock_exclusive(_file: &File) -> std::io::Result<bool> {
     Ok(true)
 }
@@ -629,8 +638,8 @@ fn try_lock_exclusive(_file: &File) -> std::io::Result<bool> {
 /// kept because a crashed editor's log is exactly what somebody comes back to
 /// read; everything older goes, along with the previous file beside it.
 ///
-/// A live owner is never touched. On Unix that is checked directly; elsewhere
-/// the platform refuses to delete an open file, which has the same effect.
+/// A live owner is never touched. Native process checks conservatively retain
+/// the log whenever the owner's liveness cannot be determined.
 pub fn prune_standalone_logs(directory: &Path, own_pid: u32, retain: usize) -> usize {
     let Ok(storage) = crate::private_storage::Directory::open(directory, false) else {
         return 0;
@@ -691,7 +700,7 @@ fn process_is_live(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn process_is_live(_pid: u32) -> bool {
     true
 }
@@ -976,6 +985,13 @@ mod tests {
         ))
     }
 
+    fn fixture_file(path: &Path) -> File {
+        #[cfg(windows)]
+        return crate::windows_fs::create_private_file(path).unwrap();
+        #[cfg(not(windows))]
+        File::create(path).unwrap()
+    }
+
     fn collecting(level: Level) -> (Logger, Collected) {
         let collected = Collected::default();
         let logger = Logger::start(
@@ -1091,12 +1107,11 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn an_inherited_full_file_is_rotated_before_the_first_record() {
         let directory = temporary("startup-rotation");
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("host.log");
-        File::create(&path).unwrap().set_len(MAX_LOG_BYTES).unwrap();
+        fixture_file(&path).set_len(MAX_LOG_BYTES).unwrap();
 
         let logger = Logger::start(
             Settings::new(Level::Warn, Role::Host),
@@ -1119,7 +1134,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn rotation_keeps_one_previous_file_and_never_a_second() {
         let directory = temporary("rotation-bound");
         fs::create_dir_all(&directory).unwrap();
@@ -1137,7 +1151,13 @@ mod tests {
         for round in 0..rounds {
             logger.emit(Level::Warn, "test", &format!("round {round} {bulk}"));
         }
-        logger.flush(FLUSH_BUDGET);
+        // Require completion of this ten-MiB workload before inspecting it.
+        // The production shutdown flush is best effort and may time out under
+        // parallel load; returning from it is not a completion acknowledgment.
+        let (acknowledge, acknowledged) = mpsc::sync_channel(1);
+        assert!(logger.sender.try_send(Message::Flush(acknowledge)).is_ok());
+        acknowledged.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(logger.failure(), None);
 
         let mut names = fs::read_dir(&directory)
             .unwrap()

@@ -90,7 +90,6 @@ fn deferred_commands_agree_with_palette_availability() {
         "context-access",
         "pipe echo text",
         "quit-here",
-        "log-open",
         "session-list",
     ] {
         let name = spelling.split_whitespace().next().unwrap();

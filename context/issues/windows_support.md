@@ -88,7 +88,8 @@ in Phase 1. Configuring a deferred service cannot start it.
 
 A reported Phase-1 input problem is tracked separately in
 [`windows_control_pane_keys.md`](resolved/windows_control_pane_keys.md): `Ctrl+h` in the
-explorer acts as Backspace, and `Ctrl+j` acts as Enter. Commit `af2218e` fixes the native transport with reviewed decoder and real
+explorer was treated as Backspace, and `Ctrl+j` as Enter. Commit `af2218e` fixes
+the native transport with reviewed decoder and real
 ConPTY regressions; the resolution records the physical-capture limitation.
 
 Terminal cwd must have a verified equivalent ordinary Windows spelling shorter
@@ -127,6 +128,15 @@ Cross-platform CI acceptance passes at `dbd30fc` in
 [`35578396537`](https://github.com/runyte/runyte/actions/runs/35578396537),
 including native Windows, Linux/macOS tests and both unchanged 89% coverage
 gates. Sub-phase 2.1 is complete; the broader Phase 2 remains open.
+
+Sub-phase 2.2 adds native private storage and standalone diagnostics on local
+NTFS. Ownership, reparse refusal, pinned identity, atomic replacement and
+cleanup have native coverage. Logs retain exclusive writer ownership across
+rotation while remaining readable; real ConPTY acceptance covers `:log-open`,
+default-log degradation and explicit-log refusal. Three implementation packages
+have independent reviews with no remaining findings. Full native and
+cross-platform acceptance is pending and will be recorded in the active Phase-2 plan. Language
+services and the remaining sub-phases are still pending.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.
