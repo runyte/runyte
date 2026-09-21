@@ -86,6 +86,12 @@ persistent sessions, plugins, context access, shell filters, image paste,
 system opening, private diagnostic logs, `--wait` and `:quit-here` are unavailable
 in Phase 1. Configuring a deferred service cannot start it.
 
+A reported Phase-1 input problem is tracked separately in
+[`windows_control_pane_keys.md`](windows_control_pane_keys.md): `Ctrl+h` in the
+explorer acts as Backspace, and `Ctrl+j` acts as Enter. The issue distinguishes
+the decoder path from physical input transport and records the configuration
+and disambiguation checks still needed.
+
 Terminal cwd must have a verified equivalent ordinary Windows spelling shorter
 than 260 UTF-16 units. ConPTY stalled during the native extended-prefix cwd
 probe, so long/verbatim-only terminal cwd is refused before process creation.
