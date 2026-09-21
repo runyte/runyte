@@ -1,6 +1,57 @@
-# Windows Ctrl+h and Ctrl+j act as explorer navigation keys
+---
+title: "Windows Ctrl+h and Ctrl+j act as explorer navigation keys"
+status: resolved
+reported: 2026-09-21
+resolved: 2026-09-21
+commit: af2218e
+---
 
-## Report and expected behavior
+## Resolution
+
+Commit `af2218e` (`Preserve Windows Ctrl pane keys through native input reporting`)
+fixes the identity loss at the native frontend's ConPTY VT input boundary.
+Native key packets injected through real ConPTY became VK=0 control units:
+Ctrl+h and Ctrl+j became U+0008 and U+000A, while physical Backspace and Enter
+became U+007F and U+000D. `Decoder::unit` consequently interpreted the Ctrl
+chords as ordinary explorer navigation. Requesting Windows native keyboard
+reporting preserves the original virtual key, Unicode unit and control state.
+
+`TerminalGuard` now owns that reporting mode and restores it on normal exit,
+initialization error and unwind. A separate bounded wire layer unwraps native
+records exactly once before the existing key/paste decoder. Encoded frames do
+not expire through the legacy Escape timeout, including fragmented paste
+openers; raw paste owns its payload until its real closing delimiter, so text
+resembling a key packet cannot synthesize a terminator and expose commands.
+These two paste-safety corrections came from the independent review loop.
+
+Default directions are unchanged: Ctrl+h/j/k/l move left/down/up/right when
+fast pane keys are enabled. A supported configured pane alias also works.
+Physical Backspace and Enter retain their explorer actions. No remapping of
+ambiguous raw control bytes was introduced.
+
+Native formatting, all-target Clippy with warnings denied, and the complete
+suite pass: 2,881 tests, zero failures, 36 ignored fixture/performance entries.
+Regression coverage includes:
+
+- `encoded_keys_keep_control_identity_defaults_releases_and_repeats`,
+  `encoded_and_legacy_paste_keep_frame_looking_text_literal`,
+  `native_frames_are_fragmented_bounded_and_do_not_timeout_into_commands`,
+  `encoded_paste_survives_timeouts_at_every_wire_boundary`,
+  `raw_paste_cannot_synthesize_its_terminator_from_a_native_frame`, and
+  `explorer_native_chords_honor_fast_panes_and_leave_navigation_keys_intact`
+  in `src/tui/windows_input/tests.rs`.
+- `console_control_key_transport` in `src/tui/windows_console_acceptance.rs`
+  checks real ConPTY key/paste transport and normal/panic reporting restoration.
+- `console_guard_runs_in_conpty` in the same file checks the existing console
+  mode, paste and screen restoration contract.
+
+Known limitation: validation injects native packets at the Windows Terminal /
+ConPTY protocol boundary; the original physical keyboard configuration was not
+captured. Native reporting support is part of the Windows 11 24H2+ target.
+Older console hosts that ignore negotiation are not a supported fallback.
+
+## Report
+### Report and expected behavior
 
 On Windows, pressing `Ctrl+h` in the explorer is treated as Backspace and
 attempts to open the parent directory instead of switching panes. `Ctrl+j`
@@ -21,7 +72,7 @@ been confirmed; the reproduction below explicitly enables them. Physical
 Backspace and Enter must retain their explorer actions: parent-directory
 navigation and opening the selected entry respectively.
 
-## Reproduction
+### Reproduction
 
 Use a fixture-owned configuration containing:
 
@@ -39,7 +90,7 @@ physical Backspace and physical Enter, and record the terminal and keyboard
 configuration. The prefixed bindings are comparison cases, not yet verified
 workarounds for the reported physical setup.
 
-## Source trace and verification boundary
+### Source trace and verification boundary
 
 The inspected code is the Phase-1 input implementation at `e600e1a`; local
 unfinished Git work does not change these input files.
@@ -82,7 +133,7 @@ the affected terminal to establish whether the distinction was lost upstream
 or in Runyte. Legacy control bytes can be ambiguous, so source inspection alone
 does not determine the correct disambiguation strategy.
 
-## Fix constraints and acceptance
+### Fix constraints and acceptance
 
 Capture the physical chords and their Backspace/Enter counterparts through
 the native Windows input path, including virtual key, UTF-16 unit and modifier
