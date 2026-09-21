@@ -238,6 +238,24 @@ parent wait lifecycle without changing ordinary CLI file-opening semantics.
 
 ## Windows ConPTY boundary
 
+The native frontend requests Windows keyboard reporting (`CSI ? 9001 h`)
+after enabling VT input and mouse handling. It restores reporting on normal
+exit and unwind. This preserves Ctrl+h/j identity separately from Backspace
+and Enter while retaining bracketed paste. A bounded wire decoder unwraps
+native records once before semantic key/paste decoding; encoded frames never
+use a legacy Escape timeout, and raw paste payload remains literal.
+
+`console_control_key_transport` in `src/tui/windows_console_acceptance.rs`
+injects native key packets through real ConPTY, verifies decoded controls and
+paste, and checks normal/panic restoration using a subsequent VT-only reader.
+The unit regressions in `src/tui/windows_input/tests.rs` cover fragmented paste,
+frame-looking payload, native ranges/repeats/Unicode, and explorer pane moves
+with fast keys on/off and a configured alias. This is native transport
+acceptance, not a capture of the original reporter's physical keyboard.
+Reporting support belongs to the Windows 11 24H2+ target below; ignored
+negotiation on older console hosts is not a supported fallback.
+The protocol follows [Microsoft's native keyboard specification](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md).
+
 The Phase-1 port uses `src/terminal/pty_windows.rs` for independent native
 consoles on Windows 11 x86_64 MSVC. The default shell is `COMSPEC` or `cmd.exe`;
 no Unix utility is required. `windows_command.rs` preserves native quoted

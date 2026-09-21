@@ -5467,6 +5467,8 @@ fn motion_repeat_dispatches(app: &App, input: &InputEvent, repeated: bool) -> us
 struct TerminalGuard {
     #[cfg(windows)]
     _console_mode: runyte::tui::windows_input::ConsoleMode,
+    #[cfg(windows)]
+    keyboard_mode: Option<runyte::tui::windows_input::KeyboardMode>,
     mouse_enabled: bool,
     #[cfg_attr(not(unix), allow(dead_code))]
     keyboard_enhancement: bool,
@@ -5566,22 +5568,31 @@ impl TerminalGuard {
             let _ = disable_raw_mode();
             return Err(error).context("failed to enable mouse capture");
         }
-        let guard = Self {
+        #[allow(unused_mut)]
+        let mut guard = Self {
             mouse_enabled,
             keyboard_enhancement,
             #[cfg(windows)]
             _console_mode: console_mode,
+            #[cfg(windows)]
+            keyboard_mode: None,
         };
         // Crossterm's native mouse setup replaces the whole input mode. Restore
         // VT input before accepting any editor input; guard owns rollback.
         #[cfg(windows)]
         guard._console_mode.enable_vt()?;
+        #[cfg(windows)]
+        {
+            guard.keyboard_mode = Some(runyte::tui::windows_input::KeyboardMode::enable()?);
+        }
         Ok(guard)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        drop(self.keyboard_mode.take());
         let mut output = stdout();
         if self.mouse_enabled {
             let _ = output.execute(DisableMouseCapture);

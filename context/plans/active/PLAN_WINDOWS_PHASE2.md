@@ -100,6 +100,20 @@ its native boundary is ready; the Phase-2 label alone does not enable it.
 
 ## Progress
 
+### Native control-key correction before sub-phase 2.2
+
+Real ConPTY capture reproduced the Ctrl+h/j loss at the VT conversion boundary.
+The frontend now requests native keyboard reporting and decodes bounded wire
+records before semantic keys or paste. Native Backspace/Enter retain their
+actions, fast pane keys use the registry, and a supported configured pane alias
+is covered. Encoded frames survive fragmented delivery without Escape timeouts;
+raw paste remains literal even when its payload resembles a native frame.
+`review_wp1` reviewed the reproduction and implementation, then repeated review
+after both paste-safety findings were corrected. The final review has no
+findings. Thirteen decoder/editor tests and two real ConPTY console tests pass.
+Native formatting, all-target Clippy with warnings denied and the full suite
+pass (2,881 tests, zero failures, 36 ignored fixture/performance entries).
+
 ### Sub-phase 2.2 preparation
 
 After Git acceptance, private storage and diagnostics proceed in four reviewed

@@ -9,7 +9,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use std::{
-    io, ptr, thread,
+    io::{self, Write},
+    ptr, thread,
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
@@ -23,6 +24,26 @@ use windows_sys::Win32::{
 
 const ESCAPE_DELAY: Duration = Duration::from_millis(30);
 const MAX_PASTE_UNITS: usize = 1024 * 1024 + 1;
+
+/// Keep native key identity when ConPTY serializes records into VT input.
+/// The guard also rolls back a partial write during initialization.
+pub struct KeyboardMode;
+impl KeyboardMode {
+    pub fn enable() -> io::Result<Self> {
+        let guard = Self;
+        let mut output = io::stdout().lock();
+        output.write_all(b"\x1b[?9001h")?;
+        output.flush()?;
+        Ok(guard)
+    }
+}
+impl Drop for KeyboardMode {
+    fn drop(&mut self) {
+        let mut output = io::stdout().lock();
+        let _ = output.write_all(b"\x1b[?9001l");
+        let _ = output.flush();
+    }
+}
 
 /// Restores the exact incoming console mode, including VT and Quick Edit bits.
 pub struct ConsoleMode {
@@ -62,6 +83,9 @@ pub struct EventStream {
     reader: Option<thread::JoinHandle<()>>,
 }
 impl EventStream {
+    /// Start after TerminalGuard has enabled native keyboard reporting on the
+    /// supported Windows console host. An encoded Escape has a native VK and
+    /// does not need the ambiguous legacy single-byte Escape timeout.
     pub fn new() -> io::Result<Self> {
         let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
         let stop = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
@@ -119,9 +143,11 @@ fn read_events(
     stop: HANDLE,
     sender: &mpsc::Sender<io::Result<Event>>,
 ) -> io::Result<()> {
-    let mut decoder = Decoder::default();
+    // TerminalGuard negotiates native reporting before this reader starts.
+    // Even the first fragmented wire frame must not use a legacy ESC timeout.
+    let mut decoder = Decoder::for_console();
     loop {
-        let wait = if decoder.sequence == [27] {
+        let wait = if decoder.legacy_escape_pending() {
             ESCAPE_DELAY.as_millis() as u32
         } else {
             u32::MAX
@@ -157,6 +183,10 @@ fn read_events(
 
 #[derive(Default)]
 struct Decoder {
+    wire: Vec<u16>,
+    discard_wire: bool,
+    encoded_keys: bool,
+    raw_paste: bool,
     sequence: Vec<u16>,
     escape_started: Option<Instant>,
     paste: Option<Vec<u16>>,
@@ -164,6 +194,12 @@ struct Decoder {
     mouse_buttons: u32,
 }
 impl Decoder {
+    fn for_console() -> Self {
+        Self {
+            encoded_keys: true,
+            ..Self::default()
+        }
+    }
     fn record(&mut self, record: &INPUT_RECORD) -> Vec<Event> {
         match record.EventType as u32 {
             KEY_EVENT => self.key(unsafe { record.Event.KeyEvent }),
@@ -184,6 +220,68 @@ impl Decoder {
         }
     }
     fn key(&mut self, record: KEY_EVENT_RECORD) -> Vec<Event> {
+        if record.wVirtualKeyCode != 0 {
+            return self.native_key(record);
+        }
+        let mut events = Vec::new();
+        if record.bKeyDown != 0 {
+            for _ in 0..record.wRepeatCount.max(1) {
+                self.wire_unit(unsafe { record.uChar.UnicodeChar }, &mut events);
+            }
+        }
+        events
+    }
+    fn wire_unit(&mut self, unit: u16, events: &mut Vec<Event>) {
+        if self.discard_wire {
+            if (0x40..=0x7e).contains(&unit) {
+                self.discard_wire = false;
+            }
+            return;
+        }
+        // Raw and encoded paste framing can both reach the console reader.
+        // Once an opener arrived raw, every payload unit is literal until its
+        // real closing delimiter, even if it resembles a native key frame.
+        if self.raw_paste {
+            self.unit(unit, events);
+            self.raw_paste = self.paste.is_some();
+            return;
+        }
+        if self.wire.is_empty() {
+            if unit == 27 {
+                self.wire.push(unit);
+                self.escape_started = Some(Instant::now());
+            } else {
+                self.unit(unit, events);
+            }
+            return;
+        }
+        self.wire.push(unit);
+        let completed = (self.wire.len() == 2 && unit != 91 && unit != 79)
+            || (self.wire.len() > 2 && (0x40..=0x7e).contains(&unit));
+        if completed {
+            let wire = std::mem::take(&mut self.wire);
+            if wire.starts_with(&[27, 91]) && unit == b'_' as u16 {
+                if let Some(record) = native_record(&wire) {
+                    self.encoded_keys = true;
+                    // Unwrap exactly once: VK=0 payload units are semantic
+                    // input, never recursively interpreted as wire frames.
+                    events.extend(self.native_key(record));
+                }
+            } else {
+                let already_pasting = self.paste.is_some();
+                for unit in wire {
+                    self.unit(unit, events);
+                }
+                if !already_pasting && self.paste.is_some() {
+                    self.raw_paste = true;
+                }
+            }
+        } else if self.wire.len() > 64 {
+            self.wire.clear();
+            self.discard_wire = true;
+        }
+    }
+    fn native_key(&mut self, record: KEY_EVENT_RECORD) -> Vec<Event> {
         let unit = unsafe { record.uChar.UnicodeChar };
         let vk = record.wVirtualKeyCode;
         let alt_code = vk == 0x12 && record.bKeyDown == 0 && unit != 0;
@@ -334,15 +432,21 @@ impl Decoder {
     }
     fn escape_timeout(&mut self, now: Instant) -> Option<Event> {
         if self.paste.is_none()
-            && self.sequence == [27]
+            && self.legacy_escape_pending()
             && self
                 .escape_started
                 .is_some_and(|at| now.duration_since(at) >= ESCAPE_DELAY)
         {
             self.sequence.clear();
+            self.wire.clear();
             return Some(key(KeyCode::Esc, KeyModifiers::NONE));
         }
         None
+    }
+    fn legacy_escape_pending(&self) -> bool {
+        !self.encoded_keys
+            && ((self.wire == [27] && self.sequence.is_empty())
+                || (self.wire.is_empty() && self.sequence == [27]))
     }
     fn mouse(&mut self, record: MOUSE_EVENT_RECORD) -> Option<Event> {
         let current = record.dwButtonState & 0xffff;
@@ -400,6 +504,34 @@ impl Decoder {
             modifiers: modifiers(record.dwControlKeyState),
         }))
     }
+}
+
+fn native_record(wire: &[u16]) -> Option<KEY_EVENT_RECORD> {
+    let text = String::from_utf16(wire).ok()?;
+    let body = text.strip_prefix("\x1b[")?.strip_suffix('_')?;
+    let mut fields = [0u32, 0, 0, 0, 0, 1];
+    for (index, value) in body.split(';').enumerate() {
+        let field = fields.get_mut(index)?;
+        if !value.is_empty() {
+            if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            *field = value.parse().ok()?;
+        }
+    }
+    if fields[3] > 1 {
+        return None;
+    }
+    Some(KEY_EVENT_RECORD {
+        wVirtualKeyCode: fields[0].try_into().ok()?,
+        wVirtualScanCode: fields[1].try_into().ok()?,
+        uChar: KEY_EVENT_RECORD_0 {
+            UnicodeChar: fields[2].try_into().ok()?,
+        },
+        bKeyDown: fields[3] as i32,
+        dwControlKeyState: fields[4],
+        wRepeatCount: fields[5].try_into().ok()?,
+    })
 }
 
 fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {

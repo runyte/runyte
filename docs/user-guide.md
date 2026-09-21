@@ -2302,6 +2302,12 @@ Insert-mode editing, and takes all four away from a terminal's child, where
 keep working, and help and the key-hint popup describe whichever set is
 actually in force.
 
+On native Windows, Runyte requests keyboard reporting that keeps Ctrl chords
+distinct from Backspace and Enter. Fast pane keys work in the explorer too;
+the physical Backspace and Enter keys retain directory navigation and opening.
+The default directions are left/down/up/right for `Ctrl-h/j/k/l` respectively;
+configured bindings still determine the action.
+
 `Space w =` levels the splits again after the `:resize-*` commands or a
 dragged border have skewed them. It gives every pane the same width and then
 gives every pane sharing a column the same height, moving only the boundaries
