@@ -58,9 +58,9 @@ struct Console {
     screen: runyte::terminal::emulator::Emulator,
 }
 impl Console {
-    fn spawn(program: &Path, args: &[String], root: &Path) -> Self {
+    fn spawn(program: &Path, args: &[String], root: &Path, columns: u16) -> Self {
         let (sender, events) = mpsc::channel();
-        let child = Pty::spawn(program.as_os_str(), args, root, 120, 30, move |event| {
+        let child = Pty::spawn(program.as_os_str(), args, root, columns, 30, move |event| {
             let _ = sender.send(event);
         })
         .unwrap();
@@ -69,10 +69,18 @@ impl Console {
             events,
             output: Vec::new(),
             transcript: Vec::new(),
-            screen: runyte::terminal::emulator::Emulator::new(120, 30),
+            screen: runyte::terminal::emulator::Emulator::new(usize::from(columns), 30),
         }
     }
     fn until(&mut self, needle: &str) {
+        self.until_with_row_separator(needle, "\n");
+    }
+    fn until_prompt(&mut self, needle: &str) {
+        // Setup prompts precede the editor's framed screen and may wrap in
+        // the middle of their marker when the temporary path is long.
+        self.until_with_row_separator(needle, "");
+    }
+    fn until_with_row_separator(&mut self, needle: &str, separator: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !(0..self.screen.rows())
             .filter_map(|row| self.screen.grid().line(row))
@@ -83,7 +91,7 @@ impl Console {
                     .collect::<String>()
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join(separator)
             .contains(needle)
         {
             match self
@@ -142,6 +150,14 @@ fn native_editor_console_fixture() {
         root.join("cache")
     );
     let project = root.join("project");
+    // Force the setup confirmation marker to span two rows, as happened with
+    // the longer temp path on CI. Adjust geometry rather than lengthening cwd.
+    let prompt_prefix = format!(
+        "Save Runyte project data in {}? ",
+        project.join(".runyte").display()
+    );
+    let columns =
+        u16::try_from(unicode_width::UnicodeWidthStr::width(prompt_prefix.as_str()) + 2).unwrap();
     let config = root.join("config/config.yaml");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -157,10 +173,11 @@ fn native_editor_console_fixture() {
             file.display().to_string(),
         ],
         &project,
+        columns,
     );
-    editor.until("Project directory [");
+    editor.until_prompt("Project directory [");
     editor.send("\r");
-    editor.until("[y/N]:");
+    editor.until_prompt("[y/N]:");
     editor.send("y\r");
     editor.until("original");
     editor.until("NOR");
