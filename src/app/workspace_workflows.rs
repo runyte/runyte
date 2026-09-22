@@ -1936,6 +1936,14 @@ impl App {
         self.session_navigation.inventory.is_some()
     }
 
+    #[cfg(all(test, unix))]
+    pub(super) fn session_inventory_request(&self) -> Option<(u64, &WorkspaceSelection)> {
+        self.session_navigation
+            .inventory
+            .as_ref()
+            .map(|inventory| (inventory.generation, &inventory.selection))
+    }
+
     #[cfg(unix)]
     pub(super) fn open_session_inventory(&mut self) {
         #[cfg(unix)]

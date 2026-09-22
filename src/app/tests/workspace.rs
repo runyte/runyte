@@ -3530,18 +3530,16 @@ fn selected_inventory_and_completions_require_full_unique_identity() {
     app.rebuild_workspace_picker();
     app.open_session_inventory();
     assert!(app.status.contains("duplicate selection identity"));
-    assert!(app.session_navigation.inventory.is_none());
+    assert!(!app.session_inventory_open());
     assert!(app.list.is_some());
 
     app.workspace_rows = vec![first, second];
     app.rebuild_workspace_picker();
     app.open_session_inventory();
-    assert_eq!(
-        app.session_navigation.inventory.as_ref().unwrap().selection,
-        first_selection
-    );
+    let (generation, selection) = app.session_inventory_request().unwrap();
+    assert_eq!(selection, &first_selection);
     app.apply_workspace_event(WorkspaceEvent::Inventory {
-        generation: app.session_navigation.generation,
+        generation,
         path: project.clone(),
         selection: second_selection.clone(),
         result: Err("wrong publication".to_owned()),
@@ -3551,7 +3549,7 @@ fn selected_inventory_and_completions_require_full_unique_identity() {
         "wrong publication"
     );
     app.apply_workspace_event(WorkspaceEvent::Inventory {
-        generation: app.session_navigation.generation,
+        generation,
         path: project.clone(),
         selection: first_selection.clone(),
         result: Err("correct publication".to_owned()),
