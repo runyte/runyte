@@ -19,8 +19,9 @@ pub mod parent;
 mod service;
 #[cfg(unix)]
 pub mod transport;
-// Prepared for the native adapter without enabling Windows transport yet.
-#[cfg(unix)]
+// Compile the shared boundary natively before enabling the Windows adapter.
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))] // Native adapter wiring follows separately.
 mod transport_shared;
 #[cfg(windows)]
 pub mod windows_endpoint;

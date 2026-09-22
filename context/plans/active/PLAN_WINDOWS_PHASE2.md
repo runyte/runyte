@@ -752,7 +752,14 @@ in-memory duplex regression covers proof retention after the host consumes the
 connection event, ordinary disconnect and cancellation. Formatting and native
 all-target Clippy pass; Unix compilation, existing transport regressions and
 coverage await CI because this development host has no Unix execution
-environment. The Windows module gate remains unchanged in this extraction.
+environment. The first CI compile exposed an unused import and missing
+`Debug + Send + Sync + 'static` bounds needed to retain the generic channel
+error through `anyhow::Context`. The correction preserves that error chain.
+The shared boundary now also compiles on Windows and runs its portable proof
+lifetime regression locally; a temporary Windows dead-code allowance covers
+adapter calls not yet wired, without enabling persistent-session commands.
+The correction has no independent-review findings; its native duplex test,
+formatting and all-target Clippy pass.
 
 The transport will share bounded framing, role validation and response queues
 with Unix, while retaining separate native connection ownership. Windows
@@ -775,6 +782,15 @@ queues. Reads must continue when rendering blocks the frontend thread, and
 cancellation must interrupt reads, writes and queue backpressure. Lifecycle
 commands and persistent-mode availability remain disabled until their later
 work packages validate startup, shutdown and attachment.
+
+Buffered-client cancellation must distinguish outgoing invalidation from whole
+worker shutdown. Existing `recover_attached_wait_after_status_write` drains an
+earlier wait completion after a failed status write. A cancelled or failed
+outgoing request therefore permanently poisons further writes while retaining
+the reader and queued responses for bounded caller recovery. Windows pipes
+must not be assumed to support Unix half-close. Whole-worker cancellation on
+Drop, startup abandonment or reader failure interrupts all I/O/backpressure;
+the owned thread is joined rather than left detached indefinitely.
 
 ### Current implementation evidence
 

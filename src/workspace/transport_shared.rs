@@ -8,7 +8,6 @@
 //! existing API; a native adapter must supply a retained authenticated peer.
 
 use std::{
-    io,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -363,7 +362,7 @@ pub(super) async fn serve_connection_with_peer<S, P>(
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
-    P: Clone,
+    P: Clone + std::fmt::Debug + Send + Sync + 'static,
 {
     let (reader, writer) = tokio::io::split(stream);
     let mut reader = MessageReader::new(reader);
