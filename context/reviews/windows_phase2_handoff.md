@@ -1,9 +1,10 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5h native
-foreground host supervision accepted in `ab9f3ac` (`Supervise native foreground
-host by retained parent`). Typed console termination is `c6dea6a`; Unix CI
-compile and lint repairs are `4a3b1bd` and `6bd7627`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5i internal
+native host interactive attachment accepted in `1e69755` (`Own native host
+interactive attachments and waits`). The shared response-ordering repair is
+`5d727db`. Typed console termination is `c6dea6a`; foreground supervision is
+`ab9f3ac`; Unix CI compile and lint repairs are `4a3b1bd` and `6bd7627`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -324,16 +325,55 @@ jobs. MacOS ru-time temporary cleanup and Ubuntu lifecycle stress failed in
 unrelated test paths; investigate repeatability rather than calling that run
 green. Its native Windows job was still running at this checkpoint.
 
-## Next package: native interactive attachment and waits
+## Accepted package: 4e.5i internal native host attachment
 
-Build one owned native interactive attachment over an authenticated exact host
-publication, with buffered frontend reads and a single connection owner. Keep
-handshake, initial frame, input and response ordering, and cancellation of only
-the disconnecting client's waits. Then add exact-publication switching and
-source recovery; never replace a selected publication by project path or PID.
-Real-host acceptance must pass before opening public attachment, manager visit,
-numbered-session, restart or parent-terminal routing gates. A wait client's
-parent loss cancels that client's wait; it does not retire a shared host.
+`1e69755` admits one authenticated interactive pipe peer in the native host.
+The retained peer proof and connection ID own input, geometry, hints, full-frame
+publication and subscribed waits. Controls cannot send physical input or invoke
+editor commands. A second interactive peer is refused; a stale old connection ID
+cannot redirect input or disconnect a replacement. Explicit disconnect cancels
+only that peer's pending waits. Editor `:detach` and `:quit` complete subscribed
+waits before the terminal response; `:quit` still refuses while another control
+client has protected state. Native directory handoff remains disabled until a
+real frontend can deliver the selected directory to its shell.
+
+`5d727db` repairs shared response receiving so a final `ShuttingDown` cannot
+overtake an already queued semantic command result when both lanes become ready
+during one `select!` poll. Its regression forces that interleaving.
+
+Independent Astra source review found no remaining findings. Real native pipe
+fixtures cover Welcome and initial full frame, a unique attachment, control
+input refusal, editing and resize, wait ownership across disconnect/reattach,
+disabled `:quit-here`, ordered command/wait/shutdown replies, actual host exit,
+and stale connection IDs. Formatting, all-target Clippy with warnings denied,
+and the complete native workspace suite pass: 3,342 tests, zero failures and
+64 ignored entries across 47 libtest/doc-test groups. The focused response
+ordering regression and 11 active real-host integration cases also pass.
+Public attachment, switching, manager visit, numbered sessions, restart and
+parent-terminal routing remain gated.
+
+CI run 35751559497 for preceding `63f8ea6` passed Ubuntu gates, MSRV, both
+Unix coverage jobs, macOS tests and all other jobs except Native Windows. That
+job repeated an intermittent 15-second Windows PowerShell filter timeout in
+`pipe::windows::tests::failures_bounds_and_whole_job_budget`. The child started
+promptly but remained alive; two recent runs stalled at different best-effort
+trace markers. No safe Runyte execution fix is established. Retain the existing
+deadline and diagnostics pending an isolated reproduction or process dump.
+CI acceptance for `1e69755` remains pending its push.
+
+## Next package: native frontend attachment, then exact switching and waits
+
+Build one terminal-owning native frontend over `BufferedLocalClient` and the
+authenticated exact host publication. Keep handshake, initial frame, input and
+response ordering, termination and peer-exit supervision, and source recovery
+on the frontend boundary. The first slice can stay internal while real ConPTY
+editing, resize, detach/reconnect, and failure acceptance runs. Then propagate
+typed selected `WorkspaceSelection` through core request and protocol values so
+switching resolves a complete `PublicationKey` from the captured discovery
+scope; never replace a stale selection by project path or PID. A wait client's
+parent loss cancels only that client's wait, not the shared host. Complete
+real-host acceptance before opening public attachment, manager visit,
+numbered-session, restart or parent-terminal routing gates.
 
 ## Phase 2.5 implementation order
 
@@ -367,10 +407,10 @@ that design calls a prerequisite, is already applied as described above.
 5. Acceptance and documentation, including combined Git branch/worktree removal
    through the now-native persistent coordinator.
 
-The internal detached Windows host already exists and has real process tests;
-foreground host supervision and the interactive native frontend remain absent.
-The current native host intentionally refuses physical-input, attachment and
-parent requests until their ownership paths are accepted.
+Detached and foreground native hosts now have real process tests. The host owns
+one internal physical-input attachment, but the native frontend and public
+attachment routes remain absent. Parent requests remain refused until their
+ownership path is accepted.
 
 ### Reviewed process-exit watcher contract
 
