@@ -559,7 +559,17 @@ workspace identity internally, so the child never rediscovers a project its
 parent already resolved.
 
 For tools that need an editor process to stay open, configure
-`runyte --wait`. One invocation may name several files and returns success only
+`runyte --wait`.
+
+On Windows, this opens a new standalone editor with the requested files and
+waits until that editor quits. It does not attach to an existing editor or
+complete when an individual buffer closes: `:wbc` alone leaves the process
+running. Normal save/discard protection applies, including explicit force
+quit. Startup failure, terminal loss, and termination return nonzero. This
+mode works even when `workspace.mode` is configured as persistent; Windows
+persistent hosting remains unavailable.
+
+On Unix, one invocation may name several files and returns success only
 after every requested buffer is explicitly closed or completed. `:wbc` writes
 and closes the requested buffer without changing the pane layout. An activated
 wait buffer enters Normal mode, including when an existing persistent session
@@ -587,8 +597,8 @@ already taken over; lifecycle loss, explicit cancellation, and host failure
 all exit nonzero.
 
 For example, `git config core.editor 'runyte --wait'` gives Git commit and
-rebase message files this lifecycle. Persistent hosting and `--wait` currently
-use the private, versioned Unix local protocol; it is a bundled-client contract,
+rebase message files this lifecycle. On Unix, persistent hosting and `--wait`
+use the private, versioned local protocol; it is a bundled-client contract,
 not a public automation API.
 
 `Space Space` or `:session-list` (`:sl`) opens the session manager: a
@@ -1456,7 +1466,8 @@ does not bundle that runtime.
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
-| Deferred | Plugins, context bridge, persistent sessions, `--wait` and `:quit-here` |
+| Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
+| Deferred | Plugins, context bridge, persistent sessions and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`

@@ -1015,6 +1015,16 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         return Ok(());
     }
 
+    // Windows initially supports --wait as a foreground standalone editor.
+    // Keep its exit requirement separate from launch mode: no persistent host,
+    // attachment, or per-buffer completion token is involved.
+    #[cfg(windows)]
+    let standalone_wait = arguments.mode == LaunchMode::Wait;
+    #[cfg(windows)]
+    if standalone_wait {
+        arguments.mode = LaunchMode::Standalone;
+    }
+
     if arguments.mode == LaunchMode::ListContext {
         #[cfg(unix)]
         {
@@ -1854,6 +1864,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
     app.shutdown_plugins().await?;
+    #[cfg(windows)]
+    anyhow::ensure!(
+        !standalone_wait || app.should_quit,
+        "standalone --wait ended before the editor was explicitly quit"
+    );
     let cwd_file = arguments.cwd_file;
     if let (Some(cwd_file), Some(directory)) = (cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
@@ -5748,6 +5763,9 @@ MODES:
     between TUIs and is currently available only on Unix.
 
         --standalone     Use standalone mode, overriding configuration
+        --wait FILE...   Windows: open a standalone editor and wait until it quits
+                         Unix: open through persistent mode and wait for
+                         explicit buffer completion
     -a, --persistent [WORKSPACE]
                          Attach to the selected or current session, starting it
                          if needed. If WORKSPACE is omitted, use the workspace
@@ -5769,8 +5787,6 @@ PERSISTENT SESSIONS:
     or directory, so a session is reachable from anywhere.
 
         --serve          Keep a persistent session alive in the foreground
-        --wait FILE...   Edit files through persistent mode and wait for
-                         explicit completion
     -l, --session-list   List running and recently visited sessions
     -s, --session-stop [WORKSPACE]
                          Stop the selected or current session
@@ -5824,7 +5840,8 @@ TARGETS:
     position keep their ordinary meaning: workspace.mode: persistent changes
     only a bare runyte, and --persistent reads its argument as a workspace
     rather than a file. Use --init to make a directory the exact standalone
-    workspace root, or --wait to open files through a persistent session.
+    workspace root. --wait uses a persistent session on Unix; on Windows it
+    opens a new standalone editor and waits until that editor quits.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.

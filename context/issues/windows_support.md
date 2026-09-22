@@ -164,8 +164,11 @@ External opening is now implemented with nonblocking, bounded native dispatch,
 literal file/URL arguments and program-cache updates after acceptance. Its
 independent review has no remaining findings. Formatting, Clippy, 2,993 local
 tests and required real rust-analyzer acceptance pass; privileged clipboard
-and cross-platform opener acceptance remain pending. Standalone `--wait` and
-PowerShell directory handoff are the following work packages.
+and cross-platform opener acceptance remain pending. Standalone `--wait` now
+opens a new editor and returns when that editor quits, retaining save/discard
+protection and nonzero failure exits. Its independent review, real ConPTY
+acceptance, formatting, Clippy and full native suite (2,994 passed) succeed.
+PowerShell directory handoff is the following work package.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

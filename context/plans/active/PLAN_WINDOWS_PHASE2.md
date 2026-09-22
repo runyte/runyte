@@ -503,8 +503,13 @@ pass: 2,993 tests, zero failures and 46 ignored fixture/performance/privileged
 acceptance entries across 42 libtest/doc groups, plus six harness-free native
 transport cases. Required real rust-analyzer acceptance passes in 3.96 seconds
 after the shared executable-resolver extraction. Remote opener acceptance is
-pending; the independently reviewed clipboard repair is pushed as `b26d65f`
-and its required privileged acceptance runs in `35615440695`.
+pending; the opener implementation is committed as `57b2b34`. The independently
+reviewed clipboard repair is pushed as `b26d65f`. Run `35615440695` passes all
+Unix jobs but stops Windows before clipboard acceptance: two PowerShell filter
+tests hit their 15-second fixture deadline. Product deadlines are unchanged;
+bounded diagnostics are being added to distinguish process startup and pipe
+progress. Clipboard acceptance now runs independently after earlier failures,
+while retaining overall job failure and cancellation behavior.
 
 Package 2's CI run `35612547548` passes all Unix jobs and both coverage gates,
 including the repaired MCP discovery scenarios. Windows exposes a clipboard
@@ -542,6 +547,19 @@ and writing remain unchanged. Compiled fixtures and checked-in shell scripts
 must cover argument fidelity, path characters, refused/forced quit, failure
 exit codes, unchanged cwd on failure and cleanup. Extended path compatibility
 must be established by native acceptance rather than blind prefix removal.
+
+Standalone wait (package 4a) is implemented and independently reviewed with no
+remaining findings. Review corrected an acceptance assumption that a standalone
+editor must create `.runyte`; the fixture now checks only the exact host
+publication path, allowing absent runtime storage. Real ConPTY acceptance
+covers literal multiple targets, persistent-config override, unsaved refusal,
+save/close without exiting, explicit quit/force quit, unsuccessful termination
+and invalid launch requests. Formatting, denied-warning Clippy and the full
+native suite pass: 2,994 tests, zero failures and 47 ignored entries across 43
+libtest/doc groups, plus six native transport cases. The explicit-quit guard
+also rejects event-stream EOF; the fixture's termination case kills the native
+process and does not claim to inject that EOF branch. PowerShell handoff
+(package 4b) follows separately.
 
 ### Sub-phase 2.5 preparation
 
