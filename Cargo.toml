@@ -24,6 +24,7 @@ include = [
     "/src/**",
     "!/src/app/tests/**",
     "/docs/**",
+    "/contrib/**",
     "/licenses/**",
     "/logo/ascii/logo.txt",
     "/README.md",

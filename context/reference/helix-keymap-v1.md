@@ -10,8 +10,7 @@ verified 2026-07-27.
 Status meanings:
 
 The Windows port retains this command inventory. Plugins,
-persistent sessions, context access,
-and parent-shell directory changes report their
+persistent sessions and context access report their
 platform limitation through execution and discovery. Syntax commands remain
 independent of LSP. Integrated Git is available when native Git is installed;
 missing Git disables its capabilities without starting a worker. Worktree
@@ -25,6 +24,8 @@ Shell filters use Windows PowerShell through `:pipe` and `:|`; the bare `|` key
 remains reserved, as on Unix.
 Native Windows file/URL opening is available. Editor input remains responsive
 while a launch is pending; explicit programs are remembered after accepted launch.
+Parent-shell directory changes use `:quit-here` through the Windows PowerShell
+5.1 wrapper, with private NTFS handoff storage and ordinary directory names.
 
 - **Implemented** — registered and dispatched by Runyte.
 - **Deviation** — implemented, but intentionally differs from Helix or retains

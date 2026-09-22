@@ -3109,7 +3109,6 @@ fn control_q_does_nothing_inside_the_command_prompt() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
     let root = temporary("quit-here-file");
     let file_directory = root.join("files");
@@ -3141,7 +3140,6 @@ fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
     let root = temporary("quit-here-explorer");
     let visited = root.join("visited");
@@ -3163,7 +3161,6 @@ fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
     let mut app = App::new(Config::default(), None).unwrap();
 
@@ -3178,7 +3175,6 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_refuses_to_exit_when_the_destination_no_longer_exists() {
     let root = temporary("quit-here-missing");
     let file = root.join("note.txt");
@@ -3194,6 +3190,25 @@ fn quit_here_refuses_to_exit_when_the_destination_no_longer_exists() {
     assert!(app.quit_directory().is_none());
     assert!(app.status_error);
     assert!(app.status.contains("cannot quit here"));
+}
+
+#[test]
+#[cfg(windows)]
+fn quit_here_refuses_shell_unsupported_paths_before_quitting() {
+    use std::os::windows::ffi::OsStrExt;
+    let root = crate::test_support::TestRuntimeRoot::new("qh-long").unwrap();
+    let mut directory = root.path().to_path_buf();
+    while directory.as_os_str().encode_wide().count() < 275 {
+        directory.push("long-directory-segment");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    app.enable_quit_directory_handoff();
+    app.working_directory = directory;
+    type_command(&mut app, "qh!");
+    assert!(!app.should_quit);
+    assert!(app.quit_directory().is_none());
+    assert!(app.status.contains("shorter than 260"), "{}", app.status);
 }
 
 #[test]

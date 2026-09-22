@@ -558,8 +558,47 @@ and invalid launch requests. Formatting, denied-warning Clippy and the full
 native suite pass: 2,994 tests, zero failures and 47 ignored entries across 43
 libtest/doc groups, plus six native transport cases. The explicit-quit guard
 also rejects event-stream EOF; the fixture's termination case kills the native
-process and does not claim to inject that EOF branch. PowerShell handoff
-(package 4b) follows separately.
+process and does not claim to inject that EOF branch.
+
+PowerShell handoff (package 4b) is implemented and independently reviewed with
+no remaining findings; native shell acceptance passes. Preparation
+pins an existing owner-private NTFS parent, and atomic publication preserves
+retained readers. Four native boundary tests pass. The pinned-parent test
+moves the directory before opening a child reader because Windows can refuse
+directory rename while a child is open; both identity and replacement remain
+covered. The shell wrapper bounds record reads, preserves UTF-16 units and
+changes directory literally. Ordinary identity-equivalent destinations shorter
+than 260 UTF-16 units with valid Unicode components are admitted before quit.
+Review added nonzero status for failed handoff after editor success, and an
+owned process tree with a startup gate for the native acceptance fixture.
+
+Native shell acceptance exposed a ConPTY executable-path compatibility defect:
+the launcher passed the canonical extended spelling of Windows PowerShell to
+CreateProcess and argv[0]. Direct ordinary/extended launch comparison reproduces
+exit 0 versus exit -65536 with a `System.Net.ServicePointManager` initialization
+error. The reviewed correction prefers an ordinary spelling only after native
+identity equality, retaining extended names when required. Native PowerShell
+startup and spelling/fallback regressions pass.
+The focused native run passes all twelve PTY tests and the PowerShell wrapper
+acceptance scenario. Formatting and all-target Clippy pass. The full native
+suite passes 3,008 tests with zero failures and 50 ignored entries across 44
+libtest/doc groups, plus six native transport cases. This completes the local
+standalone integration packages; persistent-session work begins with the
+lossless path/identity boundary below.
+
+CI at `b26d65f` passed Unix gates but exposed two Windows PowerShell fixture
+timeouts. The exact startup/stream mechanism remains undiagnosed. Reviewed
+test-only diagnostics in `8daa848` record bounded bootstrap milestones, stream
+counts/EOF, process exit and elapsed times without command or selection content.
+Production and fixture deadlines are unchanged. Ten focused tests pass and one
+compiled fixture is ignored. The required private clipboard acceptance now
+runs even after preceding failures so its privileged coverage is independent.
+Cross-platform CI run
+[`35618761952`](https://github.com/runyte/runyte/actions/runs/35618761952) at
+`8daa848` passes every job, including the native suite, all three explicitly
+required private clipboard tests, real rust-analyzer acceptance and both
+unchanged Unix coverage floors. No PowerShell timeout recurred in that run,
+so no new timeout diagnosis is claimed.
 
 ### Sub-phase 2.5 preparation
 

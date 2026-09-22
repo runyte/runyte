@@ -5,12 +5,15 @@
 //! Closing a pane kills its job; draining and ClosePseudoConsole run off-loop.
 use std::{
     collections::VecDeque,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Write},
     mem::{size_of, zeroed},
-    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
-    path::Path,
+    os::windows::{
+        ffi::OsStrExt,
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    },
+    path::{Component, Path, PathBuf, Prefix},
     ptr,
     sync::{
         Arc, Mutex,
@@ -218,6 +221,51 @@ fn dimensions(columns: u16, rows: u16) -> COORD {
     }
 }
 
+/// Framework-based console programs can reject their own configuration path
+/// when launched with an extended executable spelling. Prefer an ordinary
+/// spelling only after checking native identity. Paths that require extended
+/// syntax retain the previous behavior; metadata/identity failures do not fall
+/// back silently. This does not change the separate working-directory contract.
+fn executable_path(path: &Path) -> io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    let mut parts = canonical.components();
+    let mut ordinary = match parts.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                PathBuf::from(format!("{}:", drive as char))
+            }
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                let mut value = OsString::from(r"\\");
+                value.push(server);
+                value.push(r"\");
+                value.push(share);
+                PathBuf::from(value)
+            }
+            _ => return Ok(canonical),
+        },
+        _ => return Ok(canonical),
+    };
+    for part in parts {
+        if let Component::Normal(name) = part
+            && crate::windows_fs::validate_relative(Path::new(name)).is_err()
+        {
+            return Ok(canonical);
+        }
+        ordinary.push(part.as_os_str());
+    }
+    if ordinary.as_os_str().encode_wide().count() >= 260 {
+        return Ok(canonical);
+    }
+    if crate::windows_fs::Identity::read(&ordinary)?
+        != crate::windows_fs::Identity::read(&canonical)?
+    {
+        return Err(io::Error::other(
+            "terminal executable changed while resolving its Windows spelling",
+        ));
+    }
+    Ok(ordinary)
+}
+
 impl Pty {
     #[cfg(test)]
     pub(crate) fn cleanup_waiter(&self) -> Box<dyn FnOnce()> {
@@ -285,7 +333,7 @@ impl Pty {
                 "terminal executable was not found on PATH",
             )
         })?;
-        let program = program.canonicalize()?;
+        let program = executable_path(&program)?;
         if program
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd"))

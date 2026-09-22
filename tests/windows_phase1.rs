@@ -81,7 +81,7 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
 fn deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in ["plugins", "context-access", "quit-here", "session-list"] {
+    for spelling in ["plugins", "context-access", "session-list"] {
         let name = spelling.split_whitespace().next().unwrap();
         let spec = resolve_command(name).unwrap();
         let availability = app.command_capabilities().command_availability(spec);

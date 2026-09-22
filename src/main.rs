@@ -1168,6 +1168,19 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         .cwd_file
         .take()
         .map(|path| resolve_cwd_file_path(&launch_directory, path));
+    // Only an editor that can perform the handoff admits the output path.
+    // Pin its already-private parent before acquiring the terminal or editing.
+    #[cfg(windows)]
+    let cwd_handoff = if arguments.mode == LaunchMode::Standalone {
+        arguments
+            .cwd_file
+            .as_deref()
+            .map(runyte::cwd_handoff::Prepared::prepare)
+            .transpose()
+            .context("cannot prepare private PowerShell directory handoff")?
+    } else {
+        None
+    };
     let mut reserved_user_roots = config_path
         .as_deref()
         .map(|path| config::config_root_for(path, &launch_directory))
@@ -1869,9 +1882,15 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         !standalone_wait || app.should_quit,
         "standalone --wait ended before the editor was explicitly quit"
     );
-    let cwd_file = arguments.cwd_file;
-    if let (Some(cwd_file), Some(directory)) = (cwd_file.as_deref(), quit_directory) {
+    #[cfg(not(windows))]
+    if let (Some(cwd_file), Some(directory)) = (arguments.cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
+    }
+    #[cfg(windows)]
+    if let (Some(handoff), Some(directory)) = (cwd_handoff.as_ref(), quit_directory) {
+        handoff
+            .write(&directory)
+            .context("cannot publish PowerShell directory handoff")?;
     }
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
@@ -5190,6 +5209,7 @@ fn start_host_services(
     })
 }
 
+#[cfg(not(windows))]
 fn write_cwd_file(path: &Path, directory: &Path) -> Result<()> {
     let mut contents = directory.as_os_str().as_encoded_bytes().to_vec();
     if cfg!(unix) {
@@ -5252,7 +5272,7 @@ fn atomic_write_cwd_file_with(
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn atomic_write_cwd_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(path, contents)
 }
@@ -6053,6 +6073,8 @@ mod tests {
 
     #[cfg(unix)]
     use super::keyboard_enhancement_flags_for;
+    #[cfg(not(windows))]
+    use super::write_cwd_file;
     #[cfg(unix)]
     use super::{
         AttachedClient, AttachedWorkspaceActivity, HostResponse, PointerBatcher, WaitStatus,
@@ -6065,7 +6087,7 @@ mod tests {
         is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
         observe_key_or_text_hint, pace_file_picker_event, rejected_text_input,
         resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
+        uses_automatic_persistent_mode, write_startup_screen,
     };
     use runyte::launch::LaunchArguments;
     use runyte::{
@@ -6958,6 +6980,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn relative_cwd_file_keeps_the_invoking_shells_identity_after_directory_changes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6990,6 +7013,22 @@ mod tests {
         assert_eq!(fs::read(&first).unwrap(), expected);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn relative_cwd_file_keeps_the_invoking_shells_identity_after_directory_changes() {
+        let root = runyte::test_support::TestRuntimeRoot::new("cwd-relative").unwrap();
+        let invoking = root.create_private_dir("shell").unwrap();
+        let destination = root.create_private_dir("destination").unwrap();
+        let first = resolve_cwd_file_path(&invoking, PathBuf::from("cwd"));
+        let handoff = runyte::cwd_handoff::Prepared::prepare(&first).unwrap();
+        let forwarded = resolve_cwd_file_path(&destination, first.clone());
+        assert_eq!(forwarded, first);
+        handoff.write(&destination).unwrap();
+        assert!(first.is_file());
+        assert!(!destination.join("cwd").exists());
+        assert!(fs::read(&first).unwrap().starts_with(b"RNYCWD\x01\0"));
     }
 
     #[test]

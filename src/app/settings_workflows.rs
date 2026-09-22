@@ -913,6 +913,11 @@ impl App {
                 return;
             }
         };
+        #[cfg(windows)]
+        if let Err(error) = crate::cwd_handoff::ordinary_directory(&directory) {
+            self.action_failed(format!("cannot quit here: {error}"));
+            return;
+        }
         self.working_directory = directory.clone();
         self.quit_directory = Some(directory);
         self.persistent_exit_request = Some(super::PersistentExitRequest::Quit { force });

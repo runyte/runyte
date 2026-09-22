@@ -163,12 +163,22 @@ CI tests provide that native acceptance, with no shared-clipboard fallback.
 External opening is now implemented with nonblocking, bounded native dispatch,
 literal file/URL arguments and program-cache updates after acceptance. Its
 independent review has no remaining findings. Formatting, Clippy, 2,993 local
-tests and required real rust-analyzer acceptance pass; privileged clipboard
-and cross-platform opener acceptance remain pending. Standalone `--wait` now
+tests and required real rust-analyzer acceptance pass. Cross-platform CI run
+[`35618761952`](https://github.com/runyte/runyte/actions/runs/35618761952) at
+`8daa848` passes every job, including privileged clipboard isolation, native
+openers/wait behavior and both Unix coverage gates. Standalone `--wait` now
 opens a new editor and returns when that editor quits, retaining save/discard
 protection and nonzero failure exits. Its independent review, real ConPTY
 acceptance, formatting, Clippy and full native suite (2,994 passed) succeed.
-PowerShell directory handoff is the following work package.
+PowerShell directory handoff is implemented and independently reviewed;
+native shell acceptance passes. It uses an owner-private pinned parent,
+atomic UTF-16 records and literal directory changes. Unsupported directory
+spellings are refused before quitting. Review corrected wrapper error status
+and required whole-process-tree ownership in the acceptance fixture. Native
+acceptance also exposed and corrected PowerShell startup with extended
+executable paths: the PTY now prefers an identity-verified ordinary spelling.
+Formatting, Clippy and the full local suite pass with 3,008 tests and zero
+failures, plus six native transport cases.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

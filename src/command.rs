@@ -1298,9 +1298,6 @@ impl CommandId {
             | Self::Colon(
                 ColonCommand::Plugins | ColonCommand::PluginStop | ColonCommand::PluginRestart,
             ) => Some("Plugins are unavailable in Windows Phase 1"),
-            Self::Colon(ColonCommand::QuitHere | ColonCommand::ForceQuitHere) => {
-                Some("Changing the parent shell directory is unavailable in Windows Phase 1")
-            }
             _ => None,
         }
     }

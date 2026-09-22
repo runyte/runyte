@@ -179,6 +179,96 @@ fn native_shell_drains_unicode_output_before_exit() {
 }
 
 #[test]
+fn installed_windows_powershell_starts_from_an_extended_executable_path() {
+    let root = crate::test_support::TestRuntimeRoot::new("powershell-console").unwrap();
+    let program = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe")
+        .canonicalize()
+        .unwrap();
+    let (sender, events) = mpsc::channel();
+    let child = Pty::spawn(
+        program.as_os_str(),
+        &[
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            "[Console]::Write('RUNYTE_POWERSHELL_STARTED'); exit 0".into(),
+        ],
+        root.path(),
+        120,
+        24,
+        move |event| {
+            let _ = sender.send(event);
+        },
+    )
+    .unwrap();
+    let cleanup = child.cleanup_waiter();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut output = Vec::new();
+    loop {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output)))
+        {
+            PtyEvent::Output(bytes) => {
+                assert!(output.len() + bytes.len() <= 64 * 1024);
+                output.extend(bytes);
+            }
+            PtyEvent::Exited(code) => {
+                assert_eq!(code, Some(0), "{}", String::from_utf8_lossy(&output));
+                break;
+            }
+        }
+    }
+    assert!(
+        String::from_utf8_lossy(&output).contains("RUNYTE_POWERSHELL_STARTED"),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+    drop(child);
+    cleanup();
+}
+
+#[test]
+fn executable_spelling_preserves_identity_and_required_extended_paths() {
+    let compiled = std::env::current_exe().unwrap();
+    let root = crate::test_support::TestRuntimeRoot::new_in(
+        "executable-spelling",
+        compiled.parent().unwrap(),
+    )
+    .unwrap();
+    let short = root.join("native helper.exe");
+    std::fs::hard_link(&compiled, &short).unwrap();
+    let ordinary = executable_path(&short).unwrap();
+    assert!(!ordinary.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    assert_eq!(
+        crate::windows_fs::Identity::read(&ordinary).unwrap(),
+        crate::windows_fs::Identity::read(&short).unwrap()
+    );
+
+    let special = root.join("native helper.exe.");
+    std::fs::hard_link(&compiled, &special).unwrap();
+    assert_eq!(
+        executable_path(&special).unwrap(),
+        special.canonicalize().unwrap()
+    );
+
+    let mut long = root.path().to_path_buf();
+    while long.as_os_str().encode_wide().count() < 270 {
+        long.push("long-executable-directory");
+    }
+    std::fs::create_dir_all(&long).unwrap();
+    long.push("native helper.exe");
+    std::fs::hard_link(&compiled, &long).unwrap();
+    assert_eq!(
+        executable_path(&long).unwrap(),
+        long.canonicalize().unwrap()
+    );
+    assert!(executable_path(&root.join("missing.exe")).is_err());
+}
+
+#[test]
 fn cmd_shell_payload_preserves_nested_quotes_and_batch_path_spaces() {
     let batch =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/windows shell arguments.cmd");

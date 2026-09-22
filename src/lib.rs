@@ -12,6 +12,8 @@ pub mod clipboard;
 pub mod command;
 pub mod config;
 pub mod content_alignment;
+#[cfg(windows)]
+pub mod cwd_handoff;
 pub mod diff;
 pub mod diff_view;
 pub mod directory_buffer;

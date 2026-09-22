@@ -263,6 +263,17 @@ arguments, resolves PATH/PATHEXT without an implicit workspace lookup, and
 requires an explicit shell for batch files. Standalone terminals mark parent
 routing unavailable in their environment.
 
+Executable launch prefers an ordinary local or UNC spelling only after its
+native file identity matches the canonical path. Windows PowerShell 5.1 fails
+initialization when launched with the canonical extended executable spelling
+(`\\?\...`), so blindly passing that spelling breaks an installed shell.
+Executables whose names or lengths require extended syntax retain that spelling;
+this does not relax the separate ordinary working-directory requirement.
+`installed_windows_powershell_starts_from_an_extended_executable_path` and
+`executable_spelling_preserves_identity_and_required_extended_paths` in
+`src/terminal/tests/pty_windows.rs` cover native PowerShell startup and the
+identity-preserving choice, including long and trailing-dot executable names.
+
 Native tests in `src/terminal/tests/pty_windows.rs` exercise actual cmd.exe and
 the compiled test executable: Unicode output before exit, independent input,
 native resize, bounded input admission, process-tree termination, output-queue

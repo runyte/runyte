@@ -49,6 +49,7 @@ Project goals:
 Linux and macOS provide the full feature set. Work on native Windows support is
 ongoing; basic functionality is already available in this source tree: standalone
 editing (including `--wait`), file management, text and image clipboard,
+PowerShell directory handoff,
 integrated terminals, private diagnostic logs, shell filters, external file/URL
 opening, language services after
 workspace approval, and optional Git integration
@@ -203,7 +204,7 @@ runyte -a /path/to/notes
 
 Run `runyte --help` for the complete command-line interface. To let
 `:quit-here` change the launching shell's directory, use the
-[Bash/Zsh wrapper](docs/user-guide.md#change-the-shell-directory-on-exit).
+[shell wrappers](docs/user-guide.md#change-the-shell-directory-on-exit).
 
 ## Screenshots
 

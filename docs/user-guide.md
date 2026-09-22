@@ -1467,7 +1467,8 @@ does not bundle that runtime.
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
 | Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
-| Deferred | Plugins, context bridge, persistent sessions and `:quit-here` |
+| Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
+| Deferred | Plugins, context bridge and persistent sessions |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -3617,6 +3618,25 @@ function runyte() {
 }
 ```
 
+For Windows PowerShell 5.1, save [runyte.ps1](../contrib/runyte.ps1) in a stable
+local location and dot-source it from your PowerShell profile:
+
+```powershell
+. 'C:\Tools\Runyte\runyte.ps1'
+```
+
+The function starts `runyte.exe` and waits for it. Normal `:quit` leaves the
+caller directory unchanged; successful `:quit-here` changes it using a literal
+path. The function returns to the caller with the editor status in
+`$LASTEXITCODE`, or a nonzero status if the wrapper fails.
+
+Windows handoff requires private local NTFS temporary storage. The destination
+must have an identity-equivalent ordinary local or UNC spelling shorter than
+260 UTF-16 units, with valid Unicode path components. Unsupported paths are
+refused before quitting. The bounded, versioned handoff record preserves UTF-16
+code units; it differs from the Unix NUL-terminated byte format. PowerShell 7
+has not been validated for this wrapper.
+
 After reloading the shell configuration, invoke `runyte` normally. The
 `--cwd-file` option is intended for shell integration; Runyte writes it only
 after a successful `:quit-here` command. Without the wrapper, `:quit-here`
@@ -3625,7 +3645,7 @@ acting like plain `:quit`.
 Session-management commands such as `--session-list` accept the option but leave the
 file untouched, so they can be invoked through the same shell function.
 
-The wrapper works the same way against a persistent host. `:quit-here` runs in
+On Unix, the wrapper also works against a persistent host. `:quit-here` runs in
 the host, which reports the directory it chose while the attached client writes
 the file — so the same wrapper serves both modes, and the directory follows you
 across a workspace switch. Because the capability belongs to the client rather
