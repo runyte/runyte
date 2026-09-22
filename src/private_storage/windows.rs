@@ -574,6 +574,35 @@ impl Directory {
     pub fn sync(&self) -> io::Result<()> {
         flush_directory(&self.0)
     }
+    /// Creates an empty private staging file. The transaction owner must retain
+    /// this handle and name before writing or installing it, and retire only
+    /// this issued identity on failure.
+    pub(crate) fn create_owned_pending(&self) -> io::Result<(OsString, File)> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..64 {
+            let name = OsString::from(format!(
+                ".runyte-transaction-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match self.create_new(&name) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Ok(file) => return Ok((name, file)),
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::other(
+            "cannot create a unique runtime transaction file",
+        ))
+    }
+
+    /// No-replace installation of a retained staged file. A flush can fail
+    /// after the native rename succeeds: callers must already retain ownership
+    /// of both candidate names, including when this function returns an error.
+    pub(crate) fn install_owned_pending(&self, file: &File, name: &OsStr) -> io::Result<()> {
+        self.rename_file_with_flags(file, name, FILE_RENAME_POSIX_SEMANTICS)
+    }
+
     /// Atomically publishes a new name without replacing an occupied name,
     /// while retaining the exact issued file handle.
     /// On failure, rollback targets only that identity, including a final name

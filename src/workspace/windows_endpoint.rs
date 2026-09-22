@@ -20,6 +20,7 @@ use std::{
 mod discovery;
 mod locking;
 mod metadata;
+mod names;
 pub use discovery::{
     AuthenticatedHost, Candidate, CandidateOrigin, Inspection, ProbeFailure, ProbedCandidate,
     ProbedScan, Removal, Scan, ScanIssue, ScanLimit, StaleEvidence, StaleReason,
@@ -27,6 +28,7 @@ pub use discovery::{
 pub use metadata::{
     EndpointMetadata, MAX_METADATA_BYTES, MAX_PERSISTED_PATH_BYTES, PipeAddress, RegistryRecord,
 };
+pub use names::NameStore;
 
 const REGISTRY_LOCK: &str = ".registry.lock";
 const READY_NAME: &str = "endpoint.json";
@@ -167,6 +169,9 @@ impl EndpointLocation {
         let metadata = EndpointMetadata::new(&self.project, name)?;
         let mut locks = self.registries.identity_locks(&metadata.id)?;
         locks.extend(self.registries.registry_locks()?);
+        if let Some(name) = &metadata.name {
+            names::ensure_available(&self.registries, &metadata.id, name)?;
+        }
         for root in self.registries.0.iter() {
             let registry_name = format!("{}.json", self.registries.record_key(root, &metadata.id));
             require_absent(&root.directory, &registry_name)?;
@@ -297,6 +302,8 @@ impl PreparedEndpoint {
             location: self.location.clone(),
             metadata: self.metadata.clone(),
             issued,
+            rename_recovery: None,
+            retiring: false,
         })
     }
 }
@@ -356,6 +363,8 @@ pub struct Publication {
     location: EndpointLocation,
     metadata: EndpointMetadata,
     issued: Vec<Issued>,
+    rename_recovery: Option<names::RenameRecovery>,
+    retiring: bool,
 }
 
 impl Publication {
@@ -364,14 +373,21 @@ impl Publication {
     }
 
     pub fn cleanup(&mut self) -> io::Result<()> {
-        if self.issued.is_empty() {
+        self.retiring = true;
+        if self.issued.is_empty() && self.rename_recovery.is_none() {
             return Ok(());
         }
         let _identity = self.location.registries.identity_locks(&self.metadata.id)?;
         let _registry = self.location.registries.registry_locks()?;
+        let mut failure = self.cleanup_rename_recovery().err();
         // The ready record is last published and first retired.
         for record in self.issued.iter().rev() {
-            record.remove_if_matches(&self.metadata.incarnation)?;
+            if let Err(error) = record.remove_if_matches(&self.metadata.incarnation) {
+                failure.get_or_insert(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
         }
         self.issued.clear();
         Ok(())

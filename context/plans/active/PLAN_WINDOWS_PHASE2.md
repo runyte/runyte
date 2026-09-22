@@ -951,6 +951,43 @@ Independent review accepted the fixture correction and explicit native test
 module path. Formatting, all-target Clippy and the complete serialized native
 suite pass: 3,124 tests, zero failures and 55 ignored fixture/performance entries
 across 44 libtest/doc-test groups, plus six native transport acceptance cases.
+Cross-platform acceptance passes at `1999047` in
+[run 35640054775](https://github.com/runyte/runyte/actions/runs/35640054775),
+including native Windows and both unchanged Unix coverage gates.
+
+Package 4b2 adds an explicit `state_root/host-names` store and publication-owned
+name changes. Initial publication and live rename check complete namespace
+observations under the same locks; shared secondary roots participate, while
+owner-wide inventory does not merge isolated name scopes. Persisted-name reads
+take the store lock so a rename's missing-record window is not mistaken for an
+absent explicit name.
+
+Live rename stages bounded records before removing owned entries and installing
+new ones without replacement. The stored name and registry rows precede ready
+metadata. A failed rollback retains a bounded ledger of original, new and
+restoration file handles and refuses another rename until recovery completes.
+Retirement attempts every owned metadata generation even when the store lock
+is busy. Foreign replacements survive rollback and cleanup. This is persisted
+state with a brief unlink/install gap, not a crash-atomic or power-loss-durable
+multi-file transaction.
+
+Independent review has zero remaining findings after correcting cleanup during
+store-lock contention and verifying the exact advertised file after an initial
+stored-name write. Sixteen native tests cover completed-operation failure
+boundaries, partial staging/restoration states, retained restoration identities,
+old readers, foreign replacements and collision scopes. The failure hooks do
+not claim to force actual operating-system write or flush errors. All
+41 endpoint tests and 14 native storage tests
+pass, as do formatting and all-target Clippy. The first full native run exposed
+an existing terminal fixture cleanup gap: directly closing a terminal removes
+it from the collection before asynchronous ConPTY teardown completes, so the
+later collection-wide cleanup cannot wait for it. Two direct-close fixtures now
+capture the existing completion waiter before close and await it afterward.
+Independent review has no findings; production teardown and timeout values are
+unchanged. The fixture repair is `1ab8ff5`; all 118 command tests pass. Final
+formatting, all-target Clippy and the complete serialized native suite pass:
+3,140 tests, zero failures and 55 ignored fixture/performance entries across
+44 libtest/doc-test groups, plus six native transport acceptance cases.
 
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,
@@ -997,6 +1034,18 @@ process to exit rather than treating a temporarily missing ready record as
 proof. Future selector resolution deduplicates repeated registry rows by
 publication identity, preserving ambiguity between distinct hosts for the same
 workspace in isolated namespaces.
+
+Integration will proceed through one configured-location resolver, a real
+internal native host, the catalog backend, then control CLI wiring. The resolver
+must be shared by launcher and child and produce configured endpoint, registry
+and name-store locations from the same inputs. Native catalog refresh initially
+fails closed on incomplete scans or indeterminate peers: retain existing rows,
+report the error and skip history/number cleanup. Actions recheck exact targets.
+Public persistent-session availability remains disabled until attachment,
+switching, persistent wait, foreground supervision and parent-terminal
+authorization pass their later acceptance package. Host rename belongs to the
+server's publication owner; teardown must finish bounded server shutdown before
+retiring its publication, rather than copying the Unix cleanup ordering.
 
 Foreground host and attached-wait supervision need retained process handles,
 separate from terminal authorization. Native parent discovery must reject a

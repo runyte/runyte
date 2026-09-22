@@ -33,7 +33,7 @@ pub(super) fn file_key(file: &File) -> io::Result<FileKey> {
 pub(super) struct Lock(File);
 
 impl Lock {
-    fn acquire(file: File) -> io::Result<Self> {
+    pub(super) fn acquire(file: File) -> io::Result<Self> {
         let mut offset = offset();
         if unsafe {
             LockFileEx(
