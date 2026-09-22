@@ -2018,7 +2018,7 @@ async fn run(
                     None => std::future::pending().await,
                 }}
                 #[cfg(not(windows))]
-                { std::future::pending::<()>().await }
+                { std::future::pending::<Option<()>>().await }
             } => {
                 #[cfg(windows)]
                 if let Some(event) = event {
@@ -2850,7 +2850,7 @@ async fn run_host_server(
                     None => std::future::pending().await,
                 }}
                 #[cfg(not(windows))]
-                { std::future::pending::<()>().await }
+                { std::future::pending::<Option<()>>().await }
             } => {
                 #[cfg(windows)]
                 if let Some(event) = event {
