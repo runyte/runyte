@@ -53,12 +53,19 @@ def seed_identity(root, name, projects):
 
 
 def terminal_command(marker, stop):
-    # The prompt renders the command before the child starts. Encode every
-    # marker byte so cursor motion cannot close a displayed gap into a match.
-    encoded = ''.join(f'\\0{byte:03o}' for byte in marker.encode('utf-8'))
-    script = 'printf "%b\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
-    arguments = ['/bin/sh', '-c', script, 'context-fixture', encoded, str(stop)]
-    command = 'terminal ' + ' '.join(shlex.quote(value) for value in arguments)
+    # The prompt renders the command before the child starts. Forced adjacent
+    # quotes keep this argv short while leaving shell syntax between marker
+    # halves even when terminal cursor movement omits blank cells.
+    def quoted(value):
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+
+    split = len(marker) // 2
+    assert 0 < split < len(marker)
+    marker_word = quoted(marker[:split]) + quoted(marker[split:])
+    script = 'printf "%s\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
+    prefix = ['/bin/sh', '-c', script, 'context-fixture']
+    command = ('terminal ' + ' '.join(shlex.quote(value) for value in prefix)
+               + ' ' + marker_word + ' ' + shlex.quote(str(stop)))
     assert marker not in command
     return command
 
@@ -320,7 +327,7 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
             stop = Path(directory) / 'stop'
             stop.touch()
-            for marker in ('CLAUDE_LIVE_MARKER', 'é MARKER'):
+            for marker in ('CLAUDE_LIVE_MARKER', "é' MARKER"):
                 command = terminal_command(marker, stop)
                 self.assertNotIn(marker, command)
                 child = subprocess.run(shlex.split(command.removeprefix('terminal ')),
