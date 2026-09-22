@@ -37,7 +37,11 @@ use std::{
 
 /// Called before ordinary App/terminal construction. The dedicated launcher
 /// states the exact project; this mode must never prompt on a detached stdin.
-pub(super) async fn run(arguments: LaunchArguments, startup: &mut StartupTrace) -> Result<()> {
+pub(super) async fn run(
+    arguments: LaunchArguments,
+    startup: &mut StartupTrace,
+    termination: &mut super::TerminationSignals,
+) -> Result<()> {
     ensure!(
         arguments.mode == LaunchMode::Serve && arguments.detached_host,
         "foreground persistent mode is not yet supported on Windows"
@@ -120,7 +124,7 @@ pub(super) async fn run(arguments: LaunchArguments, startup: &mut StartupTrace) 
         let server = server.as_mut().expect("native server constructed");
         log_info!("host", "internal native persistent session published"; "workspace" => server.metadata_snapshot().id);
         if let Err(error) = startup.write_requested() { host.report_host_error(format!("failed to write startup timing report: {error}")); }
-        run_loop(&mut host, server, services.as_mut().expect("services started"), &mut clients, startup).await
+        run_loop(&mut host, server, services.as_mut().expect("services started"), &mut clients, startup, termination).await
     }.await;
     if let Some(server) = server.as_mut() {
         server.stop_admission();
@@ -181,6 +185,7 @@ async fn run_loop(
     services: &mut HostServices,
     clients: &mut Clients,
     startup: &mut StartupTrace,
+    termination: &mut super::TerminationSignals,
 ) -> Result<()> {
     #[cfg(not(feature = "startup-timing"))]
     let _ = startup;
@@ -196,6 +201,10 @@ async fn run_loop(
         let context_delay = host.context_delay();
         let mut stop = false;
         tokio::select! {
+            event = termination.recv() => {
+                log_warn!("host", "native console termination requested"; "event" => format!("{event:?}"));
+                return Err(super::terminated(event));
+            }
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;
                 match event {

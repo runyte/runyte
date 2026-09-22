@@ -48,6 +48,8 @@ use crossterm::{
         enable_raw_mode,
     },
 };
+#[cfg(windows)]
+use futures_util::FutureExt;
 #[cfg(not(windows))]
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -176,7 +178,15 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .context("failed to start the async runtime")?;
+    #[cfg(windows)]
+    let mut native_termination = runtime.block_on(async { TerminationSignals::new() })?;
+    #[cfg(windows)]
+    let result = runtime.block_on(run(&mut startup, &mut native_termination));
+    #[cfg(not(windows))]
     let result = runtime.block_on(run(&mut startup));
+    #[cfg(windows)]
+    let result =
+        prefer_pending_console_close(result, runtime.block_on(native_termination.pending_event()));
     drop(runtime);
     // Only that the process is ending, never the chain that ended it. An
     // arbitrary propagated error is unclassified text — an option's value, a
@@ -189,6 +199,16 @@ fn main() -> Result<()> {
         Err(_) => log_error!("process", "runyte exited with an error"),
     }
     runyte::log::shutdown();
+    #[cfg(windows)]
+    let result = prefer_pending_console_close(result, native_termination.recv().now_or_never());
+    #[cfg(windows)]
+    drop(native_termination);
+    #[cfg(windows)]
+    if result.as_ref().err().is_some_and(console_closed) {
+        // A closed console may no longer accept Rust's top-level Result
+        // reporter. Cleanup and logging already ran; avoid writing to it.
+        std::process::exit(1);
+    }
     #[cfg(unix)]
     if let Err(error) = &result
         && let Some(signal) = error.downcast_ref::<TerminatedBySignal>()
@@ -208,16 +228,86 @@ fn main() -> Result<()> {
     result
 }
 
+#[cfg(not(windows))]
 #[derive(Debug)]
 struct TerminatedBySignal(i32);
 
+#[cfg(not(windows))]
 impl std::fmt::Display for TerminatedBySignal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "terminated by signal {}", self.0)
     }
 }
 
+#[cfg(not(windows))]
 impl std::error::Error for TerminatedBySignal {}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConsoleEvent {
+    CtrlC,
+    CtrlBreak,
+    Close,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct TerminatedByConsole(ConsoleEvent);
+
+#[cfg(windows)]
+impl std::fmt::Display for TerminatedByConsole {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self.0 {
+            ConsoleEvent::CtrlC => "terminated by Ctrl+C",
+            ConsoleEvent::CtrlBreak => "terminated by Ctrl+Break",
+            ConsoleEvent::Close => "console closed",
+        })
+    }
+}
+
+#[cfg(windows)]
+impl std::error::Error for TerminatedByConsole {}
+
+#[cfg(windows)]
+fn console_closed(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<TerminatedByConsole>()
+        .is_some_and(|event| event.0 == ConsoleEvent::Close)
+}
+
+#[cfg(windows)]
+fn prefer_pending_console_close(result: Result<()>, pending: Option<ConsoleEvent>) -> Result<()> {
+    if pending != Some(ConsoleEvent::Close) || result.as_ref().err().is_some_and(console_closed) {
+        return result;
+    }
+    let close = terminated(ConsoleEvent::Close);
+    match result {
+        Ok(()) => Err(close),
+        Err(previous) => Err(close.context(format!("previous shutdown result: {previous:#}"))),
+    }
+}
+
+#[cfg(windows)]
+fn finish_standalone_native(
+    outcome: Result<()>,
+    catalog: Result<()>,
+    plugins: Result<()>,
+    event: Option<ConsoleEvent>,
+) -> Result<()> {
+    let mut result = event.map_or(outcome, |event| Err(terminated(event)));
+    for (label, cleanup) in [
+        ("native catalog shutdown failed", catalog),
+        ("plugin shutdown failed", plugins),
+    ] {
+        if let Err(error) = cleanup {
+            result = match result {
+                Ok(()) => Err(error.context(label)),
+                Err(primary) => Err(primary.context(format!("{label}: {error}"))),
+            };
+        }
+    }
+    result
+}
 
 #[cfg(unix)]
 #[derive(Debug)]
@@ -719,8 +809,14 @@ fn install_termination_handlers() -> Result<()> {
     result.map_err(|code| std::io::Error::from_raw_os_error(code).into())
 }
 
+#[cfg(not(windows))]
 fn terminated(signal: i32) -> anyhow::Error {
     TerminatedBySignal(signal).into()
+}
+
+#[cfg(windows)]
+fn terminated(event: ConsoleEvent) -> anyhow::Error {
+    TerminatedByConsole(event).into()
 }
 
 #[cfg(unix)]
@@ -1002,10 +1098,48 @@ fn process_is_zombie(_pid: libc::pid_t) -> bool {
     false
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+struct TerminationSignals {
+    ctrl_c: tokio::signal::windows::CtrlC,
+    ctrl_break: tokio::signal::windows::CtrlBreak,
+    close: tokio::signal::windows::CtrlClose,
+}
+
+#[cfg(windows)]
+impl TerminationSignals {
+    fn new() -> Result<Self> {
+        // One owner is installed before launch parsing and stays alive through
+        // startup and cleanup. Tokio's close handler preserves its callback
+        // thread for the operating system's limited cleanup window.
+        Ok(Self {
+            ctrl_c: tokio::signal::windows::ctrl_c()?,
+            ctrl_break: tokio::signal::windows::ctrl_break()?,
+            close: tokio::signal::windows::ctrl_close()?,
+        })
+    }
+
+    async fn recv(&mut self) -> ConsoleEvent {
+        tokio::select! {
+            biased;
+            _ = self.close.recv() => ConsoleEvent::Close,
+            _ = self.ctrl_break.recv() => ConsoleEvent::CtrlBreak,
+            _ = self.ctrl_c.recv() => ConsoleEvent::CtrlC,
+        }
+    }
+
+    async fn pending_event(&mut self) -> Option<ConsoleEvent> {
+        tokio::select! {
+            biased;
+            event = self.recv() => Some(event),
+            _ = std::future::ready(()) => None,
+        }
+    }
+}
+
+#[cfg(all(not(unix), not(windows)))]
 struct TerminationSignals;
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(windows)))]
 impl TerminationSignals {
     fn new() -> Result<Self> {
         Ok(Self)
@@ -1016,7 +1150,10 @@ impl TerminationSignals {
     }
 }
 
-async fn run(startup: &mut StartupTrace) -> Result<()> {
+async fn run(
+    startup: &mut StartupTrace,
+    #[cfg(windows)] native_termination: &mut TerminationSignals,
+) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
     #[cfg(unix)]
     let supervising_parent = HostSupervisor::for_launch(&arguments)?;
@@ -1044,7 +1181,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             arguments.detached_host,
             "foreground persistent mode is not yet supported on Windows"
         );
-        return windows_host::run(arguments, startup).await;
+        return windows_host::run(arguments, startup, native_termination).await;
     }
 
     // Windows initially supports --wait as a foreground standalone editor.
@@ -1471,9 +1608,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // a more specific startup error on invocations that have no usable TTY.
     let standalone_color_depth =
         (arguments.mode == LaunchMode::Standalone).then(terminal_color_depth);
-    // Preserve and publish the ordinary terminal state before installing the
-    // handler. A signal before installation keeps its safe default disposition;
-    // every signal after installation sees startup protection already armed.
+    // Unix preserves terminal state before installing its signal handler.
+    // Windows already owns its console listeners from before launch parsing;
+    // terminal restoration is handled by the guard during startup and exit.
     let startup_restore = if arguments.mode == LaunchMode::Standalone {
         Some(StartupSignalExit::arm())
     } else {
@@ -1483,7 +1620,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         .as_ref()
         .is_some_and(std::result::Result::is_ok)
     {
-        Some(TerminationSignals::new()?)
+        #[cfg(windows)]
+        {
+            Some(native_termination)
+        }
+        #[cfg(not(windows))]
+        {
+            Some(TerminationSignals::new()?)
+        }
     } else {
         None
     };
@@ -1568,6 +1712,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // returned.
     let color_depth = standalone_color_depth.expect("standalone terminal colour depth");
     let _terminal = standalone_terminal.expect("standalone terminal guard")?;
+    #[cfg(windows)]
+    let termination = standalone_termination
+        .take()
+        .expect("standalone termination signals");
+    #[cfg(not(windows))]
     let mut termination = standalone_termination
         .take()
         .expect("standalone termination signals");
@@ -1650,6 +1799,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // editor keeps working without it, so nothing else reports the loss.
     let mut ended_services: std::collections::HashSet<&'static str> =
         std::collections::HashSet::new();
+    let interactive_outcome: Result<()> = async {
     loop {
         key_hints.expire_at(Instant::now());
         if app.should_quit {
@@ -1964,13 +2114,23 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         })?;
         frame_pending = false;
     }
+    Ok(())
+    }.await;
+    #[cfg(not(windows))]
+    interactive_outcome?;
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
     #[cfg(windows)]
     let catalog_shutdown = services.shutdown_native_catalog().await;
     let plugins_shutdown = app.shutdown_plugins().await;
     #[cfg(windows)]
-    catalog_shutdown?;
+    finish_standalone_native(
+        interactive_outcome,
+        catalog_shutdown,
+        plugins_shutdown,
+        received_signal,
+    )?;
+    #[cfg(not(windows))]
     plugins_shutdown?;
     #[cfg(windows)]
     anyhow::ensure!(
@@ -1987,6 +2147,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
             .write(&directory)
             .context("cannot publish PowerShell directory handoff")?;
     }
+    #[cfg(not(windows))]
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
     }
@@ -6329,6 +6490,7 @@ mod tests {
         assert!(supervisor.exited().unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
     fn process_termination_errors_keep_their_stable_user_messages() {
         assert_eq!(

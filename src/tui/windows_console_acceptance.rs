@@ -1,14 +1,175 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Execute the current binary's private guard test in an isolated console.
+use super::{
+    ConsoleEvent, TerminationSignals, console_closed, finish_standalone_native,
+    prefer_pending_console_close, terminated,
+};
 use runyte::{
     terminal::pty::{Pty, PtyEvent},
     test_support::TestRuntimeRoot,
 };
 use std::{
+    os::windows::{io::AsRawHandle, process::CommandExt},
     process::{Command, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
 };
+use windows_sys::Win32::System::{
+    Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler},
+    Threading::{CREATE_NEW_CONSOLE, WaitForSingleObject},
+};
+
+const NATIVE_EVENT_HELPER: &str = "windows_console_acceptance::native_console_event_helper";
+const NATIVE_EVENT_MODE: &str = "RUNYTE_NATIVE_CONSOLE_EVENT_MODE";
+const NATIVE_EVENT_ROOT: &str = "RUNYTE_NATIVE_CONSOLE_EVENT_ROOT";
+
+struct IsolatedConsoleChild {
+    child: std::process::Child,
+    root: Option<TestRuntimeRoot>,
+}
+
+impl Drop for IsolatedConsoleChild {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            unsafe {
+                WaitForSingleObject(self.child.as_raw_handle(), 5000);
+            }
+            if self.child.try_wait().ok().flatten().is_none() {
+                // The child may still use this storage if its exit could not
+                // be proved. Keep it until the operating system reclaims it.
+                std::mem::forget(self.root.take());
+            }
+        }
+    }
+}
+
+fn run_isolated_console_event(mode: &str) {
+    let root = TestRuntimeRoot::new("native-console-events").unwrap();
+    let log = std::fs::File::create(root.join("event.log")).unwrap();
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", NATIVE_EVENT_HELPER, "--ignored", "--nocapture"])
+        .env(NATIVE_EVENT_MODE, mode)
+        .env(NATIVE_EVENT_ROOT, root.path())
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .creation_flags(CREATE_NEW_CONSOLE)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .unwrap();
+    let mut fixture = IsolatedConsoleChild {
+        child,
+        root: Some(root),
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(status) = fixture.child.try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "isolated console event fixture failed: {}",
+                std::fs::read_to_string(fixture.root.as_ref().unwrap().join("event.log")).unwrap()
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "isolated console event fixture timed out"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.as_ref().unwrap().join("ready")).unwrap(),
+        mode
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.as_ref().unwrap().join("received")).unwrap(),
+        mode
+    );
+}
+
+#[test]
+fn native_ctrl_c_and_ctrl_break_keep_distinct_types_in_isolated_consoles() {
+    run_isolated_console_event("ctrl-c");
+    run_isolated_console_event("ctrl-break");
+}
+
+#[test]
+#[ignore = "reexecuted in its own console by the parent test"]
+fn native_console_event_helper() {
+    let Some(mode) = std::env::var_os(NATIVE_EVENT_MODE) else {
+        return;
+    };
+    let root = std::path::PathBuf::from(std::env::var_os(NATIVE_EVENT_ROOT).unwrap());
+    let mode = mode.to_str().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut events = TerminationSignals::new().unwrap();
+        let (control, expected) = match mode {
+            "ctrl-c" => {
+                // An inherited ignore-Ctrl+C attribute would hide a real
+                // console event even though Tokio's handler is installed.
+                assert_ne!(unsafe { SetConsoleCtrlHandler(None, 0) }, 0);
+                (CTRL_C_EVENT, ConsoleEvent::CtrlC)
+            }
+            "ctrl-break" => (CTRL_BREAK_EVENT, ConsoleEvent::CtrlBreak),
+            _ => panic!("unknown console event fixture mode"),
+        };
+        std::fs::write(root.join("ready"), mode).unwrap();
+        // The helper alone owns this new console. Group zero cannot signal
+        // the shared test runner's console.
+        assert_ne!(unsafe { GenerateConsoleCtrlEvent(control, 0) }, 0);
+        let received = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap();
+        assert_eq!(received, expected);
+        std::fs::write(root.join("received"), mode).unwrap();
+    });
+}
+
+#[test]
+fn console_close_has_separate_error_and_no_dead_console_reporting() {
+    let close = terminated(ConsoleEvent::Close);
+    assert!(console_closed(&close));
+    assert_eq!(close.to_string(), "console closed");
+    for event in [ConsoleEvent::CtrlC, ConsoleEvent::CtrlBreak] {
+        assert!(!console_closed(&terminated(event)));
+    }
+}
+
+#[test]
+fn pending_close_overrides_startup_or_input_failure_after_joined_cleanup() {
+    let startup = prefer_pending_console_close(
+        Err(anyhow::anyhow!("startup failed")),
+        Some(ConsoleEvent::Close),
+    )
+    .unwrap_err();
+    assert!(console_closed(&startup));
+    assert!(format!("{startup:#}").contains("startup failed"));
+
+    let input = finish_standalone_native(
+        Err(anyhow::anyhow!("input failed")),
+        Err(anyhow::anyhow!("catalog joined with error")),
+        Err(anyhow::anyhow!("plugins joined with error")),
+        None,
+    )
+    .unwrap_err();
+    let close = prefer_pending_console_close(Err(input), Some(ConsoleEvent::Close)).unwrap_err();
+    assert!(console_closed(&close));
+    let detail = format!("{close:#}");
+    assert!(detail.contains("input failed"));
+    assert!(detail.contains("catalog joined with error"));
+    assert!(detail.contains("plugins joined with error"));
+
+    let ctrl_c =
+        finish_standalone_native(Ok(()), Ok(()), Ok(()), Some(ConsoleEvent::CtrlC)).unwrap_err();
+    let later_close =
+        prefer_pending_console_close(Err(ctrl_c), Some(ConsoleEvent::Close)).unwrap_err();
+    assert!(console_closed(&later_close));
+}
 
 #[test]
 fn console_guard_runs_in_conpty() {

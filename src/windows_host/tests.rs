@@ -31,3 +31,19 @@ fn cleanup_failures_retain_primary_native_error_and_report_both_services() {
     .unwrap_err();
     assert!(format!("{result:#}").contains("retirement failed"));
 }
+
+#[test]
+fn console_close_keeps_its_type_through_host_cleanup() {
+    let result = finish_cleanup(
+        Err(super::super::terminated(super::super::ConsoleEvent::Close)),
+        Err(anyhow::anyhow!("plugins were joined")),
+        Err(anyhow::anyhow!("catalog was joined")),
+        Err(anyhow::anyhow!("transport was joined")),
+    )
+    .unwrap_err();
+    assert!(super::super::console_closed(&result));
+    let detail = format!("{result:#}");
+    assert!(detail.contains("plugins were joined"));
+    assert!(detail.contains("catalog was joined"));
+    assert!(detail.contains("transport was joined"));
+}

@@ -1471,6 +1471,12 @@ does not bundle that runtime.
 | Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Deferred | Interactive persistent attachment and switching, session restart, plugins and context bridge |
 
+The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
+or detached-host shutdown. Closing that console follows the same cleanup path,
+but Windows may end the process before cleanup finishes; unsaved editor state
+cannot be promised on console close. These console events are separate from
+keys delivered to an integrated ConPTY terminal session.
+
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
 and `:service-health` for diagnostics. Git integration is enabled when a native
