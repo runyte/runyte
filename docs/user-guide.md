@@ -800,7 +800,8 @@ shows their modification markers and visible panes, and opens in recent
 activation order with the current destination selected. That order stays fixed
 while filtering. Names, paths, terminal titles and launch commands match fuzzily;
 matched characters are emphasized. Arrows, Ctrl-p/Ctrl-n and paging select;
-Enter visits; Tab offers resource actions. Printable j, k and q filter.
+Enter visits; Tab offers resource actions. Ctrl-t toggles a bounded preview of
+buffer contents or recent terminal output, initially hidden. Printable j, k and q filter.
 Escape, Ctrl-c or the effective leader with an empty query cancel. Cancellation
 from Terminal Insert resumes child input; visiting a document enters Normal,
 and visiting a live terminal resumes Insert unless it has captured review.

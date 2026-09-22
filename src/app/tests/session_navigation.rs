@@ -58,6 +58,21 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
         "sprs",
         "the rendered picker highlights fuzzy path matches without a preview"
     );
+    key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+    let picker = app.list.as_ref().unwrap();
+    assert!(picker.show_preview);
+    assert!(
+        picker
+            .selected_preview()
+            .unwrap()
+            .contains("secret_document_content")
+    );
+    assert_eq!(picker.filter, "sprs");
+    assert_eq!(selected_destination(&app), OpenDestination::Buffer(parser));
+    app.refresh_navigator();
+    assert!(app.list.as_ref().unwrap().show_preview);
+    key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+    assert!(!app.list.as_ref().unwrap().show_preview);
     key(&mut app, KeyCode::Delete, Modifiers::NONE);
     assert_eq!(
         app.list

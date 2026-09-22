@@ -515,6 +515,7 @@ No new default keybinding is assigned.
 
 ## Session and destination navigation
 
+Navigator `Ctrl-t` toggles a bounded contents preview, initially hidden.
 Runyte adds `Space n` as a complete Navigator binding, with `Ctrl-w n` in all
 editor modes and Terminal Insert. Both read the shared registry; `keys.leader`
 and `keys.window` change dispatch, help and hints together. `Ctrl-w p` returns

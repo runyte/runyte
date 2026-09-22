@@ -138,7 +138,8 @@ impl App {
             format!("Navigator — {context} · Open buffers and terminals"),
             items,
         )
-        .as_manager("visit", "Tab", "actions");
+        .as_manager("visit", "Tab", "actions")
+        .with_preview("Contents");
         picker.show_preview = false;
         self.list = Some(picker);
         self.list_actions = self
@@ -194,7 +195,15 @@ impl App {
                 )
             }
         };
-        PickerItem::new(entry.label, entry.detail, index).with_resource(resource)
+        let preview = match entry.destination {
+            OpenDestination::Buffer(buffer) => super::buffer_preview(&self.buffers[buffer]),
+            OpenDestination::Terminal(id) => {
+                super::terminal_preview(self.terminals.get(id).unwrap())
+            }
+        };
+        PickerItem::new(entry.label, entry.detail, index)
+            .with_resource(resource)
+            .with_preview(preview)
     }
 
     /// Refresh metadata in the opening order with the original action indices.
