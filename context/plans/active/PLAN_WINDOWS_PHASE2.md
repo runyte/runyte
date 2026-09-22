@@ -1190,6 +1190,25 @@ failure evidence and repairs the distinct buffered publication-wait gap; it
 preserves response deadlines and passes six deterministic reader tests. The
 initial-registration cause remains open in `node_conformance_readiness.md`.
 
+Host checkpoint `6bee767` passes native Windows and both Unix plugin-conformance jobs in CI run
+`35649368038`. Its Linux Clippy gate found a leftover test import after the
+semantic-handler extraction, and both macOS test gates rejected the new raw-byte
+filename during fixture creation. The reviewed correction removes the unused
+import, retains that filesystem test on Linux, and adds an actual Unicode
+`OpenBuffers` request on every platform. Unix-wide raw-byte codec coverage stays
+in `native_path.rs`. All nine native host-request tests and all-target Clippy
+pass locally; cross-platform acceptance must rerun with these corrections.
+
+Package 4e.3a extracts shared catalog display/event values and pure history
+numbering/ordering helpers without changing Unix discovery or selectors. Its
+thirteen focused native tests and all-target Clippy pass; independent review
+has no remaining findings. Native publication selectors remain separate from
+the Unix resolver's project-path deduplication.
+Combined native acceptance for this extraction and the CI corrections passes
+formatting, all-target Clippy, and the complete suite: 3,225 tests, zero failures,
+58 ignored entries across 45 libtest/doc-test groups, plus the six native LSP
+transport cases. Build and test concurrency remain one and two respectively.
+
 The catalog adapter will keep presentation values shared but retain native
 publication identities privately beside their observed candidates. Repeated rows
 for one exact process/incarnation/address can merge; distinct publications for
@@ -1206,6 +1225,15 @@ separate from terminal authorization. Native parent discovery must reject a
 parent created after its child before retaining its identity. A process-exit
 watch can use a one-shot registered wait, preserving callback storage and the
 process handle through completed unregistration; it must not add idle polling.
+Design review selected a sticky exit flag plus one Tokio notification task:
+the native callback must not invoke an arbitrary caller's waker, which could
+drop the registration reentrantly and wait for its own callback. The notification
+task owns only shared signal state; the watcher retains registration, callback
+storage and process ownership until completed unregistration. The captured
+runtime must remain alive through watcher teardown. Failed unregistration must
+not free storage still reachable by a native callback. Cancellation, prior exit,
+callback races and reentrant destruction require an owned fixture regression.
+This supervision design is reviewed but not yet implemented.
 Internally detached hosts release launcher ownership only after authenticated
 startup. Console Ctrl+C, Ctrl+Break and close notifications use native event
 identities rather than Unix signal numbers. Console-close cleanup remains

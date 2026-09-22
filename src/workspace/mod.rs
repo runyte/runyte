@@ -9,6 +9,9 @@
 mod buffers;
 #[cfg(unix)]
 mod catalog;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))] // Native catalog callers follow host acceptance.
+mod catalog_values;
 pub mod context;
 mod host;
 mod identity;
