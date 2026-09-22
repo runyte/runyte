@@ -33,6 +33,10 @@ SCOPES = ['terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propo
 CONTROL = re.compile(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)')
 
 
+def compact_presentation(value):
+    return b''.join(CONTROL.sub(b'', value).split())
+
+
 def private_json(path, value):
     with open(path, 'x', opener=lambda name, flags: os.open(name, flags, 0o600)) as target:
         json.dump(value, target)
@@ -150,11 +154,13 @@ class NativeEditor:
         except Exception as error:
             self.errors.append(type(error).__name__)
 
-    def wait_output(self, marker, seconds=15, *, deadline=None):
+    def wait_output(self, marker, seconds=15, *, deadline=None, compact=False):
         deadline = time.monotonic() + seconds if deadline is None else deadline
         while time.monotonic() < deadline:
             with self.lock:
-                if marker.encode() in CONTROL.sub(b'', bytes(self.output)):
+                output = bytes(self.output)
+                rendered = compact_presentation(output) if compact else CONTROL.sub(b'', output)
+                if marker.encode() in rendered:
                     return
             if self.errors:
                 raise AssertionError('Native PTY reader failed: ' + self.errors[0])
@@ -194,8 +200,11 @@ class NativeEditor:
         self.command(terminal_command(marker, stop))
         self.terminal_input = True
         self.wait_output(marker, deadline=deadline)
-        self.command('terminal-rename ' + name)
-        self.wait_output('named ' + name, deadline=deadline)
+        rename_command = 'terminal-rename ' + name
+        rename_marker = 'named' + name
+        assert rename_marker.encode() not in compact_presentation(rename_command.encode())
+        self.command(rename_command)
+        self.wait_output(rename_marker, deadline=deadline, compact=True)
 
     def detach(self):
         self.command('detach')
@@ -329,6 +338,12 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
         rendered = command.encode().replace(b' ', b'\x1b[2D')
         self.assertNotIn(marker.encode(), CONTROL.sub(b'', rendered))
 
+    def test_compact_rename_status_survives_cursor_moved_gaps_but_command_cannot_match(self):
+        marker = b'namedClaude'
+        status = b'terminal 1 named\x1b[2D Claude'
+        self.assertIn(marker, compact_presentation(status))
+        self.assertNotIn(marker, compact_presentation(b'terminal-rename Claude'))
+
     def test_terminal_waits_for_child_output_and_rename_acknowledgement(self):
         with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
             editor = NativeEditor.__new__(NativeEditor)
@@ -338,18 +353,21 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
             editor.terminal_input = False
             events = []
             editor.command = lambda command: events.append(('command', command))
-            editor.wait_output = lambda marker, **kwargs: events.append(('output', marker, kwargs['deadline']))
+            editor.wait_output = lambda marker, **kwargs: events.append(
+                ('output', marker, kwargs['deadline'], kwargs))
             editor.terminal('Claude', 'CLAUDE_LIVE_MARKER')
             self.assertEqual([event[:2] for event in events if event[0] == 'output'], [
                 ('output', 'CLAUDE_LIVE_MARKER'),
-                ('output', 'named Claude'),
+                ('output', 'namedClaude'),
             ])
             self.assertEqual(events[1][2], events[3][2])
+            self.assertNotIn('compact', events[1][3])
+            self.assertTrue(events[3][3]['compact'])
             self.assertEqual([event[:2] for event in events], [
                 ('command', terminal_command('CLAUDE_LIVE_MARKER', editor.stop_files[0])),
                 ('output', 'CLAUDE_LIVE_MARKER'),
                 ('command', 'terminal-rename Claude'),
-                ('output', 'named Claude'),
+                ('output', 'namedClaude'),
             ])
 
 
