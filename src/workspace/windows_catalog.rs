@@ -5,6 +5,7 @@
 //! Discovery stays read-only; explicit history transactions are separate.
 //! No stale deletion, service or CLI availability is enabled here.
 
+use super::catalog_values::PublicationKey;
 pub use super::catalog_values::{WorkspaceRow, abbreviated_id_width};
 mod history;
 use super::{
@@ -20,7 +21,7 @@ pub use history::{
     snapshot_with_history, snapshot_with_history_in_scope,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::{Component, Path, PathBuf, Prefix},
     sync::Arc,
     time::Duration,
@@ -209,14 +210,14 @@ fn add_scan(observations: &mut Vec<Candidate>, scan: Scan) -> Result<()> {
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
-struct PublicationKey {
+struct PublicationIdentity {
     project: Vec<u8>,
     pid: u32,
     creation: u64,
     incarnation: String,
     pipe: String,
 }
-impl From<&EndpointMetadata> for PublicationKey {
+impl From<&EndpointMetadata> for PublicationIdentity {
     fn from(metadata: &EndpointMetadata) -> Self {
         Self {
             project: metadata.project_root_bytes.clone(),
@@ -228,8 +229,8 @@ impl From<&EndpointMetadata> for PublicationKey {
     }
 }
 
-fn group(observations: Vec<Candidate>) -> Result<BTreeMap<PublicationKey, Vec<Candidate>>> {
-    let mut grouped: BTreeMap<PublicationKey, Vec<Candidate>> = BTreeMap::new();
+fn group(observations: Vec<Candidate>) -> Result<BTreeMap<PublicationIdentity, Vec<Candidate>>> {
+    let mut grouped: BTreeMap<PublicationIdentity, Vec<Candidate>> = BTreeMap::new();
     for candidate in observations {
         let copies = grouped.entry(candidate.metadata().into()).or_default();
         if let Some(previous) = copies.first() {
@@ -253,6 +254,7 @@ async fn build_snapshot(
         stale: Vec::new(),
         absent_projects: Vec::new(),
     };
+    let mut selections = HashSet::new();
     let mut health_bytes = 0;
     for observations in group(observations)?.into_values() {
         let candidate = &observations[0];
@@ -274,6 +276,13 @@ async fn build_snapshot(
         ensure!(
             peer.is_alive()?,
             "native catalog host exited during observation"
+        );
+        row.publication_key = Some(PublicationKey::from_authenticated_metadata(
+            candidate.metadata(),
+        ));
+        ensure!(
+            selections.insert(row.selection()),
+            "native catalog contains duplicate publication selection identity"
         );
         // A metadata hint must not trigger UNC/device traversal merely to
         // decorate a listing. Native configured publications require local paths.
@@ -348,6 +357,7 @@ async fn inspect(
 
 fn row(metadata: &EndpointMetadata) -> Result<WorkspaceRow> {
     Ok(WorkspaceRow {
+        publication_key: None,
         id: metadata.id.clone(),
         name: metadata.name.clone(),
         project_root: metadata.project_root()?,

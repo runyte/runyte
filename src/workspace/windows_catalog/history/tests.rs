@@ -361,10 +361,33 @@ fn same_project_publications_stay_distinct_ambiguous_and_unnumbered() {
             answer(&mut a, health()),
             answer(&mut b, health())
         );
-        let result = result.unwrap();
+        let mut result = result.unwrap();
         assert_eq!(result.entries().len(), 2);
         assert!(result.select(left.project_root(), None).is_err());
         assert!(result.select(Path::new(&a.metadata().id), None).is_err());
+        let first = result
+            .entries()
+            .iter()
+            .find(|entry| entry.row().name.as_deref() == Some("first"))
+            .unwrap()
+            .row()
+            .selection();
+        let second = result
+            .entries()
+            .iter()
+            .find(|entry| entry.row().name.as_deref() == Some("second"))
+            .unwrap()
+            .row()
+            .selection();
+        assert_ne!(first, second);
+        assert_eq!(first.project_root(), second.project_root());
+        for (selection, expected) in [(&first, a.metadata()), (&second, b.metadata())] {
+            let index = result.select_selection(selection).unwrap().unwrap();
+            let HistoryTarget::Live { publication, .. } = result.target(index).unwrap() else {
+                panic!("selected native row lost its live publication")
+            };
+            assert_eq!(publication.metadata(), expected);
+        }
         for entry in result.entries() {
             assert_eq!(entry.row().number, None);
             assert_eq!(entry.row().last_active_unix_seconds, None);
@@ -382,8 +405,32 @@ fn same_project_publications_stay_distinct_ambiguous_and_unnumbered() {
                 .is_none()
         );
         assert_eq!(fs::read(&history).unwrap(), before);
+        let duplicate = HistoryEntry {
+            row: result.entries[0].row.clone(),
+            live_index: result.entries[0].live_index,
+        };
+        result.entries.push(duplicate);
+        assert!(
+            result
+                .select_selection(&result.entries[0].row.selection())
+                .is_err()
+        );
+        drop(result);
         a.shutdown().await.unwrap();
         b.shutdown().await.unwrap();
+        let (_, mut replacement) = server(&left, "replacement");
+        let (later, ()) = tokio::join!(
+            snapshot_with_history(&left, Path::new(".runyte"), true),
+            answer(&mut replacement, health())
+        );
+        let later = later.unwrap();
+        assert!(later.select_selection(&first).unwrap().is_none());
+        assert!(later.select_selection(&second).unwrap().is_none());
+        let current = later.entries()[0].row().selection();
+        assert_ne!(current, first);
+        assert_ne!(current, second);
+        assert_eq!(later.select_selection(&current).unwrap(), Some(0));
+        replacement.shutdown().await.unwrap();
     });
 }
 

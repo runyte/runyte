@@ -707,6 +707,7 @@ async fn refresh_options(
             continue;
         }
         rows.push(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id,
@@ -789,6 +790,7 @@ async fn published_row(
     let host = endpoint.published_host().ok().flatten()?;
     if !host.speaks_current_protocol() {
         return Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -817,6 +819,7 @@ async fn published_row(
     }
     let inspection = inspect_endpoint(&endpoint).await;
     Some(WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: host.id,
@@ -882,6 +885,7 @@ async fn inspect_workspace_target(
         .and_then(|entry| entry.number);
     if !host.speaks_current_protocol() {
         return Ok(Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -907,6 +911,7 @@ async fn inspect_workspace_target(
     }
     let inspection = inspect_endpoint_strict(&endpoint).await?;
     Ok(Some(WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: host.id,
@@ -976,6 +981,7 @@ fn published_endpoint(
 async fn inspect_host_with_attention(host: RegisteredHost, attention: bool) -> WorkspaceRow {
     if !host.speaks_current_protocol() {
         return WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -1005,6 +1011,7 @@ async fn inspect_host_with_attention(host: RegisteredHost, attention: bool) -> W
         HostInspection::default()
     };
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: inspection.unread_terminals,
         terminal_bell: inspection.terminal_bell,
         id: host.id,
@@ -1399,6 +1406,7 @@ mod tests {
         let rows = ids
             .iter()
             .map(|id| WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: (*id).to_owned(),
@@ -2511,6 +2519,7 @@ mod tests {
         let id_target = id_target.canonicalize().unwrap();
         let rows = vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "11111111111111111111111111111111".to_owned(),
@@ -2534,6 +2543,7 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "22222222222222222222222222222222".to_owned(),
@@ -2557,6 +2567,7 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "abcdef0123456789abcdef0123456789".to_owned(),
@@ -2625,6 +2636,7 @@ mod tests {
         let first = first.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
@@ -2676,6 +2688,7 @@ mod tests {
         let workspace = workspace.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
@@ -2958,6 +2971,7 @@ mod tests {
         // while a stopped row with nothing left to open stays out of one.
         let entries = read_recents(Some(&path)).unwrap();
         let mut rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -3027,6 +3041,7 @@ mod tests {
     /// One listing row, in whatever running state the numbering is about.
     fn numbering_row(project_root: &Path, running: bool) -> WorkspaceRow {
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),

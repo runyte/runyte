@@ -4,6 +4,7 @@
 //! Display identity never replaces the live publication's retained proof.
 
 use super::{CatalogEntry, CatalogSnapshot, WorkspaceRow, select_indices, snapshot_locations};
+use crate::workspace::WorkspaceSelection;
 use crate::workspace::{
     catalog_values::{apply_recent_activity, assign_running_workspace_numbers},
     recent_history::{RecentEntry, read_recents},
@@ -104,6 +105,23 @@ impl HistorySnapshot {
             matches.len() <= 1,
             "workspace selector {} matches multiple native publications or history entries",
             selector.display()
+        );
+        Ok(matches.first().copied())
+    }
+
+    /// Resolves an already displayed row only within this retained complete
+    /// snapshot. A replaced publication never falls back to its project,
+    /// name, workspace ID or PID.
+    pub fn select_selection(&self, selection: &WorkspaceSelection) -> Result<Option<usize>> {
+        let matches = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| (entry.row.selection() == *selection).then_some(index))
+            .collect::<Vec<_>>();
+        ensure!(
+            matches.len() <= 1,
+            "native catalog contains duplicate selection identity"
         );
         Ok(matches.first().copied())
     }
@@ -259,6 +277,7 @@ fn merge(
 
 fn stopped(entry: &RecentEntry) -> WorkspaceRow {
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: crate::workspace::workspace_id(&entry.project_root),

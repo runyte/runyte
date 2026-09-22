@@ -70,6 +70,7 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
         required_authorization: DeletionAuthorization::Enter,
     };
     let row = |unsaved_buffers| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "linked".to_owned(),
@@ -177,6 +178,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
         1,
         target.clone(),
         Ok(Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "linked".to_owned(),
@@ -1450,6 +1452,7 @@ fn session_terminal_output_status_requires_every_live_terminal_to_be_quiet() {
                live_terminals,
                terminal_sessions,
                terminal_line_activity_unix_seconds| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1516,6 +1519,7 @@ fn an_open_session_manager_transitions_into_and_out_of_quiet() {
         .unwrap()
         .as_secs();
     let row = |line_activity| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1597,6 +1601,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         .as_secs();
     let rows = vec![
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1620,6 +1625,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             missing_directory: false,
         },
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -1713,6 +1719,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 5,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1779,6 +1786,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
             .as_secs();
         let rows = vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1802,6 +1810,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -1825,6 +1834,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "cccccccccccccccc".to_owned(),
@@ -1927,6 +1937,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
         generation: 6,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1950,6 +1961,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2019,6 +2031,7 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 7,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2084,6 +2097,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 3,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2205,6 +2219,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 1,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2275,6 +2290,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
         generation: 2,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2298,6 +2314,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2371,6 +2388,7 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
             .zip(numbers)
             .zip(names)
             .map(|((project_root, number), name)| WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: format!("{name}00000000000000"),
@@ -2653,6 +2671,7 @@ fn workspace_actions_match_the_selected_session_state() {
         generation: 9,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2676,6 +2695,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2800,6 +2820,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
     let rows = |running: bool| {
         vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2823,6 +2844,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -3289,6 +3311,7 @@ fn worktree_removal_refuses_current_locked_bare_and_unavailable_rows_before_conf
 #[cfg(unix)]
 fn navigation_row(path: PathBuf, running: bool, number: Option<u8>) -> WorkspaceRow {
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: crate::workspace::workspace_id(&path),

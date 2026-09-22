@@ -107,6 +107,7 @@ fn replica_sources_form_one_authenticated_entry_with_health_and_no_history_write
         let entry = &result.entries()[0];
         assert_eq!(entry.observations().len(), 3);
         assert_eq!(entry.peer().identity(), host.metadata().process);
+        assert!(entry.row().publication_key.is_some());
         assert_eq!(entry.row().unsaved_buffers, Some(2));
         assert_eq!(entry.row().pending_wait_requests, Some(1));
         assert!(!entry.row().missing_directory);

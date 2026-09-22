@@ -60,6 +60,97 @@ fn row_presentation_reports_protocol_and_explicit_or_directory_name() {
     assert_eq!(row.state_label(), "stopped");
 }
 
+#[test]
+fn project_only_rows_keep_selection_across_presentation_and_running_state() {
+    let root = Path::new("projects/notes");
+    let running = numbering_row(root, true);
+    let mut stopped = numbering_row(root, false);
+    stopped.name = Some("renamed".to_owned());
+    stopped.unsaved_buffers = Some(3);
+    assert_eq!(running.selection(), stopped.selection());
+    assert_eq!(running.selection().publication_key(), None);
+    assert_eq!(running.selection().project_root(), root);
+    assert_ne!(
+        running.selection(),
+        numbering_row(Path::new("projects/other"), true).selection()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn native_publication_key_uses_exact_framed_tuple_without_mutable_display_fields() {
+    use crate::workspace::{
+        windows_endpoint::{EndpointMetadata, PipeAddress},
+        windows_process_identity::ProcessIdentity,
+    };
+
+    let mut metadata = EndpointMetadata {
+        protocol: 1,
+        id: "display-id".to_owned(),
+        name: Some("old".to_owned()),
+        // An unpaired surrogate distinguishes exact native bytes from a
+        // lossy path string. Key construction never decodes this field.
+        project_root_bytes: vec![b'C', 0, b':', 0, b'\\', 0, 0xff, 0xd8],
+        process: ProcessIdentity {
+            pid: 123,
+            creation_time: 456,
+        },
+        incarnation: "a".repeat(64),
+        address: PipeAddress::try_from(format!(r"\\.\pipe\runyte-v1-{}", "b".repeat(64))).unwrap(),
+    };
+    let original = PublicationKey::from_authenticated_metadata(&metadata);
+    assert_eq!(
+        original,
+        PublicationKey::from_authenticated_metadata(&metadata)
+    );
+
+    metadata.name = Some("new".to_owned());
+    metadata.id = "another-display-id".to_owned();
+    metadata.protocol = 99;
+    assert_eq!(
+        original,
+        PublicationKey::from_authenticated_metadata(&metadata)
+    );
+
+    let mut changed = metadata.clone();
+    changed.project_root_bytes.push(0);
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+    changed = metadata.clone();
+    changed.project_root_bytes[6] = 0xfe;
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+    changed = metadata.clone();
+    changed.process.pid += 1;
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+    changed = metadata.clone();
+    changed.process.creation_time += 1;
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+    changed = metadata.clone();
+    changed.incarnation = "c".repeat(64);
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+    changed = metadata.clone();
+    changed.address =
+        PipeAddress::try_from(format!(r"\\.\pipe\runyte-v1-{}", "d".repeat(64))).unwrap();
+    assert_ne!(
+        original,
+        PublicationKey::from_authenticated_metadata(&changed)
+    );
+}
+
 fn entry(project_root: PathBuf, name: Option<String>) -> RecentEntry {
     RecentEntry::new(project_root, name, None, None)
 }
@@ -67,6 +158,7 @@ fn entry(project_root: PathBuf, name: Option<String>) -> RecentEntry {
 /// One listing row, in whatever running state the numbering is about.
 fn numbering_row(project_root: &Path, running: bool) -> WorkspaceRow {
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -130,6 +222,7 @@ fn recent_names_fill_unnamed_running_rows_without_overriding_explicit_names() {
     let explicit_root = PathBuf::from("/workspace/explicit");
     let mut rows = vec![
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
@@ -153,6 +246,7 @@ fn recent_names_fill_unnamed_running_rows_without_overriding_explicit_names() {
             missing_directory: false,
         },
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "22222222222222222222222222222222".to_owned(),

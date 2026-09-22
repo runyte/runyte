@@ -61,6 +61,8 @@ pub use catalog::{
     record_workspace_activity, recorded_workspace_number, rename_known_workspace,
     resolve_known_workspace, resolve_known_workspace_from_directory,
 };
+#[cfg(any(unix, windows))]
+pub use catalog_values::{PublicationKey, WorkspaceSelection};
 pub use host::{
     BufferRequestError, FrameId, HostCommand, HostEvent, HostFrame, HostInputOutcome,
     HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,

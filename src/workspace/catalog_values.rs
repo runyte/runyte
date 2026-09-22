@@ -10,7 +10,62 @@ use super::{
 };
 use crate::git::WorkspaceGitFacts;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Stable lookup identity for one observed native publication. This digest
+/// carries no authority to connect to or control its process.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PublicationKey([u8; 32]);
+
+impl PublicationKey {
+    /// Hashes the exact publication tuple after peer-authenticated discovery.
+    /// Length framing prevents neighboring variable fields from aliasing.
+    #[cfg(windows)]
+    pub(crate) fn from_authenticated_metadata(
+        metadata: &super::windows_endpoint::EndpointMetadata,
+    ) -> Self {
+        fn field(bytes: &mut Vec<u8>, value: &[u8]) {
+            bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(value);
+        }
+
+        const DOMAIN: &[u8] = b"runyte.native-publication-selection.v1";
+        let mut bytes = Vec::with_capacity(
+            DOMAIN.len()
+                + 5 * 8
+                + 4
+                + 8
+                + metadata.project_root_bytes.len()
+                + metadata.incarnation.len()
+                + metadata.address.as_str().len(),
+        );
+        bytes.extend_from_slice(DOMAIN);
+        field(&mut bytes, &metadata.project_root_bytes);
+        field(&mut bytes, &metadata.process.pid.to_le_bytes());
+        field(&mut bytes, &metadata.process.creation_time.to_le_bytes());
+        field(&mut bytes, metadata.incarnation.as_bytes());
+        field(&mut bytes, metadata.address.as_str().as_bytes());
+        Self(crate::hash::sha256(&bytes))
+    }
+}
+
+/// Identity of one displayed row. Project rows retain the Unix and stopped
+/// history meaning; live native rows additionally name their publication.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorkspaceSelection {
+    project_root: PathBuf,
+    publication_key: Option<PublicationKey>,
+}
+
+impl WorkspaceSelection {
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    pub fn publication_key(&self) -> Option<PublicationKey> {
+        self.publication_key
+    }
+}
 
 /// The number of workspace-ID characters a listing shows by default.
 ///
@@ -54,6 +109,9 @@ pub fn abbreviated_id_width<'a>(ids: impl IntoIterator<Item = &'a str>) -> usize
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceRow {
+    /// Opaque current-publication lookup identity. Native live rows set this
+    /// after authenticated discovery; Unix and stopped rows leave it absent.
+    pub publication_key: Option<PublicationKey>,
     pub unread_terminals: Option<usize>,
     pub terminal_bell: Option<bool>,
     pub id: String,
@@ -99,6 +157,13 @@ pub struct WorkspaceRow {
 }
 
 impl WorkspaceRow {
+    pub fn selection(&self) -> WorkspaceSelection {
+        WorkspaceSelection {
+            project_root: self.project_root.clone(),
+            publication_key: self.publication_key,
+        }
+    }
+
     /// The one wording for a workspace's state, so the CLI listing and the
     /// editor's picker cannot describe the same row differently.
     pub fn state_label(&self) -> String {

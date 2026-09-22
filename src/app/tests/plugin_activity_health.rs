@@ -180,6 +180,7 @@ fn active_plugin_jobs_share_the_standalone_quit_guard() {
 #[test]
 fn activity_health_session_status_and_preview_keep_protected_owners_visible() {
     let mut row = WorkspaceRow {
+        publication_key: None,
         id: "test".into(),
         name: None,
         number: None,
