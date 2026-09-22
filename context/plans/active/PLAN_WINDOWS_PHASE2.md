@@ -988,6 +988,9 @@ unchanged. The fixture repair is `1ab8ff5`; all 118 command tests pass. Final
 formatting, all-target Clippy and the complete serialized native suite pass:
 3,140 tests, zero failures and 55 ignored fixture/performance entries across
 44 libtest/doc-test groups, plus six native transport acceptance cases.
+Cross-platform CI passes at `7622370` in
+[run 35642303991](https://github.com/runyte/runyte/actions/runs/35642303991),
+including native Windows and both unchanged Unix coverage gates.
 
 Package 4c adds native lifecycle control without enabling frontend commands.
 Connect, Hello and validated Welcome share one two-second deadline; each rename
@@ -1011,6 +1014,50 @@ Clippy and the complete serialized native suite pass: 3,149 tests, zero failures
 and 56 ignored fixture/performance entries across 44 libtest/doc-test groups,
 plus six native transport acceptance cases. Host, catalog and frontend wiring
 remain separate packages.
+
+Control checkpoint `6fb305f` passes all jobs in
+[CI run 35643974533](https://github.com/runyte/runyte/actions/runs/35643974533),
+including native Windows and both unchanged Unix coverage gates.
+
+Package 4d adds a provisional detached-startup owner using the existing isolated
+inheritance boundary. Exact configured observations are checked first; occupied,
+malformed or indeterminate records do not authorize a duplicate launch. One
+five-second readiness budget covers bounded authenticated probes. Failure and
+cancellation keep whole-job cleanup armed. A competing winner must be outside
+that job and is checked again after owned loser cleanup.
+
+Successful handoff compares the actual peer with the created process, checks
+identity, liveness and job membership, then clears kill-on-close and enables
+explicit breakaway on only that private startup job. There is no await between
+that change and returning success. Existing service and ConPTY jobs retain
+their restrictions. External ancestor jobs may still constrain lifetime even
+when an inner breakaway succeeds; no complete escape is promised. Standard
+handles are NUL and explicit log configuration is forwarded; failures before
+logging begins provide exit status rather than captured stderr. Arguments are
+native and literal, including an explicit `--` before targets.
+
+Independent review has zero remaining findings after correcting final winner
+checks, preserving typed missing-executable diagnostics, and strengthening
+whole-tree fixture ownership across detached handoff. Thirteen behavior tests
+and two compiled fixtures are under native validation. The fixture's restrictive
+outer job retains cleanup authority while still proving that a released second
+host survives its immediate launcher process.
+
+Native acceptance found that Cargo's inherited job policy can refuse detached
+surrogate creation even when the same executable succeeds from the surrounding
+terminal. The spawn diagnostic now identifies that exact CreateProcessW stage
+and preserves its native error chain. Spawning tests use a separately owned
+compiled wrapper with an allowed inner job and restrictive outer cleanup job;
+they neither modify the test runner's job nor weaken production breakaway policy.
+Job accounting also reached zero before a retained process handle signaled exit.
+Provisional cleanup therefore observes both empty accounting and leader exit
+before inspecting stale records. Fixtures separately observe retained descendant
+handles and mark protocol replacement before testing incompatible readiness.
+All corrections passed independent review with zero remaining findings. The
+focused startup suite passes all thirteen behavior tests. Formatting, all-target
+Clippy and the complete native suite pass with one Cargo build job and two test
+threads: 3,162 tests, zero failures and 58 ignored fixture/performance entries
+across 44 libtest/doc-test groups, plus six native LSP transport acceptance cases.
 
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,

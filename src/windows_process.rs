@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Native process ownership shared by terminals and background services.
-//! A job has no breakaway permission and closes every owned descendant.
+//! Service and provisional startup jobs forbid breakaway and close descendants.
+//! Only an authenticated detached startup releases its own private job, allowing
+//! later explicit breakaway; inherited external jobs retain their own policies.
 
 pub(crate) mod overlapped;
 
@@ -147,6 +149,16 @@ pub(crate) struct Child {
     job: OwnedHandle,
 }
 impl Child {
+    #[cfg(test)]
+    pub(crate) fn fixture_process_handle(&self) -> HANDLE {
+        self.process.as_raw_handle()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_job_handle(&self) -> HANDLE {
+        self.job.as_raw_handle()
+    }
+
     pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } {
             WAIT_TIMEOUT => Ok(None),
@@ -209,6 +221,14 @@ fn pipe(parent_reads: bool) -> io::Result<(OwnedHandle, OwnedHandle)> {
 struct InheritanceParent(OwnedHandle);
 impl InheritanceParent {
     fn new(job: &OwnedHandle, directory: Option<&[u16]>) -> io::Result<Self> {
+        Self::with_creation_flags(job, directory, 0)
+    }
+
+    fn with_creation_flags(
+        job: &OwnedHandle,
+        directory: Option<&[u16]>,
+        extra_flags: u32,
+    ) -> io::Result<Self> {
         let executable = std::env::current_exe()?;
         let application = crate::windows_fs::wide(&executable)?;
         let mut line = command_line(executable.as_os_str(), [])?;
@@ -228,7 +248,7 @@ impl InheritanceParent {
                 ptr::null(),
                 ptr::null(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | extra_flags,
                 ptr::null(),
                 directory.map_or(ptr::null(), |value| value.as_ptr()),
                 &startup.StartupInfo,
@@ -236,7 +256,16 @@ impl InheritanceParent {
             )
         } == 0
         {
-            return Err(io::Error::last_os_error());
+            let error = io::Error::last_os_error();
+            return Err(if extra_flags & CREATE_BREAKAWAY_FROM_JOB != 0 {
+                io::Error::new(
+                    error.kind(),
+                    anyhow::Error::new(error)
+                        .context("CreateProcessW could not create the detached inheritance parent"),
+                )
+            } else {
+                error
+            });
         }
         let parent = Self(owned(info.hProcess)?);
         drop(owned(info.hThread)?);
@@ -302,6 +331,16 @@ fn spawn_with_stdio_inner(
     pipe_stdin: bool,
     stdio: Option<[OwnedHandle; 3]>,
     before_create: impl FnOnce(HANDLE, HANDLE),
+) -> io::Result<Child> {
+    spawn_with_policy(command, pipe_stdin, stdio, before_create, false)
+}
+
+fn spawn_with_policy(
+    command: &Command,
+    pipe_stdin: bool,
+    stdio: Option<[OwnedHandle; 3]>,
+    before_create: impl FnOnce(HANDLE, HANDLE),
+    detached: bool,
 ) -> io::Result<Child> {
     let program = std::path::Path::new(command.get_program());
     if !program.is_absolute()
@@ -371,7 +410,17 @@ fn spawn_with_stdio_inner(
             )
         }
     };
-    let parent = InheritanceParent::new(&job, directory.as_deref())?;
+    let parent = if detached {
+        // Native policy decides whether inherited jobs permit breakaway. Do not
+        // retry without this flag: that would silently undo detached ownership.
+        InheritanceParent::with_creation_flags(
+            &job,
+            directory.as_deref(),
+            CREATE_BREAKAWAY_FROM_JOB,
+        )?
+    } else {
+        InheritanceParent::new(&job, directory.as_deref())?
+    };
     let handles = [
         parent.inherit(&stdio[0])?,
         parent.inherit(&stdio[1])?,
@@ -432,6 +481,142 @@ fn same_name(left: &OsStr, right: &OsStr) -> bool {
         &right.encode_wide().collect::<Vec<_>>(),
     )
     .is_eq()
+}
+
+/// Owns a provisional detached host and all its descendants until the caller
+/// authenticates readiness. This is deliberately separate from Git/LSP Child:
+/// observing leader exit does not release or kill the provisional job.
+pub(crate) struct StartupChild {
+    child: Child,
+    armed: bool,
+}
+
+impl StartupChild {
+    pub(crate) fn spawn(command: &Command) -> io::Result<Self> {
+        // No launch-lifetime pipe reader remains after successful handoff.
+        // Log configuration is passed explicitly in argv by the lifecycle.
+        let input: OwnedHandle = std::fs::OpenOptions::new().read(true).open("NUL")?.into();
+        let output: OwnedHandle = std::fs::OpenOptions::new().write(true).open("NUL")?.into();
+        let error: OwnedHandle = std::fs::OpenOptions::new().write(true).open("NUL")?.into();
+        Ok(Self {
+            child: spawn_with_policy(
+                command,
+                false,
+                Some([input, output, error]),
+                |_, _| {},
+                true,
+            )?,
+            armed: true,
+        })
+    }
+
+    pub(crate) fn handle(&self) -> HANDLE {
+        self.child.process.as_raw_handle()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn job_handle(&self) -> HANDLE {
+        self.child.job.as_raw_handle()
+    }
+
+    pub(crate) fn exit_status(&self) -> io::Result<Option<ExitStatus>> {
+        match unsafe { WaitForSingleObject(self.handle(), 0) } {
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_OBJECT_0 => {
+                let mut code = 0;
+                if unsafe { GetExitCodeProcess(self.handle(), &mut code) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(Some(ExitStatus::from_raw(code)))
+            }
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    pub(crate) fn contains_process(&self, process: HANDLE) -> io::Result<bool> {
+        let mut value = 0;
+        if unsafe { IsProcessInJob(process, self.child.job.as_raw_handle(), &mut value) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(value != 0)
+    }
+
+    pub(crate) fn terminate(&self) -> io::Result<()> {
+        if unsafe { TerminateJobObject(self.child.job.as_raw_handle(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn job_is_empty(&self) -> io::Result<bool> {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                self.child.job.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                size_of_val(&info) as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info.ActiveProcesses == 0)
+    }
+
+    /// Caller must have authenticated the actual created host immediately
+    /// before this synchronous commit. There must be no await before returning
+    /// successful readiness after the private job's kill flag is cleared.
+    pub(crate) fn release(&mut self) -> io::Result<()> {
+        if self.exit_status()?.is_some() || !self.contains_process(self.handle())? {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "startup host exited before ownership handoff",
+            ));
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                self.child.job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of_val(&limits) as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        limits.BasicLimitInformation.LimitFlags &= !JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // Only this authenticated startup job becomes breakaway-capable. The
+        // released host may later start another independently detached host;
+        // terminal/background jobs retain their existing no-breakaway policy.
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+        if unsafe {
+            SetInformationJobObject(
+                self.child.job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of_val(&limits) as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        self.armed = false;
+        Ok(())
+    }
+}
+
+impl Drop for StartupChild {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.terminate();
+        }
+        // Kill-on-close remains armed on all failure/cancellation paths. Native
+        // process teardown completes asynchronously; no worker is detached.
+    }
 }
 
 #[cfg(test)]

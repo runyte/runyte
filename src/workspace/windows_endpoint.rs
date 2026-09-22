@@ -161,6 +161,17 @@ impl EndpointLocation {
         self.directory.join(READY_NAME)
     }
 
+    pub fn project_root(&self) -> &Path {
+        &self.project
+    }
+
+    /// Exact configured keys, including this namespace's inventory entry.
+    /// Does not enumerate or infer a hidden host's namespace.
+    pub fn observe_registrations(&self) -> io::Result<Scan> {
+        self.registries
+            .observe(&crate::workspace::workspace_id(&self.project))
+    }
+
     /// Acquire identity locks before endpoint-directory preparation. Resource
     /// classes always order identity first, then registry; each class uses
     /// native file-identity ordering across every configured registry root.

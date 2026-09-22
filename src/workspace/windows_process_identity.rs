@@ -153,7 +153,7 @@ fn classify_open_error(error: io::Error) -> io::Result<PinResult> {
     }
 }
 
-fn identity_for_handle(process: HANDLE, pid: u32) -> io::Result<ProcessIdentity> {
+pub(super) fn identity_for_handle(process: HANDLE, pid: u32) -> io::Result<ProcessIdentity> {
     let mut creation: FILETIME = unsafe { std::mem::zeroed() };
     let mut exit: FILETIME = unsafe { std::mem::zeroed() };
     let mut kernel: FILETIME = unsafe { std::mem::zeroed() };

@@ -36,6 +36,8 @@ pub mod windows_pipe;
 #[cfg(windows)]
 pub mod windows_process_identity;
 #[cfg(windows)]
+pub mod windows_startup;
+#[cfg(windows)]
 pub mod windows_transport;
 
 pub use buffers::{
