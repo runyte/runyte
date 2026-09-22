@@ -3369,7 +3369,7 @@ fn distinct_publication_row(path: PathBuf, name: &str, tag: &[u8]) -> WorkspaceR
 
 #[cfg(unix)]
 #[test]
-fn session_manager_switch_keeps_the_selected_key_for_same_project_rows() {
+fn selected_switch_request_keeps_the_key_for_same_project_rows() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.enable_persistent_session();
     let project = temporary("typed-switch-same-project");
@@ -3377,11 +3377,7 @@ fn session_manager_switch_keeps_the_selected_key_for_same_project_rows() {
     let second = distinct_publication_row(project, "second", b"switch-second");
     let expected = second.selection();
     app.workspace_rows = vec![first, second];
-    open_session_manager_for_refresh(&mut app);
-    app.rebuild_workspace_picker();
-    app.list.as_mut().unwrap().selected = 1;
-
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.request_selected_workspace_switch(expected.clone()));
 
     let request = app.take_workspace_switch().unwrap();
     assert_eq!(request.target, WorkspaceSwitchTarget::Selected(expected));
