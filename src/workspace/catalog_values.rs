@@ -34,7 +34,7 @@ impl PublicationKey {
     /// Hashes the exact publication tuple after peer-authenticated discovery.
     /// Length framing prevents neighboring variable fields from aliasing.
     #[cfg(windows)]
-    pub(crate) fn from_authenticated_metadata(
+    pub fn from_authenticated_metadata(
         metadata: &super::windows_endpoint::EndpointMetadata,
     ) -> Self {
         fn field(bytes: &mut Vec<u8>, value: &[u8]) {

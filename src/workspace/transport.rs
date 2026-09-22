@@ -3452,6 +3452,13 @@ mod tests {
             &ClientRequest::Health,
             ClientRole::Control,
         ));
+        for request in [
+            ClientRequest::NativeSwitchCommit { receipt: 1 },
+            ClientRequest::NativeSwitchAbort { receipt: 1 },
+        ] {
+            assert!(request_allowed_for_role(&request, ClientRole::Interactive));
+            assert!(!request_allowed_for_role(&request, ClientRole::Control));
+        }
         let (root, endpoint) = endpoint("role-request");
         let Some(mut server) = bind_or_skip(&endpoint).await else {
             drop(root);

@@ -33,6 +33,12 @@ pub(super) enum Incoming {
     ProtocolError(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NativeSwitchAction {
+    Commit { owner: u64, receipt: u64 },
+    Abort { owner: u64, receipt: u64 },
+}
+
 pub(super) struct ConnectedPeer {
     pub(super) id: u64,
     pub(super) proof: Arc<PinnedProcess>,
@@ -58,6 +64,8 @@ pub(super) struct Clients {
     publish_requested: bool,
     last_detached: Instant,
     pub(super) renames: FuturesUnordered<RenameCompletion>,
+    pending_switch: Option<(u64, u64)>,
+    switch_action: Option<NativeSwitchAction>,
 }
 
 impl Default for Clients {
@@ -69,6 +77,8 @@ impl Default for Clients {
             publish_requested: false,
             last_detached: Instant::now(),
             renames: FuturesUnordered::new(),
+            pending_switch: None,
+            switch_action: None,
         }
     }
 }
@@ -143,6 +153,118 @@ impl Clients {
         self.active.is_some()
     }
 
+    pub(super) fn active_id(&self) -> Option<u64> {
+        self.active
+    }
+
+    pub(super) fn switch_pending(&self) -> bool {
+        self.pending_switch.is_some()
+    }
+
+    pub(super) fn owns_switch_reservation(&self, owner: u64, receipt: u64) -> bool {
+        self.active == Some(owner) && self.pending_switch == Some((owner, receipt))
+    }
+
+    pub(super) fn begin_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+        response: HostResponse,
+    ) -> bool {
+        if self.active != Some(owner) || self.pending_switch != Some((owner, receipt)) {
+            return false;
+        }
+        self.send(host, owner, response)
+    }
+
+    pub(super) fn reserve_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) -> bool {
+        if self.active != Some(owner) || self.pending_switch.is_some() {
+            return false;
+        }
+        self.hints.clear();
+        host.cancel_pointer_drag();
+        self.pending_switch = Some((owner, receipt));
+        true
+    }
+
+    pub(super) fn cancel_switch_reservation(&mut self, owner: u64, receipt: u64) {
+        if self.pending_switch == Some((owner, receipt)) {
+            self.pending_switch = None;
+        }
+    }
+
+    pub(super) fn take_switch_action(&mut self) -> Option<NativeSwitchAction> {
+        self.switch_action.take()
+    }
+
+    pub(super) fn abort_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) -> bool {
+        if self.pending_switch != Some((owner, receipt)) {
+            return false;
+        }
+        self.pending_switch = None;
+        self.publish_requested = true;
+        self.send(host, owner, HostResponse::NativeSwitchAborted { receipt })
+    }
+
+    pub(super) fn commit_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) -> bool {
+        if self.pending_switch != Some((owner, receipt)) {
+            return false;
+        }
+        self.pending_switch = None;
+        let waits = self
+            .peers
+            .get(&owner)
+            .map(|peer| peer.waits.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for token in waits {
+            let _ = host.cancel_wait(token.into(), "TUI switched to another workspace");
+        }
+        if let Some(peer) = self.peers.get_mut(&owner) {
+            peer.waits.clear();
+            peer.subscribed_waits.clear();
+        }
+        let sent = self.send(host, owner, HostResponse::NativeSwitchCommitted { receipt });
+        if sent {
+            self.disconnected(host, owner);
+        }
+        sent
+    }
+
+    #[cfg(test)]
+    pub(super) fn drop_switch_without_ack(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) {
+        if self.pending_switch == Some((owner, receipt)) {
+            self.pending_switch = None;
+            self.disconnected(host, owner);
+        }
+    }
+
+    pub(super) fn send_active(&mut self, host: &mut WorkspaceHost, response: HostResponse) {
+        if let Some(id) = self.active {
+            self.send(host, id, response);
+        }
+    }
+
     pub(super) fn last_detached(&self) -> Instant {
         self.last_detached
     }
@@ -161,15 +283,15 @@ impl Clients {
     }
 
     pub(super) fn refuse_switch(&mut self, host: &mut WorkspaceHost) {
+        self.refuse_switch_with(host, "native session switching route is not available yet");
+    }
+
+    pub(super) fn refuse_switch_with(&mut self, host: &mut WorkspaceHost, message: &str) {
+        host.report_host_error(message.to_owned());
         if let Some(id) = self.active {
-            self.send(
-                host,
-                id,
-                HostResponse::Error {
-                    message: "native session switching is not available yet".to_owned(),
-                },
-            );
+            self.send(host, id, HostResponse::NativeSwitchUnchanged);
         }
+        self.publish_requested = true;
     }
 
     fn finish_active_waits(&mut self, host: &mut WorkspaceHost, id: u64) {
@@ -246,6 +368,9 @@ impl Clients {
     }
 
     pub(super) fn publish_frame(&mut self, host: &mut WorkspaceHost) {
+        if self.pending_switch.is_some() {
+            return;
+        }
         let Some(id) = self.active else { return };
         let Some(peer) = self.peers.get(&id) else {
             return;
@@ -267,6 +392,10 @@ impl Clients {
     }
 
     pub(super) fn disconnected(&mut self, host: &mut WorkspaceHost, id: u64) {
+        if self.pending_switch.is_some_and(|(owner, _)| owner == id) {
+            self.pending_switch = None;
+            self.switch_action = None;
+        }
         if self.active == Some(id) {
             self.active = None;
             self.hints.clear();
@@ -336,6 +465,50 @@ impl Clients {
             Incoming::Request(request) => request,
         };
         let interactive = self.active == Some(id);
+        if interactive && self.pending_switch.is_some() {
+            match &request {
+                ClientRequest::NativeSwitchCommit { receipt } => {
+                    if self.pending_switch == Some((id, *receipt)) {
+                        self.switch_action = Some(NativeSwitchAction::Commit {
+                            owner: id,
+                            receipt: *receipt,
+                        });
+                    } else {
+                        self.send(
+                            host,
+                            id,
+                            HostResponse::Error {
+                                message: "native switch receipt is stale".to_owned(),
+                            },
+                        );
+                    }
+                    return false;
+                }
+                ClientRequest::NativeSwitchAbort { receipt } => {
+                    if self.pending_switch == Some((id, *receipt)) {
+                        self.switch_action = Some(NativeSwitchAction::Abort {
+                            owner: id,
+                            receipt: *receipt,
+                        });
+                    } else {
+                        self.send(
+                            host,
+                            id,
+                            HostResponse::Error {
+                                message: "native switch receipt is stale".to_owned(),
+                            },
+                        );
+                    }
+                    return false;
+                }
+                ClientRequest::Input { .. }
+                | ClientRequest::Pointer { .. }
+                | ClientRequest::Invoke { .. }
+                | ClientRequest::Notify { .. }
+                | ClientRequest::Resynchronize => return false,
+                _ => {}
+            }
+        }
         match request {
             ClientRequest::Input {
                 event,
@@ -566,6 +739,8 @@ impl Clients {
         self.peers.clear();
         self.active = None;
         self.hints.clear();
+        self.pending_switch = None;
+        self.switch_action = None;
     }
 }
 

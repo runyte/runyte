@@ -6,7 +6,7 @@
 
 mod clients;
 
-use self::clients::{Clients, ConnectedPeer, Incoming, RenameFuture};
+use self::clients::{Clients, ConnectedPeer, Incoming, NativeSwitchAction, RenameFuture};
 use super::{
     FINDER_TERMINAL_REFRESH_INTERVAL, FRAME_INTERVAL, HostServices, MAINTENANCE_INTERVAL,
     STATUS_ANIMATION_INTERVAL, about_invocation, context_timeout, frame_publication_ready,
@@ -24,6 +24,7 @@ use runyte::{
     lsp::LspCommand,
     notification::{NotificationDraft, NotificationSeverity},
     project_root,
+    protocol::{HostResponse, NativeSwitchCandidate},
     startup::{StartupPhase, StartupTrace},
     workspace::{
         HostEvent, WorkspaceHost,
@@ -35,8 +36,108 @@ use runyte::{
 };
 use std::{
     collections::HashSet,
+    future::Future,
+    pin::Pin,
     time::{Duration, Instant},
 };
+
+type NativeSwitchPreparation = Pin<
+    Box<
+        dyn Future<
+                Output = (
+                    runyte::workspace::WorkspaceSelection,
+                    Result<runyte::workspace::windows_service::PreparedLiveTarget>,
+                ),
+            > + Send,
+    >,
+>;
+
+struct PreparingNativeSwitch {
+    owner: u64,
+    receipt: u64,
+    future: NativeSwitchPreparation,
+}
+
+struct PendingNativeSwitch {
+    owner: u64,
+    receipt: u64,
+    _target: runyte::workspace::windows_service::PreparedLiveTarget,
+    expires: Instant,
+}
+
+fn native_switch_candidate(
+    target: &runyte::workspace::windows_service::PreparedLiveTarget,
+    selection: &runyte::workspace::WorkspaceSelection,
+) -> NativeSwitchCandidate {
+    let metadata = target.metadata();
+    NativeSwitchCandidate {
+        protocol: metadata.protocol,
+        id: metadata.id.clone(),
+        name: metadata.name.clone(),
+        project_root_bytes: metadata.project_root_bytes.clone(),
+        process_pid: metadata.process.pid,
+        process_creation_time: metadata.process.creation_time,
+        incarnation: metadata.incarnation.clone(),
+        address: metadata.address.as_str().to_owned(),
+        publication_key: selection
+            .publication_key()
+            .expect("prepared live selection has a publication key")
+            .to_bytes(),
+    }
+}
+
+#[cfg(test)]
+fn injected_switch_request() -> Result<Option<runyte::app::WorkspaceSwitchRequest>> {
+    let Some(inbox) = std::env::var_os("RUNYTE_TEST_NATIVE_SWITCH_INBOX") else {
+        return Ok(None);
+    };
+    let request = std::path::PathBuf::from(inbox).join("switch-target.json");
+    let bytes = match std::fs::read(&request) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    std::fs::remove_file(&request)?;
+    let metadata = runyte::workspace::windows_endpoint::EndpointMetadata::from_json(&bytes)?;
+    let selection = runyte::workspace::WorkspaceSelection::selected(
+        metadata.project_root()?,
+        runyte::workspace::PublicationKey::from_authenticated_metadata(&metadata),
+    );
+    note_switch_fixture("consumed");
+    Ok(Some(runyte::app::WorkspaceSwitchRequest {
+        visit: None,
+        running_only: true,
+        target: runyte::app::WorkspaceSwitchTarget::Selected(selection),
+        working_directory: std::env::current_dir()?,
+    }))
+}
+
+#[cfg(test)]
+fn note_switch_fixture(stage: &str) {
+    if let Some(inbox) = std::env::var_os("RUNYTE_TEST_NATIVE_SWITCH_INBOX") {
+        let _ = std::fs::write(std::path::PathBuf::from(inbox).join("switch-stage"), stage);
+    }
+}
+
+#[cfg(test)]
+fn drop_commit_ack_requested() -> bool {
+    let Some(inbox) = std::env::var_os("RUNYTE_TEST_NATIVE_SWITCH_INBOX") else {
+        return false;
+    };
+    let marker = std::path::PathBuf::from(inbox).join("drop-commit-ack");
+    match std::fs::remove_file(marker) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+fn note_noop_switch() {
+    if let Some(inbox) = std::env::var_os("RUNYTE_TEST_NATIVE_SWITCH_INBOX") {
+        let _ = std::fs::write(std::path::PathBuf::from(inbox).join("noop-complete"), b"1");
+    }
+}
 
 #[cfg(debug_assertions)]
 async fn wait_at_parent_startup_fixture(
@@ -258,6 +359,9 @@ async fn run_loop(
     finder_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut frame_pending = false;
     let mut ended = HashSet::new();
+    let mut switch_receipt = 0_u64;
+    let mut switch_preparation: Option<PreparingNativeSwitch> = None;
+    let mut pending_switch: Option<PendingNativeSwitch> = None;
     loop {
         let attached = clients.attached();
         host.note_plugin_frontend(attached);
@@ -305,6 +409,63 @@ async fn run_loop(
             }
             completion = clients.renames.next(), if !clients.renames.is_empty() => {
                 if let Some((id, result)) = completion { stop = clients.renamed(host, id, result, |name| rename(server, name)); }
+            }
+            prepared = async {
+                match switch_preparation.as_mut() {
+                    Some(preparation) => preparation.future.as_mut().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let preparation = switch_preparation.take().expect("selected preparation exists");
+                let owner = preparation.owner;
+                let receipt = preparation.receipt;
+                let (selection, result) = prepared;
+                if clients.active_id() != Some(owner) {
+                    // The preparation retained authority only for its original
+                    // source attachment. A later owner cannot inherit it.
+                } else {
+                    match result {
+                        Ok(target) => {
+                            let candidate = native_switch_candidate(&target, &selection);
+                            if clients.begin_switch(
+                                host,
+                                owner,
+                                receipt,
+                                HostResponse::NativeSwitchPrepared {
+                                    receipt,
+                                    candidate: Box::new(candidate),
+                                },
+                            ) {
+                                pending_switch = Some(PendingNativeSwitch {
+                                    owner,
+                                    receipt,
+                                    _target: target,
+                                    expires: Instant::now() + Duration::from_secs(12),
+                                });
+                                #[cfg(test)]
+                                note_switch_fixture("prepared");
+                            }
+                        }
+                        Err(error) => {
+                            clients.cancel_switch_reservation(owner, receipt);
+                            #[cfg(test)]
+                            note_switch_fixture("prepare-failed");
+                            host.report_host_error(format!("native session switch failed: {error:#}"));
+                            clients.send_active(host, HostResponse::NativeSwitchUnchanged);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            _ = async {
+                match pending_switch.as_ref() {
+                    Some(pending) => tokio::time::sleep_until(pending.expires.into()).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(pending) = pending_switch.take() {
+                    clients.abort_switch(host, pending.owner, pending.receipt);
+                }
             }
             event = services.context_events.recv(), if !ended.contains("context") => {
                 if let Some(event) = event { host.handle_context_event(event); changed = true; }
@@ -417,11 +578,107 @@ async fn run_loop(
                 if host.resource_finder_scan_pending() { frame_pending = true; } else { changed = true; }
             }
         }
+        if switch_preparation.as_ref().is_some_and(|preparation| {
+            clients.active_id() != Some(preparation.owner)
+                || !clients.owns_switch_reservation(preparation.owner, preparation.receipt)
+        }) {
+            // Dropping the future closes its one-shot receiver. The catalog
+            // worker observes that cancellation before retaining a result.
+            switch_preparation = None;
+        }
+        if let Some(action) = clients.take_switch_action() {
+            match action {
+                NativeSwitchAction::Commit { owner, receipt } => {
+                    if pending_switch
+                        .as_ref()
+                        .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
+                    {
+                        pending_switch = None;
+                        #[cfg(test)]
+                        note_switch_fixture("committed");
+                        #[cfg(test)]
+                        if drop_commit_ack_requested() {
+                            clients.drop_switch_without_ack(host, owner, receipt);
+                        } else {
+                            clients.commit_switch(host, owner, receipt);
+                        }
+                        #[cfg(not(test))]
+                        clients.commit_switch(host, owner, receipt);
+                    }
+                }
+                NativeSwitchAction::Abort { owner, receipt } => {
+                    if pending_switch
+                        .as_ref()
+                        .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
+                    {
+                        pending_switch = None;
+                        clients.abort_switch(host, owner, receipt);
+                        #[cfg(test)]
+                        note_switch_fixture("aborted");
+                    }
+                }
+            }
+        }
+        if pending_switch.is_some() && !clients.switch_pending() {
+            pending_switch = None;
+        }
         clients.reconcile(host);
         // Detached background work cannot manufacture a future physical TUI
         // handoff. Consume stale requests without executing another workspace.
-        if host.take_workspace_switch().is_some() {
-            clients.refuse_switch(host);
+        #[cfg(test)]
+        let injected = match injected_switch_request() {
+            Ok(request) => request,
+            Err(error) => {
+                note_switch_fixture("invalid");
+                host.report_host_error(format!("native switch fixture request failed: {error:#}"));
+                None
+            }
+        };
+        #[cfg(not(test))]
+        let injected: Option<runyte::app::WorkspaceSwitchRequest> = None;
+        if let Some(request) = injected.or_else(|| host.take_workspace_switch()) {
+            if switch_preparation.is_some() || pending_switch.is_some() {
+                clients.refuse_switch_with(host, "a native session switch is already in progress");
+            } else if request.visit.is_some() {
+                clients.refuse_switch_with(host, "native destination visits are not available yet");
+            } else if let runyte::app::WorkspaceSwitchTarget::Selected(selection) = request.target {
+                let metadata = server.metadata_snapshot();
+                let source = runyte::workspace::WorkspaceSelection::selected(
+                    metadata.project_root()?,
+                    runyte::workspace::PublicationKey::from_authenticated_metadata(&metadata),
+                );
+                if selection == source {
+                    clients.send_active(host, HostResponse::NativeSwitchUnchanged);
+                    #[cfg(test)]
+                    {
+                        note_switch_fixture("unchanged");
+                        note_noop_switch();
+                    }
+                } else if let (Some(owner), Some(service)) =
+                    (clients.active_id(), services.native_catalog.clone())
+                {
+                    switch_receipt = switch_receipt.wrapping_add(1).max(1);
+                    let receipt = switch_receipt;
+                    if clients.reserve_switch(host, owner, receipt) {
+                        #[cfg(test)]
+                        note_switch_fixture("reserved");
+                        switch_preparation = Some(PreparingNativeSwitch {
+                            owner,
+                            receipt,
+                            future: Box::pin(async move {
+                                let result = service.prepare_selected_live(selection.clone()).await;
+                                (selection, result)
+                            }),
+                        });
+                    }
+                } else {
+                    #[cfg(test)]
+                    note_switch_fixture("refused");
+                    clients.refuse_switch_with(host, "native session service is unavailable");
+                }
+            } else {
+                clients.refuse_switch(host);
+            }
             changed = true;
         } else if let Some(request) = host.take_persistent_exit_request() {
             stop |= clients.finish_exit(host, request);

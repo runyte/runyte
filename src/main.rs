@@ -5332,6 +5332,8 @@ async fn context_timeout(delay: Option<Duration>) {
 
 struct HostServices {
     #[cfg(windows)]
+    native_catalog: Option<runyte::workspace::WorkspaceServiceHandle>,
+    #[cfg(windows)]
     native_catalog_owner: Option<runyte::workspace::windows_service::WorkspaceServiceOwner>,
     #[cfg(windows)]
     // The event receiver stays with the owner and enters the host loop directly.
@@ -5387,6 +5389,7 @@ impl HostServices {
             owner.shutdown().await?;
         }
         self.native_catalog_owner = None;
+        self.native_catalog = None;
         self.native_catalog_events = None;
         Ok(())
     }
@@ -5489,6 +5492,8 @@ fn start_host_services(
     #[cfg(not(unix))]
     let _ = (config_path, persistent);
     Ok(HostServices {
+        #[cfg(windows)]
+        native_catalog: native_catalog_handle,
         #[cfg(windows)]
         native_catalog_owner,
         #[cfg(windows)]

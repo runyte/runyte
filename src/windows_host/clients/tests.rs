@@ -45,6 +45,19 @@ impl Fixture {
     }
 
     fn connect(&mut self, clients: &mut Clients, id: u64) -> ResponseReceiver {
+        self.connect_with_role(clients, id, false)
+    }
+
+    fn connect_interactive(&mut self, clients: &mut Clients, id: u64) -> ResponseReceiver {
+        self.connect_with_role(clients, id, true)
+    }
+
+    fn connect_with_role(
+        &mut self,
+        clients: &mut Clients,
+        id: u64,
+        interactive: bool,
+    ) -> ResponseReceiver {
         let (tx, rx) = response_channel();
         clients.connected(
             &mut self.host,
@@ -52,7 +65,7 @@ impl Fixture {
                 id,
                 proof: self.proof.clone(),
                 responses: tx,
-                interactive: false,
+                interactive,
                 geometry: runyte::app::FrameGeometry::default(),
             },
         );
@@ -73,6 +86,116 @@ impl Fixture {
         );
         *clients.peers[&id].waits.iter().next().unwrap()
     }
+}
+
+#[test]
+fn native_switch_abort_preserves_waits_and_commit_cancels_only_source_owned_waits() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let _control = fixture.connect(&mut clients, 2);
+    let source_wait = fixture.wait(&mut clients, 1, "source-wait.txt");
+    let control_wait = fixture.wait(&mut clients, 2, "control-wait.txt");
+
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 10));
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeSwitchAbort { receipt: 10 },
+    );
+    assert_eq!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::Abort {
+            owner: 1,
+            receipt: 10
+        })
+    );
+    assert!(clients.abort_switch(&mut fixture.host, 1, 10));
+    for token in [source_wait, control_wait] {
+        assert!(matches!(
+            fixture.host.wait_status(token.into()),
+            Some(runyte::workspace::WaitStatus::Pending { .. })
+        ));
+    }
+
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 11));
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeSwitchCommit { receipt: 11 },
+    );
+    assert_eq!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::Commit {
+            owner: 1,
+            receipt: 11
+        })
+    );
+    assert!(clients.commit_switch(&mut fixture.host, 1, 11));
+    assert!(matches!(
+        fixture.host.wait_status(source_wait.into()),
+        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+    ));
+    assert!(matches!(
+        fixture.host.wait_status(control_wait.into()),
+        Some(runyte::workspace::WaitStatus::Pending { .. })
+    ));
+    assert_eq!(clients.active_id(), None);
+}
+
+#[test]
+fn late_native_switch_receipt_cannot_release_a_replacement_owner() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _old = fixture.connect_interactive(&mut clients, 1);
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 22));
+    clients.disconnected(&mut fixture.host, 1);
+    let _replacement = fixture.connect_interactive(&mut clients, 2);
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::NativeSwitchCommit { receipt: 22 },
+    );
+    assert!(clients.take_switch_action().is_none());
+    assert_eq!(clients.active_id(), Some(2));
+}
+
+#[test]
+fn prepared_response_send_failure_releases_reservation_and_owner() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let receiver = fixture.connect_interactive(&mut clients, 7);
+    drop(receiver);
+    assert!(clients.reserve_switch(&mut fixture.host, 7, 31));
+    let metadata = &fixture.metadata;
+    let candidate = runyte::protocol::NativeSwitchCandidate {
+        protocol: metadata.protocol,
+        id: metadata.id.clone(),
+        name: metadata.name.clone(),
+        project_root_bytes: metadata.project_root_bytes.clone(),
+        process_pid: metadata.process.pid,
+        process_creation_time: metadata.process.creation_time,
+        incarnation: metadata.incarnation.clone(),
+        address: metadata.address.as_str().to_owned(),
+        publication_key: runyte::workspace::PublicationKey::from_authenticated_metadata(metadata)
+            .to_bytes(),
+    };
+    assert!(!clients.begin_switch(
+        &mut fixture.host,
+        7,
+        31,
+        HostResponse::NativeSwitchPrepared {
+            receipt: 31,
+            candidate: Box::new(candidate),
+        },
+    ));
+    assert_eq!(clients.active_id(), None);
+    assert!(!clients.switch_pending());
+    assert!(!clients.peers.contains_key(&7));
 }
 
 fn no_rename(_: &str) -> io::Result<RenameFuture> {

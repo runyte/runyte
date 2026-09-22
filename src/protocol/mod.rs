@@ -174,10 +174,10 @@ use crate::workspace::{
 /// bounded lease ownership and cancellation state, in session health.
 /// Version 53 binds context review input to the last frame actually rendered
 /// by its physical frontend; prepared or dropped pages cannot authorize input.
-// Version 55 carries typed workspace-switch targets and fixed native
-// publication keys. This private
+// Version 56 carries typed workspace-switch targets, fixed native publication
+// keys and the private two-phase native switch handoff. This private
 // bundled frontend version is independent of the stable runyte-1 plugin API.
-pub const VERSION: u32 = 55;
+pub const VERSION: u32 = 56;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -531,6 +531,16 @@ pub enum ClientRequest {
         geometry: FrameGeometry,
     },
     Resynchronize,
+    /// Completes a source-host-owned native switch after the frontend has
+    /// authenticated and rendered the prepared destination.
+    NativeSwitchCommit {
+        receipt: u64,
+    },
+    /// Releases a prepared destination while retaining this exact source
+    /// attachment.
+    NativeSwitchAbort {
+        receipt: u64,
+    },
     Detach,
     Shutdown,
     ForceShutdown,
@@ -856,6 +866,9 @@ impl ClientRequest {
                 "destination identity is invalid",
             ),
             Self::Resize { geometry } => geometry.validate(),
+            Self::NativeSwitchCommit { receipt } | Self::NativeSwitchAbort { receipt } => {
+                require(*receipt != 0, "native switch receipt is invalid")
+            }
             _ => Ok(()),
         }
     }
@@ -970,6 +983,23 @@ pub enum WorkspaceSwitchTarget {
     Previous,
 }
 
+/// Exact native endpoint data offered by the source host. This is a bounded
+/// candidate only; the frontend must authenticate the actual pipe peer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeSwitchCandidate {
+    pub protocol: u32,
+    pub id: String,
+    pub name: Option<String>,
+    #[serde(deserialize_with = "deserialize_path")]
+    pub project_root_bytes: Vec<u8>,
+    pub process_pid: u32,
+    pub process_creation_time: u64,
+    pub incarnation: String,
+    pub address: String,
+    pub publication_key: [u8; 32],
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HostResponse {
@@ -1005,6 +1035,19 @@ pub enum HostResponse {
         working_directory_bytes: Vec<u8>,
         running_only: bool,
         visit: Option<DestinationVisit>,
+    },
+    /// A provisional native handoff. The source attachment remains reserved
+    /// until its own connection receives a matching commit or abort.
+    NativeSwitchPrepared {
+        receipt: u64,
+        candidate: Box<NativeSwitchCandidate>,
+    },
+    NativeSwitchUnchanged,
+    NativeSwitchAborted {
+        receipt: u64,
+    },
+    NativeSwitchCommitted {
+        receipt: u64,
     },
     ParentSwitchWorkspace {
         #[serde(deserialize_with = "deserialize_path")]
@@ -1247,6 +1290,20 @@ mod tests {
                 directory: bytes,
                 receipt: "a".repeat(64),
             },
+            HostResponse::NativeSwitchPrepared {
+                receipt: 1,
+                candidate: Box::new(NativeSwitchCandidate {
+                    protocol: VERSION,
+                    id: "a".repeat(64),
+                    name: None,
+                    project_root_bytes: metadata.path_bytes.clone().expect("test metadata path"),
+                    process_pid: 1,
+                    process_creation_time: 1,
+                    incarnation: "b".repeat(64),
+                    address: r"\\.\pipe\runyte-v1-c".to_owned() + &"c".repeat(63),
+                    publication_key: [7; 32],
+                }),
+            },
             HostResponse::Buffers {
                 buffers: vec![metadata.clone()],
             },
@@ -1357,7 +1414,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 55);
+        assert_eq!(VERSION, 56);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1568,6 +1625,46 @@ mod tests {
                 target
             );
         }
+    }
+
+    #[test]
+    fn native_switch_receipts_and_candidate_fields_are_strict() {
+        assert!(
+            ClientRequest::NativeSwitchCommit { receipt: 0 }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ClientRequest::NativeSwitchAbort { receipt: 9 }
+                .validate()
+                .is_ok()
+        );
+        let response = HostResponse::NativeSwitchPrepared {
+            receipt: 4,
+            candidate: Box::new(NativeSwitchCandidate {
+                protocol: VERSION,
+                id: "a".repeat(64),
+                name: Some("second".into()),
+                project_root_bytes: encode_path(std::path::Path::new("project")),
+                process_pid: 7,
+                process_creation_time: 8,
+                incarnation: "b".repeat(64),
+                address: r"\\.\pipe\runyte-v1-c".to_owned() + &"c".repeat(63),
+                publication_key: [9; 32],
+            }),
+        };
+        let encoded = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serde_json::from_value::<HostResponse>(encoded.clone()).unwrap(),
+            response
+        );
+        let mut malformed = encoded;
+        malformed["candidate"]["project_root_bytes"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<HostResponse>(malformed).is_err());
+
+        let mut unknown = serde_json::to_value(&response).unwrap();
+        unknown["candidate"]["pid_hint"] = serde_json::json!(7);
+        assert!(serde_json::from_value::<HostResponse>(unknown).is_err());
     }
 
     #[test]

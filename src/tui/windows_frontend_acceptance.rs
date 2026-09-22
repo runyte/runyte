@@ -56,6 +56,12 @@ const LOST: &str = "windows_frontend_acceptance::lost_host_frontend_fixture";
 const SIGNAL: &str = "windows_frontend_acceptance::console_break_frontend_fixture";
 const STALL_SERVER: &str = "windows_frontend_acceptance::stall_server_fixture";
 const STALL_FRONTEND: &str = "windows_frontend_acceptance::stall_frontend_fixture";
+const SWITCH_PARENT: &str = "windows_frontend_acceptance::switch_parent_fixture";
+const SWITCH_HOST: &str = "windows_frontend_acceptance::switch_host_fixture";
+const SWITCH_FRONTEND: &str = "windows_frontend_acceptance::switch_frontend_fixture";
+const SWITCH_BUSY_HOLDER: &str = "windows_frontend_acceptance::switch_busy_holder_fixture";
+const SWITCH_LOST_ACK: &str = "windows_frontend_acceptance::switch_lost_ack_fixture";
+const SWITCH_B_FRONTEND: &str = "windows_frontend_acceptance::switch_b_frontend_fixture";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn root() -> PathBuf {
@@ -72,6 +78,17 @@ fn stall_ready_record(root: &Path) -> PathBuf {
 
 fn read_metadata(root: &Path) -> EndpointMetadata {
     EndpointMetadata::from_json(&fs::read(ready_record(root)).unwrap()).unwrap()
+}
+
+fn runtime_ready_record(root: &Path, project: &Path) -> PathBuf {
+    // Native host startup resolves the requested project before deriving its
+    // workspace ID. Windows canonicalization commonly adds a verbatim prefix,
+    // so hashing the fixture's authored spelling would watch a different
+    // endpoint directory forever.
+    let project = project.canonicalize().unwrap();
+    root.join("runtime/runyte")
+        .join(runyte::workspace::workspace_id(&project))
+        .join("endpoint.json")
 }
 
 struct OwnedChild(Child);
@@ -149,6 +166,313 @@ fn native_frontend_edits_resizes_reattaches_and_reports_host_loss() {
         "{}",
         fs::read_to_string(root.join("fixture.log")).unwrap()
     );
+}
+
+#[test]
+fn native_frontend_switches_between_exact_running_hosts() {
+    let root = TestRuntimeRoot::new("native-frontend-switch").unwrap();
+    let runtime = root.create_private_dir("runtime").unwrap();
+    let raw_job = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+    assert!(!raw_job.is_null(), "{}", std::io::Error::last_os_error());
+    let job = unsafe { OwnedHandle::from_raw_handle(raw_job) };
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    assert_ne!(
+        unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        },
+        0
+    );
+    let log = fs::File::create(root.join("switch-fixture.log")).unwrap();
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", SWITCH_PARENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, root.path())
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("XDG_RUNTIME_DIR", runtime)
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .unwrap();
+    let mut child = OwnedChild(child);
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.0.as_raw_handle()) },
+        0
+    );
+    fs::write(root.join("fixture-admitted"), b"ready").unwrap();
+    let status = await_child(&mut child, Instant::now() + Duration::from_secs(80));
+    assert!(
+        status.success(),
+        "{}",
+        fs::read_to_string(root.join("switch-fixture.log")).unwrap()
+    );
+}
+
+#[test]
+#[ignore = "reexecuted with two real native hosts and one ConPTY frontend"]
+fn switch_parent_fixture() {
+    let root = root();
+    let deadline = Instant::now() + TIMEOUT;
+    while !root.join("fixture-admitted").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "fixture was not admitted to its job"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        Some(root.join("config").into())
+    );
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/config.yaml"), "lsp:\n  enable: false\n").unwrap();
+    let a = root.join("project-a");
+    let b = root.join("project-b");
+    let busy = root.join("project-busy");
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    fs::create_dir_all(&busy).unwrap();
+    fs::write(a.join("note.txt"), "WORKSPACE_A\n").unwrap();
+    fs::write(b.join("note.txt"), "WORKSPACE_B\n").unwrap();
+    fs::write(busy.join("note.txt"), "WORKSPACE_BUSY\n").unwrap();
+
+    let spawn_host = |project: &Path, label: &str| {
+        let inbox = root.join(format!("switch-inbox-{label}"));
+        fs::create_dir(&inbox).unwrap();
+        let log = fs::File::create(root.join(format!("switch-host-{label}.log"))).unwrap();
+        let child = OwnedChild(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", SWITCH_HOST, "--ignored", "--nocapture"])
+                .env("RUNYTE_SWITCH_PROJECT", project)
+                .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &inbox)
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .current_dir(project)
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::null())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        (child, inbox)
+    };
+    let canonical = [&a, &b, &busy]
+        .map(|project| project.canonicalize().unwrap())
+        .map(|project| runyte::workspace::workspace_id(&project));
+    assert!(
+        canonical[0] != canonical[1]
+            && canonical[0] != canonical[2]
+            && canonical[1] != canonical[2],
+        "switch fixture projects did not produce distinct workspace identities: {canonical:?}"
+    );
+    let await_publication = |project: &Path, host: &mut OwnedChild, label: &str| {
+        let ready = runtime_ready_record(&root, project);
+        let deadline = Instant::now() + TIMEOUT;
+        while !ready.exists() {
+            let status = host.0.try_wait().unwrap();
+            assert!(
+                status.is_none() && Instant::now() < deadline,
+                "host {label} did not publish {} (status {status:?}, expected {}): {}",
+                project.display(),
+                ready.display(),
+                fs::read_to_string(root.join(format!("switch-host-{label}.log")))
+                    .unwrap_or_else(|error| format!("cannot read host log: {error}")),
+            );
+            thread::sleep(Duration::from_millis(15));
+        }
+    };
+    // Publication takes the one namespace registry lock by design. Serialize
+    // only this fixture startup boundary; once ready, all hosts remain live and
+    // discoverable together for the switching exercise.
+    let (mut host_a, inbox_a) = spawn_host(&a, "a");
+    await_publication(&a, &mut host_a, "a");
+    let (mut host_b, inbox_b) = spawn_host(&b, "b");
+    await_publication(&b, &mut host_b, "b");
+    let (mut host_busy, _) = spawn_host(&busy, "busy");
+    await_publication(&busy, &mut host_busy, "busy");
+
+    let inject = |inbox: &Path, project: &Path| {
+        match fs::remove_file(inbox.join("switch-stage")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to clear native switch stage: {error}"),
+        }
+        let pending = inbox.join("switch-target.pending");
+        fs::write(
+            &pending,
+            fs::read(runtime_ready_record(&root, project)).unwrap(),
+        )
+        .unwrap();
+        fs::rename(pending, inbox.join("switch-target.json")).unwrap();
+    };
+    let await_stage = |inbox: &Path, label: &str, expected: &str| {
+        let marker = inbox.join("switch-stage");
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let stage = fs::read_to_string(&marker);
+            if stage.as_ref().is_ok_and(|stage| stage == expected) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "host {label} did not reach switch stage {expected:?}; last stage {stage:?}; request remains: {}; host log: {}",
+                inbox.join("switch-target.json").exists(),
+                fs::read_to_string(root.join(format!("switch-host-{label}.log")))
+                    .unwrap_or_else(|error| format!("cannot read host log: {error}")),
+            );
+            thread::sleep(Duration::from_millis(15));
+        }
+    };
+
+    let mut busy_holder = Console::spawn(&busy, SWITCH_BUSY_HOLDER, 100);
+    busy_holder.until_screen("WORKSPACE_BUSY");
+
+    let mut frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
+    frontend.until_screen("WORKSPACE_A");
+    inject(&inbox_a, &busy);
+    await_stage(&inbox_a, "a", "aborted");
+    frontend.insert_and_write("RECOVERED ");
+    inject(&inbox_a, &b);
+    frontend.until_screen("WORKSPACE_B");
+    frontend.insert_and_write("B_EDIT ");
+    inject(&inbox_b, &a);
+    frontend.until_screen("WORKSPACE_A");
+    frontend.insert_and_write("NOOP_BEFORE ");
+    inject(&inbox_a, &a);
+    let deadline = Instant::now() + TIMEOUT;
+    while !inbox_a.join("noop-complete").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "exact-current no-op did not complete"
+        );
+        thread::sleep(Duration::from_millis(15));
+    }
+    frontend.insert_and_write("AFTER_NOOP ");
+    frontend.detach();
+    frontend.exit("SWITCH_FRONTEND_DONE");
+    assert!(
+        fs::read_to_string(b.join("note.txt"))
+            .unwrap()
+            .contains("B_EDIT")
+    );
+    let a_text = fs::read_to_string(a.join("note.txt")).unwrap();
+    assert!(a_text.contains("RECOVERED"));
+    assert!(a_text.contains("NOOP_BEFORE") && a_text.contains("AFTER_NOOP"));
+
+    fs::write(inbox_a.join("drop-commit-ack"), b"1").unwrap();
+    let mut lost = Console::spawn(&a, SWITCH_LOST_ACK, 100);
+    lost.until_screen("WORKSPACE_A");
+    inject(&inbox_a, &b);
+    lost.exit("LOST_COMMIT_ACK_BOUNDED");
+    thread::sleep(Duration::from_millis(250));
+    let mut destination = Console::spawn(&b, SWITCH_B_FRONTEND, 100);
+    destination.until_screen("WORKSPACE_B");
+    destination.detach();
+    destination.exit("SWITCH_B_AVAILABLE");
+    drop(busy_holder);
+    host_a.0.kill().unwrap();
+    host_b.0.kill().unwrap();
+    host_busy.0.kill().unwrap();
+}
+
+#[test]
+#[ignore = "started as one of two native switch hosts"]
+fn switch_host_fixture() {
+    let root = root();
+    let project = PathBuf::from(std::env::var_os("RUNYTE_SWITCH_PROJECT").unwrap());
+    let args: Vec<OsString> = vec![
+        "--serve".into(),
+        "--detached-host".into(),
+        "--project-root".into(),
+        project.clone().into_os_string(),
+        "--config".into(),
+        root.join("config/config.yaml").into_os_string(),
+        "--".into(),
+        project.join("note.txt").into_os_string(),
+    ];
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut startup = StartupTrace::new();
+        let mut termination = TerminationSignals::new().unwrap();
+        windows_host::run(
+            LaunchArguments::parse_from(args).unwrap(),
+            &mut startup,
+            &mut termination,
+            None,
+        )
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+#[ignore = "reexecuted inside ConPTY for exact native switching"]
+fn switch_frontend_fixture() {
+    run_switch_frontend("project-a", None, "SWITCH_FRONTEND_DONE");
+}
+
+#[test]
+#[ignore = "holds the busy destination's interactive attachment"]
+fn switch_busy_holder_fixture() {
+    run_switch_frontend("project-busy", None, "BUSY_HOLDER_DONE");
+}
+
+#[test]
+#[ignore = "expects the source to drop a committed switch acknowledgement"]
+fn switch_lost_ack_fixture() {
+    run_switch_frontend(
+        "project-a",
+        Some("before switch acknowledgement"),
+        "LOST_COMMIT_ACK_BOUNDED",
+    );
+}
+
+#[test]
+#[ignore = "proves the abandoned destination accepts a later frontend"]
+fn switch_b_frontend_fixture() {
+    run_switch_frontend("project-b", None, "SWITCH_B_AVAILABLE");
+}
+
+fn run_switch_frontend(project: &str, expected_error: Option<&str>, marker: &str) {
+    use std::io::Write;
+    let root = root();
+    let project = root.join(project);
+    let metadata =
+        EndpointMetadata::from_json(&fs::read(runtime_ready_record(&root, &project)).unwrap())
+            .unwrap();
+    let original = input_mode();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut termination = TerminationSignals::new().unwrap();
+    let result = runtime.block_on(windows_frontend::attach_exact(
+        &metadata,
+        &mut termination,
+        true,
+    ));
+    match expected_error {
+        Some(needle) => assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| format!("{error:#}").contains(needle)),
+            "expected {needle:?}, got {result:?}"
+        ),
+        None => result.unwrap(),
+    }
+    assert_eq!(input_mode(), original);
+    println!("{marker}");
+    std::io::stdout().flush().unwrap();
 }
 
 #[test]
@@ -566,6 +890,25 @@ impl Console {
 
     fn send(&self, input: &str) {
         assert!(self.child.write(input.as_bytes().to_vec()));
+    }
+
+    fn insert_and_write(&mut self, text: &str) {
+        self.send("i");
+        self.until_screen("INS");
+        self.send(text);
+        self.until_screen(text.trim_end());
+        self.send("\x1b");
+        self.until_screen("NOR");
+        self.send(":write");
+        self.until_screen(":write");
+        self.send("\r");
+        self.until_screen("wrote");
+    }
+
+    fn detach(&mut self) {
+        self.send(":detach");
+        self.until_screen(":detach");
+        self.send("\r");
     }
 
     fn resize(&mut self, columns: u16, rows: u16) {
