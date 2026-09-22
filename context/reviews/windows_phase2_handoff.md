@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.3f stopped
-names accepted in `8d5c009` (`Make native stopped session names authoritative`).
-The preceding discovery-scope implementation is `ab4a0a3`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.4a native
+control actions accepted in `443eb7b` (`Add exact native session control actions`).
+The preceding stopped-name implementation is `8d5c009`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -117,16 +117,34 @@ acceptance for this commit is pending. Keep the Windows support issue open until
 the entire scope is resolved; issue resolution requires a separate follow-up
 commit.
 
-## Next package: native control orchestration and CLI
+## Accepted package: 4e.4a native control actions
 
-Implement the first remaining 2.5 item below. The projectless CLI uses
-`DiscoveryScope` and one complete `HistorySnapshot`, resolves each selector once,
-and retains the exact selected entry and candidate proof across the action.
-Compatible stops must await process exit. Explicit incompatible force uses the
-retained candidate and actual pipe-peer authentication. Read-only ready
-observations do not authorize cleanup. Retain a stopped-name edit through any
-pending recovery; a failed history cache refresh does not undo its verified
-authoritative rename. Keep restart and public attachment gated.
+`443eb7b` adds a native `ControlSnapshot` over one complete projectless catalog
+observation and a selected history index. It retains the exact publication and
+candidate proof for live stop/rename, awaits process exit before stop success,
+and uses actual pipe-peer authentication for explicit incompatible force.
+Read-only ready observations do not authorize cleanup. A stopped-name edit stays
+owned through pending recovery; a verified rename remains successful if its
+history cache refresh fails. Clean forgets only proven unchanged stopped rows.
+The sequential stop-all owner retains admitted unknown outcomes across caller
+cancellation, attempts the remaining distinct hosts, and bounds detail bytes
+while keeping complete counts.
+
+Independent review found no remaining findings after the pending-recovery owner,
+reporting and fixture corrections. Five focused action tests pass. Formatting,
+all-target Clippy with warnings denied and the full native workspace suite pass:
+3,293 tests, zero failures, 58 ignored across 46 libtest/doc-test groups, plus
+six native LSP transport cases. Native CI acceptance remains pending.
+
+## Next package: native selector-only CLI
+
+Dispatch list/rename/stop/stop-all/clean through the accepted action layer
+before resolving a current project. Capture roots once, use `DiscoveryScope`
+with no invented cwd project, and resolve selected rows once against the
+complete snapshot. Extract pure table presentation from `main.rs` while
+preserving Unix output. Keep restart and public attachment gated. Add real-host
+acceptance for compatible stop exit, protected refusal and force, same-project
+isolated publications, incomplete discovery, and stop-all continuation.
 
 ## Remaining 2.5 implementation order
 
