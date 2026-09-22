@@ -601,7 +601,7 @@ rebase message files this lifecycle. On Unix, persistent hosting and `--wait`
 use the private, versioned local protocol; it is a bundled-client contract,
 not a public automation API.
 
-`Space Space` or `:session-list` (`:sl`) opens the session manager: a
+On Unix, `Space Space` or `:session-list` (`:sl`) opens the session manager: a
 filterable list of running and recently visited persistent sessions, numbered
 sessions first in digit order and the rest least recently visited first. The
 current session is marked with `*` wherever its digit puts it and is the
@@ -753,7 +753,7 @@ the lowest free digit again on the next listing, and it stays in the by-visit
 part of the list until it is numbered by hand or stopped. The session displaced
 by a swap is not unpinned that way and may be numbered again automatically. A
 stopped row's menu has no Renumber: there is no digit on it to change.
-A standalone workspace owns no persistent host, so the whole `session`
+On Unix, a standalone workspace owns no persistent host, so the `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` and `Space 1`–`Space 9` grey out in the key-hint popup, and
 `:session-list`,
@@ -1468,7 +1468,7 @@ does not bundle that runtime.
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
 | Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
-| Session controls | `--session-list`, `--session-rename`, `--session-stop WORKSPACE`, `--session-stop-all`, and `--session-clean` for native detached hosts |
+| Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Deferred | Interactive persistent attachment and switching, session restart, plugins and context bridge |
 
 Deferred commands remain discoverable and report why they are unavailable.
@@ -1491,6 +1491,20 @@ fails as ambiguous. An unambiguous name can select one of them. A stopped
 session is reported only after
 its original host process exits. Foreground `--serve`, public `--persistent`
 attachment, session restart, and editor session navigation remain unavailable.
+
+In a standalone Windows editor, `Space Space` and `:session-list` show the
+native catalog. Distinct live publications for one project remain separate
+rows. Tab opens exact-row Rename, Close, and Force close actions for a
+compatible running session, only Force close for an incompatible running
+publication, or Rename for a stopped record; Force close requires a second
+Enter.
+Enter does not attach, and the manager shows no current marker, session number,
+or digit shortcuts. Preview reads only the selected compatible publication.
+`:session-stop WORKSPACE` and `:session-rename WORKSPACE NAME` use a fresh
+complete catalog and require an unambiguous selector; `:session-stop` without
+one refuses on Windows. `:session-clean` cleans only verified stopped history
+and applies to the whole catalog. Attachment, destination navigation, and the
+session strip remain unavailable.
 
 Language servers also use native `.exe` or `.com` executables, specified by an
 absolute path or discovered through absolute `PATH` entries. To run a script,
@@ -3588,7 +3602,7 @@ are enabled.
 :write-quit             save, then close the pane or quit from the last one (alias: wq)
 :write-buffer-close     save and close the buffer in place (alias: wbc)
 :session-1 … :session-9 attach directly to the numbered running persistent session
-:session-list           open the session manager (persistent mode; alias: sl)
+:session-list           open the session manager (Unix persistent mode or Windows native controls; alias: sl)
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
                         (alias: attach)
@@ -3596,6 +3610,7 @@ are enabled.
                         stop a clean persistent session
 :session-rename WORKSPACE NAME
                         rename a persistent session
+:session-clean          clean verified stopped session history (Windows)
 ```
 
 The working directory starts at the directory where Runyte was launched.

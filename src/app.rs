@@ -16,9 +16,9 @@ use regex::{Regex, RegexBuilder};
 use unicode_width::UnicodeWidthChar;
 
 #[cfg(unix)]
-use crate::workspace::{
-    MAX_WORKSPACE_NUMBER, SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle,
-};
+use crate::workspace::MAX_WORKSPACE_NUMBER;
+#[cfg(any(unix, windows))]
+use crate::workspace::{SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle};
 
 use crate::{
     buffer::{
@@ -2433,7 +2433,7 @@ pub(crate) struct HostPorts {
     /// surface is off in that case rather than reporting failures.
     git: Option<Box<dyn GitProvider>>,
     git_service: Option<GitServiceHandle>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_service: Option<WorkspaceServiceHandle>,
     word_index: Option<WordIndexHandle>,
 }
@@ -2461,7 +2461,7 @@ impl HostPorts {
             lsp: None,
             git: None,
             git_service: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_service: None,
             word_index: None,
         }
@@ -2936,7 +2936,7 @@ pub struct App {
     /// switches roots. Standalone mode leaves this false because replacing its
     /// process would otherwise lose that text.
     persistent_session: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_rows: Vec<WorkspaceRow>,
     /// This workspace's own session number, retained for the owned snapshot.
     ///
@@ -2944,20 +2944,24 @@ pub struct App {
     /// receive the version-29 wire field. Both ultimately read the same
     /// per-user catalog.
     pub workspace_number: Option<u8>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_generation: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     next_workspace_status_poll: Instant,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_preview_generation: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_preview_target: Option<crate::workspace::WorkspaceSelection>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_previews:
         HashMap<crate::workspace::WorkspaceSelection, Result<SessionPreview, String>>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_pending_selection: Option<(u64, crate::workspace::WorkspaceSelection)>,
-    #[cfg(unix)]
+    #[cfg(windows)]
+    workspace_pending_selector: Option<u64>,
+    #[cfg(windows)]
+    workspace_pending_clean: Option<u64>,
+    #[cfg(any(unix, windows))]
     session_rename_target: Option<crate::workspace::WorkspaceSelection>,
     /// The terminal a pending rename prompt names. Renaming is reached from
     /// the terminal list, which does not attach the terminal it acts on, so
@@ -2966,8 +2970,10 @@ pub struct App {
     #[cfg(unix)]
     session_number_target: Option<crate::workspace::WorkspaceSelection>,
     /// The session-manager row restored after its Renumber prompt closes.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     session_manager_return_target: Option<crate::workspace::WorkspaceSelection>,
+    #[cfg(windows)]
+    session_manager_selection_lost: bool,
     session_action_menu: Option<SessionActionMenu>,
     terminal_action_menu: Option<TerminalActionMenu>,
     /// The buffer a commit message was opened over, returned to once the
@@ -3442,28 +3448,34 @@ impl App {
             parent_wait_origins: HashMap::new(),
             workspace_switch: None,
             persistent_session: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_rows: Vec::new(),
             workspace_number: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_generation: 0,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             next_workspace_status_poll: Instant::now(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_preview_generation: 0,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_preview_target: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_previews: HashMap::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_pending_selection: None,
-            #[cfg(unix)]
+            #[cfg(windows)]
+            workspace_pending_selector: None,
+            #[cfg(windows)]
+            workspace_pending_clean: None,
+            #[cfg(any(unix, windows))]
             session_rename_target: None,
             terminal_rename_target: None,
             #[cfg(unix)]
             session_number_target: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             session_manager_return_target: None,
+            #[cfg(windows)]
+            session_manager_selection_lost: false,
             session_action_menu: None,
             terminal_action_menu: None,
             commit_origin: None,
@@ -3643,7 +3655,7 @@ enum ListAction {
     WorktreeGitBranch(String),
     Terminal(TerminalId),
     TutorialMotionHints(MotionHints),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Workspace(usize),
 }
 
@@ -3711,7 +3723,7 @@ fn terminal_preview(session: &TerminalSession) -> String {
         .join("\n")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// The manager's right column: what this session is, as a fixed set of fields.
 ///
 /// Every row answers the same questions in the same order, so two sessions can
@@ -3827,7 +3839,11 @@ fn session_picker_preview(
         ));
     } else if !row.running {
         lines.push(String::new());
-        lines.push("No live editor state; opening this row starts the session.".to_owned());
+        if cfg!(unix) {
+            lines.push("No live editor state; opening this row starts the session.".to_owned());
+        } else {
+            lines.push("No live editor state; attachment is unavailable here.".to_owned());
+        }
     }
     if let Some(Err(error)) = preview {
         lines.push(String::new());
@@ -3836,7 +3852,7 @@ fn session_picker_preview(
     lines.join("\n")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// A short, single-unit age for the session manager and its preview.
 ///
 /// Rounding happens before choosing the next larger unit, so 59 minutes and
@@ -3860,7 +3876,7 @@ fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> S
     format!("{days}{unit} ago")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// Whole-session activity status shown after the last-active age.
 ///
 /// The latest live-terminal baseline is sufficient because `QUIET` requires

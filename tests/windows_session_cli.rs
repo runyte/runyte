@@ -3,13 +3,19 @@
 #![cfg(windows)]
 
 use runyte::{
+    app::App,
+    command::parse_named_command,
+    config::Config,
+    input::{KeyCode, KeyStroke, Modifiers},
     protocol::{ClientRequest, HostResponse, TransportChange, encode_path},
     test_support::TestRuntimeRoot,
     workspace::{
+        WorkspaceEvent,
         windows_catalog::remember,
         windows_endpoint::NameStore,
         windows_lifecycle::connect_control,
         windows_location::{CapturedRoots, LocationInputs, ResolvedLayout},
+        windows_service::WorkspaceServiceOwner,
         windows_transport::LocalClient,
         workspace_id,
     },
@@ -466,4 +472,304 @@ fn hidden_isolated_publications_of_one_project_remain_two_live_rows() {
     assert!(first.0.try_wait().unwrap().is_some());
     assert!(second.0.try_wait().unwrap().is_some());
     assert!(!outside.join(".runyte").exists());
+}
+
+fn manager_key(app: &mut App, code: KeyCode) {
+    app.handle_key(KeyStroke::new(code, Modifiers::NONE))
+        .unwrap();
+}
+
+fn manager_overlay(app: &App) -> runyte::snapshot::OverlaySnapshot {
+    app.overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.title.starts_with("Sessions"))
+        .expect("session manager is open")
+}
+
+fn select_manager_name(app: &mut App, name: &str) {
+    for _ in 0..manager_overlay(app).rows.len() {
+        let overlay = manager_overlay(app);
+        if overlay
+            .selected
+            .and_then(|index| overlay.rows.get(index))
+            .is_some_and(|row| row.label.contains(name))
+        {
+            return;
+        }
+        manager_key(app, KeyCode::Down);
+    }
+    panic!("manager did not select {name}");
+}
+
+fn select_manager_action(app: &mut App, label: &str) {
+    manager_key(app, KeyCode::Tab);
+    for _ in 0..5 {
+        let menu = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == runyte::snapshot::OverlayKind::BufferActions)
+            .expect("session action menu is open");
+        if menu
+            .selected
+            .and_then(|index| menu.rows.get(index))
+            .is_some_and(|row| row.label == label)
+        {
+            manager_key(app, KeyCode::Enter);
+            return;
+        }
+        manager_key(app, KeyCode::Down);
+    }
+    panic!("session action {label} was absent");
+}
+
+fn apply_native_event(
+    runtime: &tokio::runtime::Runtime,
+    app: &mut App,
+    events: &mut tokio::sync::mpsc::Receiver<WorkspaceEvent>,
+    predicate: impl Fn(&WorkspaceEvent) -> bool,
+) {
+    for _ in 0..16 {
+        let event = runtime
+            .block_on(async { tokio::time::timeout(Duration::from_secs(6), events.recv()).await })
+            .expect("native session manager service did not answer")
+            .expect("native session manager service ended");
+        let done = predicate(&event);
+        app.apply_workspace_event(event);
+        if done {
+            return;
+        }
+    }
+    panic!("native session manager did not produce expected event");
+}
+
+#[test]
+fn manager_controls_exact_real_publication_and_waits_for_force_exit() {
+    let root = TestRuntimeRoot::new("native-manager-real-host").unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let selected = layout(&root, "project");
+    let other_state = root.join("state-b");
+    let other_cache = root.join("cache-b");
+    let other = ResolvedLayout::resolve(LocationInputs {
+        project_root: selected.project_root().to_owned(),
+        state_root: other_state.clone(),
+        reserved_user_roots: vec![root.join("config")],
+        roots: CapturedRoots {
+            cache_home: Some(other_cache.clone()),
+            inventory_override: Some(root.join("inventory")),
+            ..CapturedRoots::default()
+        },
+    })
+    .unwrap();
+    fs::create_dir_all(root.join("config")).unwrap();
+    let isolated_config = root.join("config/isolated.yaml");
+    fs::write(
+        &isolated_config,
+        format!(
+            "workspace:\n  state: {}\n",
+            serde_json::to_string(other_state.to_str().unwrap()).unwrap()
+        ),
+    )
+    .unwrap();
+    let mut protected = start_host(&root, &selected);
+    let rename = cli(
+        &root,
+        &outside,
+        &[
+            "--session-rename",
+            selected.project_root().to_str().unwrap(),
+            "protected",
+        ],
+    );
+    assert!(rename.status.success(), "{:?}", text(&rename));
+    let file = selected.project_root().join("note.txt");
+    fs::write(&file, "original").unwrap();
+    let (_control_runtime, control) = make_unsaved(&selected, &file);
+    let mut unrelated = start_host_in(&root, &other, &other_cache, Some(&isolated_config));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (service, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        selected.discovery_scope().clone(),
+        Some(selected.read_location()),
+        std::path::PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    let mut app = App::new_in_project(Config::default(), None, selected.project_root()).unwrap();
+    app.attach_workspace_service(service.clone());
+    app.execute(parse_named_command("session-list", None).unwrap())
+        .unwrap();
+    service.try_refresh(1, true).unwrap();
+    let selected_identity = std::cell::RefCell::new(None);
+    apply_native_event(&runtime, &mut app, &mut events, |event| {
+        if let WorkspaceEvent::Refreshed {
+            result: Ok(rows), ..
+        } = event
+            && rows.len() == 2
+        {
+            *selected_identity.borrow_mut() = rows
+                .iter()
+                .find(|row| row.name.as_deref() == Some("protected"))
+                .map(|row| row.selection());
+            true
+        } else {
+            false
+        }
+    });
+    let selected_identity = selected_identity
+        .into_inner()
+        .expect("protected publication is listed");
+    let overlay = manager_overlay(&app);
+    assert_eq!(overlay.rows.len(), 2);
+    assert!(!overlay.rows.iter().any(|row| row.label.contains('*')));
+    assert!(
+        !overlay
+            .actions
+            .iter()
+            .any(|action| action.label == "attach")
+    );
+
+    select_manager_name(&mut app, "protected");
+    apply_native_event(
+        &runtime,
+        &mut app,
+        &mut events,
+        |event| matches!(event, WorkspaceEvent::Previewed { selection, result: Ok(_), .. } if selection == &selected_identity),
+    );
+    let preview = format!("{:?}", manager_overlay(&app).preview);
+    assert!(preview.contains("Unsaved     1"), "{preview}");
+
+    select_manager_action(&mut app, "Rename");
+    for _ in "protected".chars() {
+        manager_key(&mut app, KeyCode::Backspace);
+    }
+    for character in "managed".chars() {
+        manager_key(&mut app, KeyCode::Char(character));
+    }
+    manager_key(&mut app, KeyCode::Enter);
+    apply_native_event(
+        &runtime,
+        &mut app,
+        &mut events,
+        |event| matches!(event, WorkspaceEvent::Renamed { selection: Some(selection), result: Ok(()), .. } if selection == &selected_identity),
+    );
+    assert_eq!(
+        NameStore::read_existing(
+            selected.state_root(),
+            &workspace_id(selected.project_root())
+        )
+        .unwrap(),
+        Some("managed".to_owned())
+    );
+    apply_native_event(&runtime, &mut app, &mut events, |event| {
+        matches!(event, WorkspaceEvent::Refreshed { result: Ok(_), .. })
+    });
+    select_manager_name(&mut app, "managed");
+
+    select_manager_action(&mut app, "Close");
+    apply_native_event(
+        &runtime,
+        &mut app,
+        &mut events,
+        |event| matches!(event, WorkspaceEvent::Stopped { selection: Some(selection), result: Err(_), .. } if selection == &selected_identity),
+    );
+    assert!(protected.0.try_wait().unwrap().is_none());
+    assert!(unrelated.0.try_wait().unwrap().is_none());
+
+    select_manager_action(&mut app, "Force close");
+    manager_key(&mut app, KeyCode::Enter);
+    apply_native_event(
+        &runtime,
+        &mut app,
+        &mut events,
+        |event| matches!(event, WorkspaceEvent::Stopped { selection: Some(selection), result: Ok(()), .. } if selection == &selected_identity),
+    );
+    drop(control);
+    assert!(protected.0.try_wait().unwrap().is_some());
+    assert!(unrelated.0.try_wait().unwrap().is_none());
+    runtime.block_on(owner.shutdown()).unwrap();
+}
+
+#[test]
+fn captured_manager_rename_refuses_real_replacement_at_same_location() {
+    let root = TestRuntimeRoot::new("native-manager-stale-host").unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let layout = layout(&root, "project");
+    let mut original = start_host(&root, &layout);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (service, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        layout.discovery_scope().clone(),
+        Some(layout.read_location()),
+        std::path::PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    let mut app = App::new_in_project(Config::default(), None, layout.project_root()).unwrap();
+    app.attach_workspace_service(service.clone());
+    app.execute(parse_named_command("session-list", None).unwrap())
+        .unwrap();
+    let old_selection = std::cell::RefCell::new(None);
+    apply_native_event(&runtime, &mut app, &mut events, |event| {
+        if let WorkspaceEvent::Refreshed {
+            result: Ok(rows), ..
+        } = event
+            && rows.len() == 1
+        {
+            *old_selection.borrow_mut() = Some(rows[0].selection());
+            true
+        } else {
+            false
+        }
+    });
+    let old_selection = old_selection.into_inner().unwrap();
+    select_manager_action(&mut app, "Rename");
+
+    let stopped = cli(
+        &root,
+        &outside,
+        &["--session-stop", layout.project_root().to_str().unwrap()],
+    );
+    assert!(stopped.status.success(), "{:?}", text(&stopped));
+    assert!(original.0.try_wait().unwrap().is_some());
+    let mut replacement = start_host(&root, &layout);
+    let id = workspace_id(layout.project_root());
+    let name_before = NameStore::read_existing(layout.state_root(), &id).unwrap();
+    service.try_poll().unwrap();
+    let new_selection = std::cell::RefCell::new(None);
+    apply_native_event(&runtime, &mut app, &mut events, |event| {
+        if let WorkspaceEvent::Polled { result: Ok(rows) } = event
+            && rows.len() == 1
+        {
+            *new_selection.borrow_mut() = Some(rows[0].selection());
+            true
+        } else {
+            false
+        }
+    });
+    assert_ne!(old_selection, new_selection.into_inner().unwrap());
+
+    for _ in 0..64 {
+        manager_key(&mut app, KeyCode::Backspace);
+    }
+    for character in "stale-change".chars() {
+        manager_key(&mut app, KeyCode::Char(character));
+    }
+    manager_key(&mut app, KeyCode::Enter);
+    apply_native_event(
+        &runtime,
+        &mut app,
+        &mut events,
+        |event| matches!(event, WorkspaceEvent::Renamed { selection: Some(selection), result: Err(_), .. } if selection == &old_selection),
+    );
+    assert!(replacement.0.try_wait().unwrap().is_none());
+    assert_eq!(
+        NameStore::read_existing(layout.state_root(), &id).unwrap(),
+        name_before
+    );
+    runtime.block_on(owner.shutdown()).unwrap();
 }

@@ -78,6 +78,7 @@ pub struct AppCapabilitySnapshot {
     pub git_project: CommandAvailability,
     pub git_refresh: CommandAvailability,
     pub persistent_session: CommandAvailability,
+    pub session_controls: CommandAvailability,
 }
 
 impl AppCapabilitySnapshot {
@@ -99,6 +100,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::GitProject => self.git_project.clone(),
             CommandCapability::GitRefresh => self.git_refresh.clone(),
             CommandCapability::PersistentSession => self.persistent_session.clone(),
+            CommandCapability::SessionControls => self.session_controls.clone(),
         }
     }
 }
@@ -298,6 +300,9 @@ mod tests {
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Unavailable(
+                PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
+            ),
+            session_controls: CommandAvailability::Unavailable(
                 PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
             ),
         };

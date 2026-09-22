@@ -441,10 +441,15 @@ polls, previews, action menus, and rename or number prompts. Separate live
 publications for one project remain separate rows even when their visible path
 and workspace ID match. A pending menu confirmation or prompt for a replaced
 publication refuses and asks the user to choose again; its path or name cannot
-redirect the action. Unix and stopped rows retain project identity. The native
-Windows manager remains unavailable while its owned service and frontend path
-are being completed; interactive attachment and destination visits remain
-unavailable too.
+redirect the action. Unix and stopped rows retain project identity. The Windows
+manager presents control-only rows from its owned native service.
+If refresh loses the selected publication key, the manager requires explicit
+row movement before another action. Native Enter does not attach; its menu
+offers Rename, Close, and confirmed Force close for compatible running rows,
+only Force close for incompatible running rows, or Rename for stopped rows.
+Global `:session-clean` is distinct from selected-row
+actions. Current markers, digit shortcuts, destinations, the session strip,
+and interactive attachment remain unavailable.
 
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines

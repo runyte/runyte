@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 pub struct PublicationKey([u8; 32]);
 
 impl PublicationKey {
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub(crate) fn for_test(tag: &[u8]) -> Self {
         Self(crate::hash::sha256(tag))
     }

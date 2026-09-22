@@ -81,7 +81,7 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
 fn deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in ["plugins", "context-access", "session-list"] {
+    for spelling in ["plugins", "context-access", "session-attach workspace"] {
         let name = spelling.split_whitespace().next().unwrap();
         let spec = resolve_command(name).unwrap();
         let availability = app.command_capabilities().command_availability(spec);
@@ -94,6 +94,19 @@ fn deferred_commands_agree_with_palette_availability() {
             "{spelling}: {result:?}"
         );
     }
+    let manager = resolve_command("session-list").unwrap();
+    assert!(manager.id.platform_unavailable().is_none());
+    let reason = app
+        .command_capabilities()
+        .command_availability(manager)
+        .reason()
+        .unwrap()
+        .to_owned();
+    assert_eq!(reason, "session service is unavailable");
+    let result = app
+        .execute(parse_colon_command("session-list").unwrap())
+        .unwrap();
+    assert!(matches!(result, CommandOutcome::UserError(message) if message == reason));
     assert!(!app.should_quit);
     assert!(
         runyte::command::CommandId::Editor(runyte::command::EditorCommand::MatchBracket)

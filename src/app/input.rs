@@ -288,6 +288,15 @@ impl App {
                 cfg!(unix),
                 self.persistent_session,
             ),
+            session_controls: if cfg!(windows) {
+                if self.ports.workspace_service.is_some() {
+                    CommandAvailability::Available
+                } else {
+                    CommandAvailability::Unavailable("session service is unavailable".to_owned())
+                }
+            } else {
+                persistent_session_availability(cfg!(unix), self.persistent_session)
+            },
         }
     }
 
@@ -4359,7 +4368,7 @@ impl App {
                 // prompt cannot leave a file, or a branch, waiting behind the
                 // next one.
                 let target = self.external_target.take();
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 let session_rename_target = self.session_rename_target.take();
                 #[cfg(unix)]
                 let session_number_target = self.session_number_target.take();
@@ -4380,11 +4389,11 @@ impl App {
                         self.lsp_rename(value);
                     }
                 } else if kind == PromptKind::SessionRename {
-                    #[cfg(unix)]
+                    #[cfg(any(unix, windows))]
                     if let Some(target) = session_rename_target {
                         self.rename_selected_session(target, value);
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(not(any(unix, windows)))]
                     self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::SessionNumber {
                     #[cfg(unix)]
@@ -4747,7 +4756,7 @@ impl App {
 
     pub(super) fn close_prompt(&mut self) {
         self.prompt_input_error = None;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let session_manager_return_target = self.session_manager_return_target.take();
         // Still set only when the prompt is being abandoned: a submitted
         // rename takes its own target before closing.
@@ -4761,10 +4770,13 @@ impl App {
         // cannot inherit a target nobody asked about. The branch a new one
         // would have started from is dropped for the same reason.
         self.external_target = None;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.session_rename_target = None;
-            self.session_number_target = None;
+            #[cfg(unix)]
+            {
+                self.session_number_target = None;
+            }
         }
         self.git_branch_start = None;
         self.git_worktree_start = None;
@@ -4774,11 +4786,16 @@ impl App {
         if abandoned_terminal_rename && !self.terminals.is_empty() {
             self.open_terminal_list();
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(target) = session_manager_return_target {
             self.rebuild_workspace_picker();
             if self.restore_workspace_selection(&target) {
                 self.request_selected_workspace_preview();
+            } else {
+                #[cfg(windows)]
+                {
+                    self.session_manager_selection_lost = true;
+                }
             }
         }
     }
@@ -5287,24 +5304,39 @@ impl App {
                 Ok(())
             }
             (Colon::SessionList, InvocationParameters::None) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
                 ) {
                     return Ok(());
                 }
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 {
+                    #[cfg(windows)]
+                    if self.ports.workspace_service.is_none() {
+                        self.action_failed("session service is unavailable");
+                        return Ok(());
+                    }
                     self.workspace_previews.clear();
                     self.workspace_preview_target = None;
+                    #[cfg(windows)]
+                    {
+                        self.session_manager_selection_lost = false;
+                    }
+                    #[cfg_attr(windows, allow(unused_mut))]
                     let mut picker = ListPicker::new("Sessions · loading…", Vec::new());
-                    picker.primary_action = Some("attach".to_owned());
+                    #[cfg(unix)]
+                    {
+                        picker.primary_action = Some("attach".to_owned());
+                    }
                     self.list = Some(picker);
                     self.request_workspace_refresh();
                 }
                 Ok(())
             }
             (Colon::SessionStop, InvocationParameters::OptionalPath(selector)) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
@@ -5313,11 +5345,17 @@ impl App {
                 }
                 #[cfg(unix)]
                 self.stop_session(selector.unwrap_or_else(|| self.project_root.clone()));
-                #[cfg(not(unix))]
-                let _ = selector;
+                #[cfg(windows)]
+                match selector {
+                    Some(selector) => self.stop_session_selector(selector),
+                    None => {
+                        self.action_failed("session-stop needs an explicit selector on Windows")
+                    }
+                }
                 Ok(())
             }
             (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
@@ -5326,8 +5364,15 @@ impl App {
                 }
                 #[cfg(unix)]
                 self.rename_session(workspace, name);
-                #[cfg(not(unix))]
-                let _ = (workspace, name);
+                #[cfg(windows)]
+                self.rename_session_selector(workspace, name);
+                Ok(())
+            }
+            (Colon::SessionClean, InvocationParameters::None) => {
+                #[cfg(windows)]
+                self.clean_session_history();
+                #[cfg(not(windows))]
+                self.action_failed("native session history cleaning is available on Windows");
                 Ok(())
             }
             (Colon::Format, InvocationParameters::None) => {

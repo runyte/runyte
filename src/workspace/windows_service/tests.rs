@@ -462,6 +462,58 @@ async fn idle_worker_joins_and_complete_empty_refresh_returns_rows() {
 }
 
 #[tokio::test]
+async fn clean_from_fresh_service_observes_complete_catalog_before_mutating_history() {
+    let root = TestRuntimeRoot::new("native-service-clean-fresh").unwrap();
+    root.create_private_dir("project").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let history_path = layout
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    Directory::open(history_path.parent().unwrap(), true)
+        .unwrap()
+        .atomic_write(
+            OsStr::new("workspaces.json"),
+            &encode_recents(&[RecentEntry::new(
+                layout.project_root().to_owned(),
+                Some("stopped".to_owned()),
+                None,
+                None,
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        layout.discovery_scope().clone(),
+        Some(layout.read_location()),
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    handle.try_clean(7).unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Cleaned {
+            generation: 7,
+            result: Ok(1)
+        }
+    ));
+    handle.try_refresh(8, false).unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(event, WorkspaceEvent::Refreshed { generation: 8, result: Ok(rows) } if rows.is_empty())
+    );
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn request_admission_and_event_backpressure_stay_bounded_on_shutdown() {
     let (_root, scope) = fixture("native-service-backpressure");
     let (handle, mut owner, events) =

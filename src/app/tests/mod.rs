@@ -202,6 +202,8 @@ mod provider_documents;
 mod search_and_pickers;
 mod session_navigation;
 mod tutorial;
+#[cfg(windows)]
+mod windows_session_manager;
 mod workspace;
 
 use commands::{type_command, type_text, vim_app};

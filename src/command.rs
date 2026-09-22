@@ -48,6 +48,9 @@ pub enum CommandCapability {
     /// `session` namespace addresses that host, so in standalone mode the whole
     /// namespace is inert rather than a set of commands that each refuse.
     PersistentSession,
+    /// Session catalog controls. Unix requires persistent mode; Windows uses
+    /// the owned native catalog service even in a standalone editor.
+    SessionControls,
 }
 
 /// Stable identities for commands that currently exist only on the colon
@@ -122,6 +125,7 @@ pub enum ColonCommand {
     SessionList,
     SessionStop,
     SessionRename,
+    SessionClean,
 }
 
 /// Editing grammar selected for interactive input.
@@ -291,6 +295,7 @@ impl ColonCommand {
         Self::SessionList,
         Self::SessionStop,
         Self::SessionRename,
+        Self::SessionClean,
     ];
 
     pub const fn category(self) -> CommandCategory {
@@ -355,9 +360,11 @@ impl ColonCommand {
             | Self::Plugins
             | Self::PluginStop
             | Self::PluginRestart => CommandCategory::Configuration,
-            Self::SessionAttach | Self::SessionList | Self::SessionStop | Self::SessionRename => {
-                CommandCategory::Application
-            }
+            Self::SessionAttach
+            | Self::SessionList
+            | Self::SessionStop
+            | Self::SessionRename
+            | Self::SessionClean => CommandCategory::Application,
         }
     }
 }
@@ -1281,6 +1288,9 @@ impl From<ColonCommand> for CommandId {
 impl CommandId {
     /// Platform exclusions shared by execution, the palette, help and hints.
     pub const fn platform_unavailable(self) -> Option<&'static str> {
+        if matches!(self, Self::Colon(ColonCommand::SessionClean)) && !cfg!(windows) {
+            return Some("native session history cleaning is available on Windows");
+        }
         if !cfg!(windows) {
             return None;
         }
@@ -1319,12 +1329,13 @@ impl CommandId {
                 Some(CommandCapability::LspManager)
             }
             Self::Colon(ColonCommand::GitRefresh) => Some(CommandCapability::GitRefresh),
+            Self::Colon(ColonCommand::SessionAttach) => Some(CommandCapability::PersistentSession),
             Self::Colon(
-                ColonCommand::SessionAttach
-                | ColonCommand::SessionList
+                ColonCommand::SessionList
                 | ColonCommand::SessionStop
-                | ColonCommand::SessionRename,
-            ) => Some(CommandCapability::PersistentSession),
+                | ColonCommand::SessionRename
+                | ColonCommand::SessionClean,
+            ) => Some(CommandCapability::SessionControls),
             Self::Colon(command) if matches!(command.category(), CommandCategory::Git) => {
                 Some(CommandCapability::GitProject)
             }
@@ -1507,7 +1518,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "session-list",
         ["sl"],
         "session-list",
-        "Session manager (persistent mode)",
+        "Session manager and native controls",
         NoArguments
     ),
     spec!(
@@ -1525,6 +1536,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         "session-rename <workspace> <name>",
         "Rename a persistent session",
         Required(FreeText)
+    ),
+    spec!(
+        ColonId(Colon::SessionClean),
+        "session-clean",
+        [],
+        "session-clean",
+        "Clean verified stopped session history",
+        NoArguments
     ),
     spec!(
         ColonId(Colon::DiffDisk),
@@ -2631,7 +2650,8 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::Reload
             | Colon::WriteQuit
             | Colon::WriteBufferClose
-            | Colon::SessionList,
+            | Colon::SessionList
+            | Colon::SessionClean,
             InvocationParameters::None,
         ) => true,
         (
@@ -3012,7 +3032,8 @@ fn invocation_from_parts(
                 | ColonCommand::Reload
                 | ColonCommand::WriteQuit
                 | ColonCommand::WriteBufferClose
-                | ColonCommand::SessionList,
+                | ColonCommand::SessionList
+                | ColonCommand::SessionClean,
                 ParsedArgument::None,
             ) => Ok(CommandInvocation::new(id, InvocationParameters::None)),
             (

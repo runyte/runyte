@@ -265,6 +265,17 @@ async fn run_loop(
                 if let Some(event) = event { host.apply_event(event); }
                 else { services.workspace_events = None; }
             }
+            event = async { match services.native_catalog_events.as_mut() {
+                Some(events) => events.recv().await,
+                None => std::future::pending().await,
+            }} => {
+                if let Some(event) = event { host.apply_event(HostEvent::Workspace(event)); }
+                else {
+                    services.native_catalog_events = None;
+                    host.app_mut().detach_workspace_service();
+                    note_ended_service(&mut ended, "native session catalog");
+                }
+            }
             event = async { match services.git_events.as_mut() { Some(events) => events.recv().await, None => std::future::pending().await } } => {
                 if let Some(event) = event { host.apply_event(HostEvent::Git(event)); }
                 else { services.git_events = None; }

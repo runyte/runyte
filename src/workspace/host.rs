@@ -194,7 +194,7 @@ pub enum HostEvent {
     GitInvalidation(GitInvalidation),
     Git(GitServiceEvent),
     Terminal(crate::terminal::TerminalOutput),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Workspace(super::WorkspaceEvent),
 }
 
@@ -1463,7 +1463,7 @@ impl WorkspaceHost {
             HostEvent::GitInvalidation(event) => self.apply_git_invalidation(event),
             HostEvent::Git(event) => self.apply_git_service_event(event),
             HostEvent::Terminal(output) => self.app.apply_terminal_output(output),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             HostEvent::Workspace(event) => self.app.apply_workspace_event(event),
         }
     }
@@ -1689,11 +1689,11 @@ impl WorkspaceHost {
     /// Refreshes the session manager only when one of its rounded activity
     /// values crossed a visible boundary.
     pub fn refresh_session_activity(&mut self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.app.refresh_workspace_activity()
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }

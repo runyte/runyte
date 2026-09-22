@@ -138,8 +138,10 @@ Add `-a` when starting Runyte to run in the persistent mode:
 runyte -a  # attach to a session or start a new one
 ```
 
-Press `Space Space` to open the session manager in Runyte.
-Press `Shift Left` and `Shift Right` to quickly switch between sessions.
+Press `Space Space` to open the session manager in Runyte. On Windows, its
+standalone editor can list, preview, rename, and stop native detached sessions;
+attachment and switching remain unavailable.
+On Unix, press `Shift Left` and `Shift Right` to quickly switch between sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.

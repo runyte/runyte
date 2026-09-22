@@ -2214,6 +2214,7 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         "session-list",
         "session-stop",
         "session-rename",
+        "session-clean",
     ] {
         let matched = matches
             .iter()
@@ -2222,7 +2223,13 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         assert_eq!(
             matched.availability.reason(),
             Some(if cfg!(windows) {
-                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+                if name == "session-attach" {
+                    crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+                } else {
+                    "session service is unavailable"
+                }
+            } else if name == "session-clean" {
+                "native session history cleaning is available on Windows"
             } else {
                 crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
             })
@@ -2289,7 +2296,11 @@ fn session_execution_reports_the_shared_unsupported_platform_reason_first() {
             .unwrap();
         assert_eq!(
             app.status,
-            crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            if cfg!(windows) && command != ColonCommand::SessionAttach {
+                "session service is unavailable"
+            } else {
+                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            }
         );
         assert!(app.status_error);
         assert!(app.workspace_switch.is_none());

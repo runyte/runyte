@@ -1862,6 +1862,26 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             event = async {
+                #[cfg(windows)]
+                { match services.native_catalog_events.as_mut() {
+                    Some(events) => events.recv().await,
+                    None => std::future::pending().await,
+                }}
+                #[cfg(not(windows))]
+                { std::future::pending::<()>().await }
+            } => {
+                #[cfg(windows)]
+                if let Some(event) = event {
+                    app.apply_event(HostEvent::Workspace(event));
+                } else {
+                    services.native_catalog_events = None;
+                    app.app_mut().detach_workspace_service();
+                    note_ended_service(&mut ended_services, "native session catalog");
+                }
+                #[cfg(not(windows))]
+                let _ = event;
+            }
+            event = async {
                 match services.git_events.as_mut() {
                     Some(events) => events.recv().await,
                     None => std::future::pending().await,
@@ -2661,6 +2681,27 @@ async fn run_host_server(
                     changed = !observation || before != Some((host.app().session_strip_snapshot(), host.app().status.clone(), host.app().status_error,
                         host.app().workspace_number, host.app().overlay_snapshots()));
                 }
+            }
+            event = async {
+                #[cfg(windows)]
+                { match services.native_catalog_events.as_mut() {
+                    Some(events) => events.recv().await,
+                    None => std::future::pending().await,
+                }}
+                #[cfg(not(windows))]
+                { std::future::pending::<()>().await }
+            } => {
+                #[cfg(windows)]
+                if let Some(event) = event {
+                    host.apply_event(HostEvent::Workspace(event));
+                    changed = true;
+                } else {
+                    services.native_catalog_events = None;
+                    host.app_mut().detach_workspace_service();
+                    note_ended_service(&mut ended_services, "native session catalog");
+                }
+                #[cfg(not(windows))]
+                let _ = event;
             }
             event = async {
                 match services.git_events.as_mut() {
@@ -5040,11 +5081,7 @@ struct HostServices {
     #[cfg(windows)]
     native_catalog_owner: Option<runyte::workspace::windows_service::WorkspaceServiceOwner>,
     #[cfg(windows)]
-    #[allow(dead_code)] // The native manager is still gated; retain admission for that slice.
-    native_catalog_handle: Option<runyte::workspace::windows_service::WorkspaceServiceHandle>,
-    #[cfg(windows)]
-    #[allow(dead_code)]
-    // The native manager is still gated; retain its receiver for that slice.
+    // The event receiver stays with the owner and enters the host loop directly.
     native_catalog_events: Option<tokio::sync::mpsc::Receiver<runyte::workspace::WorkspaceEvent>>,
     context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::Event>,
     pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
@@ -5097,7 +5134,6 @@ impl HostServices {
             owner.shutdown().await?;
         }
         self.native_catalog_owner = None;
-        self.native_catalog_handle = None;
         self.native_catalog_events = None;
         Ok(())
     }
@@ -5137,6 +5173,10 @@ fn start_host_services(
     } else {
         (None, None, None)
     };
+    #[cfg(windows)]
+    if let Some(service) = native_catalog_handle.as_ref() {
+        app.attach_workspace_service(service.clone());
+    }
     let git_events = if let Some(provider) = GitCliProvider::from_environment() {
         let (service, events) = GitService::spawn(provider);
         app.attach_git_service(service);
@@ -5198,8 +5238,6 @@ fn start_host_services(
     Ok(HostServices {
         #[cfg(windows)]
         native_catalog_owner,
-        #[cfg(windows)]
-        native_catalog_handle,
         #[cfg(windows)]
         native_catalog_events,
         context_events,
