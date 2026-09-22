@@ -16,12 +16,14 @@ mod windows_console_acceptance;
 mod windows_git_acceptance;
 
 use std::{
-    fs,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
+
+#[cfg(any(not(windows), debug_assertions, test))]
+use std::fs;
 
 #[cfg(unix)]
 use std::thread;
