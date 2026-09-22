@@ -676,6 +676,23 @@ with independent review and native acceptance before transport activation.
 
 #### Sub-phase 2.5 package 2 preparation
 
+Package 2a establishes native process identity without enabling persistent
+sessions. A retained noninheritable process handle checks exact creation
+FILETIME, TokenUser ownership and process exit; PID reuse and definite absence
+are distinguished from access denial or other indeterminate errors. Metadata
+does not authorize termination. Four native tests pass, including a compiled
+child's retained-handle exit observation and conservative error classification.
+Independent review has no findings; formatting and all-target Clippy pass.
+The full native workspace suite also passes: 3,036 tests, zero failures and
+51 ignored fixture/performance entries across 44 libtest/doc groups, plus six
+native transport cases. Local validation remained serialized with one build
+job and two test threads.
+
+Cross-platform run `35623646169` found a 33-character expected literal in the
+new Unix raw-byte workspace identity regression, against the established
+32-character format. Independent SHA-256 verification confirms the corrected
+literal; production hashing remains unchanged.
+
 Native endpoint metadata must separate a named-pipe address from filesystem
 publication paths. Reuse private NTFS storage, descriptor-relative atomic
 publication and retained byte-range registry locks. Acquire the identity lock
@@ -684,6 +701,14 @@ ready endpoint metadata. Each publication carries a fresh BCrypt incarnation
 and the host's PID plus creation FILETIME, checked against a retained process
 handle. Access denial, busy pipes and probe timeout are indeterminate, never
 permission to remove a record.
+
+Namespace registries exclude duplicate hosts for one workspace; owner-wide
+inventory keys also include namespace identity so deliberately isolated
+namespaces can retain separate hosts for that same workspace. Independent
+review requires atomic no-replace publication, registry pathname/issued-file
+identity checks before readiness, and exhaustive rollback of issued identities.
+Cleanup errors must remain visible: failed publication can leave unverified
+residue when removal itself fails, never authority to delete a replacement.
 
 Windows owner-wide inventory will use OS-resolved LocalAppData and verified
 local NTFS storage, independent of workspace/XDG namespaces. It retires stale
@@ -696,6 +721,30 @@ authorize termination. Exact incarnation rechecks under the registry lock
 protect replacements from stale cleanup. Fixture roots remain injectable and
 must never inspect the account's real inventory. An undocumented boot-GUID ABI
 and wall-clock/uptime approximations are unnecessary for this contract.
+
+#### Sub-phase 2.5 package 3 transport contract
+
+The transport will share bounded framing, role validation and response queues
+with Unix, while retaining separate native connection ownership. Windows
+reserves endpoint ownership, creates the first private named-pipe instance,
+then publishes readiness. A listener instance remains alive continuously while
+accepted instances are replaced; the pending instance is counted separately
+from the 16 admitted peers. Explicit owner-only security and remote-client
+refusal are required, rather than the system's permissive default pipe ACL.
+See [named-pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)
+and [Tokio server options](https://docs.rs/tokio/latest/tokio/net/windows/named_pipe/struct.ServerOptions.html).
+
+Both ends verify the connected pipe's actual peer PID against a retained native
+process handle and current-user identity before admitting protocol traffic.
+The client additionally checks published creation time. Peer proof remains
+owned for the connection lifetime; parent-terminal authorization will consume
+that proof together with retained ConPTY job membership, not just a PID.
+The frontend's buffered client uses one dedicated thread and Tokio runtime
+owning the duplex pipe, bounded requests and the shared coalescing response
+queues. Reads must continue when rendering blocks the frontend thread, and
+cancellation must interrupt reads, writes and queue backpressure. Lifecycle
+commands and persistent-mode availability remain disabled until their later
+work packages validate startup, shutdown and attachment.
 
 ### Current implementation evidence
 

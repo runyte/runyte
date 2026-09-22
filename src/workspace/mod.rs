@@ -19,6 +19,8 @@ pub mod parent;
 mod service;
 #[cfg(unix)]
 pub mod transport;
+#[cfg(windows)]
+pub mod windows_process_identity;
 
 pub use buffers::{
     BufferContents, BufferId, BufferMetadata, BufferRevision, WaitStatus, WaitToken,
