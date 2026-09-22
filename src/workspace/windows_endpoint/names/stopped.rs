@@ -41,6 +41,25 @@ pub struct StoppedNameEdit {
 }
 
 impl StoppedNameEdit {
+    #[cfg(test)]
+    pub(crate) fn fault_pending_recovery_for_test(&mut self, name: &str) -> Result<()> {
+        self.rename_with(
+            name,
+            |step, _| {
+                if step == Step::Installed || step == Step::RollingBack {
+                    Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "injected retained stopped-name recovery",
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+            || Ok(()),
+        )
+        .map(|_| ())
+    }
+
     pub(crate) fn new(selection: StoppedNameSelection) -> Self {
         Self {
             selection,

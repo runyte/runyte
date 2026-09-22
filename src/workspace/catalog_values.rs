@@ -200,6 +200,17 @@ impl WorkspaceRow {
 
 #[derive(Debug)]
 pub enum WorkspaceEvent {
+    #[cfg(windows)]
+    ControlWarnings {
+        generation: u64,
+        details: Vec<String>,
+        omitted: usize,
+    },
+    #[cfg(windows)]
+    Cleaned {
+        generation: u64,
+        result: Result<usize, String>,
+    },
     DirectoryWorktrees {
         generation: u64,
         result: Result<Vec<PathBuf>, String>,

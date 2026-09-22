@@ -45,6 +45,8 @@ pub mod windows_pipe;
 #[cfg(windows)]
 pub mod windows_process_identity;
 #[cfg(windows)]
+pub mod windows_service;
+#[cfg(windows)]
 pub mod windows_startup;
 #[cfg(windows)]
 pub mod windows_transport;
@@ -61,6 +63,8 @@ pub use catalog::{
     record_workspace_activity, recorded_workspace_number, rename_known_workspace,
     resolve_known_workspace, resolve_known_workspace_from_directory,
 };
+#[cfg(windows)]
+pub use catalog_values::WorkspaceEvent;
 #[cfg(any(unix, windows))]
 pub use catalog_values::{PublicationKey, WorkspaceSelection};
 pub use host::{

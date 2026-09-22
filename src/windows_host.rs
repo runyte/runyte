@@ -102,7 +102,17 @@ pub(super) async fn run(arguments: LaunchArguments, startup: &mut StartupTrace) 
     // partially started services, failed publication and a dead listener.
     let outcome = async {
         if show_about { host.app_mut().execute(about_invocation()?)?; }
-        services = Some(start_host_services(&mut host, startup, config_path.as_deref(), true)?);
+        let native_catalog = super::NativeCatalogConfig::from_layout(
+            &layout,
+            host.config.workspace.state.clone(),
+        );
+        services = Some(start_host_services(
+            &mut host,
+            startup,
+            config_path.as_deref(),
+            true,
+            Some(native_catalog),
+        )?);
         let location = layout.publication_location()?;
         let names = NameStore::open(layout.state_root())?;
         let prepared = location.prepare_named(&names, None)?;
@@ -123,19 +133,29 @@ pub(super) async fn run(arguments: LaunchArguments, startup: &mut StartupTrace) 
     // Observing a rename is cancellable; begun mutation remains worker-owned.
     clients.clear();
     let plugins = host.shutdown_plugins().await;
+    let catalog = match services.as_mut() {
+        Some(services) => services.shutdown_native_catalog().await,
+        None => Ok(()),
+    };
     let transport = match server.as_mut() {
         Some(server) => server.shutdown().await,
         None => Ok(()),
     };
-    let result = finish_cleanup(outcome, plugins, transport);
+    let result = finish_cleanup(outcome, plugins, catalog, transport);
     diagnostic_log::flush(diagnostic_log::FLUSH_BUDGET);
     result
 }
 
-fn finish_cleanup(outcome: Result<()>, plugins: Result<()>, transport: Result<()>) -> Result<()> {
+fn finish_cleanup(
+    outcome: Result<()>,
+    plugins: Result<()>,
+    catalog: Result<()>,
+    transport: Result<()>,
+) -> Result<()> {
     let mut result = outcome;
     for (label, cleanup) in [
         ("host service shutdown failed", plugins),
+        ("native catalog shutdown failed", catalog),
         ("native transport shutdown failed", transport),
     ] {
         if let Err(error) = cleanup {

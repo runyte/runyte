@@ -65,7 +65,7 @@ fn missing_git_fixture() {
         let app = App::new_in_project(config, None, &root).unwrap();
         let mut host = WorkspaceHost::new(app);
         let services =
-            start_host_services(&mut host, &mut StartupTrace::new(), None, false).unwrap();
+            start_host_services(&mut host, &mut StartupTrace::new(), None, false, None).unwrap();
         assert!(services.git_events.is_none());
         for command in ["git-status", "git-refresh", "git-branches", "git-worktrees"] {
             let spec = runyte::command::resolve_command(command).unwrap();

@@ -1590,7 +1590,32 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
 
     // Optional services start only after the standalone editor is usable.
     // Their initialization must never hide first-frame latency.
-    let mut services = start_host_services(&mut app, startup, config_path.as_deref(), false)?;
+    #[cfg(windows)]
+    let native_catalog = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: reserved_user_roots.clone(),
+        roots: CapturedRoots::capture(),
+    })
+    .and_then(|scope| {
+        let current = scope.known_read_location(&project_root, &state_root)?;
+        Ok(NativeCatalogConfig {
+            scope,
+            current,
+            configured_state: app.config.workspace.state.clone(),
+        })
+    })
+    .map(Some)
+    .unwrap_or_else(|error| {
+        app.report_host_error(format!("native session catalog is unavailable: {error}"));
+        None
+    });
+    let mut services = start_host_services(
+        &mut app,
+        startup,
+        config_path.as_deref(),
+        false,
+        #[cfg(windows)]
+        native_catalog,
+    )?;
     if let Err(error) = startup.write_requested() {
         app.report_host_error(format!("failed to write startup timing report: {error}"));
     }
@@ -1921,7 +1946,12 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     }
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
-    app.shutdown_plugins().await?;
+    #[cfg(windows)]
+    let catalog_shutdown = services.shutdown_native_catalog().await;
+    let plugins_shutdown = app.shutdown_plugins().await;
+    #[cfg(windows)]
+    catalog_shutdown?;
+    plugins_shutdown?;
     #[cfg(windows)]
     anyhow::ensure!(
         !standalone_wait || app.should_quit,
@@ -5007,6 +5037,15 @@ async fn context_timeout(delay: Option<Duration>) {
 }
 
 struct HostServices {
+    #[cfg(windows)]
+    native_catalog_owner: Option<runyte::workspace::windows_service::WorkspaceServiceOwner>,
+    #[cfg(windows)]
+    #[allow(dead_code)] // The native manager is still gated; retain admission for that slice.
+    native_catalog_handle: Option<runyte::workspace::windows_service::WorkspaceServiceHandle>,
+    #[cfg(windows)]
+    #[allow(dead_code)]
+    // The native manager is still gated; retain its receiver for that slice.
+    native_catalog_events: Option<tokio::sync::mpsc::Receiver<runyte::workspace::WorkspaceEvent>>,
     context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::Event>,
     pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
     plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
@@ -5030,6 +5069,40 @@ struct HostServices {
     terminal_events: TerminalEvents,
 }
 
+#[cfg(windows)]
+struct NativeCatalogConfig {
+    scope: DiscoveryScope,
+    current: runyte::workspace::windows_location::KnownReadLocation,
+    configured_state: PathBuf,
+}
+
+#[cfg(windows)]
+impl NativeCatalogConfig {
+    fn from_layout(
+        layout: &runyte::workspace::windows_location::ResolvedLayout,
+        configured_state: PathBuf,
+    ) -> Self {
+        Self {
+            scope: layout.discovery_scope().clone(),
+            current: layout.read_location(),
+            configured_state,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl HostServices {
+    async fn shutdown_native_catalog(&mut self) -> Result<()> {
+        if let Some(owner) = self.native_catalog_owner.as_mut() {
+            owner.shutdown().await?;
+        }
+        self.native_catalog_owner = None;
+        self.native_catalog_handle = None;
+        self.native_catalog_events = None;
+        Ok(())
+    }
+}
+
 async fn receive_workspace_event(
     events: &mut Option<tokio::sync::mpsc::Receiver<HostEvent>>,
 ) -> Option<HostEvent> {
@@ -5044,7 +5117,26 @@ fn start_host_services(
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
     persistent: bool,
+    #[cfg(windows)] native_catalog: Option<NativeCatalogConfig>,
 ) -> Result<HostServices> {
+    #[cfg(windows)]
+    let (native_catalog_handle, native_catalog_owner, native_catalog_events) = if let Some(config) =
+        native_catalog
+    {
+        match runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
+            config.scope,
+            Some(config.current),
+            config.configured_state,
+        ) {
+            Ok((handle, owner, events)) => (Some(handle), Some(owner), Some(events)),
+            Err(error) => {
+                app.report_host_error(format!("native session catalog could not start: {error}"));
+                (None, None, None)
+            }
+        }
+    } else {
+        (None, None, None)
+    };
     let git_events = if let Some(provider) = GitCliProvider::from_environment() {
         let (service, events) = GitService::spawn(provider);
         app.attach_git_service(service);
@@ -5104,6 +5196,12 @@ fn start_host_services(
     #[cfg(not(unix))]
     let _ = (config_path, persistent);
     Ok(HostServices {
+        #[cfg(windows)]
+        native_catalog_owner,
+        #[cfg(windows)]
+        native_catalog_handle,
+        #[cfg(windows)]
+        native_catalog_events,
         context_events,
         pipe_events,
         plugin_events,

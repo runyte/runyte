@@ -10,7 +10,7 @@ use super::{
         await_host_stopped, force_shutdown_host, remove_stopped_observation, rename_host,
         shutdown_host, terminate_incompatible_host,
     },
-    windows_location::DiscoveryScope,
+    windows_location::{DiscoveryScope, KnownReadLocation},
 };
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
@@ -55,9 +55,20 @@ impl ControlSnapshot {
         configured_state: &Path,
         include_hidden: bool,
     ) -> Result<Self> {
+        Self::observe_at(scope, None, configured_state, include_hidden).await
+    }
+
+    /// The service supplies its captured current ready location; selector-only
+    /// CLI discovery deliberately supplies none.
+    pub async fn observe_at(
+        scope: &DiscoveryScope,
+        current: Option<&KnownReadLocation>,
+        configured_state: &Path,
+        include_hidden: bool,
+    ) -> Result<Self> {
         let history = windows_catalog::snapshot_with_history_in_scope(
             scope,
-            None,
+            current,
             configured_state,
             include_hidden,
         )
@@ -70,6 +81,12 @@ impl ControlSnapshot {
 
     pub fn history(&self) -> &HistorySnapshot {
         &self.history
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retain_pending_name_for_test(&mut self, edit: StoppedNameEdit) {
+        assert!(edit.recovery_pending());
+        self.pending_name = Some(edit);
     }
 
     pub fn select(&self, target: UserSelector<'_>) -> Result<usize> {
