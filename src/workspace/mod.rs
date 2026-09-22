@@ -20,6 +20,8 @@ mod service;
 #[cfg(unix)]
 pub mod transport;
 #[cfg(windows)]
+pub mod windows_endpoint;
+#[cfg(windows)]
 pub mod windows_process_identity;
 
 pub use buffers::{

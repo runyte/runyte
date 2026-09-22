@@ -692,6 +692,14 @@ Cross-platform run `35623646169` found a 33-character expected literal in the
 new Unix raw-byte workspace identity regression, against the established
 32-character format. Independent SHA-256 verification confirms the corrected
 literal; production hashing remains unchanged.
+The correction is `6bca515`; [run 35624663900](https://github.com/runyte/runyte/actions/runs/35624663900)
+passes every job, including native PowerShell directory handoff, all three
+required isolated clipboard cases, real rust-analyzer acceptance, Unix
+lifecycle/plugin/context checks and both unchanged 89% coverage gates. This
+also accepts package 1's portable path/protocol change across all targets.
+The earlier intermittent native filter timeout did not recur; a green run
+does not diagnose it, and the finer bounded startup milestones remain enabled
+in its fixture for a future failure.
 
 Native endpoint metadata must separate a named-pipe address from filesystem
 publication paths. Reuse private NTFS storage, descriptor-relative atomic
@@ -709,6 +717,17 @@ review requires atomic no-replace publication, registry pathname/issued-file
 identity checks before readiness, and exhaustive rollback of issued identities.
 Cleanup errors must remain visible: failed publication can leave unverified
 residue when removal itself fails, never authority to delete a replacement.
+
+Package 2b implements this foundation with no remaining independent-review
+findings. Fifteen native endpoint tests pass, including compiled-process lock
+contention and exact-incarnation cleanup; ten native private-storage tests pass,
+including concurrent no-replace installation and post-rename rollback errors.
+Formatting and all-target Clippy with warnings denied pass after fixture-only
+clone cleanup; that correction also received independent review.
+The new owned publication helper retains issued handles and preserves existing
+atomic replacement semantics for other storage callers. Transport activation,
+authenticated stale recovery, inventory listing and unique name allocation
+remain subsequent packages.
 
 Windows owner-wide inventory will use OS-resolved LocalAppData and verified
 local NTFS storage, independent of workspace/XDG namespaces. It retires stale

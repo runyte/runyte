@@ -487,13 +487,20 @@ impl Directory {
         self.rename_file(&file, to)
     }
     fn rename_file(&self, file: &File, to: &OsStr) -> io::Result<()> {
+        self.rename_file_with_flags(
+            file,
+            to,
+            FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS,
+        )
+    }
+    fn rename_file_with_flags(&self, file: &File, to: &OsStr, flags: u32) -> io::Result<()> {
         let name = leaf(to)?;
         let size = (offset_of!(FILE_RENAME_INFORMATION, FileName) + name.len() * 2)
             .max(size_of::<FILE_RENAME_INFORMATION>());
         let mut buffer = vec![0usize; size.div_ceil(size_of::<usize>())];
         let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
         unsafe {
-            (*info).Anonymous.Flags = FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS;
+            (*info).Anonymous.Flags = flags;
             (*info).RootDirectory = self.0.as_raw_handle();
             (*info).FileNameLength = (name.len() * 2) as u32;
             ptr::copy_nonoverlapping(
@@ -515,6 +522,66 @@ impl Directory {
     pub fn sync(&self) -> io::Result<()> {
         flush_directory(&self.0)
     }
+    /// Atomically publishes a new name without replacing an occupied name,
+    /// while retaining the exact issued file handle.
+    /// On failure, rollback targets only that identity, including a final name
+    /// already installed before a directory-flush failure. Existing atomic_write
+    /// callers retain their original replacement/error semantics.
+    pub(crate) fn atomic_write_owned(&self, name: &OsStr, bytes: &[u8]) -> io::Result<File> {
+        self.atomic_write_owned_with(name, bytes, Self::sync, Self::remove_owned)
+    }
+
+    fn atomic_write_owned_with(
+        &self,
+        name: &OsStr,
+        bytes: &[u8],
+        flush: impl FnOnce(&Self) -> io::Result<()>,
+        mut remove: impl FnMut(&Self, &OsStr, &File) -> io::Result<()>,
+    ) -> io::Result<File> {
+        leaf(name)?;
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..64 {
+            let pending = format!(
+                ".runyte-owned-write-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            );
+            let mut file = match self.create_new(OsStr::new(&pending)) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                result => result?,
+            };
+            let result = (|| {
+                file.write_all(bytes)?;
+                file.sync_all()?;
+                self.rename_file_with_flags(&file, name, FILE_RENAME_POSIX_SEMANTICS)?;
+                flush(self)
+            })();
+            if let Err(error) = result {
+                // Either name can be absent. Neither removal may delete a
+                // replacement, even if a rename or flush failed after mutation.
+                let mut cleanup_error = None;
+                for candidate in [OsStr::new(&pending), name] {
+                    if let Err(cleanup) = remove(self, candidate, &file)
+                        && cleanup.kind() != io::ErrorKind::NotFound
+                    {
+                        cleanup_error.get_or_insert(cleanup);
+                    }
+                }
+                if let Some(cleanup) = cleanup_error {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!("{error}; publication rollback failed: {cleanup}"),
+                    ));
+                }
+                return Err(error);
+            }
+            return Ok(file);
+        }
+        Err(io::Error::other(
+            "cannot create a unique owned runtime storage file",
+        ))
+    }
+
     pub fn atomic_write(&self, name: &OsStr, bytes: &[u8]) -> io::Result<()> {
         leaf(name)?;
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -620,6 +687,126 @@ mod tests {
         assert_eq!(
             directory.create_new(name).unwrap_err().kind(),
             io::ErrorKind::AlreadyExists
+        );
+    }
+
+    #[test]
+    fn owned_atomic_publication_rolls_back_flush_failure_and_preserves_replacements() {
+        let root = TestRuntimeRoot::new("native-owned-publication").unwrap();
+        let directory = Directory::open(root.path(), true).unwrap();
+        let name = OsStr::new("ready.json");
+        let error = directory
+            .atomic_write_owned_with(
+                name,
+                b"issued",
+                |directory| {
+                    assert_eq!(directory.read(name, 64).unwrap(), b"issued");
+                    Err(io::Error::other("injected post-rename flush failure"))
+                },
+                Directory::remove_owned,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("injected post-rename"));
+        assert_eq!(
+            directory.open_read(name).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        let issued = directory.atomic_write_owned(name, b"old").unwrap();
+        directory.atomic_write(name, b"replacement").unwrap();
+        directory.remove_owned(name, &issued).unwrap();
+        assert_eq!(directory.read(name, 64).unwrap(), b"replacement");
+        assert!(
+            directory
+                .atomic_write_owned(name, b"must not replace")
+                .is_err()
+        );
+        assert_eq!(directory.read(name, 64).unwrap(), b"replacement");
+        directory.remove(name).unwrap();
+        directory
+            .atomic_write_owned_with(
+                name,
+                b"issued again",
+                |directory| {
+                    directory.atomic_write(name, b"newer replacement")?;
+                    Err(io::Error::other("injected failure after replacement"))
+                },
+                Directory::remove_owned,
+            )
+            .unwrap_err();
+        assert_eq!(directory.read(name, 64).unwrap(), b"newer replacement");
+        assert!(fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".runyte-owned-write-")
+        }));
+    }
+
+    #[test]
+    fn owned_atomic_rollback_attempts_final_name_after_pending_cleanup_error() {
+        let root = TestRuntimeRoot::new("native-owned-rollback").unwrap();
+        let directory = Directory::open(root.path(), true).unwrap();
+        let name = OsStr::new("ready.json");
+        let mut attempts = 0;
+        let error = directory
+            .atomic_write_owned_with(
+                name,
+                b"issued",
+                |_| Err(io::Error::other("original flush failure")),
+                |directory, candidate, file| {
+                    attempts += 1;
+                    if attempts == 1 {
+                        Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "injected pending cleanup failure",
+                        ))
+                    } else {
+                        assert_eq!(candidate, name);
+                        directory.remove_owned(candidate, file)
+                    }
+                },
+            )
+            .unwrap_err();
+        assert_eq!(attempts, 2);
+        assert!(error.to_string().contains("original flush failure"));
+        assert!(error.to_string().contains("injected pending cleanup"));
+        assert_eq!(
+            directory.open_read(name).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn concurrent_owned_publications_install_exactly_one_issued_identity() {
+        let root = TestRuntimeRoot::new("native-owned-contenders").unwrap();
+        let directory = std::sync::Arc::new(Directory::open(root.path(), true).unwrap());
+        let gate = std::sync::Arc::new(Barrier::new(2));
+        let contenders: Vec<_> = [b"first".as_slice(), b"second".as_slice()]
+            .into_iter()
+            .map(|bytes| {
+                let directory = directory.clone();
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    gate.wait();
+                    directory.atomic_write_owned(OsStr::new("ready"), bytes)
+                })
+            })
+            .collect();
+        let results: Vec<_> = contenders
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let winner = results.into_iter().find_map(Result::ok).unwrap();
+        let current = directory.open_read(OsStr::new("ready")).unwrap();
+        assert_eq!(
+            Identity::of(&current).unwrap(),
+            Identity::of(&winner).unwrap()
+        );
+        assert!(
+            [b"first".as_slice(), b"second".as_slice()]
+                .contains(&directory.read(OsStr::new("ready"), 64).unwrap().as_slice())
         );
     }
 
