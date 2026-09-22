@@ -1,5 +1,11 @@
 # Windows support
 
+Current continuation: Phase 1 and Phase 2.1–2.4 are complete; Phase 2.5 is in
+progress and Phase 2.6 remains pending. The
+[handoff](../reviews/windows_phase2_handoff.md) records the current checkout,
+validation and next package; the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
+contains detailed delivery evidence. Earlier investigations below are historical.
+
 Windows support is incomplete; Linux and macOS provide the full feature set.
 The Phase-1 implementation and validation status are recorded below.
 Runyte may omit or disable features on Windows when a sound implementation would

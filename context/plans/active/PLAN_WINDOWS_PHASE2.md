@@ -1,5 +1,10 @@
 # Windows Phase 2
 
+For the current working-tree state, exact next package and reviewed remaining
+designs, start with the [continuation handoff](../../reviews/windows_phase2_handoff.md).
+Phase 2.1–2.4 are complete; 2.5 is in progress and 2.6 remains pending.
+The chronological entries below retain earlier checkpoint evidence.
+
 ## Checkpoint and next work package
 
 Phase 1 is complete and pushed through `fc9c324`; remote acceptance run
@@ -1264,6 +1269,9 @@ has no remaining findings. Combined native acceptance for packages 4e.3b through
 4e.3d passes formatting, all-target Clippy and the full suite: 3,254 tests,
 zero failures and 58 ignored entries across 45 libtest/doc-test groups, plus
 six native LSP transport cases. Build/test concurrency stays at one/two.
+These packages are committed as `221a48d`; CI run
+[`35655164347`](https://github.com/runyte/runyte/actions/runs/35655164347)
+passes every job, including native Windows and both unchanged Unix coverage gates.
 
 Native control actions and the background service
 must retain exact publication identity through selected rows, prompts, previews
@@ -1272,10 +1280,15 @@ The native service will own its runtime/thread through joined shutdown and keep
 synchronous filesystem work off the editor loop. These controls remain disabled
 until their integration and real-host acceptance.
 
-The next CLI integration needs a frozen discovery scope independent of any
-current project. Selector-only commands must not invent a cwd project merely to
-enumerate namespaces and remembered ready addresses. The same captured scope
-will supply project layouts without changing their publication fingerprints.
+Package 4e.3e introduces a frozen discovery scope independent of any current
+project. Selector-only commands can enumerate namespaces and remembered ready
+addresses without inventing a cwd project. Actual project layouts compose the
+same scope without changing publication fingerprints or detached environments.
+Scope-based ready observations remain read-only and cannot authorize cleanup.
+Independent review has no remaining findings; all 15 location and 34 catalog
+tests pass, including eight new scope regressions. Formatting and all-target
+Clippy also pass; complete native acceptance follows with the naming package.
+
 For native stopped-session rename, the configured name store will be authoritative
 and recent-history names will remain a cache/default fallback. A verified stored
 name commit must remain successful if cache refresh fails. Read-only discovery
