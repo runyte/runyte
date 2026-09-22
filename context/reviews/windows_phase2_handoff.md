@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.4b native
-selector-only CLI accepted in `a24b943` (`Enable native session control CLI on
-Windows`). The preceding control-action implementation is `443eb7b`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5a typed
+row identity accepted in `b5c47ce` (`Track exact native publication selection
+identity`). The preceding native CLI implementation is `a24b943`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -155,18 +155,31 @@ with warnings denied and the complete native workspace suite pass: 3,299
 tests, zero failures, 58 ignored across 47 libtest/doc-test groups, plus six
 native LSP transport cases. Native CI acceptance remains pending.
 
-## Next package: shared row selection identity
+## Accepted package: 4e.5a typed row identity
 
-Add a typed `WorkspaceSelection` that distinguishes exact native live
-publications sharing a project while preserving Unix and stopped project
-identity. Carry it through manager refresh, preview cache/request/completion,
-action menus and delayed prompts before enabling native manager actions.
-`SessionActionMenu` currently keeps a row index, so a refresh can redirect a
-confirmation to a different row; capture the original selection and refuse a
-stale replacement. Keep colon user selectors separate from selected-row
-intents. Do not open native attachment, switching, current-session markers or
-destination navigation until frontend ownership supplies actual current
-publication identity. The owned native catalog service follows this package.
+`b5c47ce` adds `WorkspaceSelection`: an exact native live publication key
+beside its project, or project-only identity for Unix and stopped rows. The
+fixed native key digests framed exact project bytes, process identity,
+incarnation and pipe address after peer authentication; display names and
+health do not change it. Complete snapshots reject duplicate selection keys,
+and selected lookup refuses a stale replacement without falling back to path,
+name or PID. Independent review found no remaining findings. Focused shared
+value and native catalog/history tests pass. Formatting, all-target Clippy with
+warnings denied and the full native workspace suite pass: 3,301 tests, zero
+failures, 58 ignored across 47 libtest/doc-test groups, plus six native LSP
+transport cases. Native CI acceptance remains pending.
+
+## Next package: carry selection identity through the manager
+
+Carry `WorkspaceSelection` through manager refresh, preview cache/request and
+completion, action menus and delayed prompts before enabling native manager
+actions. `SessionActionMenu` currently keeps a row index, so a refresh can
+redirect a confirmation to a different row; capture the original selection
+and refuse a stale replacement. Keep colon user selectors separate from
+selected-row intents. Preserve Unix project-only behavior. Do not open native
+attachment, switching, current-session markers or destination navigation
+until frontend ownership supplies actual current publication identity. The
+owned native catalog service follows this package.
 
 ## Phase 2.5 implementation order
 
