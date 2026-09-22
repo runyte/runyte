@@ -31,6 +31,7 @@ use super::{
     },
 };
 
+use super::catalog_values::WorkspaceSelection;
 pub use super::catalog_values::{
     ABBREVIATED_WORKSPACE_ID, DestinationInventory, WorkspaceEvent, WorkspaceRow,
     abbreviated_id_width,
@@ -55,6 +56,8 @@ use std::{fs, io};
 const REQUEST_CAPACITY: usize = 16;
 const EVENT_CAPACITY: usize = 16;
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
+const NATIVE_SELECTION_UNAVAILABLE: &str =
+    "native publication selection is unavailable in the Unix session service";
 
 #[derive(Debug)]
 enum WorkspaceRequest {
@@ -71,7 +74,7 @@ enum WorkspaceRequest {
     },
     Inventory {
         generation: u64,
-        path: PathBuf,
+        selection: WorkspaceSelection,
     },
     Inspect {
         generation: u64,
@@ -79,7 +82,7 @@ enum WorkspaceRequest {
     },
     Stop {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         force: bool,
     },
@@ -89,16 +92,33 @@ enum WorkspaceRequest {
     },
     Rename {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         name: String,
     },
     Number {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         number: Option<u8>,
     },
+}
+
+#[derive(Debug)]
+enum WorkspaceRequestTarget {
+    UserSelector(PathBuf),
+    SelectedRow(WorkspaceSelection),
+}
+
+impl WorkspaceRequestTarget {
+    fn into_parts(self) -> (PathBuf, Option<WorkspaceSelection>) {
+        match self {
+            Self::UserSelector(selector) => (selector, None),
+            Self::SelectedRow(selection) => {
+                (selection.project_root().to_path_buf(), Some(selection))
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -110,7 +130,7 @@ pub struct WorkspaceServiceHandle {
 #[derive(Clone, Debug)]
 struct WorkspacePreviewRequest {
     generation: u64,
-    path: PathBuf,
+    selection: WorkspaceSelection,
 }
 
 impl WorkspaceServiceHandle {
@@ -124,9 +144,16 @@ impl WorkspaceServiceHandle {
             .map_err(|_| "session service is unavailable or busy")
     }
 
-    pub fn try_inventory(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+    pub fn try_inventory(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
         self.requests
-            .try_send(WorkspaceRequest::Inventory { generation, path })
+            .try_send(WorkspaceRequest::Inventory {
+                generation,
+                selection,
+            })
             .map_err(|_| "session service is unavailable or busy")
     }
 
@@ -170,9 +197,16 @@ impl WorkspaceServiceHandle {
     /// Requests the selected session's live overview. A watch slot retains
     /// only the newest selection while an earlier host is answering, so fast
     /// picker movement cannot build a queue of stale socket round trips.
-    pub fn try_preview(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+    pub fn try_preview(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
         self.previews
-            .send(Some(WorkspacePreviewRequest { generation, path }))
+            .send(Some(WorkspacePreviewRequest {
+                generation,
+                selection,
+            }))
             .map_err(|_| "session preview service is unavailable")
     }
 
@@ -186,7 +220,27 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Stop {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                force,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_stop_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        force: bool,
+    ) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Stop {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 force,
             })
@@ -216,7 +270,28 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Rename {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                name,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_rename_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        name: String,
+    ) -> Result<(), &'static str> {
+        let name = normalize_session_name(&name);
+        self.requests
+            .try_send(WorkspaceRequest::Rename {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 name,
             })
@@ -236,7 +311,27 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Number {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                number,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_number_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        number: Option<u8>,
+    ) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Number {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 number,
             })
@@ -272,16 +367,26 @@ impl WorkspaceService {
         tokio::spawn(async move {
             while preview_rx.changed().await.is_ok() {
                 let request = preview_rx.borrow_and_update().clone();
-                let Some(WorkspacePreviewRequest { generation, path }) = request else {
+                let Some(WorkspacePreviewRequest {
+                    generation,
+                    selection,
+                }) = request
+                else {
                     continue;
                 };
-                let result = preview_session(&path, &preview_state)
-                    .await
-                    .map_err(|error| format!("{error:#}"));
+                let path = selection.project_root().to_path_buf();
+                let result = if selection.publication_key().is_some() {
+                    Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                } else {
+                    preview_session(&path, &preview_state)
+                        .await
+                        .map_err(|error| format!("{error:#}"))
+                };
                 if preview_events
                     .send(WorkspaceEvent::Previewed {
                         generation,
                         path,
+                        selection,
                         result,
                     })
                     .await
@@ -323,13 +428,22 @@ impl WorkspaceService {
                         .and_then(|result| result);
                         WorkspaceEvent::DirectoryWorktrees { generation, result }
                     }
-                    WorkspaceRequest::Inventory { generation, path } => {
-                        let result = read_destination_inventory(&path, &state, runtime.as_deref())
-                            .await
-                            .map_err(|error| format!("{error:#}"));
+                    WorkspaceRequest::Inventory {
+                        generation,
+                        selection,
+                    } => {
+                        let path = selection.project_root().to_path_buf();
+                        let result = if selection.publication_key().is_some() {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            read_destination_inventory(&path, &state, runtime.as_deref())
+                                .await
+                                .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Inventory {
                             generation,
                             path,
+                            selection,
                             result,
                         }
                     }
@@ -377,24 +491,33 @@ impl WorkspaceService {
                     }
                     WorkspaceRequest::Stop {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         force,
                     } => {
-                        let result = stop(
-                            &roots,
-                            &selector,
-                            &working_directory,
-                            &state,
-                            config.as_deref(),
-                            runtime.as_deref(),
-                            force,
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            stop(
+                                &roots,
+                                &selector,
+                                &working_directory,
+                                &state,
+                                config.as_deref(),
+                                runtime.as_deref(),
+                                force,
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Stopped {
                             generation,
                             selector,
+                            selection,
                             result,
                         }
                     }
@@ -415,47 +538,65 @@ impl WorkspaceService {
                     }
                     WorkspaceRequest::Rename {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         name,
                     } => {
-                        let result = rename(
-                            &roots,
-                            recents.as_deref(),
-                            &selector,
-                            &working_directory,
-                            &name,
-                            &state,
-                            config.as_deref(),
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            rename(
+                                &roots,
+                                recents.as_deref(),
+                                &selector,
+                                &working_directory,
+                                &name,
+                                &state,
+                                config.as_deref(),
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Renamed {
                             generation,
                             path: selector,
+                            selection,
                             name,
                             result,
                         }
                     }
                     WorkspaceRequest::Number {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         number,
                     } => {
-                        let result = number_workspace(
-                            &roots,
-                            recents.as_deref(),
-                            &selector,
-                            &working_directory,
-                            number,
-                            &state,
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            number_workspace(
+                                &roots,
+                                recents.as_deref(),
+                                &selector,
+                                &working_directory,
+                                number,
+                                &state,
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Numbered {
                             generation,
                             path: selector,
+                            selection,
                             number,
                             result,
                         }
@@ -1391,9 +1532,106 @@ mod tests {
             assert_eq!(result, Err("session service is unavailable"));
         }
         assert_eq!(
-            closed.try_preview(7, path),
+            closed.try_preview(7, WorkspaceSelection::project_only(path)),
             Err("session preview service is unavailable")
         );
+    }
+
+    #[tokio::test]
+    async fn unix_worker_rejects_native_selected_keys_before_path_resolution() {
+        let root = TestRuntimeRoot::new("selected-native-key").unwrap();
+        let mut row = numbering_row(&root.join("project"), true);
+        row.publication_key = Some(crate::workspace::PublicationKey::for_test(b"native-key"));
+        let selection = row.selection();
+        let (service, mut events) =
+            WorkspaceService::spawn_with(Vec::new(), None, root.join("state"), None, None);
+        service.try_preview(1, selection.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Previewed {
+            selection: returned,
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key preview should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+
+        service.try_inventory(2, selection.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Inventory {
+            selection: returned,
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key inventory should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+
+        service
+            .try_stop_selected(3, selection.clone(), root.to_path_buf(), true)
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Stopped {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key stop should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+
+        service
+            .try_rename_selected(4, selection.clone(), root.to_path_buf(), "new".to_owned())
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Renamed {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key rename should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+
+        service
+            .try_number_selected(5, selection.clone(), root.to_path_buf(), Some(1))
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Numbered {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key number should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+        assert!(!root.join("state").exists());
+        assert!(!root.join("project").exists());
     }
 
     #[test]
@@ -1621,6 +1859,7 @@ mod tests {
         let Some(WorkspaceEvent::Stopped {
             generation,
             selector,
+            selection: None,
             result,
         }) = events.recv().await
         else {
@@ -2312,6 +2551,7 @@ mod tests {
             let Some(WorkspaceEvent::Renamed {
                 generation: completed,
                 path,
+                selection: None,
                 name: completed_name,
                 result,
             }) = events.recv().await
@@ -3554,13 +3794,15 @@ mod destination_inventory_tests {
         assert!(
             matches!(event,WorkspaceEvent::DirectoryWorktrees {generation:7,result:Ok(rows)} if rows.is_empty())
         );
-        service.try_inventory(8, project.clone()).unwrap();
+        service
+            .try_inventory(8, WorkspaceSelection::project_only(project.clone()))
+            .unwrap();
         let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
             .await
             .unwrap()
             .unwrap();
         assert!(
-            matches!(event,WorkspaceEvent::Inventory {generation:8,path,result:Err(_)} if path==project)
+            matches!(event,WorkspaceEvent::Inventory {generation:8,path,result:Err(_), ..} if path==project)
         );
     }
 }

@@ -1908,7 +1908,7 @@ fn parse_session_number(value: &str) -> Result<Option<u8>, String> {
 #[derive(Clone, Debug)]
 #[cfg_attr(not(unix), allow(dead_code))]
 struct SessionActionMenu {
-    row: usize,
+    selection: crate::workspace::WorkspaceSelection,
     actions: Vec<SessionAction>,
     selected: usize,
     force_armed: bool,
@@ -2951,20 +2951,23 @@ pub struct App {
     #[cfg(unix)]
     workspace_preview_generation: u64,
     #[cfg(unix)]
-    workspace_preview_target: Option<PathBuf>,
+    workspace_preview_target: Option<crate::workspace::WorkspaceSelection>,
     #[cfg(unix)]
-    workspace_previews: HashMap<PathBuf, Result<SessionPreview, String>>,
+    workspace_previews:
+        HashMap<crate::workspace::WorkspaceSelection, Result<SessionPreview, String>>,
     #[cfg(unix)]
-    session_rename_target: Option<PathBuf>,
+    workspace_pending_selection: Option<(u64, crate::workspace::WorkspaceSelection)>,
+    #[cfg(unix)]
+    session_rename_target: Option<crate::workspace::WorkspaceSelection>,
     /// The terminal a pending rename prompt names. Renaming is reached from
     /// the terminal list, which does not attach the terminal it acts on, so
     /// the prompt cannot read its subject from the active pane.
     terminal_rename_target: Option<TerminalId>,
     #[cfg(unix)]
-    session_number_target: Option<PathBuf>,
+    session_number_target: Option<crate::workspace::WorkspaceSelection>,
     /// The session-manager row restored after its Renumber prompt closes.
     #[cfg(unix)]
-    session_manager_return_target: Option<PathBuf>,
+    session_manager_return_target: Option<crate::workspace::WorkspaceSelection>,
     session_action_menu: Option<SessionActionMenu>,
     terminal_action_menu: Option<TerminalActionMenu>,
     /// The buffer a commit message was opened over, returned to once the
@@ -3452,6 +3455,8 @@ impl App {
             workspace_preview_target: None,
             #[cfg(unix)]
             workspace_previews: HashMap::new(),
+            #[cfg(unix)]
+            workspace_pending_selection: None,
             #[cfg(unix)]
             session_rename_target: None,
             terminal_rename_target: None,

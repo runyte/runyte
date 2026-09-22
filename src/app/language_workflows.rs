@@ -2788,6 +2788,13 @@ impl App {
         let Some(ListAction::Workspace(row)) = self.selected_list_action() else {
             return;
         };
+        let Some(selection) = self.workspace_rows.get(row).map(|entry| entry.selection()) else {
+            return;
+        };
+        if self.workspace_row_index(&selection) != Ok(Some(row)) {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
         let Some(entry) = self.workspace_rows.get(row) else {
             return;
         };
@@ -2811,7 +2818,7 @@ impl App {
             ]
         };
         self.session_action_menu = Some(SessionActionMenu {
-            row,
+            selection,
             actions,
             selected: 0,
             force_armed: false,
@@ -2840,69 +2847,77 @@ impl App {
                 }
             }
             (KeyCode::Enter, _) => {
-                if self.session_action_menu.as_ref().is_some_and(|menu| {
-                    menu.selected_action() == Some(SessionAction::ForceClose) && !menu.force_armed
-                }) && self.session_action_menu.as_ref().is_some_and(|menu| {
-                    self.workspace_rows
-                        .get(menu.row)
-                        .is_some_and(|row| row.running)
-                }) {
+                let chosen = self.session_action_menu.as_ref().and_then(|menu| {
+                    let action = menu.selected_action()?;
+                    let index = self.workspace_row_index(&menu.selection).ok().flatten()?;
+                    let row = self.workspace_rows.get(index)?;
+                    Some((
+                        menu.selection.clone(),
+                        row.name.clone(),
+                        row.running,
+                        action,
+                    ))
+                });
+                let Some((selection, name, running, action)) = chosen else {
+                    self.session_action_menu = None;
+                    self.action_failed("selected session changed; choose it again");
+                    return Ok(());
+                };
+                if action == SessionAction::ForceClose
+                    && running
+                    && self
+                        .session_action_menu
+                        .as_ref()
+                        .is_some_and(|menu| !menu.force_armed)
+                {
                     self.session_action_menu.as_mut().unwrap().force_armed = true;
                     self.status(
                         "force close discards protected buffers, waiters, and live terminals; press Enter again to confirm",
                     );
                     return Ok(());
                 }
-                let chosen = self.session_action_menu.as_ref().and_then(|menu| {
-                    let action = menu.selected_action()?;
-                    let row = self.workspace_rows.get(menu.row)?;
-                    Some((
-                        row.project_root.clone(),
-                        row.name.clone(),
-                        row.running,
-                        action,
-                    ))
-                });
-                match chosen {
-                    Some((_, _, _, SessionAction::Open)) => {
+                match (running, action) {
+                    (_, SessionAction::Open) => {
+                        if !self.restore_workspace_selection(&selection) {
+                            self.session_action_menu = None;
+                            self.action_failed("selected session changed; choose it again");
+                            return Ok(());
+                        }
                         self.session_action_menu = None;
                         self.activate_list_selection()?;
                     }
-                    Some((selector, name, _, SessionAction::Rename)) => {
+                    (_, SessionAction::Rename) => {
                         self.list = None;
                         self.session_action_menu = None;
-                        self.session_rename_target = Some(selector);
+                        self.session_rename_target = Some(selection);
                         self.open_prompt(PromptKind::SessionRename);
                         self.command = name.unwrap_or_default();
                         self.command_cursor = self.command.chars().count();
                     }
-                    Some((selector, _, true, SessionAction::Number)) => {
+                    (true, SessionAction::Number) => {
                         self.list = None;
                         self.session_action_menu = None;
-                        self.session_number_target = Some(selector.clone());
-                        self.session_manager_return_target = Some(selector);
+                        self.session_number_target = Some(selection.clone());
+                        self.session_manager_return_target = Some(selection);
                         self.open_prompt(PromptKind::SessionNumber);
                     }
-                    Some((_, _, false, SessionAction::Number)) => {
+                    (false, SessionAction::Number) => {
                         self.status("this session is already stopped")
                     }
-                    Some((selector, _, true, SessionAction::Close)) => self.stop_session(selector),
-                    Some((_, _, false, SessionAction::Close)) => {
+                    (true, SessionAction::Close) => self.stop_selected_session(selection, false),
+                    (false, SessionAction::Close) => self.status("this session is already stopped"),
+                    (true, SessionAction::ForceClose) => {
+                        self.stop_selected_session(selection, true)
+                    }
+                    (false, SessionAction::ForceClose) => {
                         self.status("this session is already stopped")
                     }
-                    Some((selector, _, true, SessionAction::ForceClose)) => {
-                        self.stop_session_force(selector)
+                    (false, SessionAction::Forget) => {
+                        let _ = self.forget_workspace(selection.project_root().to_path_buf());
                     }
-                    Some((_, _, false, SessionAction::ForceClose)) => {
-                        self.status("this session is already stopped")
-                    }
-                    Some((selector, _, false, SessionAction::Forget)) => {
-                        let _ = self.forget_workspace(selector);
-                    }
-                    Some((_, _, true, SessionAction::Forget)) => {
+                    (true, SessionAction::Forget) => {
                         self.status("stop this session before forgetting it")
                     }
-                    None => {}
                 }
             }
             _ => {}
@@ -3781,6 +3796,19 @@ impl App {
         if matches!(chosen, Some(ListAction::Workspace(_))) && !self.persistent_session {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return Ok(());
+        }
+        #[cfg(unix)]
+        if let Some(ListAction::Workspace(index)) = &chosen {
+            let Some(selection) = self.workspace_rows.get(*index).map(|row| row.selection()) else {
+                self.action_failed("selected session changed; choose it again");
+                return Ok(());
+            };
+            if selection.publication_key().is_some()
+                || self.workspace_row_index(&selection) != Ok(Some(*index))
+            {
+                self.action_failed("selected session cannot be attached here");
+                return Ok(());
+            }
         }
         self.list = None;
         self.buffer_action_menu = None;

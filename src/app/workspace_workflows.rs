@@ -9,6 +9,8 @@ use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
     compact_session_elapsed, session_picker_preview, terminal_output_status,
 };
+#[cfg(unix)]
+use crate::workspace::WorkspaceSelection;
 
 #[cfg(unix)]
 const SESSION_STATUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -17,6 +19,92 @@ impl App {
     #[cfg(unix)]
     pub fn attach_workspace_service(&mut self, service: WorkspaceServiceHandle) {
         self.ports.workspace_service = Some(service);
+    }
+
+    #[cfg(unix)]
+    pub(super) fn workspace_row_index(
+        &self,
+        selection: &WorkspaceSelection,
+    ) -> Result<Option<usize>, &'static str> {
+        let mut matches = self
+            .workspace_rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| (row.selection() == *selection).then_some(index));
+        let first = matches.next();
+        if matches.next().is_some() {
+            Err("session list contains duplicate selection identity")
+        } else {
+            Ok(first)
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn selected_workspace_selection(&self) -> Option<WorkspaceSelection> {
+        let super::ListAction::Workspace(index) = self.selected_list_action()? else {
+            return None;
+        };
+        self.workspace_rows.get(index).map(|row| row.selection())
+    }
+
+    #[cfg(unix)]
+    fn replace_workspace_rows(&mut self, rows: Vec<crate::workspace::WorkspaceRow>) {
+        let visible = rows
+            .iter()
+            .map(crate::workspace::WorkspaceRow::selection)
+            .collect::<std::collections::HashSet<_>>();
+        self.workspace_previews
+            .retain(|selection, _| visible.contains(selection));
+        if self
+            .workspace_preview_target
+            .as_ref()
+            .is_some_and(|selection| !visible.contains(selection))
+        {
+            self.workspace_preview_target = None;
+            self.workspace_preview_generation =
+                self.workspace_preview_generation.wrapping_add(1).max(1);
+        }
+        self.workspace_rows = rows;
+    }
+
+    #[cfg(unix)]
+    pub(super) fn restore_workspace_selection(&mut self, selection: &WorkspaceSelection) -> bool {
+        let Ok(Some(row_index)) = self.workspace_row_index(selection) else {
+            return false;
+        };
+        let Some(picker) = self.list.as_mut() else {
+            return false;
+        };
+        let Some(visible_index) = picker
+            .visible_indices()
+            .iter()
+            .position(|index| *index == row_index)
+        else {
+            return false;
+        };
+        picker.selected = visible_index;
+        true
+    }
+
+    #[cfg(unix)]
+    fn matches_workspace_completion(
+        &mut self,
+        generation: u64,
+        selection: Option<&WorkspaceSelection>,
+    ) -> bool {
+        match selection {
+            Some(selection) => {
+                if self.workspace_pending_selection.as_ref()
+                    == Some(&(generation, selection.clone()))
+                {
+                    self.workspace_pending_selection = None;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => generation == self.workspace_generation,
+        }
     }
 
     #[cfg(unix)]
@@ -34,6 +122,7 @@ impl App {
             WorkspaceEvent::Inventory {
                 generation,
                 path,
+                selection,
                 result,
             } => {
                 if !self
@@ -41,7 +130,9 @@ impl App {
                     .inventory
                     .as_ref()
                     .is_some_and(|inventory| {
-                        inventory.generation == generation && inventory.path == path
+                        inventory.generation == generation
+                            && inventory.path == path
+                            && selection == inventory.selection
                     })
                 {
                     return;
@@ -130,7 +221,7 @@ impl App {
                             .as_ref()
                             .is_some_and(|picker| picker.title.starts_with("Sessions"));
                         if !manager_open && self.session_navigation.inventory.is_none() {
-                            self.workspace_rows = rows;
+                            self.replace_workspace_rows(rows);
                             if let Some(row) = self
                                 .workspace_rows
                                 .iter()
@@ -174,11 +265,12 @@ impl App {
                 }
                 match result {
                     Ok(rows) => {
+                        let selected = self.selected_workspace_selection();
                         let manager_open = self
                             .list
                             .as_ref()
                             .is_some_and(|picker| picker.title.starts_with("Sessions"));
-                        self.workspace_rows = rows;
+                        self.replace_workspace_rows(rows);
                         // Self-correcting: a swap performed from another
                         // workspace can change this one's number without this
                         // host hearing about it, and every listing carries the
@@ -193,7 +285,12 @@ impl App {
                         }
                         if manager_open {
                             self.rebuild_workspace_picker();
-                            self.request_selected_workspace_preview();
+                            if selected
+                                .as_ref()
+                                .is_none_or(|selection| self.restore_workspace_selection(selection))
+                            {
+                                self.request_selected_workspace_preview();
+                            }
                         }
                     }
                     Err(error) => self.error_from("Host", "Host operation failed", error),
@@ -211,14 +308,8 @@ impl App {
                 // complete rows remain visible and the next bounded poll may
                 // recover without turning a transient host into an error.
                 if let Ok(rows) = result {
-                    let selected_path = match self.selected_list_action() {
-                        Some(ListAction::Workspace(index)) => self
-                            .workspace_rows
-                            .get(index)
-                            .map(|row| row.project_root.clone()),
-                        _ => None,
-                    };
-                    self.workspace_rows = rows;
+                    let selected = self.selected_workspace_selection();
+                    self.replace_workspace_rows(rows);
                     if let Some(row) = self
                         .workspace_rows
                         .iter()
@@ -227,34 +318,32 @@ impl App {
                         self.note_workspace_number(row.number);
                     }
                     self.rebuild_workspace_picker();
-                    if let Some(path) = selected_path
-                        && let Some(row_index) = self
-                            .workspace_rows
-                            .iter()
-                            .position(|row| row.project_root == path)
-                        && let Some(picker) = self.list.as_mut()
-                        && let Some(visible_index) = picker
-                            .visible_indices()
-                            .iter()
-                            .position(|index| *index == row_index)
+                    if selected
+                        .as_ref()
+                        .is_none_or(|selection| self.restore_workspace_selection(selection))
                     {
-                        picker.selected = visible_index;
+                        self.request_selected_workspace_preview();
                     }
-                    self.request_selected_workspace_preview();
                 }
             }
             WorkspaceEvent::Previewed {
                 generation,
-                path,
+                path: _,
+                selection,
                 result,
             } => {
                 if generation != self.workspace_preview_generation
-                    || self.workspace_preview_target.as_ref() != Some(&path)
+                    || self.workspace_preview_target.as_ref() != Some(&selection)
+                    || self
+                        .workspace_row_index(&selection)
+                        .ok()
+                        .flatten()
+                        .is_none()
                 {
                     return;
                 }
                 self.workspace_preview_target = None;
-                self.workspace_previews.insert(path, result);
+                self.workspace_previews.insert(selection, result);
                 if self
                     .list
                     .as_ref()
@@ -266,6 +355,7 @@ impl App {
             WorkspaceEvent::Stopped {
                 generation,
                 selector,
+                selection,
                 result,
             } => {
                 // A stop that belongs to a compound worktree removal is one
@@ -274,11 +364,9 @@ impl App {
                 // own request before the manager's latest-generation gate: a
                 // refresh requested while the host is stopping must not make
                 // this reply disappear.
-                if self
-                    .worktree_teardown
-                    .as_ref()
-                    .is_some_and(|teardown| teardown.awaits_stop(generation, &selector))
-                {
+                if self.worktree_teardown.as_ref().is_some_and(|teardown| {
+                    selection.is_none() && teardown.awaits_stop(generation, &selector)
+                }) {
                     self.session_action_menu = None;
                     match result {
                         Ok(()) => {
@@ -298,7 +386,7 @@ impl App {
                     }
                     return;
                 }
-                if generation != self.workspace_generation {
+                if !self.matches_workspace_completion(generation, selection.as_ref()) {
                     return;
                 }
                 self.session_action_menu = None;
@@ -365,10 +453,11 @@ impl App {
             WorkspaceEvent::Renamed {
                 generation,
                 path,
+                selection,
                 name,
                 result,
             } => {
-                if generation != self.workspace_generation {
+                if !self.matches_workspace_completion(generation, selection.as_ref()) {
                     return;
                 }
                 self.session_action_menu = None;
@@ -383,10 +472,11 @@ impl App {
             WorkspaceEvent::Numbered {
                 generation,
                 path,
+                selection,
                 number,
                 result,
             } => {
-                if generation != self.workspace_generation {
+                if !self.matches_workspace_completion(generation, selection.as_ref()) {
                     return;
                 }
                 self.session_action_menu = None;
@@ -590,8 +680,8 @@ impl App {
                         ))
                         .with_preview(session_picker_preview(
                             row,
-                            self.workspace_previews.get(&row.project_root),
-                            self.workspace_preview_target.as_ref() == Some(&row.project_root),
+                            self.workspace_previews.get(&row.selection()),
+                            self.workspace_preview_target.as_ref() == Some(&row.selection()),
                             active,
                         ))
                         // A stopped session is still worth listing and still starts
@@ -743,27 +833,31 @@ impl App {
         let Some(row) = self.workspace_rows.get(index) else {
             return;
         };
+        let selection = row.selection();
+        if self.workspace_row_index(&selection).ok() != Some(Some(index)) {
+            return;
+        }
         if !row.running
             || row.incompatible_protocol.is_some()
-            || self.workspace_previews.contains_key(&row.project_root)
-            || self.workspace_preview_target.as_ref() == Some(&row.project_root)
+            || self.workspace_previews.contains_key(&selection)
+            || self.workspace_preview_target.as_ref() == Some(&selection)
         {
             return;
         }
-        let path = row.project_root.clone();
         self.workspace_preview_generation =
             self.workspace_preview_generation.wrapping_add(1).max(1);
         let generation = self.workspace_preview_generation;
-        self.workspace_preview_target = Some(path.clone());
+        self.workspace_preview_target = Some(selection.clone());
         let result = self
             .ports
             .workspace_service
             .as_ref()
             .ok_or("session preview service is unavailable")
-            .and_then(|service| service.try_preview(generation, path.clone()));
+            .and_then(|service| service.try_preview(generation, selection.clone()));
         if let Err(error) = result {
             self.workspace_preview_target = None;
-            self.workspace_previews.insert(path, Err(error.to_owned()));
+            self.workspace_previews
+                .insert(selection, Err(error.to_owned()));
         }
         self.rebuild_workspace_picker();
     }
@@ -779,21 +873,49 @@ impl App {
 
     #[cfg(unix)]
     pub(super) fn stop_session(&mut self, selector: PathBuf) {
-        self.stop_session_with_force(selector, false);
-    }
-
-    #[cfg(unix)]
-    pub(super) fn stop_session_force(&mut self, selector: PathBuf) {
-        self.stop_session_with_force(selector, true);
-    }
-
-    #[cfg(unix)]
-    fn stop_session_with_force(&mut self, selector: PathBuf, force: bool) {
         if !self.persistent_session {
             self.action_failed("stopping sessions needs workspace.mode: persistent");
             return;
         }
-        let _ = self.request_session_stop(selector, force);
+        let _ = self.request_session_stop(selector, false);
+    }
+
+    #[cfg(unix)]
+    pub(super) fn stop_selected_session(&mut self, selection: WorkspaceSelection, force: bool) {
+        if !self.persistent_session {
+            self.action_failed("stopping sessions needs workspace.mode: persistent");
+            return;
+        }
+        let Ok(Some(index)) = self.workspace_row_index(&selection) else {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        };
+        if !self.workspace_rows[index].running {
+            self.status("this session is already stopped");
+            return;
+        }
+        self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
+        let generation = self.workspace_generation;
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            self.action_failed("session service is unavailable");
+            return;
+        };
+        match service.try_stop_selected(
+            generation,
+            selection.clone(),
+            self.working_directory.clone(),
+            force,
+        ) {
+            Ok(()) => {
+                self.workspace_pending_selection = Some((generation, selection));
+                self.status(if force {
+                    "force-stopping session and its protected live state…"
+                } else {
+                    "stopping session…"
+                });
+            }
+            Err(error) => self.error_from("Host", "Host operation failed", error),
+        }
     }
 
     /// Stops a session without the `session` namespace's mode gate.
@@ -813,6 +935,7 @@ impl App {
         };
         match service.try_stop(generation, selector, self.working_directory.clone(), force) {
             Ok(()) => {
+                self.workspace_pending_selection = None;
                 self.status(if force {
                     "force-stopping session and its protected live state…"
                 } else {
@@ -838,6 +961,7 @@ impl App {
         };
         match service.try_forget(generation, path) {
             Ok(()) => {
+                self.workspace_pending_selection = None;
                 self.status("forgetting session record…");
                 Some(generation)
             }
@@ -857,22 +981,75 @@ impl App {
             return;
         };
         match service.try_rename(generation, path, self.working_directory.clone(), name) {
-            Ok(()) => self.status("renaming session…"),
+            Ok(()) => {
+                self.workspace_pending_selection = None;
+                self.status("renaming session…");
+            }
             Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
 
-    /// Asks the catalog to give this workspace a number, or to take its away.
     #[cfg(unix)]
-    pub(super) fn number_session(&mut self, path: PathBuf, number: Option<u8>) {
+    pub(super) fn rename_selected_session(&mut self, selection: WorkspaceSelection, name: String) {
+        if self
+            .workspace_row_index(&selection)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
         let generation = self.workspace_generation;
         let Some(service) = self.ports.workspace_service.as_ref() else {
             self.action_failed("session service is unavailable");
             return;
         };
-        match service.try_number(generation, path, self.working_directory.clone(), number) {
-            Ok(()) => self.status("numbering session…"),
+        match service.try_rename_selected(
+            generation,
+            selection.clone(),
+            self.working_directory.clone(),
+            name,
+        ) {
+            Ok(()) => {
+                self.workspace_pending_selection = Some((generation, selection));
+                self.status("renaming session…");
+            }
+            Err(error) => self.error_from("Host", "Host operation failed", error),
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn number_selected_session(
+        &mut self,
+        selection: WorkspaceSelection,
+        number: Option<u8>,
+    ) {
+        let Ok(Some(index)) = self.workspace_row_index(&selection) else {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        };
+        if !self.workspace_rows[index].running {
+            self.status("this session is already stopped");
+            return;
+        }
+        self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
+        let generation = self.workspace_generation;
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            self.action_failed("session service is unavailable");
+            return;
+        };
+        match service.try_number_selected(
+            generation,
+            selection.clone(),
+            self.working_directory.clone(),
+            number,
+        ) {
+            Ok(()) => {
+                self.workspace_pending_selection = Some((generation, selection));
+                self.status("numbering session…");
+            }
             Err(error) => self.error_from("Host", "Host operation failed", error),
         }
     }
@@ -925,6 +1102,8 @@ pub(super) struct SessionNavigationState {
 struct SessionInventory {
     #[cfg(unix)]
     path: PathBuf,
+    #[cfg(unix)]
+    selection: WorkspaceSelection,
     #[cfg(unix)]
     generation: u64,
     saved_picker: super::ListPicker,
@@ -1419,6 +1598,10 @@ impl App {
             let Some(row) = self.workspace_rows.get(index).cloned() else {
                 return;
             };
+            if self.workspace_row_index(&row.selection()) != Ok(Some(index)) {
+                self.action_failed("session list contains duplicate selection identity");
+                return;
+            }
             let Some(saved_picker) = self.list.take() else {
                 return;
             };
@@ -1426,6 +1609,7 @@ impl App {
             let generation = self.session_navigation.generation;
             self.session_navigation.inventory = Some(SessionInventory {
                 path: row.project_root.clone(),
+                selection: row.selection(),
                 generation,
                 saved_picker,
                 incarnation: None,
@@ -1452,7 +1636,7 @@ impl App {
                     .workspace_service
                     .as_ref()
                     .ok_or("session service is unavailable")
-                    .and_then(|service| service.try_inventory(generation, row.project_root));
+                    .and_then(|service| service.try_inventory(generation, row.selection()));
                 if let Err(error) = result {
                     self.list = Some(
                         ListPicker::new(
@@ -1481,19 +1665,9 @@ impl App {
                 #[cfg(unix)]
                 {
                     self.rebuild_workspace_picker();
-                    if let Some(index) = self
-                        .workspace_rows
-                        .iter()
-                        .position(|row| row.project_root == inventory.path)
-                        && let Some(picker) = self.list.as_mut()
-                        && let Some(selected) = picker
-                            .visible_indices()
-                            .iter()
-                            .position(|visible| picker.items[*visible].index == index)
-                    {
-                        picker.selected = selected;
+                    if self.restore_workspace_selection(&inventory.selection) {
+                        self.request_selected_workspace_preview();
                     }
-                    self.request_selected_workspace_preview();
                 }
             }
             (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
@@ -1536,6 +1710,17 @@ impl App {
                     .and_then(|item| inventory.entries.get(item.index));
                 if let (Some(entry), Some(incarnation)) = (selected, inventory.incarnation.clone())
                 {
+                    let selection = inventory.selection.clone();
+                    if selection.publication_key().is_some()
+                        || self
+                            .workspace_row_index(&selection)
+                            .ok()
+                            .flatten()
+                            .is_none()
+                    {
+                        self.action_failed("selected session changed; choose it again");
+                        return Ok(());
+                    }
                     let destination = match entry.destination {
                         crate::protocol::OpenDestination::Buffer(id) => {
                             let Some(index) = id
@@ -1551,7 +1736,7 @@ impl App {
                             super::OpenDestination::Terminal(super::TerminalId::from_raw(id))
                         }
                     };
-                    let path = inventory.path.clone();
+                    let path = selection.project_root().to_path_buf();
                     if self.request_workspace_switch(path) {
                         let request = self.workspace_switch.as_mut().unwrap();
                         request.running_only = true;

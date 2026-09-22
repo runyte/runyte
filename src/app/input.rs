@@ -4382,7 +4382,7 @@ impl App {
                 } else if kind == PromptKind::SessionRename {
                     #[cfg(unix)]
                     if let Some(target) = session_rename_target {
-                        self.rename_session(target, value);
+                        self.rename_selected_session(target, value);
                     }
                     #[cfg(not(unix))]
                     self.action_failed("persistent mode is not yet supported on this platform");
@@ -4390,7 +4390,7 @@ impl App {
                     #[cfg(unix)]
                     if let Some(target) = session_number_target {
                         match parse_session_number(&value) {
-                            Ok(number) => self.number_session(target, number),
+                            Ok(number) => self.number_selected_session(target, number),
                             Err(error) => self.action_failed(error),
                         }
                     }
@@ -4777,15 +4777,9 @@ impl App {
         #[cfg(unix)]
         if let Some(target) = session_manager_return_target {
             self.rebuild_workspace_picker();
-            if let Some(selected) = self
-                .workspace_rows
-                .iter()
-                .position(|row| row.project_root == target)
-                && let Some(picker) = self.list.as_mut()
-            {
-                picker.selected = selected;
+            if self.restore_workspace_selection(&target) {
+                self.request_selected_workspace_preview();
             }
-            self.request_selected_workspace_preview();
         }
     }
 

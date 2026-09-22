@@ -436,6 +436,16 @@ to the temporary refusal. That refusal does not change a remembered decision.
 
 ## Session strip and Navigator
 
+The **session manager** keeps each displayed row's identity across catalog
+polls, previews, action menus, and rename or number prompts. Separate live
+publications for one project remain separate rows even when their visible path
+and workspace ID match. A pending menu confirmation or prompt for a replaced
+publication refuses and asks the user to choose again; its path or name cannot
+redirect the action. Unix and stopped rows retain project identity. The native
+Windows manager remains unavailable while its owned service and frontend path
+are being completed; interactive attachment and destination visits remain
+unavailable too.
+
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines
 retain their roles. `workspace.session_strip` is `auto`, `always`, or `hidden`;

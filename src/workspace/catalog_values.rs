@@ -18,6 +18,11 @@ use std::path::{Path, PathBuf};
 pub struct PublicationKey([u8; 32]);
 
 impl PublicationKey {
+    #[cfg(all(test, unix))]
+    pub(crate) fn for_test(tag: &[u8]) -> Self {
+        Self(crate::hash::sha256(tag))
+    }
+
     /// Hashes the exact publication tuple after peer-authenticated discovery.
     /// Length framing prevents neighboring variable fields from aliasing.
     #[cfg(windows)]
@@ -58,6 +63,14 @@ pub struct WorkspaceSelection {
 }
 
 impl WorkspaceSelection {
+    /// Creates the project-only identity used by Unix and stopped-history rows.
+    pub fn project_only(project_root: PathBuf) -> Self {
+        Self {
+            project_root,
+            publication_key: None,
+        }
+    }
+
     pub fn project_root(&self) -> &Path {
         &self.project_root
     }
@@ -194,6 +207,7 @@ pub enum WorkspaceEvent {
     Inventory {
         generation: u64,
         path: PathBuf,
+        selection: WorkspaceSelection,
         result: Result<DestinationInventory, String>,
     },
     Observed {
@@ -216,11 +230,13 @@ pub enum WorkspaceEvent {
     Previewed {
         generation: u64,
         path: PathBuf,
+        selection: WorkspaceSelection,
         result: Result<SessionPreview, String>,
     },
     Stopped {
         generation: u64,
         selector: PathBuf,
+        selection: Option<WorkspaceSelection>,
         result: Result<(), String>,
     },
     /// A workspace was dropped from the visited history. `recorded` is whether
@@ -234,6 +250,7 @@ pub enum WorkspaceEvent {
     Renamed {
         generation: u64,
         path: PathBuf,
+        selection: Option<WorkspaceSelection>,
         name: String,
         result: Result<(), String>,
     },
@@ -243,6 +260,7 @@ pub enum WorkspaceEvent {
     Numbered {
         generation: u64,
         path: PathBuf,
+        selection: Option<WorkspaceSelection>,
         number: Option<u8>,
         result: Result<Option<PathBuf>, String>,
     },
