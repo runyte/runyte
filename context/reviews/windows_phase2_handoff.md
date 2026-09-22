@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5d native
-manager controls accepted in `5b86575` (`Enable exact native session manager
-controls`). The preceding owned catalog service is `92e44dc`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5e native
+process-exit supervision accepted in `1359c1a` (`Supervise native host exit with
+retained process wait`). The preceding manager controls are `5b86575`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -233,13 +233,36 @@ pass: 3,318 tests, zero failures, 58 ignored across 47 libtest/doc-test groups,
 plus six native LSP transport cases. Native CI and Unix coverage acceptance
 remain pending a later authorized push.
 
-## Next package: native process-exit supervision
+## Accepted package: 4e.5e native process-exit supervision
 
-Implement the retained-handle one-shot watcher contract below, including
-cancellation, unregister/drop races and reentrant-waker fixture coverage.
-Then integrate it into frontend attachment/switching and wait ownership; keep
-public attachment and parent-terminal routing gated until their own real-host
-acceptance. Do not treat metadata PID or a missing ready file as process exit.
+`1359c1a` adds a one-shot native wait over the retained host process handle and
+uses it for stop completion under the existing five-second budget. It no longer
+polls the process during an active stop. The callback keeps its context and
+process handle through completed unregistration; an unexpected unregister
+failure retains them. One notifier task isolates caller wakers from the native
+callback. A sticky exit flag preserves cancellation and repeated waits.
+
+Independent Astra review found no remaining findings. Focused tests cover
+already-exited processes, cancellation, callback/drop overlap, runtime shutdown,
+registration and unregister failures, and reentrant caller-waker destruction in
+compiled helpers with parent timeouts. Formatting, all-target Clippy with
+warnings denied, and the complete native workspace suite pass: 3,325 tests,
+zero failures, 61 ignored across 47 libtest/doc-test groups, plus six native LSP
+transport cases. Native CI and Unix coverage acceptance remain pending a later
+authorized push.
+
+## Next package: native parent identity and foreground supervision
+
+Observe a foreground process's candidate parent once, immediately retain the
+same-user process handle, and verify creation order against the child. A PID is
+only a discovery hint, not ongoing identity or an authorization proof. Keep
+missing or unobservable parents explicit. A detached host uses a short-lived
+inheritance parent during launch, so do not attach natural-parent supervision
+to detached hosts. Use an isolated compiled parent-child fixture to prove live
+identity, process exit after pinning, and later-created candidate refusal.
+Then add typed console events and foreground-host supervision before frontend
+attachment/switching and connection-owned waits. Keep public attachment and
+parent-terminal routing gated until their own real-host acceptance.
 
 ## Phase 2.5 implementation order
 
@@ -291,8 +314,17 @@ notification task holding only shared signal state. It must not invoke arbitrary
 caller wakers directly: a waker could drop the watcher reentrantly and deadlock
 unregistering its own callback. Waiters enable notification before acquiring the
 sticky flag. Cancellation and repeated waits must preserve observed exit.
-Keep the captured runtime alive through teardown; retain the bundle rather than
-risk use-after-free if unregister unexpectedly fails.
+Retain the bundle rather than risk use-after-free if unregister unexpectedly
+fails. A captured Tokio handle alone does not keep its runtime alive.
+
+The watcher implementation pre-spawns its single notifier task on the captured
+runtime at registration. The callback releases the sticky flag and sends a
+one-shot signal that schedules that task; it never calls the runtime after
+registration or wakes a caller directly. This also permits a runtime to shut
+down before the callback without invoking a dead runtime handle. Active wait
+delivery still requires that captured runtime to run; shutdown cancels its
+notifier task. Completed unregister remains the sole condition for freeing the
+retained process and callback bundle.
 
 Acceptance includes already-exited processes, cancelled/repeated waits, callback
 and drop races, and reentrant caller-waker destruction in an owned compiled helper
