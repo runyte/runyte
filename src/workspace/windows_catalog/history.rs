@@ -81,6 +81,19 @@ impl HistorySnapshot {
         selector: &Path,
         working_directory: Option<&Path>,
     ) -> Result<Option<HistoryTarget<'_>>> {
+        Ok(self
+            .select_index(selector, working_directory)?
+            .and_then(|index| self.target(index)))
+    }
+
+    /// Resolves exactly one displayed row while retaining its position in this
+    /// snapshot. Mutating callers use the index to reach the original live
+    /// publication or stopped-name observation without a second path lookup.
+    pub fn select_index(
+        &self,
+        selector: &Path,
+        working_directory: Option<&Path>,
+    ) -> Result<Option<usize>> {
         let rows = self
             .entries
             .iter()
@@ -92,7 +105,7 @@ impl HistorySnapshot {
             "workspace selector {} matches multiple native publications or history entries",
             selector.display()
         );
-        Ok(matches.first().and_then(|index| self.target(*index)))
+        Ok(matches.first().copied())
     }
 }
 

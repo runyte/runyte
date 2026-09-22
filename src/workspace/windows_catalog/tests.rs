@@ -13,13 +13,13 @@ use crate::{
 };
 use std::{ffi::OsStr, fs};
 
-pub(super) fn runtime() -> tokio::runtime::Runtime {
+pub(crate) fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
 }
-pub(super) fn layout(root: &TestRuntimeRoot, project: &str, namespace: &str) -> ResolvedLayout {
+pub(crate) fn layout(root: &TestRuntimeRoot, project: &str, namespace: &str) -> ResolvedLayout {
     let project = root.join(project);
     fs::create_dir_all(&project).unwrap();
     ResolvedLayout::resolve(LocationInputs {
@@ -34,12 +34,12 @@ pub(super) fn layout(root: &TestRuntimeRoot, project: &str, namespace: &str) -> 
     })
     .unwrap()
 }
-pub(super) fn server(layout: &ResolvedLayout, name: &str) -> (EndpointLocation, LocalServer) {
+pub(crate) fn server(layout: &ResolvedLayout, name: &str) -> (EndpointLocation, LocalServer) {
     let endpoint = layout.publication_location().unwrap();
     let server = LocalServer::bind(endpoint.prepare(Some(name.into())).unwrap()).unwrap();
     (endpoint, server)
 }
-pub(super) fn health() -> HostResponse {
+pub(crate) fn health() -> HostResponse {
     HostResponse::Health {
         protocol: VERSION,
         pid: std::process::id(),
@@ -57,7 +57,7 @@ pub(super) fn health() -> HostResponse {
         terminal_bell: false,
     }
 }
-pub(super) async fn answer(server: &mut LocalServer, health: HostResponse) {
+pub(crate) async fn answer(server: &mut LocalServer, health: HostResponse) {
     let mut responses = None;
     timeout_at(Instant::now() + Duration::from_secs(5), async {
         loop {

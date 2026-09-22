@@ -501,4 +501,4 @@ fn selector_directory(path: PathBuf) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
