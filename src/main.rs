@@ -1070,27 +1070,47 @@ fn process_queue_has_exited(
 ) -> Result<bool> {
     use std::os::fd::AsRawFd;
 
-    let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
     let timeout = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: the kqueue descriptor is live, the output has capacity for one
-    // event, and the zero timeout performs a non-blocking observation.
-    let count = unsafe {
-        libc::kevent(
-            process_queue.as_raw_fd(),
-            std::ptr::null(),
-            0,
-            event.as_mut_ptr(),
-            1,
-            &timeout,
-        )
+    process_queue_has_exited_with(pid, |event| {
+        // SAFETY: the kqueue descriptor is live, the output has capacity for
+        // one event, and the zero timeout performs a non-blocking observation.
+        let count = unsafe {
+            libc::kevent(
+                process_queue.as_raw_fd(),
+                std::ptr::null(),
+                0,
+                event.as_mut_ptr(),
+                1,
+                &timeout,
+            )
+        };
+        if count == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(count)
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn process_queue_has_exited_with(
+    pid: libc::pid_t,
+    mut observe: impl FnMut(&mut std::mem::MaybeUninit<libc::kevent>) -> std::io::Result<libc::c_int>,
+) -> Result<bool> {
+    // A signal can interrupt this nonblocking read without consuming the
+    // NOTE_EXIT event. Retry the same retained queue rather than consulting a
+    // PID that could later name another process.
+    let (count, event) = loop {
+        let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+        match observe(&mut event) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error).context("cannot read host supervisor process queue"),
+            Ok(count) => break (count, event),
+        }
     };
-    if count == -1 {
-        return Err(std::io::Error::last_os_error())
-            .context("cannot read host supervisor process queue");
-    }
     if count == 0 {
         return Ok(false);
     }
@@ -6450,6 +6470,31 @@ mod tests {
         };
         watcher.join().unwrap();
         assert!(matches!(result, Some(Ok(()))));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn interrupted_process_queue_observation_keeps_note_exit() {
+        let pid = 42;
+        let mut observations = 0;
+        let exited = super::process_queue_has_exited_with(pid, |event| {
+            observations += 1;
+            if observations == 1 {
+                return Err(std::io::Error::from_raw_os_error(libc::EINTR));
+            }
+            event.write(libc::kevent {
+                ident: pid as libc::uintptr_t,
+                filter: libc::EVFILT_PROC,
+                flags: 0,
+                fflags: libc::NOTE_EXIT,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            });
+            Ok(1)
+        })
+        .unwrap();
+        assert!(exited);
+        assert_eq!(observations, 2);
     }
 
     #[cfg(target_os = "macos")]
