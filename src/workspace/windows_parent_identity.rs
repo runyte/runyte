@@ -20,7 +20,10 @@ use windows_sys::Win32::{
     },
 };
 
-use super::windows_process_identity::{PinnedProcess, ProcessIdentity};
+use super::{
+    windows_process_exit::ProcessExitWatcher,
+    windows_process_identity::{PinnedProcess, ProcessIdentity},
+};
 
 const SNAPSHOT_ATTEMPTS: usize = 3;
 const MAX_PROCESS_ROWS: usize = 65_536;
@@ -61,6 +64,51 @@ impl RetainedParent {
 pub enum ParentObservation {
     Retained(RetainedParent),
     Unavailable(ParentUnavailable),
+}
+
+/// Owns the exact natural parent and its one-shot exit registration for a
+/// foreground host. The handle stays pinned through host cleanup; a detached
+/// host never constructs this value for its synthetic inheritance parent.
+pub struct ForegroundParentSupervisor {
+    parent: RetainedParent,
+    watcher: ProcessExitWatcher,
+}
+
+impl ForegroundParentSupervisor {
+    pub fn capture() -> io::Result<Self> {
+        let parent = match observe_parent(ParentRole::Foreground)? {
+            ParentObservation::Retained(parent) => parent,
+            ParentObservation::Unavailable(reason) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("foreground parent unavailable: {reason:?}"),
+                ));
+            }
+        };
+        let watcher = ProcessExitWatcher::new(Arc::clone(parent.parent()))?;
+        let supervisor = Self { parent, watcher };
+        supervisor.ensure_alive()?;
+        Ok(supervisor)
+    }
+
+    pub fn ensure_alive(&self) -> io::Result<()> {
+        if self.parent.parent().is_alive()? {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "foreground parent exited before host publication",
+            ))
+        }
+    }
+
+    pub fn parent_identity(&self) -> ProcessIdentity {
+        self.parent.parent().identity()
+    }
+
+    pub async fn wait(&self) {
+        self.watcher.wait().await;
+    }
 }
 
 /// Capture a foreground process's candidate parent once. An unavailable

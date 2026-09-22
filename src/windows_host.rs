@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Dedicated internal native host. Public attachment, foreground supervision
-//! and parent-terminal authorization remain unavailable until their acceptance.
+//! Native persistent host. Foreground and detached lifetimes share one cleanup
+//! owner; frontend attachment and parent-terminal authorization remain gated.
 
 mod clients;
 
@@ -27,6 +27,7 @@ use runyte::{
         HostEvent, WorkspaceHost,
         windows_endpoint::NameStore,
         windows_location::{CapturedRoots, EXPECTED_LAYOUT_ENV, LocationInputs, ResolvedLayout},
+        windows_parent_identity::ForegroundParentSupervisor,
         windows_transport::{LocalServer, ServerEvent},
     },
 };
@@ -35,30 +36,54 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Called before ordinary App/terminal construction. The dedicated launcher
-/// states the exact project; this mode must never prompt on a detached stdin.
+#[cfg(debug_assertions)]
+async fn wait_at_parent_startup_fixture(
+    supervisor: Option<&ForegroundParentSupervisor>,
+) -> Result<()> {
+    use std::path::PathBuf;
+
+    if supervisor.is_none() {
+        return Ok(());
+    }
+    let Some(root) = std::env::var_os("RUNYTE_TEST_FOREGROUND_PARENT_BARRIER") else {
+        return Ok(());
+    };
+    let root = PathBuf::from(root);
+    let pending = root.join("parent-pinned.pending");
+    std::fs::write(&pending, b"1")?;
+    std::fs::rename(pending, root.join("parent-pinned"))?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !root.join("release-parent-startup").exists() {
+        ensure!(
+            Instant::now() < deadline,
+            "foreground parent startup fixture was not released"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(())
+}
+
+/// A detached launcher states the exact project and never prompts on stdin.
+/// A foreground host uses ordinary project discovery or an explicit root.
 pub(super) async fn run(
     arguments: LaunchArguments,
     startup: &mut StartupTrace,
     termination: &mut super::TerminationSignals,
+    supervisor: Option<ForegroundParentSupervisor>,
 ) -> Result<()> {
     ensure!(
-        arguments.mode == LaunchMode::Serve && arguments.detached_host,
-        "foreground persistent mode is not yet supported on Windows"
+        arguments.mode == LaunchMode::Serve && arguments.detached_host == supervisor.is_none(),
+        "native host launch role and parent supervision disagree"
     );
+    if let Some(parent) = supervisor.as_ref() {
+        parent.ensure_alive()?;
+    }
     let show_about = starts_on_about(&arguments);
     let launch_directory = std::env::current_dir()?;
     let configured_roots = CapturedRoots::capture();
     let expected_layout = std::env::var_os(EXPECTED_LAYOUT_ENV);
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
     startup.mark(StartupPhase::ConfigLoaded);
-    startup.mark(StartupPhase::ProjectResolutionStarted);
-    let requested = arguments
-        .project_root
-        .as_deref()
-        .context("internal native host requires an explicit --project-root")?;
-    let project = resolve_requested_project_root(&launch_directory, requested)?;
-    let state = project_root::resolve_state_root(&project, &config.workspace.state);
     let reserved = config_path
         .as_deref()
         .map(|path| {
@@ -70,7 +95,31 @@ pub(super) async fn run(
             }
         })
         .into_iter()
-        .collect();
+        .collect::<Vec<_>>();
+    startup.mark(StartupPhase::ProjectResolutionStarted);
+    let project = match arguments.project_root.as_deref() {
+        Some(requested) => {
+            let project = resolve_requested_project_root(&launch_directory, requested)?;
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project
+        }
+        None if arguments.detached_host => {
+            anyhow::bail!("internal native host requires an explicit --project-root")
+        }
+        None => {
+            let project = project_root::discover(&launch_directory, &config.workspace.state)?
+                .context(
+                    "no project workspace was found; pass --project-root for foreground --serve",
+                )?;
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project
+        }
+    };
+    if let Some(parent) = supervisor.as_ref() {
+        parent.ensure_alive()?;
+    }
+    let state = project_root::resolve_state_root(&project, &config.workspace.state);
+    project_root::validate_state_root(&state, &reserved)?;
     let layout = ResolvedLayout::resolve(LocationInputs {
         project_root: project.clone(),
         state_root: state,
@@ -78,8 +127,12 @@ pub(super) async fn run(
         roots: configured_roots,
     })?;
     // No registry, name store, ready record, or App exists before this check.
-    layout.verify_detached_layout(true, expected_layout.as_deref())?;
-    startup.mark(StartupPhase::ProjectResolvedAutomatically);
+    layout.verify_detached_layout(arguments.detached_host, expected_layout.as_deref())?;
+    #[cfg(debug_assertions)]
+    wait_at_parent_startup_fixture(supervisor.as_ref()).await?;
+    if let Some(parent) = supervisor.as_ref() {
+        parent.ensure_alive()?;
+    }
     let logging_failure =
         initialize_logging(&arguments, LogRole::Host, layout.state_root(), &project)?;
     let mut app =
@@ -105,6 +158,7 @@ pub(super) async fn run(
     // Every failure after host construction reaches the same cleanup, including
     // partially started services, failed publication and a dead listener.
     let outcome = async {
+        if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         if show_about { host.app_mut().execute(about_invocation()?)?; }
         let native_catalog = super::NativeCatalogConfig::from_layout(
             &layout,
@@ -120,11 +174,13 @@ pub(super) async fn run(
         let location = layout.publication_location()?;
         let names = NameStore::open(layout.state_root())?;
         let prepared = location.prepare_named(&names, None)?;
+        if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         server = Some(LocalServer::bind_with_names(prepared, names)?);
         let server = server.as_mut().expect("native server constructed");
+        if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         log_info!("host", "internal native persistent session published"; "workspace" => server.metadata_snapshot().id);
         if let Err(error) = startup.write_requested() { host.report_host_error(format!("failed to write startup timing report: {error}")); }
-        run_loop(&mut host, server, services.as_mut().expect("services started"), &mut clients, startup, termination).await
+        run_loop(&mut host, server, services.as_mut().expect("services started"), &mut clients, startup, termination, supervisor.as_ref()).await
     }.await;
     if let Some(server) = server.as_mut() {
         server.stop_admission();
@@ -186,6 +242,7 @@ async fn run_loop(
     clients: &mut Clients,
     startup: &mut StartupTrace,
     termination: &mut super::TerminationSignals,
+    supervisor: Option<&ForegroundParentSupervisor>,
 ) -> Result<()> {
     #[cfg(not(feature = "startup-timing"))]
     let _ = startup;
@@ -204,6 +261,14 @@ async fn run_loop(
             event = termination.recv() => {
                 log_warn!("host", "native console termination requested"; "event" => format!("{event:?}"));
                 return Err(super::terminated(event));
+            }
+            _ = async { match supervisor {
+                Some(parent) => parent.wait().await,
+                None => std::future::pending().await,
+            }} => {
+                log_info!("host", "foreground parent exited; retiring persistent session";
+                    "parent" => supervisor.expect("supervised branch").parent_identity().pid);
+                return Ok(());
             }
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;

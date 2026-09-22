@@ -1469,6 +1469,7 @@ does not bundle that runtime.
 | Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
 | Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
+| Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Deferred | Interactive persistent attachment and switching, session restart, plugins and context bridge |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
@@ -1495,8 +1496,13 @@ hosts from isolated environments. If two live Windows publications have the
 same project path and ID, both remain visible; selecting by that path or ID
 fails as ambiguous. An unambiguous name can select one of them. A stopped
 session is reported only after
-its original host process exits. Foreground `--serve`, public `--persistent`
-attachment, session restart, and editor session navigation remain unavailable.
+its original host process exits. Foreground `--serve` discovers an existing
+project workspace or accepts an explicit `--project-root`; if neither is
+available it refuses startup without prompting. It retires the host when its
+original launching process exits. A detached host is independent of its
+short-lived launcher.
+Public `--persistent` attachment, session restart, and editor session navigation
+remain unavailable.
 
 In a standalone Windows editor, `Space Space` and `:session-list` show the
 native catalog. Distinct live publications for one project remain separate

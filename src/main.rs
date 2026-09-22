@@ -170,6 +170,7 @@ use runyte::workspace::{
     windows_catalog::{HistoryTarget, WorkspaceRow, abbreviated_id_width},
     windows_control::{ControlSnapshot, StopAllReport, UserSelector},
     windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
+    windows_parent_identity::ForegroundParentSupervisor,
 };
 
 fn main() -> Result<()> {
@@ -185,8 +186,10 @@ fn main() -> Result<()> {
     #[cfg(not(windows))]
     let result = runtime.block_on(run(&mut startup));
     #[cfg(windows)]
-    let result =
-        prefer_pending_console_close(result, runtime.block_on(native_termination.pending_event()));
+    let result = reconcile_pending_console_event(
+        result,
+        runtime.block_on(native_termination.pending_event()),
+    );
     drop(runtime);
     // Only that the process is ending, never the chain that ended it. An
     // arbitrary propagated error is unclassified text — an option's value, a
@@ -200,7 +203,7 @@ fn main() -> Result<()> {
     }
     runyte::log::shutdown();
     #[cfg(windows)]
-    let result = prefer_pending_console_close(result, native_termination.recv().now_or_never());
+    let result = reconcile_pending_console_event(result, native_termination.recv().now_or_never());
     #[cfg(windows)]
     drop(native_termination);
     #[cfg(windows)]
@@ -284,6 +287,20 @@ fn prefer_pending_console_close(result: Result<()>, pending: Option<ConsoleEvent
     match result {
         Ok(()) => Err(close),
         Err(previous) => Err(close.context(format!("previous shutdown result: {previous:#}"))),
+    }
+}
+
+#[cfg(windows)]
+fn reconcile_pending_console_event(
+    result: Result<()>,
+    pending: Option<ConsoleEvent>,
+) -> Result<()> {
+    if pending == Some(ConsoleEvent::Close) {
+        return prefer_pending_console_close(result, pending);
+    }
+    match (result, pending) {
+        (Ok(()), Some(event)) => Err(terminated(event)),
+        (result, _) => result,
     }
 }
 
@@ -1173,15 +1190,17 @@ async fn run(
         anyhow::bail!("session restart is not yet supported on Windows");
     }
 
-    // Internal host acceptance precedes public native attachment/supervision.
-    // Refuse foreground Serve before loading configuration or constructing App.
+    // Capture a foreground host's natural parent before configuration or App
+    // startup. Detached hosts have a disposable inheritance parent and never
+    // turn that process into a supervisor.
     #[cfg(windows)]
     if arguments.mode == LaunchMode::Serve {
-        anyhow::ensure!(
-            arguments.detached_host,
-            "foreground persistent mode is not yet supported on Windows"
-        );
-        return windows_host::run(arguments, startup, native_termination).await;
+        let supervisor = if arguments.detached_host {
+            None
+        } else {
+            Some(ForegroundParentSupervisor::capture()?)
+        };
+        return windows_host::run(arguments, startup, native_termination, supervisor).await;
     }
 
     // Windows initially supports --wait as a foreground standalone editor.
@@ -6033,8 +6052,9 @@ PERSISTENT SESSIONS:
     associated with one workspace. CLI listing also works from standalone mode;
     session commands inside the editor need workspace.mode: persistent.
     Windows supports list, rename, selected stop, stop-all and clean for native
-    detached persistent sessions. Stop requires WORKSPACE there; attachment,
-    restart and foreground serve remain unavailable.
+    persistent sessions, including through the standalone session manager.
+    Stop requires WORKSPACE there. Foreground --serve follows its launching
+    process; attachment and restart remain unavailable.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
     or directory, so a session is reachable from anywhere.

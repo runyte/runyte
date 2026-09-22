@@ -11,21 +11,34 @@ use runyte::{
         windows_endpoint::EndpointMetadata,
         windows_lifecycle::{await_host_stopped, connect_control, force_shutdown_host},
         windows_location::{CapturedRoots, EXPECTED_LAYOUT_ENV, LocationInputs, ResolvedLayout},
+        windows_process_identity::PinnedProcess,
         windows_transport::LocalClient,
     },
 };
 use std::{
     fs,
-    io::Read,
-    os::windows::{io::AsRawHandle, process::CommandExt},
-    path::PathBuf,
+    io::{Read, Write},
+    mem::size_of,
+    os::windows::{
+        io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle},
+        process::CommandExt,
+    },
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant as StdInstant},
 };
 use tokio::time::{Instant, sleep, timeout};
 use windows_sys::Win32::{
     Foundation::WAIT_OBJECT_0,
-    System::Threading::{CREATE_NO_WINDOW, WaitForSingleObject},
+    System::{
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        },
+        Threading::{CREATE_NO_WINDOW, GetExitCodeProcess, WaitForSingleObject},
+    },
 };
 
 const BUDGET: Duration = Duration::from_secs(10);
@@ -109,6 +122,26 @@ impl Fixture {
                 command.env_remove(name);
             }
         }
+        command
+    }
+
+    fn foreground_command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+        command
+            .arg("--serve")
+            .arg("--config")
+            .arg(&self.config)
+            .current_dir(&self.project)
+            .env("XDG_CONFIG_HOME", self.root.join("config"))
+            .env("XDG_CACHE_HOME", self.root.join("cache"))
+            .env("XDG_RUNTIME_DIR", self.root.join("runtime"))
+            .env("RUNYTE_ALL_HOSTS_DIR", self.root.join("inventory"))
+            .env_remove(EXPECTED_LAYOUT_ENV)
+            .env("PATH", "")
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(fs::File::create(self.root.join("foreground-stderr")).unwrap());
         command
     }
 
@@ -437,47 +470,472 @@ fn native_host_control_handshake_rename_order_and_interactive_refusal() {
 }
 
 #[test]
-fn native_host_layout_mismatch_and_foreground_refuse_before_publication() {
+fn native_host_layout_mismatch_refuses_before_publication() {
     runtime().block_on(async {
-        for foreground in [false, true] {
-            let fixture = Fixture::new();
-            let mut command = fixture.command();
-            if foreground {
-                // Build a fresh command so the dedicated-only flag is absent.
-                command = Command::new(env!("CARGO_BIN_EXE_runyte"));
-                command
-                    .args(["--serve", "--project-root"])
-                    .arg(&fixture.project)
-                    .arg("--config")
-                    .arg(&fixture.config)
-                    .current_dir(&fixture.project)
-                    .env("XDG_CONFIG_HOME", fixture.root.join("config"))
-                    .env("XDG_CACHE_HOME", fixture.root.join("cache"))
-                    .env("XDG_RUNTIME_DIR", fixture.root.join("runtime"))
-                    .env("RUNYTE_ALL_HOSTS_DIR", fixture.root.join("inventory"))
-                    .env("PATH", "")
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null());
-            } else {
-                command.env(EXPECTED_LAYOUT_ENV, "mismatched-layout");
+        let fixture = Fixture::new();
+        let mut command = fixture.command();
+        command.env(EXPECTED_LAYOUT_ENV, "mismatched-layout");
+        let mut process = Process(command.spawn().unwrap());
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if let Some(status) = process.0.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
             }
-            let mut process = Process(command.spawn().unwrap());
-            let deadline = Instant::now() + BUDGET;
-            loop {
-                if let Some(status) = process.0.try_wait().unwrap() {
-                    assert!(!status.success());
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "invalid host launch did not refuse"
-                );
-                sleep(Duration::from_millis(10)).await;
-            }
-            assert!(!fixture.layout.endpoint_directory().exists());
-            assert!(!fixture.root.join("inventory").exists());
+            assert!(
+                Instant::now() < deadline,
+                "invalid host launch did not refuse"
+            );
+            sleep(Duration::from_millis(10)).await;
         }
+        assert!(!fixture.layout.endpoint_directory().exists());
+        assert!(!fixture.root.join("inventory").exists());
+    });
+}
+
+#[test]
+fn foreground_serve_requires_a_discoverable_or_explicit_project() {
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        let mut process = Process(fixture.foreground_command().spawn().unwrap());
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if let Some(status) = process.0.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "projectless --serve did not refuse"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            fs::read_to_string(fixture.root.join("foreground-stderr"))
+                .unwrap()
+                .contains("--project-root")
+        );
+        assert!(!fixture.layout.endpoint_directory().exists());
+    });
+}
+
+#[test]
+fn foreground_serve_discovers_an_existing_project_without_prompting() {
+    runtime().block_on(async {
+        let mut fixture = Fixture::new();
+        let marker = TestRuntimeRoot::new_in("projectstate", &fixture.project).unwrap();
+        let state_name = marker.path().file_name().unwrap().to_str().unwrap();
+        fs::write(
+            &fixture.config,
+            format!("lsp:\n  enable: false\nworkspace:\n  state: {state_name}\n  idle_retirement_minutes: 0\n"),
+        )
+        .unwrap();
+        fixture.layout = ResolvedLayout::resolve(LocationInputs {
+            project_root: fixture.project.clone(),
+            state_root: marker.path().to_path_buf(),
+            reserved_user_roots: vec![fixture.root.join("config")],
+            roots: CapturedRoots {
+                runtime_root: Some(fixture.root.join("runtime")),
+                cache_home: Some(fixture.root.join("cache")),
+                local_app_data: None,
+                inventory_override: Some(fixture.root.join("inventory")),
+            },
+        })
+        .unwrap();
+        let mut process = Process(fixture.foreground_command().spawn().unwrap());
+        let deadline = Instant::now() + BUDGET;
+        let metadata = loop {
+            if let Ok(view) = fixture.layout.discovery_view(false)
+                && let Some(candidate) = view
+                    .observe_ready(
+                        &fixture.project,
+                        fixture.layout.endpoint_directory().to_owned(),
+                    )
+                    .unwrap()
+                && connect_control(candidate.metadata()).await.is_ok()
+            {
+                break candidate.metadata().clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "foreground project was not discovered"
+            );
+            sleep(Duration::from_millis(10)).await;
+        };
+        assert!(process.0.try_wait().unwrap().is_none());
+        let stopped = force_shutdown_host(&metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+        fixture.exited(&mut process).await;
+    });
+}
+
+const FOREGROUND_HELPER: &str = "foreground_parent_helper";
+const FOREGROUND_MODE: &str = "RUNYTE_TEST_FOREGROUND_HELPER_MODE";
+const FOREGROUND_ROOT: &str = "RUNYTE_TEST_FOREGROUND_HELPER_ROOT";
+
+/// Owns the parent helper and every process it creates through exit/unwind.
+/// Storage is retained if Windows cannot prove the job has drained.
+struct ForegroundTree {
+    fixture: Option<Fixture>,
+    job: OwnedHandle,
+    joined: bool,
+}
+
+impl ForegroundTree {
+    fn new() -> Self {
+        let fixture = Fixture::new();
+        let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        assert!(!raw.is_null(), "cannot create foreground fixture job");
+        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        assert_ne!(
+            unsafe {
+                SetInformationJobObject(
+                    job.as_raw_handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            },
+            0,
+            "cannot arm foreground fixture job"
+        );
+        Self {
+            fixture: Some(fixture),
+            job,
+            joined: false,
+        }
+    }
+
+    fn fixture(&self) -> &Fixture {
+        self.fixture.as_ref().unwrap()
+    }
+
+    fn shutdown(&mut self) -> std::io::Result<()> {
+        if self.joined {
+            return Ok(());
+        }
+        if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let deadline = StdInstant::now() + BUDGET;
+        loop {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            if unsafe {
+                QueryInformationJobObject(
+                    self.job.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            if accounting.ActiveProcesses == 0 {
+                self.joined = true;
+                return Ok(());
+            }
+            if StdInstant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "foreground fixture job still has live processes",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for ForegroundTree {
+    fn drop(&mut self) {
+        if self.shutdown().is_err()
+            && let Some(fixture) = self.fixture.take()
+        {
+            std::mem::forget(fixture);
+        }
+    }
+}
+
+fn publish_marker(root: &Path, name: &str, bytes: &[u8]) {
+    let pending = root.join(format!("{name}.pending"));
+    fs::write(&pending, bytes).unwrap();
+    fs::rename(pending, root.join(name)).unwrap();
+}
+
+async fn wait_marker(root: &Path, name: &str) {
+    let deadline = Instant::now() + BUDGET;
+    while !root.join(name).exists() {
+        assert!(Instant::now() < deadline, "fixture did not publish {name}");
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_child_exit(process: &mut Process) {
+    let deadline = Instant::now() + BUDGET;
+    loop {
+        if let Some(status) = process.0.try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "foreground parent fixture failed: {status}"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "foreground parent fixture did not exit"
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_pinned_exit(process: &PinnedProcess) {
+    let deadline = Instant::now() + BUDGET;
+    while process.is_alive().unwrap() {
+        assert!(Instant::now() < deadline, "supervised host did not exit");
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+fn pinned_exit_code(process: &PinnedProcess) -> u32 {
+    let mut code = 0;
+    assert_ne!(
+        unsafe { GetExitCodeProcess(process.as_handle().as_raw_handle(), &mut code) },
+        0
+    );
+    code
+}
+
+fn spawn_foreground_parent(tree: &ForegroundTree, mode: &str) -> Process {
+    let fixture = tree.fixture();
+    Process(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", FOREGROUND_HELPER, "--ignored", "--nocapture"])
+            .env(FOREGROUND_MODE, mode)
+            .env(FOREGROUND_ROOT, fixture.root.path())
+            .env("XDG_CONFIG_HOME", fixture.root.join("config"))
+            .creation_flags(CREATE_NO_WINDOW)
+            .current_dir(&fixture.project)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(fs::File::create(fixture.root.join("parent-stderr")).unwrap())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+#[test]
+#[ignore = "reexecuted as the natural parent of a real foreground host"]
+fn foreground_parent_helper() {
+    let Some(mode) = std::env::var_os(FOREGROUND_MODE) else {
+        return;
+    };
+    let mode = mode.to_str().unwrap();
+    assert!(matches!(mode, "startup" | "serving" | "detached"));
+    let root = PathBuf::from(std::env::var_os(FOREGROUND_ROOT).unwrap());
+    publish_marker(&root, "helper-ready", b"ready");
+    let mut go = [0u8; 1];
+    std::io::stdin().read_exact(&mut go).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
+        .args(["--serve", "--project-root"])
+        .arg(root.join("project"))
+        .arg("--config")
+        .arg(root.join("config/config.yaml"))
+        .current_dir(root.join("project"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env_remove(EXPECTED_LAYOUT_ENV)
+        .env_remove("RUNYTE_TEST_FOREGROUND_PARENT_BARRIER")
+        .env("PATH", "")
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(root.join("foreground-stderr")).unwrap());
+    if mode == "startup" {
+        command.env("RUNYTE_TEST_FOREGROUND_PARENT_BARRIER", &root);
+    }
+    if mode == "detached" {
+        command.arg("--detached-host");
+        let layout = ResolvedLayout::resolve(LocationInputs {
+            project_root: root.join("project"),
+            state_root: root.join("project/.runyte"),
+            reserved_user_roots: vec![root.join("config")],
+            roots: CapturedRoots {
+                runtime_root: Some(root.join("runtime")),
+                cache_home: Some(root.join("cache")),
+                local_app_data: None,
+                inventory_override: Some(root.join("inventory")),
+            },
+        })
+        .unwrap();
+        for (name, value) in layout.detached_environment().unwrap() {
+            if let Some(value) = value {
+                command.env(name, value);
+            } else {
+                command.env_remove(name);
+            }
+        }
+    }
+    let child = command.spawn().unwrap();
+    publish_marker(&root, "foreground-pid", child.id().to_string().as_bytes());
+    drop(child); // The outer job owns the live process and its descendants.
+    // The outer owner may first wait for this host and then start an
+    // unrelated host. Those are separate bounded phases before it releases
+    // the parent, so this helper's deadline covers their combined budget.
+    let deadline = StdInstant::now() + BUDGET * 3;
+    while !root.join("exit-parent").exists() {
+        assert!(StdInstant::now() < deadline, "parent release timed out");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+async fn admitted_parent(tree: &ForegroundTree, mode: &str) -> Process {
+    let mut parent = spawn_foreground_parent(tree, mode);
+    wait_marker(tree.fixture().root.path(), "helper-ready").await;
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(tree.job.as_raw_handle(), parent.0.as_raw_handle()) },
+        0,
+        "cannot own foreground parent and its child"
+    );
+    parent.0.stdin.as_mut().unwrap().write_all(b"g").unwrap();
+    wait_marker(tree.fixture().root.path(), "foreground-pid").await;
+    parent
+}
+
+fn foreground_process(tree: &ForegroundTree) -> PinnedProcess {
+    let pid = fs::read_to_string(tree.fixture().root.join("foreground-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    PinnedProcess::open_peer(pid).unwrap()
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn foreground_parent_loss_before_publication_refuses_startup() {
+    runtime().block_on(async {
+        let mut tree = ForegroundTree::new();
+        let mut parent = admitted_parent(&tree, "startup").await;
+        wait_marker(tree.fixture().root.path(), "parent-pinned").await;
+        let host = foreground_process(&tree);
+        assert!(
+            !tree
+                .fixture()
+                .layout
+                .endpoint_directory()
+                .join("endpoint.json")
+                .exists()
+        );
+        publish_marker(tree.fixture().root.path(), "exit-parent", b"go");
+        wait_child_exit(&mut parent).await;
+        publish_marker(tree.fixture().root.path(), "release-parent-startup", b"go");
+        wait_pinned_exit(&host).await;
+        assert_ne!(pinned_exit_code(&host), 0);
+        assert!(
+            fs::read_to_string(tree.fixture().root.join("foreground-stderr"))
+                .unwrap()
+                .contains("foreground parent exited before host publication")
+        );
+        assert!(
+            !tree
+                .fixture()
+                .layout
+                .endpoint_directory()
+                .join("endpoint.json")
+                .exists()
+        );
+        tree.shutdown().unwrap();
+    });
+}
+
+#[test]
+fn foreground_parent_loss_retires_only_its_own_serving_host() {
+    runtime().block_on(async {
+        let mut tree = ForegroundTree::new();
+        let mut parent = admitted_parent(&tree, "serving").await;
+        let host = foreground_process(&tree);
+        let fixture = tree.fixture();
+        let deadline = Instant::now() + BUDGET;
+        let metadata = loop {
+            if let Ok(view) = fixture.layout.discovery_view(false)
+                && let Some(candidate) = view
+                    .observe_ready(
+                        &fixture.project,
+                        fixture.layout.endpoint_directory().to_owned(),
+                    )
+                    .unwrap()
+                && connect_control(candidate.metadata()).await.is_ok()
+            {
+                break candidate.metadata().clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "foreground host was not published"
+            );
+            sleep(Duration::from_millis(10)).await;
+        };
+        let unrelated = Fixture::new();
+        let (mut unrelated_process, unrelated_metadata) = unrelated.start().await;
+        publish_marker(fixture.root.path(), "exit-parent", b"go");
+        wait_child_exit(&mut parent).await;
+        wait_pinned_exit(&host).await;
+        assert_eq!(pinned_exit_code(&host), 0);
+        assert!(
+            !fixture
+                .layout
+                .endpoint_directory()
+                .join("endpoint.json")
+                .exists()
+        );
+        assert!(connect_control(&metadata).await.is_err());
+        assert!(unrelated_process.0.try_wait().unwrap().is_none());
+        assert!(connect_control(&unrelated_metadata).await.is_ok());
+        let stopped = force_shutdown_host(&unrelated_metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+        unrelated.exited(&mut unrelated_process).await;
+        tree.shutdown().unwrap();
+    });
+}
+
+#[test]
+fn detached_host_survives_its_short_lived_launching_parent() {
+    runtime().block_on(async {
+        let mut tree = ForegroundTree::new();
+        let mut parent = admitted_parent(&tree, "detached").await;
+        let host = foreground_process(&tree);
+        let fixture = tree.fixture();
+        let deadline = Instant::now() + BUDGET;
+        let metadata = loop {
+            if let Ok(view) = fixture.layout.discovery_view(false)
+                && let Some(candidate) = view
+                    .observe_ready(
+                        &fixture.project,
+                        fixture.layout.endpoint_directory().to_owned(),
+                    )
+                    .unwrap()
+                && connect_control(candidate.metadata()).await.is_ok()
+            {
+                break candidate.metadata().clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "detached fixture host was not published"
+            );
+            sleep(Duration::from_millis(10)).await;
+        };
+        publish_marker(fixture.root.path(), "exit-parent", b"go");
+        wait_child_exit(&mut parent).await;
+        assert!(host.is_alive().unwrap());
+        assert!(connect_control(&metadata).await.is_ok());
+        let stopped = force_shutdown_host(&metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+        wait_pinned_exit(&host).await;
+        assert_eq!(pinned_exit_code(&host), 0);
+        tree.shutdown().unwrap();
     });
 }

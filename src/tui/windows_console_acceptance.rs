@@ -2,7 +2,7 @@
 //! Execute the current binary's private guard test in an isolated console.
 use super::{
     ConsoleEvent, TerminationSignals, console_closed, finish_standalone_native,
-    prefer_pending_console_close, terminated,
+    prefer_pending_console_close, reconcile_pending_console_event, terminated,
 };
 use runyte::{
     terminal::pty::{Pty, PtyEvent},
@@ -169,6 +169,12 @@ fn pending_close_overrides_startup_or_input_failure_after_joined_cleanup() {
     let later_close =
         prefer_pending_console_close(Err(ctrl_c), Some(ConsoleEvent::Close)).unwrap_err();
     assert!(console_closed(&later_close));
+    assert_eq!(
+        reconcile_pending_console_event(Ok(()), Some(ConsoleEvent::CtrlBreak))
+            .unwrap_err()
+            .to_string(),
+        "terminated by Ctrl+Break"
+    );
 }
 
 #[test]
