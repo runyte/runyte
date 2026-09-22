@@ -386,7 +386,9 @@ fn read_answer(input: &mut impl BufRead) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io, io::Cursor, path::PathBuf};
+    use std::{fs, io::Cursor};
+    #[cfg(windows)]
+    use std::{io, path::PathBuf};
 
     use super::{discover, discover_candidates, initialize, prompt, validate_state_root};
 
