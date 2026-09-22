@@ -3,6 +3,8 @@
 use super::*;
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::FutureExt;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -10,11 +12,14 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::{Notify, mpsc, watch},
 };
+
+#[cfg(windows)]
+mod native;
 
 const PRODUCER_EVENTS: usize = 16;
 const RESERVED_MESSAGES: usize = 8;
@@ -122,21 +127,33 @@ pub fn spawn(
     )
 }
 
-async fn read_message(
-    reader: &mut BufReader<tokio::process::ChildStdout>,
-) -> Result<(ClientMessage, usize)> {
+async fn read_message<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+) -> Result<Option<(ClientMessage, usize)>> {
     let mut bytes = Vec::new();
-    let n = reader
+    let n = match reader
         .take((MAX_BYTES + 1) as u64)
         .read_until(b'\n', &mut bytes)
-        .await?;
-    ensure!(n > 0, "plugin closed stdout");
+        .await
+    {
+        Ok(n) => n,
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe && bytes.is_empty() => {
+            return Ok(None);
+        }
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => bytes.len(),
+        Err(error) => return Err(error.into()),
+    };
+    if n == 0 {
+        return Ok(None);
+    }
     ensure!(
         n <= MAX_BYTES && bytes.last() == Some(&b'\n'),
         "plugin message exceeds limit or lacks newline"
     );
     application::decode(&bytes)
-        .map(|message| (message, n))
+        .map(|message| Some((message, n)))
         .context("invalid application message")
 }
 
@@ -151,6 +168,7 @@ struct WorkerControl {
     rejection: Arc<std::sync::Mutex<Option<application::RegistrationFailure>>>,
 }
 
+#[cfg(windows)]
 async fn supervise(
     config: PluginConfig,
     root: PathBuf,
@@ -160,9 +178,19 @@ async fn supervise(
     admission: OutputAdmission,
     control: WorkerControl,
 ) -> (Option<&'static str>, bool) {
-    if cfg!(windows) {
-        return (Some("Plugins are unavailable in Windows Phase 1"), true);
-    }
+    native::supervise(config, root, plugin, events, input, admission, control).await
+}
+
+#[cfg(not(windows))]
+async fn supervise(
+    config: PluginConfig,
+    root: PathBuf,
+    plugin: usize,
+    events: &mpsc::Sender<Event>,
+    input: mpsc::Receiver<HostMessage>,
+    admission: OutputAdmission,
+    control: WorkerControl,
+) -> (Option<&'static str>, bool) {
     let WorkerControl {
         mut cancellation,
         rejection,
@@ -189,8 +217,13 @@ async fn supervise(
             events,
             input,
             admission,
-            &mut child,
-            &mut writer,
+            RunTransport {
+                reader: child.stdout.take().expect("piped stdout"),
+                writer: &mut writer,
+                child_exit: child.wait(),
+                drain_after_exit: false,
+                write_uncertain: None,
+            },
         ))
         .catch_unwind();
         tokio::select! {
@@ -234,20 +267,43 @@ async fn supervise(
     (failure, true)
 }
 
-async fn run(
+struct RunTransport<'a, R, W, E> {
+    reader: R,
+    writer: &'a mut W,
+    child_exit: E,
+    drain_after_exit: bool,
+    write_uncertain: Option<&'a AtomicBool>,
+}
+
+async fn run<R, W, E>(
     plugin: usize,
     events: &mpsc::Sender<Event>,
     mut input: mpsc::Receiver<HostMessage>,
     admission: OutputAdmission,
-    child: &mut tokio::process::Child,
-    writer: &mut tokio::process::ChildStdin,
-) -> Result<()> {
+    transport: RunTransport<'_, R, W, E>,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    E: std::future::Future<Output = std::io::Result<std::process::ExitStatus>>,
+{
+    let RunTransport {
+        reader,
+        writer,
+        child_exit,
+        drain_after_exit,
+        write_uncertain,
+    } = transport;
     let OutputAdmission {
         charge,
         output,
         limit,
     } = admission;
-    let mut reader = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let mut reader = BufReader::new(reader);
+    let mut child_exit = std::pin::pin!(child_exit);
+    let mut exited = None;
+    let mut exit_drain = None;
+    let mut write_failure = None;
     let mut deadline = Some(tokio::time::Instant::now() + TIMEOUT);
     let slots = Arc::new(tokio::sync::Semaphore::new(PRODUCER_EVENTS));
     let inbound_bytes = Arc::new(tokio::sync::Semaphore::new(application::MAX_QUEUE_BYTES));
@@ -259,7 +315,27 @@ async fn run(
         loop {
             tokio::select! {
                 result = &mut reading => {
-                    let (message, size) = result?;
+                    let Some((message, size)) = result? else {
+                        if let Some(status) = exited {
+                            if let Some(error) = write_failure.take() {
+                                return Err(error);
+                            }
+                            bail!("plugin exited: {status}");
+                        }
+                        if drain_after_exit {
+                            let drain = exit_drain.unwrap_or_else(|| {
+                                tokio::time::Instant::now() + Duration::from_secs(2)
+                            });
+                            let status = tokio::time::timeout_at(drain, &mut child_exit)
+                            .await
+                            .context("plugin exit was not observed after stdout closed")??;
+                            if let Some(error) = write_failure.take() {
+                                return Err(error);
+                            }
+                            bail!("plugin exited: {status}");
+                        }
+                        bail!("plugin closed stdout");
+                    };
                     // Internal deadlines share producer admission and
                     // consume these same permits rather than another owner's
                     // reserved space in the host channel.
@@ -268,7 +344,7 @@ async fn run(
                         .map_err(|_| anyhow::anyhow!("plugin inbound queue full or closed"))?;
                     break;
                 }
-                message = input.recv() => {
+                message = input.recv(), if exited.is_none() && write_failure.is_none() => {
                     let Some(message) = message else { return Ok(()); };
                     charge.fetch_sub(encoded_len(&message)?, Ordering::Relaxed);
                     if let HostMessage::Deadline { token, after_ms } = message {
@@ -280,11 +356,18 @@ async fn run(
                     let mut bytes = serde_json::to_vec(&message)?;
                     ensure!(bytes.len() < MAX_BYTES, "plugin outbound message exceeds limit");
                     bytes.push(b'\n');
-                    tokio::time::timeout(Duration::from_secs(2), writer.write_all(&bytes)).await
-                        .context("plugin stopped reading")?.context("plugin input write failed")?;
+                    if let Err(error) = write_message(writer, &bytes, write_uncertain).await {
+                        if !drain_after_exit {
+                            return Err(error);
+                        }
+                        write_failure = Some(error);
+                        deadline = None;
+                        deadlines.clear();
+                        exit_drain = Some(tokio::time::Instant::now() + Duration::from_secs(2));
+                    }
                 }
-                _ = output.changed.notified() => {}
-                permit = events.reserve(), if output.ready(input.capacity(), charge.load(Ordering::Acquire), limit) => {
+                _ = output.changed.notified(), if exited.is_none() && write_failure.is_none() => {}
+                permit = events.reserve(), if exited.is_none() && write_failure.is_none() && output.ready(input.capacity(), charge.load(Ordering::Acquire), limit) => {
                     let permit = permit.context("plugin event channel closed")?;
                     let notification = output.notification();
                     permit.send(Event { plugin, result: Ok(ClientMessage::OutputReady { _notification: notification }) });
@@ -292,7 +375,7 @@ async fn run(
                 _ = async { match deadline {
                     Some(deadline) => tokio::time::sleep_until(deadline).await,
                     None => std::future::pending().await,
-                }} => bail!("plugin registration or invocation timed out"),
+                }}, if exited.is_none() && write_failure.is_none() => bail!("plugin registration or invocation timed out"),
                 permit = async {
                     match deadlines.values().min().copied() {
                         Some(at) => tokio::time::sleep_until(at).await,
@@ -302,7 +385,7 @@ async fn run(
                     // plugin. Wait for this owner's admission inside select so
                     // pipe IO and other owners remain responsive meanwhile.
                     Arc::clone(&slots).acquire_owned().await
-                } => {
+                }, if exited.is_none() && write_failure.is_none() => {
                     let now = tokio::time::Instant::now();
                     let token = deadlines.iter().find(|(_, at)| **at <= now)
                         .map(|(token, _)| token.clone()).expect("expired deadline");
@@ -316,10 +399,50 @@ async fn run(
                     events.try_send(Event { plugin, result: Ok(message) })
                         .map_err(|_| anyhow::anyhow!("plugin deadline queue full or closed"))?;
                 }
-                status = child.wait() => bail!("plugin exited: {}", status?),
+                status = &mut child_exit, if exited.is_none() => {
+                    let status = status?;
+                    if !drain_after_exit {
+                        bail!("plugin exited: {status}");
+                    }
+                    exited = Some(status);
+                    deadline = None;
+                    exit_drain.get_or_insert_with(|| {
+                        tokio::time::Instant::now() + Duration::from_secs(2)
+                    });
+                }
+                _ = async {
+                    match exit_drain {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(error) = write_failure.take() {
+                        return Err(error);
+                    }
+                    bail!("plugin exited: {}", exited.expect("exit drain has status"));
+                }
             }
         }
     }
+}
+
+async fn write_message<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    bytes: &[u8],
+    uncertain: Option<&AtomicBool>,
+) -> Result<()> {
+    if let Some(uncertain) = uncertain {
+        uncertain.store(true, Ordering::Release);
+    }
+    let result = tokio::time::timeout(Duration::from_secs(2), writer.write_all(bytes)).await;
+    if matches!(result, Ok(Ok(())))
+        && let Some(uncertain) = uncertain
+    {
+        uncertain.store(false, Ordering::Release);
+    }
+    result
+        .context("plugin stopped reading")?
+        .context("plugin input write failed")
 }
 
 fn queued(

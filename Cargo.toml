@@ -140,3 +140,8 @@ strip = true
 name = "lsp_windows_transport"
 path = "tests/lsp_windows_transport.rs"
 harness = false
+
+[[test]]
+name = "plugin_windows_worker"
+path = "tests/plugin_windows_worker.rs"
+harness = false

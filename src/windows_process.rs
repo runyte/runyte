@@ -5,7 +5,9 @@
 //! Only an authenticated detached startup releases its own private job, allowing
 //! later explicit breakaway; inherited external jobs retain their own policies.
 
+mod exit;
 pub(crate) mod overlapped;
+pub(crate) use exit::ChildExitWatcher;
 
 use std::{
     ffi::{OsStr, OsString},
@@ -192,6 +194,60 @@ impl Child {
             )),
             _ => Err(io::Error::last_os_error()),
         }
+    }
+
+    /// Registers against the process handle returned by CreateProcess. The
+    /// duplicate keeps the exact process object alive even when it exits before
+    /// the async waiter is first polled; no PID lookup is involved.
+    pub(crate) fn exit_watcher(&self) -> io::Result<ChildExitWatcher> {
+        ChildExitWatcher::new(&self.process, &self.job)
+    }
+
+    /// Terminates the whole private job and proves that its leader is signaled
+    /// and no active descendants remain before reporting cleanup success.
+    /// Windows can retire job accounting before an externally retained process
+    /// object becomes signaled; `reaped` describes leader settlement plus an
+    /// empty owned job, rather than every historical process-object handle.
+    pub(crate) fn terminate_and_wait_tree(&mut self) -> io::Result<ExitStatus> {
+        let kill_error = self.kill().err();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let leader = unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) };
+            if leader != WAIT_OBJECT_0 && leader != WAIT_TIMEOUT {
+                return Err(io::Error::last_os_error());
+            }
+            if leader == WAIT_OBJECT_0 && self.job_is_empty()? {
+                let mut code = 0;
+                if unsafe { GetExitCodeProcess(self.process.as_raw_handle(), &mut code) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                return Ok(ExitStatus::from_raw(code));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(kill_error.unwrap_or_else(|| {
+                    io::Error::new(io::ErrorKind::TimedOut, "process tree cleanup timed out")
+                }));
+            }
+            // This runs only on the joined blocking cleanup task. Active
+            // process observation uses the registered one-shot watcher.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    pub(crate) fn job_is_empty(&self) -> io::Result<bool> {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                self.job.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                size_of_val(&info) as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info.ActiveProcesses == 0)
     }
 }
 
@@ -1069,5 +1125,36 @@ mod tests {
         finishing.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(writer.join().unwrap().is_err());
         assert!(reader.join().unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn launch_handle_watcher_accepts_prior_exit_and_repeated_waits() {
+        let root = TestRuntimeRoot::new("native-process-exit-watcher").unwrap();
+        let mut child = spawn(&command(root.path(), "exit"), false).unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(child.fixture_process_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        let watcher = child.exit_watcher().unwrap();
+        assert_eq!(watcher.wait().await.unwrap().code(), Some(17));
+        assert_eq!(watcher.wait().await.unwrap().code(), Some(17));
+        drop(watcher);
+        assert_eq!(child.terminate_and_wait_tree().unwrap().code(), Some(17));
+    }
+
+    #[tokio::test]
+    async fn launch_handle_watcher_drop_race_and_retention_fallback_kill_jobs() {
+        for fallback in [false, true] {
+            let root = TestRuntimeRoot::new("native-process-watcher-drop").unwrap();
+            let mut child = spawn(&command(root.path(), "hold"), false).unwrap();
+            let watcher = child.exit_watcher().unwrap();
+            if fallback {
+                watcher.fixture_terminate_retained_job().unwrap();
+            } else {
+                child.kill().unwrap();
+            }
+            drop(watcher);
+            child.terminate_and_wait_tree().unwrap();
+        }
     }
 }
