@@ -796,7 +796,8 @@ input in Terminal Insert. No filesystem scan or content search runs here;
 menu offers **Close all exited terminals** without touching live children.
 
 The Navigator includes scratch and retained special buffers once per identity,
-shows their modification markers and visible panes, and opens in recent
+aligns buffer type, title, modification/read-only markers and destination details
+in columns, shows visible panes, and opens in recent
 activation order with the current destination selected. That order stays fixed
 while filtering. Names, paths, terminal titles and launch commands match fuzzily;
 matched characters are emphasized. Arrows, Ctrl-p/Ctrl-n and paging select;

@@ -116,11 +116,12 @@ impl App {
                     .position(|item| *item == entry.destination),
             )
         });
-        let items = entries
+        let mut items = entries
             .into_iter()
             .enumerate()
             .map(|(index, entry)| self.navigator_item(entry, index))
-            .collect();
+            .collect::<Vec<_>>();
+        self.align_navigator_items(&mut items);
         let context = self
             .project_root
             .file_name()
@@ -206,6 +207,59 @@ impl App {
             .with_preview(preview)
     }
 
+    fn align_navigator_items(&self, items: &mut [PickerItem]) {
+        use unicode_width::UnicodeWidthStr as _;
+
+        let columns = items
+            .iter()
+            .map(|item| {
+                let mut title = item.label.as_str();
+                let mut flags = ["", "", ""];
+                if let Some(ResourceTarget::Buffer(buffer)) = item.resource().map(|r| r.target) {
+                    let state = &self.buffers[buffer];
+                    for (index, present, marker) in [
+                        (2, state.is_read_only(), "[RO]"),
+                        (1, state.external_file_status().is_stale(), "[STALE]"),
+                        (0, state.dirty, "[+]"),
+                    ] {
+                        if present {
+                            title = title.strip_suffix(marker).unwrap().trim_end();
+                            flags[index] = marker;
+                        }
+                    }
+                }
+                let (kind, name) = title.split_once(']').map_or((title, ""), |(kind, name)| {
+                    (&title[..kind.len() + 1], name.trim_start())
+                });
+                (kind.to_owned(), name.to_owned(), flags)
+            })
+            .collect::<Vec<_>>();
+        let kind_width = columns
+            .iter()
+            .map(|(kind, _, _)| kind.width())
+            .max()
+            .unwrap_or(0);
+        let name_width = columns
+            .iter()
+            .map(|(_, name, _)| name.width())
+            .max()
+            .unwrap_or(0);
+        for (item, (kind, name, flags)) in items.iter_mut().zip(columns) {
+            item.label = format!(
+                "{kind}{}  {name}{}  {:3} {:7} {:4}",
+                " ".repeat(kind_width - kind.width()),
+                " ".repeat(name_width - name.width()),
+                flags[0],
+                flags[1],
+                flags[2]
+            );
+            if let Some(mut resource) = item.resource().cloned() {
+                resource.label = item.label.clone();
+                *item = item.clone().with_resource(resource);
+            }
+        }
+    }
+
     /// Refresh metadata in the opening order with the original action indices.
     /// Removing a resource cannot make a stale selected row resolve to another
     /// resource.
@@ -223,7 +277,7 @@ impl App {
             .into_iter()
             .map(|entry| (entry.destination, entry))
             .collect::<HashMap<_, _>>();
-        let items = self
+        let mut items = self
             .list
             .as_ref()
             .unwrap()
@@ -237,7 +291,8 @@ impl App {
                 let entry = valid.get(destination)?;
                 Some(self.navigator_item(entry.clone(), item.index))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        self.align_navigator_items(&mut items);
         let picker = self.list.as_mut().unwrap();
         picker.items = items;
         if selected.is_some_and(|selected| !picker.items.iter().any(|item| item.index == selected))

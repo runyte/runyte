@@ -692,3 +692,34 @@ fn parent_wait_failed_save_does_not_finish_the_request() {
     assert!(!app.should_quit);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn navigator_aligns_types_titles_and_flags_in_terminal_cells() {
+    use unicode_width::UnicodeWidthStr as _;
+    let directory = temporary("navigator-columns");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("界.rs"), "source").unwrap();
+    let mut app = App::new(Config::default(), Some(directory.join("界.rs"))).unwrap();
+    app.apply_to_buffer(app.active().buffer, &Transaction::insert(0, "edited"));
+    app.execute_command("help").unwrap();
+    app.open_navigator();
+    let items = &app.list.as_ref().unwrap().items;
+    let file = items
+        .iter()
+        .find(|item| item.label.starts_with("[file]"))
+        .unwrap();
+    let help = items
+        .iter()
+        .find(|item| item.label.starts_with("[help]"))
+        .unwrap();
+    assert_eq!(file.label.width(), help.label.width());
+    assert!(file.label.contains("[+]"));
+    assert!(help.label.ends_with("[RO]"));
+    let file_title = file.label.find(directory.to_str().unwrap()).unwrap();
+    assert!(file_title > "[file]".len());
+    assert_eq!(
+        file.label[..file_title].width(),
+        "[file]".width().max("[help]".width()) + 2
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
