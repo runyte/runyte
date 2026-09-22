@@ -599,6 +599,17 @@ Cross-platform CI run
 required private clipboard tests, real rust-analyzer acceptance and both
 unchanged Unix coverage floors. No PowerShell timeout recurred in that run,
 so no new timeout diagnosis is claimed.
+The following run `35620818754` at handoff commit `968f639` passes every Unix
+job and required clipboard acceptance but fails one native library filter test.
+Its bounded trace reports a 9 ms spawn, all 32 stdin bytes written, bootstrap
+`entered`, no stdout/stderr bytes or EOF, and no observed exit at 15,007 ms.
+The last recorded milestone precedes encoding/environment setup and the
+authored command. Markers are best-effort, so later marker-write failure could
+also leave that value; it does not identify an exact stalled instruction.
+Native PowerShell ConPTY startup
+passes in that run; the later handoff integration test is not reached because
+the library test fails. Finer startup diagnosis remains active, without longer
+deadlines or a claimed root cause.
 
 ### Sub-phase 2.5 preparation
 
@@ -629,6 +640,55 @@ Windows protocol implementation is unnecessary. Windows persisted-path
 encoding, process/boot identity and detached ownership transfer are refined
 and reviewed in their owning packages. Dependency review finds no user
 decision blocker.
+
+#### Sub-phase 2.5 package 1 contract
+
+One native-path codec preserves raw Unix bytes and uses explicit UTF-16LE on
+Windows, including unpaired code units. Decoding becomes fallible and refuses
+odd Windows byte counts; request and received-frame admission retain byte/count
+bounds. Windows workspace IDs hash those exact units instead of a lossy display
+string. Canonicalization remains at workspace resolution, without case folding
+in the codec or hash. Unix wire bytes, identity vectors and JSON field names
+remain unchanged. Windows diagnostic workspace IDs change; there is no enabled
+native persistent catalog to migrate.
+
+The bundled protocol becomes compilable on Windows, while persistent transport,
+catalog, lifecycle and command availability remain disabled. Received host
+paths must be checked as well as requests, including optional quit-directory
+records, workspace switches, buffer metadata and overlay identities. Caller
+migration propagates decoding errors before host mutation and returns ordinary
+request errors instead of terminating the host. Independent review of the Unix
+caller migration and the complete codec/admission package have no findings.
+All 21 focused protocol tests pass natively, including malformed received
+frames and exact byte bounds. Formatting and all-target Clippy pass; the full
+native suite passes 3,032 tests with zero failures and 50 ignored entries across
+44 libtest/doc groups, plus six native transport cases. Package 1 is complete
+locally and ready for cross-platform CI. The next package is split into native
+process identity (2a), then endpoint metadata and registry ownership (2b), each
+with independent review and native acceptance before transport activation.
+
+#### Sub-phase 2.5 package 2 preparation
+
+Native endpoint metadata must separate a named-pipe address from filesystem
+publication paths. Reuse private NTFS storage, descriptor-relative atomic
+publication and retained byte-range registry locks. Acquire the identity lock
+before preparing an endpoint directory, and publish registry entries before
+ready endpoint metadata. Each publication carries a fresh BCrypt incarnation
+and the host's PID plus creation FILETIME, checked against a retained process
+handle. Access denial, busy pipes and probe timeout are indeterminate, never
+permission to remove a record.
+
+Windows owner-wide inventory will use OS-resolved LocalAppData and verified
+local NTFS storage, independent of workspace/XDG namespaces. It retires stale
+records individually rather than requiring Unix-style boot directories.
+[Known folders](https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid)
+provide the account location; [process creation times](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)
+pin process identity, not boot identity. Actual pipe-peer PID and owner proof
+must corroborate a live host or process-directed stop; metadata alone cannot
+authorize termination. Exact incarnation rechecks under the registry lock
+protect replacements from stale cleanup. Fixture roots remain injectable and
+must never inspect the account's real inventory. An undocumented boot-GUID ABI
+and wall-clock/uptime approximations are unnecessary for this contract.
 
 ### Current implementation evidence
 

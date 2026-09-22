@@ -43,6 +43,8 @@ pub mod lsp;
 pub mod lsp_trust;
 pub mod manual;
 pub mod markdown;
+#[cfg(any(unix, windows))]
+mod native_path;
 mod navigation_target;
 pub mod notification;
 pub mod pasted_image;
@@ -53,7 +55,7 @@ mod private_storage;
 #[cfg(unix)]
 pub mod process_group;
 pub mod project_root;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod protocol;
 pub mod row_hints;
 pub mod selection;

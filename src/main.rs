@@ -2231,7 +2231,9 @@ async fn run_host_server(
                                 let terminal = runyte::terminal::TerminalId::from_raw(*terminal);
                                 let result = if active.as_ref().is_some_and(|client| control_attachments.get(&id).copied().flatten() == Some(client.id)) && host.app().terminals.validates_parent(terminal, capability,
                                     peer_processes.get(&id).copied().flatten()) {
-                                    host.create_parent_wait_request(terminal, paths.iter().cloned().map(decode_path).collect())
+                                    paths.iter().cloned().map(decode_path).collect::<io::Result<Vec<_>>>()
+                                        .map_err(anyhow::Error::from)
+                                        .and_then(|paths| host.create_parent_wait_request(terminal, paths))
                                 } else { Err(anyhow::anyhow!("parent editing context is stale or detached; return to the owning persistent session")) };
                                 let response = result.map_or_else(|error| HostResponse::Error { message: error.to_string() }, |(token,buffers)| {
                                     let token: WaitToken = token.into();
@@ -3189,7 +3191,12 @@ fn handle_workspace_request(
             if paths.is_empty() || paths.len() > 32 {
                 Err(anyhow::anyhow!("open request requires 1 to 32 paths"))
             } else {
-                host.open_buffers(paths.into_iter().map(decode_path), activate)
+                paths
+                    .into_iter()
+                    .map(decode_path)
+                    .collect::<io::Result<Vec<_>>>()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|paths| host.open_buffers(paths, activate))
                     .map(|buffers| HostResponse::Opened {
                         buffers: buffers.into_iter().map(Into::into).collect(),
                     })
@@ -3243,7 +3250,12 @@ fn handle_workspace_request(
             if paths.is_empty() || paths.len() > 32 {
                 Err(anyhow::anyhow!("wait request requires 1 to 32 paths"))
             } else {
-                host.create_wait_request(paths.into_iter().map(decode_path), true)
+                paths
+                    .into_iter()
+                    .map(decode_path)
+                    .collect::<io::Result<Vec<_>>>()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|paths| host.create_wait_request(paths, true))
                     .map(|(token, buffers)| HostResponse::WaitCreated {
                         token: token.into(),
                         buffers: buffers.into_iter().map(Into::into).collect(),
@@ -4325,7 +4337,7 @@ async fn run_attached(
                         // file belongs to this process, so writing it is the
                         // client's half of the handoff.
                         if let (Some(cwd_file), Some(directory)) =
-                            (cwd_file, directory_bytes.map(decode_path))
+                            (cwd_file, directory_bytes.map(decode_path).transpose()?)
                         {
                             write_cwd_file(cwd_file, &directory)?;
                         }
@@ -4350,8 +4362,8 @@ async fn run_attached(
                             "wait request was cancelled by a workspace switch"
                         );
                         return Ok(AttachOutcome::Switch {
-                            selector: decode_path(selector_bytes),
-                            working_directory: decode_path(working_directory_bytes),
+                            selector: decode_path(selector_bytes)?,
+                            working_directory: decode_path(working_directory_bytes)?,
                             running_only,
                             previous_session,
                             parent_receipt: None,
@@ -4363,7 +4375,7 @@ async fn run_attached(
                     }
                     Some(HostResponse::ParentSwitchWorkspace { selector, directory, receipt }) => {
                         anyhow::ensure!(wait_token.is_none(), "a wait-owned attachment cannot switch persistent sessions");
-                        return Ok(AttachOutcome::Switch { selector: decode_path(selector), working_directory: decode_path(directory),
+                        return Ok(AttachOutcome::Switch { selector: decode_path(selector)?, working_directory: decode_path(directory)?,
                             running_only: false, previous_session: false, parent_receipt: Some(receipt), visit: None });
                     }
                     Some(HostResponse::Welcome { .. }) => {}
@@ -4465,7 +4477,7 @@ async fn run_parent_request(
     context: runyte::workspace::parent::ParentContext,
     launching_parent: Option<&HostSupervisor>,
 ) -> Result<()> {
-    let endpoint = LocalEndpoint::from_parent_metadata(&decode_path(context.metadata)).context(
+    let endpoint = LocalEndpoint::from_parent_metadata(&decode_path(context.metadata)?).context(
         "Runyte parent context is stale; return to its persistent session or open a fresh terminal",
     )?;
     let directory = std::env::current_dir()?;

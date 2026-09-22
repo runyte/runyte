@@ -6,7 +6,7 @@
 //! happens here so changing a core representation cannot silently change the
 //! socket contract.
 
-use std::{fmt, path::PathBuf};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,9 @@ pub use frame::{
     EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow, TerminalDamageFrame,
 };
 pub use input::{FrameGeometry, InputEvent, PointerEvent, Rect};
+
+// Platform-local bytes: raw Unix paths or lossless Windows UTF-16LE units.
+pub use crate::native_path::{decode_path, encode_path};
 
 use crate::app::{
     CommandOutcome as CoreCommandOutcome, PromptKind as CorePromptKind,
@@ -231,6 +234,7 @@ impl From<BufferRevision> for CoreBufferRevision {
 pub struct BufferMetadata {
     pub id: BufferId,
     pub revision: BufferRevision,
+    #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub path_bytes: Option<Vec<u8>>,
     pub name: String,
     pub dirty: bool,
@@ -695,6 +699,7 @@ impl ClientRequest {
                     !project_root_bytes.is_empty() && project_root_bytes.len() <= MAX_PATH_BYTES,
                     "invalid workspace identity length",
                 )?;
+                validate_path_bytes(project_root_bytes)?;
                 require(
                     !client_version.is_empty() && client_version.len() <= 128,
                     "invalid client version length",
@@ -767,7 +772,8 @@ impl ClientRequest {
                         .iter()
                         .all(|path| !path.is_empty() && path.len() <= MAX_PATH_BYTES),
                     "path identity exceeds the protocol limit",
-                )
+                )?;
+                paths.iter().try_for_each(|path| validate_path_bytes(path))
             }
             Self::ApplyTransaction { changes, .. } => {
                 require(
@@ -810,7 +816,9 @@ impl ClientRequest {
                         && !directory.is_empty()
                         && directory.len() <= MAX_PATH_BYTES,
                     "parent attachment path exceeds the protocol limit",
-                )
+                )?;
+                validate_path_bytes(selector)?;
+                validate_path_bytes(directory)
             }
             Self::ParentWait {
                 terminal,
@@ -825,7 +833,8 @@ impl ClientRequest {
                             .iter()
                             .all(|path| !path.is_empty() && path.len() <= MAX_PATH_BYTES),
                     "parent wait requires 1 to 32 bounded paths",
-                )
+                )?;
+                paths.iter().try_for_each(|path| validate_path_bytes(path))
             }
             Self::ParentHandoffResult { receipt, error } => require(
                 receipt.len() == 64
@@ -966,6 +975,7 @@ pub enum HostResponse {
         /// Where `:quit-here` asked the invoking shell to go, when this response
         /// came from that command. The client owns the file a shell wrapper
         /// reads, so the host reports the directory rather than writing it.
+        #[serde(default, deserialize_with = "deserialize_optional_path")]
         directory_bytes: Option<Vec<u8>>,
     },
     ShuttingDown,
@@ -973,14 +983,18 @@ pub enum HostResponse {
         name: String,
     },
     SwitchWorkspace {
+        #[serde(deserialize_with = "deserialize_path")]
         selector_bytes: Vec<u8>,
+        #[serde(deserialize_with = "deserialize_path")]
         working_directory_bytes: Vec<u8>,
         running_only: bool,
         previous_session: bool,
         visit: Option<DestinationVisit>,
     },
     ParentSwitchWorkspace {
+        #[serde(deserialize_with = "deserialize_path")]
         selector: Vec<u8>,
+        #[serde(deserialize_with = "deserialize_path")]
         directory: Vec<u8>,
         receipt: String,
     },
@@ -1105,19 +1119,200 @@ pub fn validate_welcome(response: &HostResponse, interactive: bool) -> Result<()
     )
 }
 
-pub fn encode_path(path: &std::path::Path) -> Vec<u8> {
-    use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes().to_vec()
+fn validate_path_bytes(bytes: &[u8]) -> Result<(), String> {
+    require(
+        !bytes.is_empty() && bytes.len() <= MAX_PATH_BYTES,
+        "path identity exceeds the protocol limit",
+    )?;
+    crate::native_path::validate_encoding(bytes).map_err(|error| error.to_string())
 }
 
-pub fn decode_path(bytes: Vec<u8>) -> PathBuf {
-    use std::os::unix::ffi::OsStringExt;
-    std::ffi::OsString::from_vec(bytes).into()
+fn deserialize_path<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bytes = Vec::<u8>::deserialize(deserializer)?;
+    validate_path_bytes(&bytes).map_err(serde::de::Error::custom)?;
+    Ok(bytes)
+}
+
+fn deserialize_optional_path<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bytes = Option::<Vec<u8>>::deserialize(deserializer)?;
+    if let Some(path) = bytes.as_deref() {
+        validate_path_bytes(path).map_err(serde::de::Error::custom)?;
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn path_requests(bytes: Vec<u8>) -> Vec<ClientRequest> {
+        let valid = encode_path(std::path::Path::new("valid"));
+        vec![
+            ClientRequest::Hello {
+                protocol: VERSION,
+                features: vec![FeatureGroup::Snapshots],
+                project_root_bytes: bytes.clone(),
+                client_kind: ClientKind::Tui,
+                client_version: CLIENT_VERSION.to_owned(),
+                role: ClientRole::Interactive,
+                geometry: FrameGeometry::default(),
+                directory_handoff: false,
+            },
+            ClientRequest::OpenBuffers {
+                paths: vec![valid.clone(), bytes.clone()],
+                activate: true,
+            },
+            ClientRequest::CreateWait {
+                paths: vec![valid.clone(), bytes.clone()],
+            },
+            ClientRequest::ParentWait {
+                terminal: 1,
+                capability: "a".repeat(64),
+                paths: vec![valid.clone(), bytes.clone()],
+            },
+            ClientRequest::ParentAttach {
+                terminal: 1,
+                capability: "a".repeat(64),
+                selector: bytes.clone(),
+                directory: valid.clone(),
+            },
+            ClientRequest::ParentAttach {
+                terminal: 1,
+                capability: "a".repeat(64),
+                selector: valid,
+                directory: bytes,
+            },
+        ]
+    }
+
+    fn path_responses(bytes: Vec<u8>) -> Vec<HostResponse> {
+        let valid = encode_path(std::path::Path::new("valid"));
+        let metadata = BufferMetadata {
+            id: BufferId(1),
+            revision: BufferRevision(1),
+            path_bytes: Some(bytes.clone()),
+            name: "file".to_owned(),
+            dirty: false,
+            read_only: false,
+            closed: false,
+        };
+        vec![
+            HostResponse::Detached {
+                directory_bytes: Some(bytes.clone()),
+            },
+            HostResponse::SwitchWorkspace {
+                selector_bytes: bytes.clone(),
+                working_directory_bytes: valid.clone(),
+                running_only: false,
+                previous_session: false,
+                visit: None,
+            },
+            HostResponse::SwitchWorkspace {
+                selector_bytes: valid.clone(),
+                working_directory_bytes: bytes.clone(),
+                running_only: false,
+                previous_session: false,
+                visit: None,
+            },
+            HostResponse::ParentSwitchWorkspace {
+                selector: bytes.clone(),
+                directory: valid.clone(),
+                receipt: "a".repeat(64),
+            },
+            HostResponse::ParentSwitchWorkspace {
+                selector: valid,
+                directory: bytes,
+                receipt: "a".repeat(64),
+            },
+            HostResponse::Buffers {
+                buffers: vec![metadata.clone()],
+            },
+            HostResponse::Buffer {
+                buffer: BufferContents {
+                    metadata,
+                    text: String::new(),
+                    truncated: false,
+                },
+            },
+        ]
+    }
+
+    fn assert_path_admission(bytes: Vec<u8>, accepted: bool) {
+        for request in path_requests(bytes.clone()) {
+            let received: ClientRequest =
+                serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+            assert_eq!(received.validate().is_ok(), accepted, "{request:?}");
+        }
+        for response in path_responses(bytes) {
+            let received =
+                serde_json::from_slice::<HostResponse>(&serde_json::to_vec(&response).unwrap());
+            assert_eq!(received.is_ok(), accepted, "{response:?}");
+            if accepted {
+                assert_eq!(received.unwrap(), response);
+            }
+        }
+    }
+
+    #[test]
+    fn all_path_messages_enforce_native_encoding_and_existing_byte_bounds() {
+        assert_path_admission(
+            encode_path(std::path::Path::new("literal [file] caf\u{e9} \u{1f600}")),
+            true,
+        );
+        assert_path_admission(vec![65; MAX_PATH_BYTES], true);
+        assert_path_admission(Vec::new(), false);
+        assert_path_admission(vec![65; MAX_PATH_BYTES + 2], false);
+        #[cfg(windows)]
+        {
+            assert_path_admission(vec![65], false);
+            // A complete unpaired surrogate is a native path unit, not malformed encoding.
+            assert_path_admission(vec![0, 216], true);
+        }
+        #[cfg(unix)]
+        assert_path_admission(vec![0xff, 0x80, b'a'], true);
+    }
+
+    #[test]
+    fn optional_received_paths_keep_missing_and_null_semantics() {
+        let detached = HostResponse::Detached {
+            directory_bytes: None,
+        };
+        let mut value = serde_json::to_value(&detached).unwrap();
+        assert_eq!(
+            serde_json::from_value::<HostResponse>(value.clone()).unwrap(),
+            detached
+        );
+        value.as_object_mut().unwrap().remove("directory_bytes");
+        assert_eq!(
+            serde_json::from_value::<HostResponse>(value).unwrap(),
+            detached
+        );
+        let metadata = BufferMetadata {
+            id: BufferId(1),
+            revision: BufferRevision(1),
+            path_bytes: None,
+            name: "scratch".to_owned(),
+            dirty: false,
+            read_only: false,
+            closed: false,
+        };
+        let mut value = serde_json::to_value(&metadata).unwrap();
+        assert_eq!(
+            serde_json::from_value::<BufferMetadata>(value.clone()).unwrap(),
+            metadata
+        );
+        value.as_object_mut().unwrap().remove("path_bytes");
+        assert_eq!(
+            serde_json::from_value::<BufferMetadata>(value).unwrap(),
+            metadata
+        );
+    }
 
     #[test]
     fn activity_health_round_trip_preserves_owner_and_cancellation_without_deadlines() {
@@ -1157,7 +1352,7 @@ mod tests {
         };
         assert!(oversized_command.validate().is_err());
         let too_many_paths = ClientRequest::CreateWait {
-            paths: vec![b"file".to_vec(); MAX_PATHS + 1],
+            paths: vec![encode_path(std::path::Path::new("file")); MAX_PATHS + 1],
         };
         assert!(too_many_paths.validate().is_err());
         let oversized_transaction = ClientRequest::ApplyTransaction {
@@ -1528,8 +1723,8 @@ mod tests {
         let request = ClientRequest::ParentAttach {
             terminal: 1,
             capability: "a".repeat(64),
-            selector: b"/tmp/next".to_vec(),
-            directory: b"/tmp".to_vec(),
+            selector: encode_path(std::path::Path::new("/tmp/next")),
+            directory: encode_path(std::path::Path::new("/tmp")),
         };
         assert!(request.validate().is_ok());
         let ClientRequest::ParentAttach {
@@ -1565,7 +1760,7 @@ mod tests {
             ClientRequest::ParentWait {
                 terminal,
                 capability: capability.clone(),
-                paths: vec![vec![b'a']; MAX_PATHS + 1]
+                paths: vec![encode_path(std::path::Path::new("a")); MAX_PATHS + 1]
             }
             .validate()
             .is_err()
@@ -1574,7 +1769,7 @@ mod tests {
             ClientRequest::ParentWait {
                 terminal,
                 capability,
-                paths: vec![b"/tmp/prompt".to_vec()]
+                paths: vec![encode_path(std::path::Path::new("/tmp/prompt"))]
             }
             .validate()
             .is_ok()

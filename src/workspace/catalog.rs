@@ -4704,15 +4704,17 @@ fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
     }
     let mut entries = entries
         .into_iter()
-        .map(|entry| RecentEntry {
-            project_root: decode_path(entry.project_root_bytes),
-            name: entry.name,
-            number: entry.number,
-            last_active_unix_seconds: entry.last_active_unix_seconds,
-            number_declined: entry.number_declined,
-            number_pinned: entry.number_pinned,
+        .map(|entry| {
+            Ok(RecentEntry {
+                project_root: decode_path(entry.project_root_bytes)?,
+                name: entry.name,
+                number: entry.number,
+                last_active_unix_seconds: entry.last_active_unix_seconds,
+                number_declined: entry.number_declined,
+                number_pinned: entry.number_pinned,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<io::Result<Vec<_>>>()?;
     // A number identifies one workspace, so a file hand-edited into holding a
     // duplicate is repaired on the way in rather than reaching a listing where
     // one digit would select whichever row happened to be first.
@@ -4749,7 +4751,7 @@ fn validate_recent_workspace(entry: &RecentWorkspace) -> Result<()> {
         &entry.project_root_bytes,
         "recent workspace project directory",
     )?;
-    let project_root = decode_path(entry.project_root_bytes.clone());
+    let project_root = decode_path(entry.project_root_bytes.clone())?;
     anyhow::ensure!(
         project_root.is_absolute(),
         "recent workspace project directory is not absolute"

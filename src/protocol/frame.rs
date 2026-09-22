@@ -564,7 +564,11 @@ impl TryFrom<OverlaySnapshot> for core::OverlaySnapshot {
             query: value.query,
             query_placeholder: value.query_placeholder,
             column_header: value.column_header.map(Into::into),
-            rows: value.rows.into_iter().map(Into::into).collect(),
+            rows: value
+                .rows
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_, _>>()?,
             selected: value.selected,
             scroll_anchor: value.scroll_anchor,
             row_offset: value.row_offset,
@@ -612,11 +616,12 @@ impl From<core::OverlayRow> for OverlayRow {
         }
     }
 }
-impl From<OverlayRow> for core::OverlayRow {
-    fn from(value: OverlayRow) -> Self {
-        Self {
+impl TryFrom<OverlayRow> for core::OverlayRow {
+    type Error = String;
+    fn try_from(value: OverlayRow) -> Result<Self, Self::Error> {
+        Ok(Self {
             heading: value.heading,
-            identity: value.identity.into(),
+            identity: value.identity.try_into()?,
             label: value.label,
             detail: value.detail,
             trailing_detail: value.trailing_detail,
@@ -625,7 +630,7 @@ impl From<OverlayRow> for core::OverlayRow {
             muted: value.muted,
             emphasis: value.emphasis,
             detail_emphasis: value.detail_emphasis,
-        }
+        })
     }
 }
 
@@ -715,6 +720,97 @@ mod tests {
         }
     }
 
+    fn path_frame(bytes: Vec<u8>) -> HostFrame {
+        let mut frame = terminal_frame(1, 1, 'x');
+        frame.overlays.push(OverlaySnapshot {
+            kind: OverlayKind::FilePicker,
+            purpose: OverlayPurpose::Picker,
+            input: OverlayInput::Filter,
+            layout: OverlayLayout::Standard,
+            actions: Vec::new(),
+            title: "Files".to_owned(),
+            query: String::new(),
+            query_placeholder: String::new(),
+            column_header: None,
+            rows: vec![OverlayRow {
+                heading: false,
+                identity: OverlayIdentity::Path(bytes),
+                label: "file".to_owned(),
+                detail: String::new(),
+                trailing_detail: String::new(),
+                available: true,
+                dimmed: false,
+                muted: Vec::new(),
+                emphasis: Vec::new(),
+                detail_emphasis: Vec::new(),
+            }],
+            selected: Some(0),
+            scroll_anchor: None,
+            row_offset: 0,
+            message: None,
+            omitted_rows: 0,
+            total_rows: 1,
+            query_cursor: None,
+            show_preview: false,
+            preview_title: None,
+            preview: None,
+        });
+        frame
+    }
+
+    #[test]
+    fn received_frame_paths_round_trip_losslessly_through_core_conversion() {
+        let path = std::path::PathBuf::from("literal [file] caf\u{e9} \u{1f600}");
+        let mut paths = vec![path];
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            paths.push(std::ffi::OsString::from_wide(&[67, 58, 92, 0xd800]).into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            paths.push(std::ffi::OsString::from_vec(vec![b'/', 0xff, 0x80]).into());
+        }
+        for path in paths {
+            let frame = path_frame(encode_path(&path));
+            let received: HostFrame =
+                serde_json::from_slice(&serde_json::to_vec(&frame).unwrap()).unwrap();
+            let core = CoreHostFrame::try_from(received).unwrap();
+            assert_eq!(
+                core.overlays[0].rows[0].identity,
+                core::OverlayIdentity::Path(path)
+            );
+            assert_eq!(HostFrame::from(core), frame);
+        }
+    }
+
+    #[test]
+    fn malformed_frame_paths_fail_wire_admission_and_entire_core_conversion() {
+        let invalid = [Vec::new(), vec![65; super::super::MAX_PATH_BYTES + 2]];
+        for bytes in invalid {
+            assert_invalid_frame_path(bytes);
+        }
+        #[cfg(windows)]
+        assert_invalid_frame_path(vec![65, 0, 66]);
+    }
+
+    fn assert_invalid_frame_path(bytes: Vec<u8>) {
+        let frame = path_frame(bytes);
+        let wire = serde_json::to_vec(&frame).unwrap();
+        assert!(serde_json::from_slice::<HostFrame>(&wire).is_err());
+        let response = super::super::HostResponse::Frame {
+            frame: Box::new(frame.clone()),
+        };
+        assert!(
+            serde_json::from_slice::<super::super::HostResponse>(
+                &serde_json::to_vec(&response).unwrap()
+            )
+            .is_err()
+        );
+        assert!(CoreHostFrame::try_from(frame).is_err());
+    }
+
     #[test]
     fn changed_session_strip_requires_full_frame_even_when_terminal_rows_match() {
         let mut base = terminal_frame(1, 1, 'x');
@@ -773,7 +869,7 @@ mod tests {
         let encoded = serde_json::to_vec(&wire).unwrap();
         let decoded: OverlayRow = serde_json::from_slice(&encoded).unwrap();
 
-        assert_eq!(core::OverlayRow::from(decoded), row);
+        assert_eq!(core::OverlayRow::try_from(decoded).unwrap(), row);
     }
 
     #[test]
@@ -823,7 +919,7 @@ mod tests {
         ];
         for identity in identities {
             let wire = OverlayIdentity::from(identity.clone());
-            assert_eq!(core::OverlayIdentity::from(wire), identity);
+            assert_eq!(core::OverlayIdentity::try_from(wire).unwrap(), identity);
         }
 
         for kind in [
@@ -943,7 +1039,7 @@ impl From<OverlayPreview> for core::OverlayPreview {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OverlayIdentity {
     Text(String),
-    Path(Vec<u8>),
+    Path(#[serde(deserialize_with = "super::deserialize_path")] Vec<u8>),
     Index(usize),
 }
 impl From<core::OverlayIdentity> for OverlayIdentity {
@@ -955,13 +1051,17 @@ impl From<core::OverlayIdentity> for OverlayIdentity {
         }
     }
 }
-impl From<OverlayIdentity> for core::OverlayIdentity {
-    fn from(value: OverlayIdentity) -> Self {
-        match value {
+impl TryFrom<OverlayIdentity> for core::OverlayIdentity {
+    type Error = String;
+    fn try_from(value: OverlayIdentity) -> Result<Self, Self::Error> {
+        Ok(match value {
             OverlayIdentity::Text(text) => Self::Text(text),
-            OverlayIdentity::Path(path) => Self::Path(decode_path(path)),
+            OverlayIdentity::Path(path) => {
+                super::validate_path_bytes(&path)?;
+                Self::Path(decode_path(path).map_err(|error| error.to_string())?)
+            }
             OverlayIdentity::Index(index) => Self::Index(index),
-        }
+        })
     }
 }
 

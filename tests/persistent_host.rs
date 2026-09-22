@@ -2139,12 +2139,12 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
     let outcome = invoke_when_current(&mut client, "quit-here", frame).await;
     let detached_directory = match outcome {
         HostResponse::Detached { directory_bytes } => {
-            directory_bytes.map(runyte::workspace::transport::decode_path)
+            directory_bytes.map(|path| runyte::workspace::transport::decode_path(path).unwrap())
         }
         HostResponse::CommandResult { .. } => {
             await_detached(&mut client, None, "waiting for quit-here to detach")
                 .await
-                .map(runyte::workspace::transport::decode_path)
+                .map(|path| runyte::workspace::transport::decode_path(path).unwrap())
         }
         response => panic!("expected quit-here result, got {response:?}"),
     };
@@ -2361,7 +2361,7 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
     )
     .await;
     assert_eq!(
-        detached.map(runyte::workspace::transport::decode_path),
+        detached.map(|path| runyte::workspace::transport::decode_path(path).unwrap()),
         Some(root.join("nested"))
     );
 

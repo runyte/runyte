@@ -338,8 +338,8 @@ impl LocalEndpoint {
     }
 
     fn from_registered(metadata: &EndpointMetadata, registration: &Path) -> Result<Self> {
-        let project_root = decode_path(metadata.project_root_bytes.clone());
-        let socket = decode_path(metadata.socket_bytes.clone());
+        let project_root = decode_path(metadata.project_root_bytes.clone())?;
+        let socket = decode_path(metadata.socket_bytes.clone())?;
         ensure!(
             socket.is_absolute(),
             "registered host socket is not absolute"
@@ -1215,8 +1215,8 @@ fn validate_metadata_fields(metadata: &EndpointMetadata) -> Result<()> {
     }
     validate_metadata_path(&metadata.project_root_bytes, "project directory")?;
     validate_metadata_path(&metadata.socket_bytes, "socket path")?;
-    let project_root = decode_path(metadata.project_root_bytes.clone());
-    let socket = decode_path(metadata.socket_bytes.clone());
+    let project_root = decode_path(metadata.project_root_bytes.clone())?;
+    let socket = decode_path(metadata.socket_bytes.clone())?;
     ensure!(
         project_root.is_absolute(),
         "host metadata project directory is not absolute"
@@ -2052,7 +2052,7 @@ impl LocalClient {
         directory_handoff: bool,
     ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
-        let socket = decode_path(metadata.socket_bytes);
+        let socket = decode_path(metadata.socket_bytes)?;
         let stream = UnixStream::connect(&socket)
             .await
             .with_context(|| format!("cannot attach to workspace host {}", socket.display()))?;
@@ -2093,7 +2093,7 @@ impl BufferedLocalClient {
         directory_handoff: bool,
     ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
-        let socket = decode_path(metadata.socket_bytes);
+        let socket = decode_path(metadata.socket_bytes)?;
         let mut stream = UnixStream::connect(&socket)
             .await
             .with_context(|| format!("cannot attach to workspace host {}", socket.display()))?;
@@ -3614,7 +3614,7 @@ mod tests {
         let registration = registry.join(format!("{}.json", second.id()));
         let metadata: EndpointMetadata =
             serde_json::from_slice(&fs::read(registration).unwrap()).unwrap();
-        assert_eq!(decode_path(metadata.socket_bytes), second.socket());
+        assert_eq!(decode_path(metadata.socket_bytes).unwrap(), second.socket());
 
         drop(second_server);
         second.cleanup().unwrap();
