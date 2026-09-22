@@ -29,6 +29,8 @@ pub mod windows_endpoint;
 pub mod windows_pipe;
 #[cfg(windows)]
 pub mod windows_process_identity;
+#[cfg(windows)]
+pub mod windows_transport;
 
 pub use buffers::{
     BufferContents, BufferId, BufferMetadata, BufferRevision, WaitStatus, WaitToken,

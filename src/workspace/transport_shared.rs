@@ -618,6 +618,11 @@ pub(super) struct MessageReader<R> {
 }
 
 impl<R: AsyncRead + Unpin> MessageReader<R> {
+    #[cfg(all(test, windows))]
+    pub(super) fn pending_bytes_for_test(&self) -> usize {
+        self.pending.len()
+    }
+
     pub(super) fn new(reader: R) -> Self {
         Self {
             reader: BufReader::new(reader),

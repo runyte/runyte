@@ -851,7 +851,52 @@ and the complete serialized workspace suite: 3,071 passed, zero failures and
 54 ignored fixture/performance entries across 44 libtest/doc-test groups, plus
 the six native transport acceptance cases. The 15 pipe regressions and five
 process-identity tests also pass independently; ignored compiled child entries
-are exercised by their parent tests. Server/client adapters proceed next.
+are exercised by their parent tests. Checkpoint `9337009` passes every CI job
+in [run 35631958559](https://github.com/runyte/runyte/actions/runs/35631958559),
+including required Windows clipboard and language-server acceptance and both
+unchanged Unix coverage gates. Server/client adapters proceed next.
+
+Package 3c adds native server and ordinary-client adapters around the shared
+protocol. The server owns its connection futures directly, bounds admission
+and host events, and preserves shutdown progress under connection or queue
+backpressure. Explicit shutdown drains events while awaiting the retained
+owner task, with the existing three-second final-response budget. Cancellation
+retains that task; Drop aborts it. Neither path detaches connection workers.
+The client authenticates the native server before Hello and permanently
+disables outgoing requests after a failed or cancelled send, retaining its
+reader for incoming lifecycle recovery without a potentially blocking shutdown
+flush. Shared framing retains partial responses across receive cancellation.
+
+Both adapters have zero independent-review findings. Review added exact Hello
+field assertions, an observed partial-frame cancellation boundary, and an owner
+panic regression that checks connection teardown before publication cleanup.
+All 13 native adapter tests pass. Native formatting, all-target Clippy and the
+complete workspace suite also pass: 3,084 passed, zero failures and 54 ignored
+entries across 44 libtest/doc-test groups, plus six transport acceptance cases.
+The buffered frontend client is next; public persistent-session availability
+still awaits lifecycle and attachment work.
+
+The reviewed lifecycle preparation splits the following work into discovery
+and stale-record recovery, names and recent history, control lifecycle,
+detached startup, then catalog/host integration. A configured publication
+location keeps known namespace roots; an inventory-discovered control target
+does not invent those roots from its inventory directory. Hidden hosts can be
+controlled through their authenticated pipe, while stale inventory cleanup
+removes only the exact observed row under its known locking context.
+Native discovery uses async bounded probes rather than placing Tokio pipe I/O
+inside the existing Unix blocking scan. Missing or busy pipes, denied access
+and timeouts remain indeterminate; only conclusive process identity evidence
+permits locked, exact-incarnation stale cleanup.
+
+Detached startup retains ownership of its own child until authenticated
+readiness, and cleans up a losing child if another launcher wins. Console
+detachment does not escape inherited Windows jobs. Keep ConPTY job restrictions
+and route launches from integrated terminals through their authenticated parent
+host; parent PID observation alone is not terminal authorization. Compatible
+force shutdown remains a protocol request. Incompatible-host termination needs
+a separate capability derived from the actual authenticated peer and checked
+against the handle used for termination, never metadata-only PID signaling.
+See [Windows job inheritance](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
 ### Current implementation evidence
 
