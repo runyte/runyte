@@ -1,10 +1,10 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5i internal
-native host interactive attachment accepted in `1e69755` (`Own native host
-interactive attachments and waits`). The shared response-ordering repair is
-`5d727db`. Typed console termination is `c6dea6a`; foreground supervision is
-`ab9f3ac`; Unix CI compile and lint repairs are `4a3b1bd` and `6bd7627`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5j1 private
+native frontend attachment accepted in `180175d`. The macOS host queue EINTR
+repair is `dad1d86`; the Unix plugin fixture readiness repair is `26f6c4e`.
+The preceding native host attachment is `1e69755` and shared response ordering
+repair is `5d727db`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -359,20 +359,54 @@ job repeated an intermittent 15-second Windows PowerShell filter timeout in
 promptly but remained alive; two recent runs stalled at different best-effort
 trace markers. No safe Runyte execution fix is established. Retain the existing
 deadline and diagnostics pending an isolated reproduction or process dump.
-CI acceptance for `1e69755` remains pending its push.
+CI run 35755224602 for `70f8c69` passed the native host integration cases and
+Unix coverage gates. Native Windows failed two recurring PowerShell filter
+timeouts: both children spawned in six milliseconds and remained alive without
+output or exit through the 15-second budget. The trace markers were `missing`
+and `policy-set`; neither establishes the cause. Ubuntu plugin conformance
+failed because the fixture could match its own echoed terminal command before
+the child produced output. macOS plugin conformance exposed `EINTR` from the
+nonblocking host supervisor process queue read. The two targeted repairs above
+are committed locally and require CI validation after their push.
 
-## Next package: native frontend attachment, then exact switching and waits
+## Accepted package: 4e.5j1 private native frontend attachment
 
-Build one terminal-owning native frontend over `BufferedLocalClient` and the
-authenticated exact host publication. Keep handshake, initial frame, input and
-response ordering, termination and peer-exit supervision, and source recovery
-on the frontend boundary. The first slice can stay internal while real ConPTY
-editing, resize, detach/reconnect, and failure acceptance runs. Then propagate
-typed selected `WorkspaceSelection` through core request and protocol values so
-switching resolves a complete `PublicationKey` from the captured discovery
-scope; never replace a stale selection by project path or PID. A wait client's
-parent loss cancels only that client's wait, not the shared host. Complete
-real-host acceptance before opening public attachment, manager visit,
+`180175d` adds one internal Windows TUI attachment owner over the authenticated
+buffered pipe. It retains the actual connected process handle, races writes and
+input against that exact peer's exit, preserves semantic error replies during
+the bounded final drain, and restores terminal mode on every return. Welcome
+and the first complete frame share one startup deadline. Empty native Paste
+reaches the host as ClipboardPaste, where the editor decides its meaning.
+Public attachment and switching routes remain gated.
+
+The ConPTY acceptance fixture runs a real native host outside the frontend's
+ConPTY. It covers editing and save, a newly rendered resize frame, busy refusal,
+detach and reattach, host death, Ctrl+Break cleanup, and a connected server
+that withholds its first frame. Independent Astra review found no remaining
+findings after exit-aware writes, reply ordering and resize-fixture corrections.
+`tests/input_boundary.rs` allows Crossterm only in the TUI adapter source.
+Formatting, all-target Clippy with warnings denied and the complete native
+workspace suite pass: 3,345 tests, zero failures and 72 ignored entries across
+47 libtest/doc-test groups, plus six native LSP transport cases.
+
+`dad1d86` retries only interrupted macOS `kevent` process-queue observations
+against the retained queue. An injected macOS regression observes EINTR then
+NOTE_EXIT. Independent Astra review found no blockers; native macOS compilation
+and execution remain for CI. `26f6c4e` makes the Unix plugin fixture wait for
+child-emitted, octal-encoded terminal output and the editor's rename status
+within one deadline. Independent Astra review found no remaining issue after
+the portable `\\0ddd` correction. Python is unavailable on this Windows host;
+Unix execution remains for CI. Neither CI repair has a passing post-fix run yet.
+
+## Next package: exact selected switching and waits
+
+Propagate typed selected `WorkspaceSelection` through core switch requests,
+session-strip targets and private protocol values. Resolve a complete
+`PublicationKey` from the captured discovery scope; never replace a stale
+selection by project path or PID. Then add exact native target preparation and
+source recovery within the private frontend. A wait client's parent loss
+cancels only that client's wait, not the shared host. Complete real-host
+acceptance before opening public attachment, manager visit,
 numbered-session, restart or parent-terminal routing gates.
 
 ## Phase 2.5 implementation order
