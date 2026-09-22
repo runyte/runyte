@@ -72,3 +72,5 @@ pub use service::{
     ServiceProgress, ServiceRequestId, ServiceStateError, ServiceSubmitError, ServiceUpdate,
     ServiceWorker,
 };
+#[cfg(any(unix, windows))]
+pub use session_name::normalize_session_name;

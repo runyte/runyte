@@ -157,10 +157,17 @@ use runyte::workspace::transport::{
 };
 #[cfg(unix)]
 use runyte::workspace::{
-    WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
-    known_workspaces, known_workspaces_all_namespaces, known_workspaces_for_navigation,
-    record_recent_workspace, record_workspace_activity, rename_known_workspace,
-    resolve_known_workspace, resolve_known_workspace_from_directory,
+    WorkspaceRow, WorkspaceService, abbreviated_id_width, clear_stopped_sessions,
+    ensure_recent_workspace, known_workspaces, known_workspaces_all_namespaces,
+    known_workspaces_for_navigation, record_recent_workspace, record_workspace_activity,
+    rename_known_workspace, resolve_known_workspace, resolve_known_workspace_from_directory,
+};
+#[cfg(windows)]
+use runyte::workspace::{
+    normalize_session_name,
+    windows_catalog::{HistoryTarget, WorkspaceRow, abbreviated_id_width},
+    windows_control::{ControlSnapshot, StopAllReport, UserSelector},
+    windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
 };
 
 fn main() -> Result<()> {
@@ -1024,6 +1031,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::RestartSession {
+        anyhow::bail!("session restart is not yet supported on Windows");
+    }
+
     // Internal host acceptance precedes public native attachment/supervision.
     // Refuse foreground Serve before loading configuration or constructing App.
     #[cfg(windows)]
@@ -1168,8 +1180,17 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 _ => unreachable!(),
             };
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            return run_native_control_cli(&arguments, startup).await;
+        }
+        #[cfg(all(not(unix), not(windows)))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
+    }
+
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::StopSession {
+        return run_native_control_cli(&arguments, startup).await;
     }
 
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
@@ -4376,6 +4397,166 @@ async fn run_wait(
     outcome
 }
 
+#[cfg(windows)]
+async fn run_native_control_cli(
+    arguments: &LaunchArguments,
+    startup: &mut StartupTrace,
+) -> Result<()> {
+    anyhow::ensure!(
+        arguments.project_root.is_none(),
+        "--project-root is not available in this workspace mode"
+    );
+    if arguments.mode == LaunchMode::StopSession {
+        anyhow::ensure!(
+            arguments.workspace_selector.is_some(),
+            "--session-stop on Windows requires an explicit workspace selector"
+        );
+    }
+    // Root selection belongs to this invocation, not to an inferred cwd
+    // project. A missing launch directory still permits IDs, names and
+    // absolute selectors to reach a complete captured catalog.
+    let launch_directory = match std::env::current_dir() {
+        Ok(path) => Some(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("cannot inspect launch directory"),
+    };
+    let roots = CapturedRoots::capture();
+    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    startup.mark(StartupPhase::ConfigLoaded);
+    let mut reserved_user_roots = config_path
+        .as_deref()
+        .map(|path| {
+            // Config::load returns an absolute path. Preserve its canonical
+            // parent admission even when the process cwd has disappeared.
+            config::config_root_for(path, path.parent().unwrap_or(path))
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(cache) = external_open::cache_root() {
+        reserved_user_roots.push(cache);
+    }
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots,
+        roots,
+    })?;
+    let mut controls =
+        ControlSnapshot::observe(&scope, &config.workspace.state, arguments.include_hidden).await?;
+    match arguments.mode {
+        LaunchMode::ListSessions => {
+            print!(
+                "{}",
+                format_session_table(controls.history().entries().iter().map(|entry| entry.row()))
+            );
+        }
+        LaunchMode::StopAllSessions => {
+            let mut operation = controls.stop_all(arguments.force)?;
+            operation.run_to_completion().await;
+            report_native_stop_all(operation.report())?;
+        }
+        LaunchMode::CleanSessions => {
+            let cleared = controls.clean()?;
+            println!(
+                "forgot {cleared} stopped session{}",
+                if cleared == 1 { "" } else { "s" }
+            );
+        }
+        LaunchMode::RenameSession => {
+            let selector = arguments
+                .workspace_selector
+                .as_deref()
+                .expect("parser set selector");
+            let selected = controls.select(UserSelector {
+                selector,
+                working_directory: launch_directory.as_deref(),
+            })?;
+            let name = normalize_session_name(
+                arguments
+                    .workspace_name
+                    .as_deref()
+                    .expect("parser set name"),
+            );
+            let outcome = controls.rename(selected, &name).await?;
+            if let Some(issue) = outcome.cache_issue {
+                eprintln!(
+                    "session name changed, but recent history could not be refreshed: {issue}"
+                );
+            }
+        }
+        LaunchMode::StopSession => {
+            let selector = arguments
+                .workspace_selector
+                .as_deref()
+                .expect("checked explicit selector");
+            let selected = controls.select(UserSelector {
+                selector,
+                working_directory: launch_directory.as_deref(),
+            })?;
+            let incompatible = match controls.history().target(selected) {
+                Some(HistoryTarget::Live { publication, row })
+                    if row.incompatible_protocol.is_some() =>
+                {
+                    Some((
+                        publication.metadata().process.pid,
+                        publication.metadata().protocol,
+                    ))
+                }
+                _ => None,
+            };
+            let outcome = controls.stop(selected, arguments.force).await?;
+            if let Some((pid, protocol)) = incompatible {
+                eprintln!(
+                    "force-stopped persistent session process {pid} (protocol {protocol}); its protected live state was discarded"
+                );
+            }
+            for issue in outcome.cleanup_issues {
+                eprintln!("session stopped; observation cleanup is incomplete: {issue}");
+            }
+        }
+        _ => unreachable!("native CLI dispatch selected a control mode"),
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn report_native_stop_all(report: StopAllReport) -> Result<()> {
+    for issue in &report.cleanup_issues {
+        eprintln!("session stopped; observation cleanup is incomplete: {issue}");
+    }
+    if report.omitted_cleanup_details > 0 {
+        eprintln!(
+            "{} further observation cleanup detail(s) omitted",
+            report.omitted_cleanup_details
+        );
+    }
+    if report.failed == 0 && report.unknown == 0 {
+        println!(
+            "stopped {} session{}",
+            report.stopped,
+            if report.stopped == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
+    let mut message = format!(
+        "stopped {} of {} running sessions; {} failed, {} outcome(s) unknown",
+        report.stopped, report.total, report.failed, report.unknown
+    );
+    for detail in report.failures {
+        message.push('\n');
+        message.push_str(&detail);
+    }
+    if report.omitted_failure_details > 0 {
+        message.push_str(&format!(
+            "\n{} further failure detail(s) omitted",
+            report.omitted_failure_details
+        ));
+    }
+    if let Some(admitted) = report.admitted_summary {
+        message.push_str("\noutcome unknown for ");
+        message.push_str(&admitted);
+    }
+    anyhow::bail!(message)
+}
+
 #[cfg(unix)]
 async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
     let workspaces = if include_hidden {
@@ -4383,8 +4564,15 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
     } else {
         known_workspaces(state).await?
     };
+    print!("{}", format_session_table(workspaces.iter()));
+    Ok(())
+}
+
+#[cfg(any(unix, windows))]
+fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRow>) -> String {
+    let workspaces = workspaces.into_iter().collect::<Vec<_>>();
     let width = abbreviated_id_width(workspaces.iter().map(|workspace| workspace.id.as_str()));
-    let mut rows = workspaces
+    let rows = workspaces
         .iter()
         .map(|workspace| {
             [
@@ -4434,21 +4622,23 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
                 widths[index].max(unicode_width::UnicodeWidthStr::width(value.as_str()));
         }
     }
-    print_workspace_row(&headings, &widths);
-    print_workspace_row(&widths.map(|width| "-".repeat(width)), &widths);
-    for row in rows.drain(..) {
-        print_workspace_row(&row, &widths);
+    let mut output = String::new();
+    append_workspace_row(&mut output, &headings, &widths);
+    append_workspace_row(&mut output, &widths.map(|width| "-".repeat(width)), &widths);
+    for row in rows {
+        append_workspace_row(&mut output, &row, &widths);
     }
-    Ok(())
+    output
 }
 
-#[cfg(unix)]
-fn print_workspace_row(row: &[String; 10], widths: &[usize; 10]) {
+#[cfg(any(unix, windows))]
+fn append_workspace_row(output: &mut String, row: &[String; 10], widths: &[usize; 10]) {
     let cells = std::array::from_fn::<_, 10, _>(|index| pad_table_cell(&row[index], widths[index]));
-    println!("{}", cells.join("  "));
+    output.push_str(&cells.join("  "));
+    output.push('\n');
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn pad_table_cell(value: &str, width: usize) -> String {
     let used = unicode_width::UnicodeWidthStr::width(value);
     format!("{value}{}", " ".repeat(width.saturating_sub(used)))
@@ -5545,6 +5735,9 @@ PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
     associated with one workspace. CLI listing also works from standalone mode;
     session commands inside the editor need workspace.mode: persistent.
+    Windows supports list, rename, selected stop, stop-all and clean for native
+    detached persistent sessions. Stop requires WORKSPACE there; attachment,
+    restart and foreground serve remain unavailable.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
     or directory, so a session is reachable from anywhere.

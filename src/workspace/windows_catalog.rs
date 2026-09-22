@@ -5,7 +5,7 @@
 //! Discovery stays read-only; explicit history transactions are separate.
 //! No stale deletion, service or CLI availability is enabled here.
 
-pub use super::catalog_values::WorkspaceRow;
+pub use super::catalog_values::{WorkspaceRow, abbreviated_id_width};
 mod history;
 use super::{
     windows_endpoint::{Candidate, EndpointMetadata, Inspection, Scan},

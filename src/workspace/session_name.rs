@@ -27,6 +27,6 @@ pub(super) fn validate_host_name(name: &str) -> Result<()> {
 /// identity characters. Spaces at the edges are discarded; spaces that carry
 /// meaning between words become hyphens. Persisted historical names remain
 /// readable even if they predate this input rule.
-pub(super) fn normalize_session_name(name: &str) -> String {
+pub fn normalize_session_name(name: &str) -> String {
     name.trim_matches(' ').replace(' ', "-")
 }

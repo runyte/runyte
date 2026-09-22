@@ -1468,7 +1468,8 @@ does not bundle that runtime.
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
 | Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
-| Deferred | Plugins, context bridge and persistent sessions |
+| Session controls | `--session-list`, `--session-rename`, `--session-stop WORKSPACE`, `--session-stop-all`, and `--session-clean` for native detached hosts |
+| Deferred | Interactive persistent attachment and switching, session restart, plugins and context bridge |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -1477,6 +1478,19 @@ and `:service-health` for diagnostics. Git integration is enabled when a native
 Git is optional: if it is absent, Git commands are disabled with a clear reason,
 and editing still works. Restart Runyte after installing Git or changing `PATH`.
 Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
+
+Native session controls work from a directory outside any project. The CLI
+uses captured cache/runtime settings and a complete session catalog; an
+unavailable catalog fails the command instead of showing an empty list.
+`--session-stop` requires an explicit workspace ID, name, or path on Windows.
+Normal stop respects protected editor state, and `--force` requests its loss.
+`--include-hidden` with listing or stop-all includes separately published
+hosts from isolated environments. If two live Windows publications have the
+same project path and ID, both remain visible; selecting by that path or ID
+fails as ambiguous. An unambiguous name can select one of them. A stopped
+session is reported only after
+its original host process exits. Foreground `--serve`, public `--persistent`
+attachment, session restart, and editor session navigation remain unavailable.
 
 Language servers also use native `.exe` or `.com` executables, specified by an
 absolute path or discovered through absolute `PATH` entries. To run a script,

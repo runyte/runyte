@@ -53,7 +53,9 @@ PowerShell directory handoff,
 integrated terminals, private diagnostic logs, shell filters, external file/URL
 opening, language services after
 workspace approval, and optional Git integration
-when Git is installed. See the
+when Git is installed. Native session listing, rename, selected stop,
+stop-all, and stopped-history cleanup are available for detached hosts;
+interactive attachment and restart are still pending. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
