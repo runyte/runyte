@@ -1107,7 +1107,9 @@ impl InputGrammar for RunyteGrammar {
             Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
                 InputEvent::Key(key) => self.translate_modal(key, context),
-                InputEvent::Text(_) | InputEvent::Pointer(_) => Ok(GrammarOutput::default()),
+                InputEvent::Text(_) | InputEvent::ClipboardPaste | InputEvent::Pointer(_) => {
+                    Ok(GrammarOutput::default())
+                }
             },
             Mode::Command => Ok(GrammarOutput::default()),
         }
@@ -2229,7 +2231,9 @@ impl InputGrammar for VimGrammar {
             Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
                 InputEvent::Key(key) => self.translate_modal(key, context),
-                InputEvent::Text(_) | InputEvent::Pointer(_) => Ok(GrammarOutput::default()),
+                InputEvent::Text(_) | InputEvent::ClipboardPaste | InputEvent::Pointer(_) => {
+                    Ok(GrammarOutput::default())
+                }
             },
             Mode::Command => Ok(GrammarOutput::default()),
         }

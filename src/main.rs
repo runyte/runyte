@@ -1639,10 +1639,12 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                         key_repeat_detector.observe(None, None, Instant::now());
                     }
                     Some(event) => {
-                        #[cfg(windows)]
-                        let event = route_empty_windows_paste(event, app.app());
                         let key_kind = terminal_key_kind(&event);
-                        let Some(input) = convert_event(event)? else {
+                        #[cfg(windows)]
+                        let converted = convert_windows_event(event, app.app())?;
+                        #[cfg(not(windows))]
+                        let converted = convert_event(event)?;
+                        let Some(input) = converted else {
                             key_repeat_detector.observe(key_kind, None, Instant::now());
                             continue;
                         };
@@ -1717,7 +1719,7 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                 }
                                 HintEventResult::Consumed
                             }
-                            InputEvent::Key(_) | InputEvent::Text(_) => {
+                            InputEvent::Key(_) | InputEvent::Text(_) | InputEvent::ClipboardPaste => {
                                 observe_key_or_text_hint(app.app(), &mut key_hints, &input)
                             }
                         };
@@ -2932,7 +2934,7 @@ fn observe_key_or_text_hint(
         InputEvent::Key(key) if !app.has_input_overlay() => {
             observe_editor_key_hint(app, key_hints, *key)
         }
-        InputEvent::Key(_) | InputEvent::Text(_) => {
+        InputEvent::Key(_) | InputEvent::Text(_) | InputEvent::ClipboardPaste => {
             key_hints.clear();
             HintEventResult::Forward
         }
@@ -5096,22 +5098,22 @@ fn terminal_key_kind(event: &CrosstermEvent) -> Option<KeyEventKind> {
 }
 
 /// Some Windows Terminal builds send an empty bracketed paste for an image.
-/// Route that signal through the ordinary keymap so image paste, help, hints,
-/// and macro recording still agree. An active terminal or overlay owns its
-/// paste event and must not receive a synthetic editor command.
+/// A semantic paste event avoids interpreting it as the next key in a pending
+/// command or as a configured binding. Terminals and overlays own their paste.
 #[cfg(windows)]
-fn route_empty_windows_paste(event: CrosstermEvent, app: &App) -> CrosstermEvent {
-    if matches!(&event, CrosstermEvent::Paste(text) if text.is_empty())
+fn is_empty_windows_image_paste(event: &CrosstermEvent, app: &App) -> bool {
+    matches!(event, CrosstermEvent::Paste(text) if text.is_empty())
         && app.active_terminal().is_none()
         && !app.has_input_overlay()
         && app.mode != runyte::command::Mode::Command
-    {
-        CrosstermEvent::Key(crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('v'),
-            crossterm::event::KeyModifiers::CONTROL,
-        ))
+}
+
+#[cfg(windows)]
+fn convert_windows_event(event: CrosstermEvent, app: &App) -> Result<Option<InputEvent>> {
+    if is_empty_windows_image_paste(&event, app) {
+        Ok(Some(InputEvent::ClipboardPaste))
     } else {
-        event
+        Ok(convert_event(event)?)
     }
 }
 
@@ -5814,8 +5816,6 @@ mod tests {
 
     #[cfg(unix)]
     use super::keyboard_enhancement_flags_for;
-    #[cfg(windows)]
-    use super::route_empty_windows_paste;
     #[cfg(not(windows))]
     use super::write_cwd_file;
     #[cfg(unix)]
@@ -5831,6 +5831,8 @@ mod tests {
         resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
         uses_automatic_persistent_mode, write_startup_screen,
     };
+    #[cfg(windows)]
+    use super::{convert_windows_event, is_empty_windows_image_paste};
     #[cfg(windows)]
     use crossterm::event::Event as CrosstermEvent;
     use runyte::launch::LaunchArguments;
@@ -6506,18 +6508,27 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn empty_windows_image_paste_uses_the_registered_clipboard_command() {
+    fn empty_windows_image_paste_becomes_a_semantic_event_only_in_editor_panes() {
         let mut app = App::new(Config::default(), None).unwrap();
         let empty = CrosstermEvent::Paste(String::new());
+        assert!(is_empty_windows_image_paste(&empty, &app));
         assert_eq!(
-            convert_event(route_empty_windows_paste(empty.clone(), &app)).unwrap(),
-            Some(InputEvent::Key(KeyStroke::ctrl('v')))
+            convert_windows_event(empty.clone(), &app).unwrap(),
+            Some(InputEvent::ClipboardPaste)
         );
 
         app.mode = runyte::command::Mode::Command;
-        assert_eq!(route_empty_windows_paste(empty.clone(), &app), empty);
+        assert!(!is_empty_windows_image_paste(&empty, &app));
+        app.mode = runyte::command::Mode::Normal;
         let text = CrosstermEvent::Paste("ordinary text".to_owned());
-        assert_eq!(route_empty_windows_paste(text.clone(), &app), text);
+        assert!(!is_empty_windows_image_paste(&text, &app));
+
+        for key in [' ', 'b', 'b'] {
+            app.handle_input(InputEvent::Key(KeyStroke::char(key)))
+                .unwrap();
+        }
+        assert!(app.has_input_overlay());
+        assert!(!is_empty_windows_image_paste(&empty, &app));
     }
 
     #[test]

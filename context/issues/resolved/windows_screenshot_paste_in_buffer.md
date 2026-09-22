@@ -15,9 +15,12 @@ Windows Terminal builds send an empty bracketed-paste event, while others send
 no event. Runyte's standalone event loop previously passed an empty paste to
 `App::handle_text` as empty text, so the clipboard image command never ran.
 
-`route_empty_windows_paste` now maps an empty paste in an editor buffer to the
-registered `Ctrl-v` command. It leaves terminal panes, input overlays, command
-prompts, and nonempty text paste alone. `Alt-v` is also bound to the same
+The initial empty-paste route synthesized `Ctrl-v`, which could complete a
+pending editor sequence such as `Ctrl-w Ctrl-v` and split the pane. A later
+correction routes an empty paste in an editor buffer to a semantic clipboard
+event, independent of pending keys and configured bindings. It leaves terminal
+panes, input overlays, command prompts, and nonempty text paste alone. `Alt-v`
+is also bound to the same
 clipboard-paste command in Normal, Select, Insert, and Replace so an image can
 be pasted when Windows Terminal emits no event for `Ctrl-v`. The existing
 `Ctrl-v` binding remains for terminal hosts that deliver it directly. The
@@ -25,10 +28,11 @@ keymap register and user guide document the alternate spelling; terminal
 panes still pass these keys to their child when the outer terminal sends them.
 
 Coverage is in `src/main.rs`:
-`empty_windows_image_paste_uses_the_registered_clipboard_command`;
+`empty_windows_image_paste_becomes_a_semantic_event_only_in_editor_panes`;
 `src/tui/windows_input/tests.rs`:
 `alternate_image_paste_key_survives_native_console_input`; and
 `src/app/tests/editing_and_buffers.rs`:
+`semantic_image_paste_ignores_pending_key_sequences_and_operands` and
 `alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v` alongside
 `ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link`.
 

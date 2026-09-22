@@ -715,6 +715,7 @@ impl ClientRequest {
                     key.modifiers & !0x3f == 0,
                     "key input contains unsupported modifier bits",
                 ),
+                InputEvent::ClipboardPaste => Ok(()),
                 InputEvent::Pointer(pointer) => require(
                     pointer.modifiers & !0x3f == 0,
                     "pointer input contains unsupported modifier bits",

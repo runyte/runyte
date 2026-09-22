@@ -1132,6 +1132,64 @@ fn alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+#[test]
+fn semantic_image_paste_ignores_pending_key_sequences_and_operands() {
+    let fixture = temporary("semantic-clipboard-image-paste");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "abc").unwrap();
+    let mut baseline =
+        App::new_in_project(Config::default(), Some(notes.clone()), &project).unwrap();
+    baseline.set_system_clipboard(Box::new(ImageClipboard::holding(&png("pending"))));
+    baseline.handle_input(InputEvent::ClipboardPaste).unwrap();
+    let expected = text(&baseline);
+
+    for prefix in [KeyStroke::ctrl('w'), KeyStroke::char('r')] {
+        let mut app =
+            App::new_in_project(Config::default(), Some(notes.clone()), &project).unwrap();
+        app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("pending"))));
+        app.handle_input(InputEvent::Key(prefix)).unwrap();
+        if prefix == KeyStroke::ctrl('w') {
+            assert!(!app.pending_sequence().is_empty());
+        }
+
+        app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+        assert!(app.pending_sequence().is_empty());
+        assert_eq!(app.panes.len(), 1, "paste completed a split sequence");
+        assert_eq!(text(&app), expected, "pending key changed paste behavior");
+    }
+
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_respects_overlay_and_terminal_ownership() {
+    let fixture = temporary("semantic-image-paste-ownership");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "unchanged").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("owned"))));
+
+    app.open_buffer_picker();
+    assert!(app.has_input_overlay());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+    assert_eq!(text(&app), "unchanged");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    app.open_terminal_at(Some(terminal_fixture_command()), project.clone());
+    assert!(app.active_terminal().is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+    app.leave_terminal();
+    assert_eq!(text(&app), "unchanged");
+    assert!(!project.join(".runyte/cache/images").exists());
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 /// Numbering continues from the document rather than from a counter the
 /// editor keeps, so a file reopened in a later session does not restart at
 /// one.

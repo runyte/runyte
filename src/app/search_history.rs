@@ -485,7 +485,9 @@ impl App {
                 .take(remaining_work.saturating_add(1))
                 .count()
                 .max(1),
-            super::InputEvent::Key(_) | super::InputEvent::Pointer(_) => 1,
+            super::InputEvent::Key(_)
+            | super::InputEvent::ClipboardPaste
+            | super::InputEvent::Pointer(_) => 1,
         }
     }
 

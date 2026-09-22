@@ -23,6 +23,9 @@ pub enum InputEvent {
     /// keys. This is the boundary for paste, IME, and future frontend text
     /// composition.
     Text(String),
+    /// Clipboard paste requested by a frontend paste signal without a text
+    /// payload. It bypasses bindable keys and pending key sequences.
+    ClipboardPaste,
     /// Presentation-neutral pointer input. Frontends retain physical screen
     /// coordinates; the editor resolves them through the last prepared view.
     Pointer(PointerEvent),
@@ -64,6 +67,7 @@ impl fmt::Debug for InputEvent {
                 .field("bytes", &text.len())
                 .field("characters", &text.chars().count())
                 .finish(),
+            Self::ClipboardPaste => formatter.write_str("ClipboardPaste"),
             Self::Pointer(event) => formatter.debug_tuple("Pointer").field(event).finish(),
         }
     }

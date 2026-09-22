@@ -613,6 +613,16 @@ impl App {
         let result = match input {
             InputEvent::Key(key) => self.handle_key_stroke(key),
             InputEvent::Text(text) => self.handle_text(&text),
+            InputEvent::ClipboardPaste => {
+                if !overlay_owns_input
+                    && self.active_terminal().is_none()
+                    && self.mode != Mode::Command
+                {
+                    self.grammar.reset();
+                    self.clipboard_paste_any();
+                }
+                Ok(())
+            }
             InputEvent::Pointer(_) => Ok(()),
         };
         if result.is_ok() {

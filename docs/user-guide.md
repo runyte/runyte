@@ -1512,6 +1512,8 @@ command-looking lines do not execute editor commands. `Ctrl-v` and `Alt-v` use
 the native clipboard for text and images. Windows Terminal reserves `Ctrl-v`
 for its paste action. Runyte recognizes the empty paste event that some
 versions send for an image; if the terminal sends no event, use `Alt-v`.
+An empty image paste is handled as a clipboard action even when a multi-key
+editor command is waiting for its next key.
 Keyboard-layout and IME behavior
 beyond the automated input cases still needs reports from native setups.
 
