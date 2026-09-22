@@ -3,8 +3,10 @@
 
 use runyte::{
     app::FrameGeometry,
+    input::{InputEvent, KeyStroke},
     protocol::{
-        ClientRequest, FeatureGroup, HostResponse, TransportChange, WaitStatus, encode_path,
+        ClientRequest, FeatureGroup, HostResponse, SnapshotRow, TransportChange, WaitStatus,
+        encode_path,
     },
     test_support::TestRuntimeRoot,
     workspace::{
@@ -12,7 +14,7 @@ use runyte::{
         windows_lifecycle::{await_host_stopped, connect_control, force_shutdown_host},
         windows_location::{CapturedRoots, EXPECTED_LAYOUT_ENV, LocationInputs, ResolvedLayout},
         windows_process_identity::PinnedProcess,
-        windows_transport::LocalClient,
+        windows_transport::{BufferedLocalClient, LocalClient},
     },
 };
 use std::{
@@ -223,6 +225,119 @@ async fn request(client: &mut LocalClient, request: ClientRequest) -> HostRespon
     response(client).await
 }
 
+async fn buffered_response(client: &mut BufferedLocalClient, stage: &str) -> HostResponse {
+    timeout(BUDGET, client.recv())
+        .await
+        .unwrap_or_else(|_| panic!("native interactive response timed out at {stage}"))
+        .unwrap()
+        .expect("native interactive peer closed before response")
+}
+
+async fn buffered_semantic_response(client: &mut BufferedLocalClient, stage: &str) -> HostResponse {
+    timeout(BUDGET, async {
+        loop {
+            let response = client
+                .recv()
+                .await
+                .unwrap()
+                .expect("native interactive peer closed");
+            if !matches!(
+                response,
+                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            ) {
+                return response;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("native interactive semantic response timed out at {stage}"))
+}
+
+async fn buffered_frame(
+    client: &mut BufferedLocalClient,
+    stage: &str,
+) -> runyte::protocol::HostFrame {
+    timeout(BUDGET, async {
+        loop {
+            let response = client
+                .recv()
+                .await
+                .unwrap()
+                .expect("native interactive peer closed");
+            if let HostResponse::Frame { frame } = response {
+                return *frame;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("native interactive frame timed out at {stage}"))
+}
+
+async fn buffered_invoke(
+    client: &mut BufferedLocalClient,
+    frame: &runyte::protocol::HostFrame,
+    name: &str,
+) {
+    client
+        .send(&ClientRequest::Invoke {
+            command: runyte::protocol::CommandRequest::at(
+                name,
+                frame.id,
+                frame.active_buffer,
+                frame.active_revision,
+            ),
+        })
+        .await
+        .unwrap();
+}
+
+async fn buffered_invoke_current(
+    client: &mut BufferedLocalClient,
+    mut frame: runyte::protocol::HostFrame,
+    name: &str,
+) -> HostResponse {
+    timeout(BUDGET, async {
+        loop {
+            buffered_invoke(client, &frame, name).await;
+            let response = buffered_semantic_response(client, name).await;
+            match response {
+                HostResponse::Error { ref message }
+                    if message.starts_with("stale editor frame:") =>
+                {
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                    frame = buffered_frame(client, "retry current command frame").await;
+                }
+                response => return response,
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("native {name} command could not obtain a current frame"))
+}
+
+fn frame_contains(frame: &runyte::protocol::HostFrame, expected: &str) -> bool {
+    frame_text(frame).contains(expected)
+}
+
+fn frame_text(frame: &runyte::protocol::HostFrame) -> String {
+    frame
+        .editor
+        .panes
+        .iter()
+        .flat_map(|pane| &pane.rows)
+        .filter_map(|row| match row {
+            SnapshotRow::Text(row) => Some(
+                row.runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn native_host_edits_unsaved_revisions_saves_and_refuses_dirty_shutdown() {
     runtime().block_on(async {
@@ -415,6 +530,23 @@ fn native_host_control_handshake_rename_order_and_interactive_refusal() {
             .unwrap();
         assert!(matches!(
             response(&mut interactive).await,
+            HostResponse::Welcome { features, .. } if features == vec![
+                FeatureGroup::Snapshots,
+                FeatureGroup::Input,
+                FeatureGroup::Buffers,
+                FeatureGroup::Wait,
+            ]
+        ));
+        assert!(matches!(
+            response(&mut interactive).await,
+            HostResponse::Frame { .. }
+        ));
+        let mut second_interactive =
+            LocalClient::connect(&metadata, FrameGeometry::default(), true)
+                .await
+                .unwrap();
+        assert!(matches!(
+            response(&mut second_interactive).await,
             HostResponse::Refused { .. }
         ));
         client
@@ -433,7 +565,7 @@ fn native_host_control_handshake_rename_order_and_interactive_refusal() {
         assert!(matches!(
             response(&mut client).await,
             HostResponse::Health {
-                interactive_attached: false,
+                interactive_attached: true,
                 ..
             }
         ));
@@ -465,6 +597,182 @@ fn native_host_control_handshake_rename_order_and_interactive_refusal() {
         drop(interactive);
         let stopped = force_shutdown_host(&metadata).await.unwrap();
         await_host_stopped(&stopped).await.unwrap();
+        fixture.exited(&mut process).await;
+    });
+}
+
+#[test]
+fn native_host_buffered_interactive_wire_is_single_owned_and_waits_stay_peer_scoped() {
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        let wait_path = fixture.project.join("attached-wait.txt");
+        fs::write(&wait_path, "clean").unwrap();
+        let edit_path = fixture.project.join("attached-edit.txt");
+        fs::write(&edit_path, "before").unwrap();
+        let (mut process, metadata) = fixture.start().await;
+        let mut control = connect_control(&metadata).await.unwrap();
+        assert!(matches!(request(&mut control, ClientRequest::OpenBuffers {
+            paths: vec![encode_path(&edit_path)], activate: true,
+        }).await, HostResponse::Opened { .. }));
+        let geometry = FrameGeometry {
+            screen: runyte::layout::Rect { x: 0, y: 0, width: 80, height: 24 },
+            editor: runyte::layout::Rect { x: 0, y: 0, width: 80, height: 22 },
+            status: runyte::layout::Rect { x: 0, y: 22, width: 80, height: 1 },
+            message: runyte::layout::Rect { x: 0, y: 23, width: 80, height: 1 },
+        };
+        let mut attached = BufferedLocalClient::connect_with_handoff(&metadata, geometry, false)
+            .await.unwrap();
+        assert!(matches!(
+            timeout(BUDGET, attached.recv_handshake()).await.unwrap().unwrap(),
+            Some(HostResponse::Welcome { features, .. }) if features == vec![
+                FeatureGroup::Snapshots, FeatureGroup::Input, FeatureGroup::Buffers, FeatureGroup::Wait,
+            ]
+        ));
+        let HostResponse::Frame { frame: initial } = buffered_response(&mut attached, "initial frame").await else {
+            panic!("native interactive handshake must be followed by a complete frame")
+        };
+        let mut second = LocalClient::connect(&metadata, geometry, true).await.unwrap();
+        assert!(matches!(response(&mut second).await, HostResponse::Refused { .. }));
+        assert!(matches!(
+            request(&mut control, ClientRequest::Health).await,
+            HostResponse::Health { interactive_attached: true, .. }
+        ));
+        assert!(matches!(
+            request(&mut control, ClientRequest::Input {
+                event: InputEvent::Text("untrusted".into()).into(),
+                repeated: false,
+                presented_frame: Some(initial.id),
+            }).await,
+            HostResponse::Error { .. }
+        ));
+        attached.send(&ClientRequest::Input {
+            event: InputEvent::Key(KeyStroke::char('i')).into(),
+            repeated: false,
+            presented_frame: Some(initial.id),
+        }).await.unwrap();
+        assert!(matches!(buffered_response(&mut attached, "enter insert frame").await, HostResponse::Frame { .. }));
+        attached.send(&ClientRequest::Input {
+            event: InputEvent::Text("native interactive text".into()).into(),
+            repeated: false,
+            presented_frame: None,
+        }).await.unwrap();
+        let mut last_frame = None;
+        timeout(BUDGET, async {
+            loop {
+                let response = attached.recv().await.unwrap().expect("native interactive peer closed");
+                if let HostResponse::Frame { frame } = response {
+                    if frame_contains(&frame, "native interactive text") { break; }
+                    last_frame = Some(format!("mode={:?}, revision={:?}, text={:?}",
+                        frame.editor.mode, frame.active_revision, frame_text(&frame)));
+                }
+            }
+        }).await.unwrap_or_else(|_| panic!("native input was not rendered; last frame: {last_frame:?}"));
+        let resized = FrameGeometry {
+            screen: runyte::layout::Rect { width: 100, ..geometry.screen },
+            editor: runyte::layout::Rect { width: 100, ..geometry.editor },
+            status: runyte::layout::Rect { width: 100, ..geometry.status },
+            message: runyte::layout::Rect { width: 100, ..geometry.message },
+        };
+        attached.send(&ClientRequest::Resize { geometry: resized.into() }).await.unwrap();
+        timeout(BUDGET, async {
+            loop {
+                let response = attached.recv().await.unwrap().expect("native interactive peer closed");
+                if let HostResponse::Frame { frame } = response
+                    && frame.editor.geometry.screen.width == 100 { break; }
+            }
+        }).await.expect("resize did not yield the requested native geometry");
+        attached.send(&ClientRequest::CreateWait { paths: vec![encode_path(&wait_path)] }).await.unwrap();
+        let HostResponse::WaitCreated { token: attached_wait, .. } = buffered_semantic_response(&mut attached, "CreateWait").await else {
+            panic!("interactive wait was not admitted")
+        };
+        let HostResponse::WaitCreated { token: control_wait, .. } = request(&mut control,
+            ClientRequest::CreateWait { paths: vec![encode_path(&wait_path)] }).await else {
+            panic!("independent control wait was not admitted")
+        };
+        drop(attached);
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if matches!(request(&mut control, ClientRequest::WaitStatus { token: attached_wait }).await,
+                HostResponse::WaitState { status: WaitStatus::Cancelled { .. }, .. }) { break; }
+            assert!(Instant::now() < deadline, "disconnected interactive wait was not cancelled");
+            sleep(Duration::from_millis(10)).await;
+        }
+        assert!(matches!(request(&mut control, ClientRequest::WaitStatus { token: control_wait }).await,
+            HostResponse::WaitState { status: WaitStatus::Pending { .. }, .. }));
+        assert!(matches!(request(&mut control, ClientRequest::Health).await,
+            HostResponse::Health { interactive_attached: false, .. }));
+        let mut reattached = BufferedLocalClient::connect_with_handoff(&metadata, geometry, false).await.unwrap();
+        assert!(matches!(timeout(BUDGET, reattached.recv_handshake()).await.unwrap().unwrap(),
+            Some(HostResponse::Welcome { .. })));
+        assert!(matches!(buffered_response(&mut reattached, "reattached initial frame").await, HostResponse::Frame { .. }));
+        reattached.send(&ClientRequest::Detach).await.unwrap();
+        assert!(matches!(buffered_semantic_response(&mut reattached, "Detach").await, HostResponse::Detached { .. }));
+        drop(reattached);
+        let stopped = force_shutdown_host(&metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+        fixture.exited(&mut process).await;
+    });
+}
+
+#[test]
+fn native_host_editor_quit_finishes_attached_wait_before_final_reply_and_preserves_other_wait() {
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        let path = fixture.project.join("quit-wait.txt");
+        fs::write(&path, "clean").unwrap();
+        let (mut process, metadata) = fixture.start().await;
+        let mut control = connect_control(&metadata).await.unwrap();
+        let HostResponse::WaitCreated { token: control_wait, buffers, .. } = request(&mut control,
+            ClientRequest::CreateWait { paths: vec![encode_path(&path)] }).await else {
+            panic!("control wait was not created before interactive attachment")
+        };
+        let mut attached = BufferedLocalClient::connect_with_handoff(
+            &metadata, FrameGeometry::default(), true,
+        ).await.unwrap();
+        assert!(matches!(timeout(BUDGET, attached.recv_handshake()).await.unwrap().unwrap(),
+            Some(HostResponse::Welcome { .. })));
+        let initial = buffered_frame(&mut attached, "quit initial").await;
+        assert!(matches!(buffered_invoke_current(&mut attached, initial, "quit-here").await,
+            HostResponse::CommandResult { outcome: runyte::protocol::CommandOutcome::UserError(message) }
+                if message.contains("runyte()")));
+        assert!(matches!(request(&mut control, ClientRequest::Health).await,
+            HostResponse::Health { interactive_attached: true, .. }));
+        attached.send(&ClientRequest::CreateWait { paths: vec![encode_path(&path)] }).await.unwrap();
+        let HostResponse::WaitCreated { token: attached_wait, .. } =
+            buffered_semantic_response(&mut attached, "attached quit wait").await else {
+                panic!("attached wait was not created")
+            };
+        attached.send(&ClientRequest::Resynchronize).await.unwrap();
+        let frame = buffered_frame(&mut attached, "pre-quit frame").await;
+        let first_quit = buffered_invoke_current(&mut attached, frame, "quit").await;
+        assert!(matches!(first_quit, HostResponse::CommandResult { .. }),
+            "first quit response: {first_quit:?}");
+        assert!(matches!(buffered_semantic_response(&mut attached, "attached wait completion").await,
+            HostResponse::WaitState { token, status: WaitStatus::Completed, interactive_attached: false }
+                if token == attached_wait));
+        assert!(matches!(request(&mut control, ClientRequest::WaitStatus { token: control_wait }).await,
+            HostResponse::WaitState { status: WaitStatus::Pending { .. }, .. }));
+        assert!(matches!(request(&mut control, ClientRequest::Health).await,
+            HostResponse::Health { interactive_attached: true, .. }));
+        assert!(matches!(request(&mut control, ClientRequest::CompleteWaitBuffer {
+            token: control_wait, buffer: buffers[0],
+        }).await, HostResponse::WaitState { status: WaitStatus::Completed, .. }));
+        attached.send(&ClientRequest::CreateWait { paths: vec![encode_path(&path)] }).await.unwrap();
+        let HostResponse::WaitCreated { token: final_wait, .. } =
+            buffered_semantic_response(&mut attached, "final attached quit wait").await else {
+                panic!("final attached wait was not created")
+            };
+        attached.send(&ClientRequest::Resynchronize).await.unwrap();
+        let frame = buffered_frame(&mut attached, "final quit frame").await;
+        assert!(matches!(buffered_invoke_current(&mut attached, frame, "quit").await,
+            HostResponse::CommandResult { .. }));
+        assert!(matches!(buffered_semantic_response(&mut attached, "final wait completion").await,
+            HostResponse::WaitState { token, status: WaitStatus::Completed, interactive_attached: false }
+                if token == final_wait));
+        assert!(matches!(buffered_semantic_response(&mut attached, "final quit reply").await,
+            HostResponse::ShuttingDown));
+        drop(attached);
+        drop(control);
         fixture.exited(&mut process).await;
     });
 }

@@ -3170,7 +3170,6 @@ fn publish_attached_frame(
     }
 }
 
-#[cfg(unix)]
 fn dispatch_host_key_or_text(
     host: &mut WorkspaceHost,
     key_hints: &mut KeyHintState,

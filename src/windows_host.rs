@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Native persistent host. Foreground and detached lifetimes share one cleanup
-//! owner; frontend attachment and parent-terminal authorization remain gated.
+//! owner; the internal interactive wire is owned here while public frontend
+//! attachment and parent-terminal authorization remain gated.
 
 mod clients;
 
-use self::clients::{Clients, Incoming, RenameFuture};
+use self::clients::{Clients, ConnectedPeer, Incoming, RenameFuture};
 use super::{
-    HostServices, MAINTENANCE_INTERVAL, about_invocation, context_timeout, initialize_logging,
-    note_ended_service, report_logging_failure, resolve_requested_project_root,
-    start_host_services, starts_on_about,
+    FINDER_TERMINAL_REFRESH_INTERVAL, FRAME_INTERVAL, HostServices, MAINTENANCE_INTERVAL,
+    STATUS_ANIMATION_INTERVAL, about_invocation, context_timeout, frame_publication_ready,
+    initialize_logging, note_ended_service, pace_file_picker_event, report_logging_failure,
+    resolve_requested_project_root, start_host_services, starts_on_about,
 };
 use anyhow::{Context, Result, ensure};
 use futures_util::StreamExt;
@@ -246,17 +248,34 @@ async fn run_loop(
 ) -> Result<()> {
     #[cfg(not(feature = "startup-timing"))]
     let _ = startup;
-    let last_detached = Instant::now();
     let mut maintenance = tokio::time::interval(MAINTENANCE_INTERVAL);
     maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut status_animation = tokio::time::interval(STATUS_ANIMATION_INTERVAL);
+    status_animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut frame_tick = tokio::time::interval(FRAME_INTERVAL);
+    frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut finder_refresh = tokio::time::interval(FINDER_TERMINAL_REFRESH_INTERVAL);
+    finder_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut frame_pending = false;
     let mut ended = HashSet::new();
     loop {
-        host.note_plugin_frontend(false);
-        host.cancel_pointer_drag();
+        let attached = clients.attached();
+        host.note_plugin_frontend(attached);
+        if !attached {
+            host.cancel_pointer_drag();
+        }
         host.sync_plugin_observers();
         host.sync_context();
         let context_delay = host.context_delay();
+        let hint_delay = clients.hint_delay(Instant::now());
+        let picker_delay = attached
+            .then(|| host.picker_pacing_delay(Instant::now()))
+            .flatten();
+        let pointer_delay = attached
+            .then(|| host.pointer_autoscroll_delay(Instant::now()))
+            .flatten();
         let mut stop = false;
+        let mut changed = false;
         tokio::select! {
             event = termination.recv() => {
                 log_warn!("host", "native console termination requested"; "event" => format!("{event:?}"));
@@ -273,7 +292,8 @@ async fn run_loop(
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;
                 match event {
-                    ServerEvent::Connected { id, peer_process, responses, interactive, .. } => clients.connected(id, peer_process, responses, interactive),
+                    ServerEvent::Connected { id, peer_process, responses, interactive, geometry, .. } =>
+                        clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, geometry }),
                     ServerEvent::Request { id, request } => stop = clients.incoming(host, id, Incoming::Request(request), |name| rename(server, name)),
                     ServerEvent::ProtocolError { id, message } => stop = clients.incoming(host, id, Incoming::ProtocolError(message), |name| rename(server, name)),
                     ServerEvent::TransportFailure { id, message } => {
@@ -287,63 +307,73 @@ async fn run_loop(
                 if let Some((id, result)) = completion { stop = clients.renamed(host, id, result, |name| rename(server, name)); }
             }
             event = services.context_events.recv(), if !ended.contains("context") => {
-                if let Some(event) = event { host.handle_context_event(event); }
+                if let Some(event) = event { host.handle_context_event(event); changed = true; }
                 else { ended.insert("context"); } // Unavailable on Windows; closed intentionally.
             }
-            _ = context_timeout(context_delay) => { host.sync_context(); }
-            _ = std::future::ready(()), if host.plugin_presentation_pending() => { host.take_plugin_presentation_change(); }
+            _ = context_timeout(context_delay) => { host.sync_context(); changed = host.plugin_presentation_pending(); }
+            _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }
             event = services.pipe_events.recv(), if !ended.contains("shell filters") => {
-                if let Some(event) = event { host.handle_pipe_completion(event); }
+                if let Some(event) = event { host.handle_pipe_completion(event); changed = true; }
                 else { note_ended_service(&mut ended, "shell filters"); }
             }
             event = runyte::plugin::receive(&mut services.plugin_events) => {
-                if let Some(event) = event { host.handle_plugin_event(event); }
+                if let Some(event) = event { changed = host.handle_plugin_event(event); }
                 else { services.plugin_events = None; }
             }
             event = services.lsp_events.recv(), if !ended.contains("language servers") => {
-                if let Some(event) = event { host.apply_event(HostEvent::Lsp(event)); }
+                if let Some(event) = event { host.apply_event(HostEvent::Lsp(event)); changed = true; }
                 else { note_ended_service(&mut ended, "language servers"); }
             }
             event = services.syntax_events.recv(), if !ended.contains("syntax") => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Syntax(event));
+                    changed = true;
                     #[cfg(feature = "startup-timing")]
                     if host.syntax.first().is_some_and(Option::is_some) && startup.note_initial_syntax_ready()
                         && let Err(error) = startup.write_requested() { host.report_host_error(format!("failed to write startup timing report: {error}")); }
                 } else {
                     host.syntax_worker_stopped();
+                    changed = true;
                     note_ended_service(&mut ended, "syntax");
                 }
             }
             event = services.file_picker_events.recv(), if !ended.contains("file picker") => {
-                if let Some(event) = event { host.apply_event(HostEvent::FilePicker(event)); }
+                if let Some(event) = event {
+                    let paced = pace_file_picker_event(&event);
+                    host.apply_event(HostEvent::FilePicker(event));
+                    if paced { frame_pending = true; } else { changed = true; }
+                }
                 else { note_ended_service(&mut ended, "file picker"); }
             }
             event = services.workspace_search_events.recv(), if !ended.contains("workspace search") => {
-                if let Some(event) = event { host.apply_event(HostEvent::WorkspaceSearch(event)); }
+                if let Some(event) = event { host.apply_event(HostEvent::WorkspaceSearch(event)); changed = true; }
                 else { note_ended_service(&mut ended, "workspace search"); }
             }
             event = services.file_monitor_events.recv(), if !ended.contains("file monitor") => {
-                if let Some(event) = event { host.apply_event(HostEvent::FileObservation(event)); }
+                if let Some(event) = event { host.apply_event(HostEvent::FileObservation(event)); changed = true; }
                 else { note_ended_service(&mut ended, "file monitor"); }
             }
             event = services.git_monitor_events.recv(), if !ended.contains("Git monitor") => {
-                if let Some(event) = event { host.apply_event(HostEvent::GitInvalidation(event)); host.refresh_git_if_due(Instant::now()); }
+                if let Some(event) = event { host.apply_event(HostEvent::GitInvalidation(event)); changed = true; changed |= host.refresh_git_if_due(Instant::now()); }
                 else { note_ended_service(&mut ended, "Git monitor"); }
             }
             output = services.terminal_events.recv(), if !ended.contains("terminals") => {
-                if let Some(output) = output { host.apply_terminal_output(output, false); }
+                if let Some(output) = output {
+                    host.apply_terminal_output(output, attached);
+                    super::terminal::drain(&mut services.terminal_events, |output| host.apply_terminal_output(output, attached));
+                    frame_pending = true;
+                }
                 else { note_ended_service(&mut ended, "terminals"); }
             }
             event = super::receive_workspace_event(&mut services.workspace_events) => {
-                if let Some(event) = event { host.apply_event(event); }
+                if let Some(event) = event { host.apply_event(event); changed = true; }
                 else { services.workspace_events = None; }
             }
             event = async { match services.native_catalog_events.as_mut() {
                 Some(events) => events.recv().await,
                 None => std::future::pending().await,
             }} => {
-                if let Some(event) = event { host.apply_event(HostEvent::Workspace(event)); }
+                if let Some(event) = event { host.apply_event(HostEvent::Workspace(event)); changed = true; }
                 else {
                     services.native_catalog_events = None;
                     host.app_mut().detach_workspace_service();
@@ -351,28 +381,57 @@ async fn run_loop(
                 }
             }
             event = async { match services.git_events.as_mut() { Some(events) => events.recv().await, None => std::future::pending().await } } => {
-                if let Some(event) = event { host.apply_event(HostEvent::Git(event)); }
+                if let Some(event) = event { host.apply_event(HostEvent::Git(event)); changed = true; }
                 else { services.git_events = None; }
             }
             _ = maintenance.tick() => {
                 report_logging_failure(host.app_mut());
                 services.file_monitor.sync(host.file_monitor_requests());
                 services.git_monitor.sync(host.git_monitor_repository());
-                host.refresh_git_if_due(Instant::now());
-                host.app_mut().poll_external_opens(Instant::now());
+                changed = host.refresh_git_if_due(Instant::now());
+                changed |= host.app_mut().poll_external_opens(Instant::now());
+                if attached { changed |= host.refresh_session_activity(); }
                 let idle = Duration::from_secs((host.config.workspace.idle_retirement_minutes as u64).saturating_mul(60));
-                stop = !idle.is_zero() && clients.renames.is_empty() && host.may_retire_idle() && last_detached.elapsed() >= idle;
+                stop = !idle.is_zero() && !attached && clients.renames.is_empty() && host.may_retire_idle() && clients.last_detached().elapsed() >= idle;
+            }
+            _ = status_animation.tick(), if attached && host.has_long_running_action() => { changed = true; }
+            _ = frame_tick.tick(), if attached && frame_pending && !host.finder_scan_refills() => { changed = true; }
+            _ = finder_refresh.tick(), if host.finder_terminals_dirty() => {
+                if host.refresh_finder_terminals() && !host.resource_finder_scan_pending() { changed = true; }
+            }
+            _ = tokio::time::sleep(picker_delay.unwrap_or_default()), if picker_delay.is_some() && !host.finder_scan_refills() => {
+                host.advance_picker_pacing(); changed = true;
+            }
+            _ = tokio::time::sleep(pointer_delay.unwrap_or_default()), if pointer_delay.is_some() => {
+                changed = host.advance_pointer_autoscroll(Instant::now());
+            }
+            _ = tokio::time::sleep(hint_delay.unwrap_or_default()), if hint_delay.is_some() => {
+                clients.expire_hints(Instant::now()); changed = true;
             }
             _ = tokio::task::yield_now(), if host.macro_replay_pending() => {
                 if let Err(error) = host.advance_macro_replay() { host.report_host_error(error.to_string()); }
+                changed = true;
             }
-            _ = tokio::task::yield_now(), if host.resource_finder_scan_pending() => { host.advance_resource_finder_scan(); }
+            _ = tokio::task::yield_now(), if host.resource_finder_scan_pending() => {
+                host.advance_resource_finder_scan();
+                if host.resource_finder_scan_pending() { frame_pending = true; } else { changed = true; }
+            }
         }
         clients.reconcile(host);
         // Detached background work cannot manufacture a future physical TUI
         // handoff. Consume stale requests without executing another workspace.
-        let _ = host.take_workspace_switch();
-        let _ = host.take_persistent_exit_request();
+        if host.take_workspace_switch().is_some() {
+            clients.refuse_switch(host);
+            changed = true;
+        } else if let Some(request) = host.take_persistent_exit_request() {
+            stop |= clients.finish_exit(host, request);
+            changed = true;
+        }
+        changed |= clients.take_publish_requested();
+        if frame_publication_ready(changed, host.finder_scan_refills(), &mut frame_pending) {
+            clients.publish_frame(host);
+            frame_pending = false;
+        }
         if stop {
             return Ok(());
         }

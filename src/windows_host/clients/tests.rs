@@ -44,9 +44,18 @@ impl Fixture {
         }
     }
 
-    fn connect(&self, clients: &mut Clients, id: u64) -> ResponseReceiver {
+    fn connect(&mut self, clients: &mut Clients, id: u64) -> ResponseReceiver {
         let (tx, rx) = response_channel();
-        clients.connected(id, self.proof.clone(), tx, false);
+        clients.connected(
+            &mut self.host,
+            ConnectedPeer {
+                id,
+                proof: self.proof.clone(),
+                responses: tx,
+                interactive: false,
+                geometry: runyte::app::FrameGeometry::default(),
+            },
+        );
         assert!(clients.peers.contains_key(&id));
         rx
     }
@@ -251,12 +260,34 @@ fn response_backpressure_cancels_pending_wait_without_changing_completed_wait() 
 }
 
 #[test]
-fn interactive_peers_never_enter_control_state_and_pending_wait_protects_shutdown() {
+fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
     let mut fixture = Fixture::new();
     let mut clients = Clients::default();
     let (tx, _rx) = response_channel();
-    clients.connected(1, fixture.proof.clone(), tx, true);
-    assert!(clients.peers.is_empty());
+    clients.connected(
+        &mut fixture.host,
+        ConnectedPeer {
+            id: 1,
+            proof: fixture.proof.clone(),
+            responses: tx,
+            interactive: true,
+            geometry: runyte::app::FrameGeometry::default(),
+        },
+    );
+    assert_eq!(clients.active, Some(1));
+    let (refused, _response) = response_channel();
+    clients.connected(
+        &mut fixture.host,
+        ConnectedPeer {
+            id: 3,
+            proof: fixture.proof.clone(),
+            responses: refused,
+            interactive: true,
+            geometry: runyte::app::FrameGeometry::default(),
+        },
+    );
+    assert_eq!(clients.active, Some(1));
+    assert!(!clients.peers.contains_key(&3));
     let _receiver = fixture.connect(&mut clients, 2);
     fixture.wait(&mut clients, 2, "protected.txt");
     assert!(!request(
@@ -270,5 +301,71 @@ fn interactive_peers_never_enter_control_state_and_pending_wait_protects_shutdow
         &mut fixture.host,
         2,
         ClientRequest::ForceShutdown
+    ));
+}
+
+#[test]
+fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let (first, _first_receiver) = response_channel();
+    clients.connected(
+        &mut fixture.host,
+        ConnectedPeer {
+            id: 1,
+            proof: fixture.proof.clone(),
+            responses: first,
+            interactive: true,
+            geometry: runyte::app::FrameGeometry::default(),
+        },
+    );
+    let first_wait = fixture.wait(&mut clients, 1, "old-id-wait.txt");
+    clients.disconnected(&mut fixture.host, 1);
+    assert!(matches!(
+        fixture.host.wait_status(first_wait.into()),
+        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+    ));
+    let (replacement, _replacement_receiver) = response_channel();
+    clients.connected(
+        &mut fixture.host,
+        ConnectedPeer {
+            id: 2,
+            proof: fixture.proof.clone(),
+            responses: replacement,
+            interactive: true,
+            geometry: runyte::app::FrameGeometry::default(),
+        },
+    );
+    let second_wait = fixture.wait(&mut clients, 2, "new-id-wait.txt");
+    let active_buffer = fixture.host.app().active().buffer;
+    let before_mode = fixture.host.app().mode;
+    let before_revision = fixture.host.app().buffers[active_buffer].revision();
+    assert!(!request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::Input {
+            event: runyte::input::InputEvent::Key(runyte::input::KeyStroke::char(':')).into(),
+            repeated: false,
+            presented_frame: None,
+        }
+    ));
+    assert!(!request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::ForceShutdown
+    ));
+    clients.disconnected(&mut fixture.host, 1);
+    assert_eq!(clients.active, Some(2));
+    assert_eq!(fixture.host.app().mode, before_mode);
+    assert_eq!(
+        fixture.host.app().buffers[active_buffer].revision(),
+        before_revision
+    );
+    assert!(clients.peers.contains_key(&2));
+    assert!(matches!(
+        fixture.host.wait_status(second_wait.into()),
+        Some(runyte::workspace::WaitStatus::Pending { .. })
     ));
 }

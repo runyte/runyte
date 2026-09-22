@@ -6,10 +6,13 @@
 use crate::host_requests::{handle_workspace_request, is_workspace_request};
 use futures_util::stream::FuturesUnordered;
 use runyte::{
+    app::FrameGeometry,
+    key_hints::KeyHintState,
     protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken},
     workspace::{
-        WorkspaceHost, windows_endpoint::EndpointMetadata, windows_pipe::MAX_CONNECTIONS,
-        windows_process_identity::PinnedProcess, windows_transport::ResponseSender,
+        HostCommand, HostInputOutcome, WorkspaceHost, windows_endpoint::EndpointMetadata,
+        windows_pipe::MAX_CONNECTIONS, windows_process_identity::PinnedProcess,
+        windows_transport::ResponseSender,
     },
 };
 use std::{
@@ -18,6 +21,7 @@ use std::{
     io,
     pin::Pin,
     sync::Arc,
+    time::Instant,
 };
 
 pub(super) type RenameFuture = Pin<Box<dyn Future<Output = io::Result<EndpointMetadata>> + Send>>;
@@ -29,32 +33,59 @@ pub(super) enum Incoming {
     ProtocolError(String),
 }
 
+pub(super) struct ConnectedPeer {
+    pub(super) id: u64,
+    pub(super) proof: Arc<PinnedProcess>,
+    pub(super) responses: ResponseSender,
+    pub(super) interactive: bool,
+    pub(super) geometry: FrameGeometry,
+}
+
 struct Peer {
     _proof: Arc<PinnedProcess>,
     responses: ResponseSender,
     waits: HashSet<WaitToken>,
+    subscribed_waits: HashSet<WaitToken>,
+    geometry: Option<FrameGeometry>,
     renaming: bool,
     deferred: Option<Incoming>,
 }
 
-#[derive(Default)]
 pub(super) struct Clients {
     peers: HashMap<u64, Peer>,
+    active: Option<u64>,
+    hints: KeyHintState,
+    publish_requested: bool,
+    last_detached: Instant,
     pub(super) renames: FuturesUnordered<RenameCompletion>,
 }
 
+impl Default for Clients {
+    fn default() -> Self {
+        Self {
+            peers: HashMap::new(),
+            active: None,
+            hints: KeyHintState::default(),
+            publish_requested: false,
+            last_detached: Instant::now(),
+            renames: FuturesUnordered::new(),
+        }
+    }
+}
+
 impl Clients {
-    pub(super) fn connected(
-        &mut self,
-        id: u64,
-        proof: Arc<PinnedProcess>,
-        responses: ResponseSender,
-        interactive: bool,
-    ) {
-        if interactive || self.peers.len() >= MAX_CONNECTIONS {
+    pub(super) fn connected(&mut self, host: &mut WorkspaceHost, connection: ConnectedPeer) {
+        let ConnectedPeer {
+            id,
+            proof,
+            responses,
+            interactive,
+            geometry,
+        } = connection;
+        if (interactive && self.active.is_some()) || self.peers.len() >= MAX_CONNECTIONS {
             let _ = responses.try_send(HostResponse::Refused {
                 message: if interactive {
-                    "native interactive attachment is not available yet"
+                    "another interactive TUI is already attached"
                 } else {
                     "native control connection limit reached"
                 }
@@ -66,11 +97,20 @@ impl Clients {
             .try_send(HostResponse::Welcome {
                 protocol: runyte::protocol::VERSION,
                 pid: std::process::id(),
-                features: vec![
-                    FeatureGroup::Control,
-                    FeatureGroup::Buffers,
-                    FeatureGroup::Wait,
-                ],
+                features: if interactive {
+                    vec![
+                        FeatureGroup::Snapshots,
+                        FeatureGroup::Input,
+                        FeatureGroup::Buffers,
+                        FeatureGroup::Wait,
+                    ]
+                } else {
+                    vec![
+                        FeatureGroup::Control,
+                        FeatureGroup::Buffers,
+                        FeatureGroup::Wait,
+                    ]
+                },
                 host_version: env!("CARGO_PKG_VERSION").to_owned(),
             })
             .is_ok()
@@ -81,14 +121,161 @@ impl Clients {
                     _proof: proof,
                     responses,
                     waits: HashSet::new(),
+                    subscribed_waits: HashSet::new(),
+                    geometry: interactive.then_some(geometry),
                     renaming: false,
                     deferred: None,
+                },
+            );
+            if interactive {
+                self.active = Some(id);
+                // A private wire client cannot grant shell handoff until the
+                // public native frontend owns and validates that operation.
+                host.app_mut().set_quit_directory_handoff(false);
+                host.app_mut().note_frontend_attached();
+                host.note_plugin_frontend(true);
+                self.publish_frame(host);
+            }
+        }
+    }
+
+    pub(super) fn attached(&self) -> bool {
+        self.active.is_some()
+    }
+
+    pub(super) fn last_detached(&self) -> Instant {
+        self.last_detached
+    }
+
+    pub(super) fn hint_delay(&self, now: Instant) -> Option<std::time::Duration> {
+        self.active.and_then(|_| self.hints.time_until_expiry(now))
+    }
+
+    pub(super) fn expire_hints(&mut self, now: Instant) {
+        self.hints.expire_at(now);
+        self.publish_requested = true;
+    }
+
+    pub(super) fn take_publish_requested(&mut self) -> bool {
+        std::mem::take(&mut self.publish_requested)
+    }
+
+    pub(super) fn refuse_switch(&mut self, host: &mut WorkspaceHost) {
+        if let Some(id) = self.active {
+            self.send(
+                host,
+                id,
+                HostResponse::Error {
+                    message: "native session switching is not available yet".to_owned(),
                 },
             );
         }
     }
 
+    fn finish_active_waits(&mut self, host: &mut WorkspaceHost, id: u64) {
+        let tokens = self
+            .peers
+            .get(&id)
+            .map(|peer| peer.subscribed_waits.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for token in tokens {
+            let status = match host.complete_wait_request(token.into()) {
+                Ok(()) => host
+                    .wait_status(token.into())
+                    .expect("completed wait exists"),
+                Err(error) => {
+                    let _ = host.cancel_wait(
+                        token.into(),
+                        format!("attached TUI ended before successful wait completion: {error}"),
+                    );
+                    host.wait_status(token.into())
+                        .expect("cancelled wait exists")
+                }
+            };
+            self.send(
+                host,
+                id,
+                HostResponse::WaitState {
+                    token,
+                    status: status.into(),
+                    interactive_attached: false,
+                },
+            );
+        }
+        if let Some(peer) = self.peers.get_mut(&id) {
+            peer.waits.clear();
+            peer.subscribed_waits.clear();
+        }
+    }
+
+    pub(super) fn finish_exit(
+        &mut self,
+        host: &mut WorkspaceHost,
+        request: runyte::app::PersistentExitRequest,
+    ) -> bool {
+        let Some(id) = self.active else { return false };
+        self.hints.clear();
+        match request {
+            runyte::app::PersistentExitRequest::Detach => {
+                self.finish_active_waits(host, id);
+                self.send(
+                    host,
+                    id,
+                    HostResponse::Detached {
+                        directory_bytes: None,
+                    },
+                );
+                self.disconnected(host, id);
+                false
+            }
+            runyte::app::PersistentExitRequest::Quit { force } => {
+                self.finish_active_waits(host, id);
+                let mut protected = host.protected_state();
+                if force {
+                    protected.unsaved_buffers = 0;
+                }
+                if !protected.is_empty() {
+                    host.report_host_error(format!("cannot quit persistent session: {}; finish or close that state, or use :detach", protected.refusal()));
+                    self.publish_requested = true;
+                    return false;
+                }
+                self.send(host, id, HostResponse::ShuttingDown);
+                true
+            }
+        }
+    }
+
+    pub(super) fn publish_frame(&mut self, host: &mut WorkspaceHost) {
+        let Some(id) = self.active else { return };
+        let Some(peer) = self.peers.get(&id) else {
+            return;
+        };
+        let geometry = peer.geometry.expect("interactive geometry retained");
+        host.mark_visible_terminals_viewed();
+        let frame = host
+            .prepare_frame_with_hints(geometry, Some(&self.hints))
+            .into();
+        // Complete frames can replace an unseen visual response without a
+        // delta base. The transport keeps exactly one coalesced visual slot.
+        if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+            peer.responses.try_send(HostResponse::Frame {
+                frame: Box::new(frame),
+            })
+        {
+            self.disconnected(host, id);
+        }
+    }
+
     pub(super) fn disconnected(&mut self, host: &mut WorkspaceHost, id: u64) {
+        if self.active == Some(id) {
+            self.active = None;
+            self.hints.clear();
+            self.publish_requested = false;
+            self.last_detached = Instant::now();
+            host.cancel_pointer_drag();
+            host.app_mut().set_quit_directory_handoff(false);
+            host.note_plugin_frontend(false);
+        }
         if let Some(peer) = self.peers.remove(&id) {
             for token in peer.waits {
                 let _ =
@@ -148,7 +335,95 @@ impl Clients {
             }
             Incoming::Request(request) => request,
         };
+        let interactive = self.active == Some(id);
         match request {
+            ClientRequest::Input {
+                event,
+                repeated,
+                presented_frame,
+            } if interactive => {
+                if !repeated && let Some(frame) = presented_frame {
+                    host.context_frame_presented(frame.into());
+                }
+                super::super::dispatch_host_key_or_text(
+                    host,
+                    &mut self.hints,
+                    event.into(),
+                    repeated,
+                );
+                self.publish_requested = true;
+                false
+            }
+            ClientRequest::Pointer {
+                event,
+                frame,
+                repetitions,
+            } if interactive => {
+                self.hints.clear();
+                match host.execute(HostCommand::Pointer {
+                    event: event.into(),
+                    frame: frame.into(),
+                    repetitions,
+                }) {
+                    Ok(HostInputOutcome::Applied) => self.publish_requested = true,
+                    Ok(
+                        HostInputOutcome::AppliedWithoutVisualChange
+                        | HostInputOutcome::IgnoredStaleFrame,
+                    ) => {}
+                    Err(error) => host.report_host_error(error.to_string()),
+                }
+                false
+            }
+            ClientRequest::Resize { geometry } if interactive => {
+                if let Some(peer) = self.peers.get_mut(&id) {
+                    peer.geometry = Some(geometry.into());
+                }
+                self.publish_requested = true;
+                false
+            }
+            ClientRequest::Resynchronize if interactive => {
+                self.publish_requested = true;
+                false
+            }
+            ClientRequest::Detach if interactive => {
+                self.send(
+                    host,
+                    id,
+                    HostResponse::Detached {
+                        directory_bytes: None,
+                    },
+                );
+                self.disconnected(host, id);
+                false
+            }
+            ClientRequest::Notify { message } if interactive => {
+                host.report_host_error(message);
+                self.publish_requested = true;
+                false
+            }
+            ClientRequest::AttachWait { token } if interactive => {
+                let response = match host.wait_status(token.into()) {
+                    Some(status) => {
+                        if matches!(status, runyte::workspace::WaitStatus::Pending { .. }) {
+                            self.peers
+                                .get_mut(&id)
+                                .expect("active peer")
+                                .subscribed_waits
+                                .insert(token);
+                        }
+                        HostResponse::WaitState {
+                            token,
+                            status: status.into(),
+                            interactive_attached: true,
+                        }
+                    }
+                    None => HostResponse::Error {
+                        message: format!("unknown wait token {token}"),
+                    },
+                };
+                self.send(host, id, response);
+                false
+            }
             ClientRequest::Shutdown => {
                 let protected = host.protected_state();
                 if !protected.is_empty() {
@@ -196,18 +471,20 @@ impl Clients {
                 false
             }
             request if is_workspace_request(&request) => {
-                let reply = handle_workspace_request(host, request, false, false)
+                let reply = handle_workspace_request(host, request, self.attached(), interactive)
                     .expect("semantic request classified");
                 if let HostResponse::WaitCreated { token, .. } = &reply.response {
-                    self.peers
-                        .get_mut(&id)
-                        .expect("admitted peer")
-                        .waits
-                        .insert(*token);
+                    let peer = self.peers.get_mut(&id).expect("admitted peer");
+                    peer.waits.insert(*token);
+                    if interactive {
+                        peer.subscribed_waits.insert(*token);
+                    } else if let Some(active) =
+                        self.active.and_then(|active| self.peers.get_mut(&active))
+                    {
+                        active.subscribed_waits.insert(*token);
+                    }
                 }
-                // There is no native frontend in this package. Mutations still
-                // cross the same semantic handler and wait reconciliation.
-                let _ = reply.publish_frame;
+                self.publish_requested |= reply.publish_frame;
                 self.send(host, id, reply.response);
                 false
             }
@@ -253,19 +530,42 @@ impl Clients {
 
     pub(super) fn reconcile(&mut self, host: &mut WorkspaceHost) {
         host.reconcile_wait_requests();
-        for peer in self.peers.values_mut() {
+        let mut completions = Vec::new();
+        for (&id, peer) in &mut self.peers {
             peer.waits.retain(|token| {
                 matches!(
                     host.wait_status((*token).into()),
                     Some(runyte::workspace::WaitStatus::Pending { .. })
                 )
             });
+            peer.subscribed_waits
+                .retain(|token| match host.wait_status((*token).into()) {
+                    Some(runyte::workspace::WaitStatus::Pending { .. }) => true,
+                    Some(status) => {
+                        completions.push((id, *token, status));
+                        false
+                    }
+                    None => false,
+                });
+        }
+        for (id, token, status) in completions {
+            self.send(
+                host,
+                id,
+                HostResponse::WaitState {
+                    token,
+                    status: status.into(),
+                    interactive_attached: self.attached(),
+                },
+            );
         }
     }
 
     pub(super) fn clear(&mut self) {
         self.renames.clear();
         self.peers.clear();
+        self.active = None;
+        self.hints.clear();
     }
 }
 
