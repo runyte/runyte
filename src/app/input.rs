@@ -614,12 +614,14 @@ impl App {
             InputEvent::Key(key) => self.handle_key_stroke(key),
             InputEvent::Text(text) => self.handle_text(&text),
             InputEvent::ClipboardPaste => {
-                if !overlay_owns_input
+                if self.jump.take().is_some() {
+                    self.status("jump cancelled");
+                } else if !overlay_owns_input
                     && self.active_terminal().is_none()
                     && self.mode != Mode::Command
                 {
                     self.grammar.reset();
-                    self.clipboard_paste_any();
+                    self.execute_editor_command(EditorCommand::ClipboardPaste)?;
                 }
                 Ok(())
             }

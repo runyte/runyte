@@ -1190,6 +1190,55 @@ fn semantic_image_paste_respects_overlay_and_terminal_ownership() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+#[test]
+fn semantic_image_paste_cancels_live_goto_word_labels() {
+    let fixture = temporary("semantic-image-paste-jump-labels");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "alpha beta").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.active_mut().wrap_width = 80;
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("jump"))));
+
+    press(&mut app, 'g');
+    press(&mut app, 'w');
+    assert!(app.jump.is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+    assert!(app.jump.is_none());
+    assert_eq!(text(&app), "alpha beta");
+    assert!(!project.join(".runyte/cache/images").exists());
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_dismisses_insert_completion_before_editing() {
+    let fixture = temporary("semantic-image-paste-completion");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(project.join("docs")).unwrap();
+    fs::write(project.join("docs/target.txt"), "").unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("completion"))));
+
+    press(&mut app, 'i');
+    type_text(&mut app, "docs/ta");
+    assert!(app.completion.is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+    assert!(app.completion.is_none());
+    let pasted = text(&app);
+    assert!(pasted.contains("[Image 1](.runyte/cache/images/"));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(
+        text(&app).contains(&pasted),
+        "Tab replaced the pasted image"
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 /// Numbering continues from the document rather than from a counter the
 /// editor keeps, so a file reopened in a later session does not restart at
 /// one.
