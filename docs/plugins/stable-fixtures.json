@@ -380,7 +380,8 @@
         "view-metadata",
         "view-document",
         "job-feedback",
-        "input-path-completion"
+        "input-path-completion",
+        "view-default-bindings"
       ]
     }
   },

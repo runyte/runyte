@@ -33,6 +33,19 @@ impl WorkspaceHost {
         let mut next_command = self.app.plugins.next_command;
         let mut groups = BTreeSet::new();
         for registration in &commands {
+            let default_binding = if let Some(binding) = &registration.default_binding {
+                ensure!(
+                    features.contains(plugin::application::VIEW_DEFAULT_BINDINGS)
+                        && registration.context == plugin::application::CommandContext::View,
+                    "Default bindings require view-default-bindings and a view command"
+                );
+                ensure!(binding.len() <= 128, "Default binding is too long");
+                let sequence = KeySequence::parse(binding).map_err(anyhow::Error::msg)?;
+                ensure!(sequence.len() <= 8, "Default binding exceeds 8 keys");
+                Some(sequence)
+            } else {
+                None
+            };
             if let Some(presentation) = &registration.presentation {
                 ensure!(
                     features.contains(plugin::application::VIEW_ACTION_PRESENTATION),
@@ -73,6 +86,7 @@ impl WorkspaceHost {
                 .bindings
                 .get(&registration.name)
                 .map(|s| KeySequence::parse(s))
+                .or_else(|| default_binding.map(Ok))
                 .or_else(|| registration.primary.then(|| KeySequence::parse("Enter")))
                 .transpose()
                 .map_err(anyhow::Error::msg)?;

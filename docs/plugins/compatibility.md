@@ -108,6 +108,7 @@ be present. Features select understood wire behavior and cannot grant authority.
 
 The host supports `view-row-actions` for row-specific action lists,
 `view-action-presentation` for readable labels and grouped discovery,
+`view-default-bindings` for configurable view-scoped default keys,
 `view-metadata` for labelled values above content, and `view-document` for
 complete bounded read-only documents. `job-feedback` adds bounded completion
 messages for owned jobs without another capability. See the [application contract](applications.md#row-dependent-actions).

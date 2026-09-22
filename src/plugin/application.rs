@@ -39,6 +39,7 @@ pub const VIEW_ACTION_PRESENTATION: &str = "view-action-presentation";
 pub const VIEW_METADATA: &str = "view-metadata";
 pub const JOB_FEEDBACK: &str = "job-feedback";
 pub const VIEW_DOCUMENT: &str = "view-document";
+pub const VIEW_DEFAULT_BINDINGS: &str = "view-default-bindings";
 pub const INPUT_PATH_COMPLETION: &str = "input-path-completion";
 pub const FEATURES: &[&str] = &[
     VIEW_ROW_ACTIONS,
@@ -47,6 +48,7 @@ pub const FEATURES: &[&str] = &[
     VIEW_DOCUMENT,
     JOB_FEEDBACK,
     INPUT_PATH_COMPLETION,
+    VIEW_DEFAULT_BINDINGS,
 ];
 
 #[derive(Clone, Debug, Serialize)]
@@ -100,6 +102,13 @@ impl Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    /// Optional view-scoped fallback; explicit host configuration wins.
+    #[serde(
+        default,
+        deserialize_with = "super::presentation::authored",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_binding: Option<String>,
     #[serde(
         default,
         deserialize_with = "super::presentation::authored",

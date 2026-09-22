@@ -48,6 +48,23 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-22 — Navigator, buffer cleanup and plugin default keys
+
+The Linux x86-64 canonical workspace suite passed with one Cargo job and one
+Rust test thread at **91.91% total line coverage** (126,085 of 137,185 lines),
+above the unchanged 89% floor. Formatting, all-target Clippy with warnings denied,
+and all 3,855 ordinary tests passed (36 ignored). The public plugin schema suite
+also passed all 14 cases.
+
+`src/app/tests/session_navigation.rs` covers Unicode column alignment, fuzzy
+highlighting and Ctrl-t preview state. `src/app/tests/editing_and_buffers.rs`
+covers closing hidden buffers across a picker filter while preserving visible
+and unsaved buffers. `src/workspace/host/tests/plugin_aliases.rs` covers negotiated
+view defaults, explicit configuration precedence, and refusal of global defaults
+and key collisions. The optional `view-default-bindings` extension leaves frozen
+wire fixtures unchanged. Native macOS and PostgreSQL were not exercised locally;
+this measurement establishes only the Linux baseline.
+
 ## 2026-09-21 — Linux PTY descriptor inheritance
 
 For implementation commit `5e30ffb`, native

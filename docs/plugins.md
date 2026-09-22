@@ -75,6 +75,11 @@ With negotiated `view-action-presentation`, command labels can contain spaces
 Plugins can group Tab actions and hide an internal Enter callback from discovery
 without disabling it. See [action labels and groups](plugins/applications.md#action-labels-and-groups).
 
+With negotiated `view-default-bindings`, a view command can declare a
+`default_binding` such as `"-"`. An explicit entry in the host configuration
+overrides it. Older hosts still require configured bindings. Defaults pass the
+same scope and collision validation as configured bindings.
+
 Bindings use physical spellings, at most eight keys, in Normal and Select modes.
 They cannot replace existing commands or grammar controls. Invalid commands,
 arguments, aliases or binding collisions reject the whole registration.

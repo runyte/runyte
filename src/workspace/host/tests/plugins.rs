@@ -74,6 +74,7 @@ fn registration(commands: Vec<api::Registration>) -> api::ClientMessage {
 }
 fn command(name: &str) -> api::Registration {
     api::Registration {
+        default_binding: None,
         presentation: None,
         alias: None,
         arguments: vec![],

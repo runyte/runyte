@@ -597,3 +597,7 @@ permissions for the external context bridge. It adds no default editor key
 binding. Grant and terminal-text confirmation keys are owned by their overlay,
 as described in the UI vocabulary; they do not change the Helix-derived
 selection-first editing keys.
+
+Plugin view commands may supply a physical default binding through negotiated
+`view-default-bindings`. Configured bindings override it; scope, collisions, help
+and hints continue to use the shared registry. No global defaults are added.

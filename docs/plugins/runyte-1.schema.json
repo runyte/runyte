@@ -126,6 +126,12 @@
         "presentation": {
           "$ref": "#/$defs/actionPresentation",
           "description": "Requires view-action-presentation advertised in hello and requested in registration; omit entirely for unsupported hosts."
+        },
+        "default_binding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Requires negotiated view-default-bindings and context view. Physical key sequence, at most eight keys. Explicit configured bindings override this fallback; normal collision checks apply."
         }
       },
       "required": [

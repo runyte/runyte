@@ -86,6 +86,7 @@ fn setup(
             version: api::VERSION.into(),
             name: "Tasks".into(),
             commands: vec![api::Registration {
+                default_binding: None,
                 presentation: None,
                 alias: None,
                 arguments: vec![],
@@ -183,6 +184,7 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
             version: api::VERSION.into(),
             name: "Arguments".into(),
             commands: vec![api::Registration {
+                default_binding: None,
                 presentation: None,
                 alias: None,
                 name: "echo".into(),
@@ -694,6 +696,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
             name: "Tasks".into(),
             commands: vec![
                 api::Registration {
+                    default_binding: None,
                     presentation: None,
                     alias: None,
                     arguments: vec![],
@@ -703,6 +706,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
                     primary: false,
                 },
                 api::Registration {
+                    default_binding: None,
                     presentation: None,
                     alias: None,
                     arguments: vec![],

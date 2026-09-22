@@ -26,6 +26,14 @@ PLUGIN_VALIDATOR = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/p
 
 
 class PluginSchemaTests(unittest.TestCase):
+    def test_view_default_binding_shape(self):
+        validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/command'})
+        command = {'name': 'back', 'description': 'Return to parent', 'context': 'view'}
+        self.assertTrue(validator.is_valid(command))
+        self.assertTrue(validator.is_valid({**command, 'default_binding': '-'}))
+        for binding in (None, '', [], 1, 'x' * 129):
+            self.assertFalse(validator.is_valid({**command, 'default_binding': binding}))
+
     def test_local_path_completion_field_shape(self):
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/inputField'})
         field = {'id': 'path', 'label': 'Local file', 'kind': 'text'}

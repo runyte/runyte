@@ -217,6 +217,7 @@ fn stable_alias_keeps_argument_usage_completion_and_wire_command_identity() {
             optional_features: Default::default(),
             name: "Timer".into(),
             commands: vec![api::Registration {
+                default_binding: None,
                 presentation: None,
                 name: "add".into(),
                 alias: Some("time-add".into()),
@@ -246,4 +247,79 @@ fn stable_alias_keeps_argument_usage_completion_and_wire_command_identity() {
         matches!(next(&mut receiver), api::HostMessage::Request { params, .. }
         if params.command == "add" && matches!(&params.arguments["title"], plugin::arguments::Scalar::String(value) if value == "猫 task"))
     );
+}
+
+#[test]
+fn view_default_bindings_require_negotiation_and_respect_configuration() {
+    for configured in [None, Some("F12")] {
+        let (_root, mut host) = super::host();
+        let mut cfg = config("browser");
+        if let Some(key) = configured {
+            cfg.bindings.insert("back".into(), key.into());
+        }
+        let _receiver = instance(&mut host, 0, cfg);
+        let mut back = command("back");
+        back.context = api::CommandContext::View;
+        back.default_binding = Some("-".into());
+        assert!(
+            host.register_plugin_commands(
+                0,
+                vec![back.clone()],
+                Default::default(),
+                Default::default(),
+                crate::plugin::compatibility::HOST_VERSION.into()
+            )
+            .is_err()
+        );
+        assert!(host.app.plugins.commands.is_empty());
+        host.register_plugin_commands(
+            0,
+            vec![back],
+            Default::default(),
+            [api::VIEW_DEFAULT_BINDINGS.into()].into(),
+            crate::plugin::compatibility::HOST_VERSION.into(),
+        )
+        .unwrap();
+        let registered = host.app.plugins.commands.values().next().unwrap();
+        assert_eq!(
+            registered.binding,
+            Some(crate::keymap::KeySequence::parse(configured.unwrap_or("-")).unwrap())
+        );
+        assert!(
+            host.app
+                .keymap()
+                .bindings()
+                .iter()
+                .any(
+                    |binding| binding.scope == crate::keymap::BindingScope::Plugin(0)
+                        && binding.target == crate::keymap::BindingTarget::Plugin(registered.id)
+                )
+        );
+    }
+}
+
+#[test]
+fn view_default_bindings_reject_global_commands_and_collisions() {
+    for (context, key) in [
+        (api::CommandContext::Workspace, "-"),
+        (api::CommandContext::View, "j"),
+        (api::CommandContext::View, ""),
+    ] {
+        let (_root, mut host) = super::host();
+        let _receiver = instance(&mut host, 0, config("browser"));
+        let mut back = command("back");
+        back.context = context;
+        back.default_binding = Some(key.into());
+        assert!(
+            host.register_plugin_commands(
+                0,
+                vec![back],
+                Default::default(),
+                [api::VIEW_DEFAULT_BINDINGS.into()].into(),
+                crate::plugin::compatibility::HOST_VERSION.into()
+            )
+            .is_err()
+        );
+        assert!(host.app.plugins.commands.is_empty());
+    }
 }
