@@ -97,6 +97,7 @@ pub struct ResponseSender {
 pub struct ResponseReceiver {
     messages: mpsc::Receiver<HostResponse>,
     final_messages: mpsc::Receiver<HostResponse>,
+    pending_final: Option<HostResponse>,
     frame: tokio::sync::watch::Receiver<Option<VisualResponse>>,
     delivered_visual: Arc<AtomicU64>,
     in_flight_visual: Option<u64>,
@@ -128,6 +129,7 @@ pub fn response_channel() -> (ResponseSender, ResponseReceiver) {
         ResponseReceiver {
             messages: message_rx,
             final_messages: final_message_rx,
+            pending_final: None,
             frame: frame_rx,
             delivered_visual,
             in_flight_visual: None,
@@ -242,6 +244,23 @@ impl ResponseSender {
 }
 
 impl ResponseReceiver {
+    /// A final reply can become ready after `select!` has polled the semantic
+    /// lane empty. Recheck that lane before returning the final reply, and
+    /// retain the one final reply if a semantic response arrived meanwhile.
+    fn semantic_before_final(&mut self, final_response: HostResponse) -> HostResponse {
+        if !self.messages_closed {
+            match self.messages.try_recv() {
+                Ok(response) => {
+                    self.pending_final = Some(final_response);
+                    return response;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => self.messages_closed = true,
+                Err(mpsc::error::TryRecvError::Empty) => {}
+            }
+        }
+        final_response
+    }
+
     /// Receives the semantic response that establishes a connection before
     /// visual updates are allowed onto the wire.
     ///
@@ -264,6 +283,9 @@ impl ResponseReceiver {
     pub(super) async fn recv(&mut self) -> Option<HostResponse> {
         self.in_flight_visual = None;
         loop {
+            if let Some(response) = self.pending_final.take() {
+                return Some(self.semantic_before_final(response));
+            }
             tokio::select! {
                 biased;
                 response = self.messages.recv(), if !self.messages_closed => {
@@ -274,7 +296,7 @@ impl ResponseReceiver {
                 }
                 response = self.final_messages.recv(), if !self.final_messages_closed => {
                     match response {
-                        Some(response) => return Some(response),
+                        Some(response) => return Some(self.semantic_before_final(response)),
                         None => self.final_messages_closed = true,
                     }
                 }
@@ -780,6 +802,32 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn semantic_reply_queued_during_final_selection_precedes_shutdown() {
+        let (responses, mut receiver) = response_channel();
+        let command_result = HostResponse::CommandResult {
+            outcome: crate::protocol::CommandOutcome::Completed,
+        };
+
+        // Model a select pass that polled the semantic lane while it was
+        // empty, then selected the final lane after both sends completed.
+        assert!(matches!(
+            receiver.messages.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        responses.try_send(command_result.clone()).unwrap();
+        responses.try_send(HostResponse::ShuttingDown).unwrap();
+        let selected_final = receiver.final_messages.try_recv().unwrap();
+        assert_eq!(
+            receiver.semantic_before_final(selected_final),
+            command_result
+        );
+        drop(responses);
+
+        assert_eq!(receiver.recv().await, Some(HostResponse::ShuttingDown));
+        assert_eq!(receiver.recv().await, None);
+    }
 
     #[test]
     fn bounded_encoder_preserves_wire_bytes_and_exact_limit_including_json_escaping() {
