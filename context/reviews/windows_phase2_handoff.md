@@ -1,9 +1,9 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5g typed
-native console termination accepted in `c6dea6a` (`Handle native console
-termination through owned cleanup`). The preceding foreground parent identity
-is `4aa792b`; Unix CI compile repair is `4a3b1bd`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5h native
+foreground host supervision accepted in `ab9f3ac` (`Supervise native foreground
+host by retained parent`). Typed console termination is `c6dea6a`; Unix CI
+compile and lint repairs are `4a3b1bd` and `6bd7627`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -294,17 +294,46 @@ workspace suite pass: 3,333 tests, zero failures, 63 ignored across 47
 libtest/doc-test groups, plus six native LSP transport cases. Native CI and Unix
 coverage acceptance remain pending the next push.
 
-## Next package: native foreground-host supervision
+## Accepted package: 4e.5h native foreground host supervision
 
-Connect the retained foreground-parent observation and one-shot process-exit
-watcher to the foreground host lifecycle. Keep the parent handle pinned from
-startup, distinguish parent loss from typed console events, and carry either
-termination through the same joined host cleanup. Detached hosts have a
-synthetic inheritance parent and must remain independent. Use compiled
-real-process fixtures for parent exit during startup and while serving; a wait
-client's parent loss cancels its wait without killing a shared host. Keep public
-attachment and parent-terminal routing gated until their own real-host
-acceptance.
+`ab9f3ac` captures and pins the natural parent of foreground `--serve` before
+configuration startup, then retains one process-exit watcher through joined
+host cleanup. Parent loss before publication refuses the launch; parent loss
+while serving retires only that host. Typed console termination remains distinct.
+Detached hosts never observe their temporary inheritance parent. Foreground
+project resolution accepts an explicit `--project-root` or discovers an existing
+project; if neither exists it refuses with an actionable path instead of entering
+a blocking prompt that could outlive the parent. `--init` is already refused with
+`--serve` by argument validation.
+
+Independent Astra review found no remaining findings after removing the blocking
+prompt, restoring fair host service selection, and tightening real-process
+fixtures. The focused native host suite passes 9 active cases. The fixtures
+exercise parent exit before publication and while serving, exact ready-record
+retirement, unrelated host survival, detached launcher loss, project discovery
+and refusal, and owned process-tree cleanup. Formatting, all-target Clippy with
+warnings denied, and the complete native workspace suite pass: 3,338 tests,
+zero failures, 64 ignored across 47 libtest/doc-test groups, plus six native LSP
+transport cases. Native CI and Unix coverage acceptance for this commit remain
+pending its push.
+
+The preceding `219acba` CI run found a Unix `clippy::let_unit_value` error in two
+never-completing catalog branches. `6bd7627` keeps their Unix placeholder result
+non-unit; its CI run 35749011529 has passing Ubuntu gates, MSRV and both coverage
+jobs. MacOS ru-time temporary cleanup and Ubuntu lifecycle stress failed in
+unrelated test paths; investigate repeatability rather than calling that run
+green. Its native Windows job was still running at this checkpoint.
+
+## Next package: native interactive attachment and waits
+
+Build one owned native interactive attachment over an authenticated exact host
+publication, with buffered frontend reads and a single connection owner. Keep
+handshake, initial frame, input and response ordering, and cancellation of only
+the disconnecting client's waits. Then add exact-publication switching and
+source recovery; never replace a selected publication by project path or PID.
+Real-host acceptance must pass before opening public attachment, manager visit,
+numbered-session, restart or parent-terminal routing gates. A wait client's
+parent loss cancels that client's wait; it does not retire a shared host.
 
 ## Phase 2.5 implementation order
 
