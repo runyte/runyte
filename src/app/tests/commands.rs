@@ -75,7 +75,6 @@ fn multiple_binary_launch_targets_fail_before_one_can_be_silently_dropped() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_late_binary_startup_target_reaches_the_external_program_prompt() {
     let directory = temporary("launch-late-binary");
     fs::create_dir_all(&directory).unwrap();
@@ -2609,7 +2608,6 @@ fn the_last_selected_theme_is_written_to_the_configuration() {
 /// Opening a binary file must not produce a buffer: a screenful of
 /// replacement characters cannot be saved back without destroying it.
 #[test]
-#[cfg(not(windows))]
 fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
     let directory = temporary("binary-open");
     fs::create_dir_all(&directory).unwrap();
@@ -2659,7 +2657,6 @@ fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
 /// The bounded probe is only an optimization. The bytes accepted by the
 /// final read still decide whether the file can safely become editable text.
 #[test]
-#[cfg(not(windows))]
 fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
     let directory = temporary("binary-beyond-probe");
     fs::create_dir_all(&directory).unwrap();
@@ -2682,18 +2679,19 @@ fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
     let directory = temporary("binary-program-cache");
     fs::create_dir_all(&directory).unwrap();
     let binary = directory.join("image.png");
     fs::write(&binary, [0x00, 0x01, 0x02, 0x03]).unwrap();
-    // A program that exists everywhere and does nothing, so the test
-    // spawns something real without depending on a viewer being installed.
-    let program = "true";
+    let program = "test-viewer";
 
     let mut app = App::new(Config::default(), None).unwrap();
     app.programs = ProgramCache::load(Some(directory.join("cache")));
+    app.ports.program_opener = Box::new(|program, _| {
+        assert_eq!(program, "test-viewer");
+        Ok(external_open::Dispatch::Accepted)
+    });
 
     app.open_file(binary.clone()).unwrap();
     assert!(app.matching_programs().is_empty(), "nothing remembered yet");
@@ -2756,7 +2754,6 @@ fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_program_that_cannot_run_is_reported_and_not_remembered() {
     let directory = temporary("binary-bad-program");
     fs::create_dir_all(&directory).unwrap();
@@ -2765,6 +2762,7 @@ fn a_program_that_cannot_run_is_reported_and_not_remembered() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     app.programs = ProgramCache::load(Some(directory.join("cache")));
+    app.ports.program_opener = Box::new(|program, _| bail!("{program} cannot run"));
 
     app.open_file(binary).unwrap();
     app.command.clear();

@@ -423,7 +423,10 @@ pass. This does not establish RAM exhaustion, shell startup latency or a pipe
 deadlock. Windows CI now uses the locally validated one-build/two-test-thread
 resource envelope; explicit concurrency tests retain their own overlapping
 children. Independent review has no findings. Product and fixture deadlines
-are unchanged, and remote acceptance of the resource bound remains pending.
+are unchanged. Native Windows acceptance passes at `6dd14ef` in run
+`35609722577`; that run's sole failure is a separate Linux MCP fixture readiness
+race, corrected with independent review in `fd1cd7b` and recorded in
+[`mcp_workspace_discovery_readiness.md`](../../issues/resolved/mcp_workspace_discovery_readiness.md).
 
 The ConPTY save fixture now waits for the editor's successful write status
 before reading completed contents. A single pre-completion `NotFound` read is
@@ -491,6 +494,84 @@ contracts. Two design reviews identify no decision blocker. Editor ports return
 accepted or pending dispatch, and cache updates require confirmed acceptance.
 The existing maintenance tick drains completions without adding an idle timer.
 Implementation follows the reviewed and natively validated package 2.
+
+Package 3 implementation has independent review with no remaining findings.
+All 21 backend tests and five editor dispatch tests pass, including a compiled
+viewer that preserves literal arguments and survives its launcher without
+inheriting its handles. Formatting, all-target Clippy and full native acceptance
+pass: 2,993 tests, zero failures and 46 ignored fixture/performance/privileged
+acceptance entries across 42 libtest/doc groups, plus six harness-free native
+transport cases. Required real rust-analyzer acceptance passes in 3.96 seconds
+after the shared executable-resolver extraction. Remote opener acceptance is
+pending; the independently reviewed clipboard repair is pushed as `b26d65f`
+and its required privileged acceptance runs in `35615440695`.
+
+Package 2's CI run `35612547548` passes all Unix jobs and both coverage gates,
+including the repaired MCP discovery scenarios. Windows exposes a clipboard
+fixture isolation error: `CreateWindowStationW(NULL, 0, ...)` can reopen the
+same logon-derived station in the text and image fixture children. Independent
+investigation confirms the API contract; a unique create-only station and a
+coordinated two-process regression replace that assumption. Native probes
+confirm this development token cannot create a named station even with minimal
+rights and default security; create-only unnamed creation also finds an existing
+station. There is no safe shared-station fallback. The three native fixtures
+therefore run as explicit required acceptance in the administrator-capable
+Windows CI job, which checks each passing result. They are ignored in ordinary
+local tests; conversion and worker tests remain enabled. Product clipboard
+behavior and its privileges are unchanged. This follows the documented
+[station creation restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-createwindowstationw)
+and [hosted runner privileges](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+#### Sub-phase 2.4 package 4 contract
+
+Implement and review standalone wait behavior before the PowerShell handoff.
+On Windows, `--wait` opens a new standalone editor and returns when that editor
+quits. It retains parser target requirements and normal save/discard checks;
+closing one requested buffer does not complete the invocation. Startup or
+terminal loss must return failure. Unix attachment and wait-token semantics
+remain unchanged until native persistent sessions are implemented separately.
+
+The PowerShell wrapper targets Windows PowerShell 5.1. It creates private
+handoff storage, invokes the native editor with literal argument framing,
+consumes a bounded lossless UTF-16 record only after successful exit, changes
+directory with `Set-Location -LiteralPath`, and cleans up in `finally` without
+exiting the caller's shell. The editor pins an already-private parent before
+editing and writes atomically through the native storage boundary. Existing
+App quit safety and pane-directory selection are reused. Unix handoff bytes
+and writing remain unchanged. Compiled fixtures and checked-in shell scripts
+must cover argument fidelity, path characters, refused/forced quit, failure
+exit codes, unchanged cwd on failure and cleanup. Extended path compatibility
+must be established by native acceptance rather than blind prefix removal.
+
+### Sub-phase 2.5 preparation
+
+Read-only dependency review proposes six packages; persistent availability
+remains disabled until native acceptance completes:
+
+1. Lossless Windows protocol paths and workspace identity, with malformed
+   path-byte refusal, unpaired UTF-16 coverage and unchanged Unix encoding.
+2. Private endpoint publication, registry locks and pinned process identity.
+   Separate transport addresses from filesystem metadata and expose probes
+   instead of treating named-pipe addresses as ordinary socket files.
+3. Native named-pipe accept/connect and authenticated peers beneath the shared
+   bounded framing, response queues and generic `serve_connection`. Keep the
+   buffered client's reader independent of rendering, with bounded cancellation.
+4. Detached host ownership, supervision, conservative stale-record recovery,
+   stop/restart and catalog state. Detached hosts outlive launchers while
+   foreground/test-supervised hosts retain their shutdown obligations.
+5. Attached frontend, persistent wait and workspace switching. Parent-terminal
+   capabilities also require native ConPTY job membership and pinned peer
+   identity; process ancestry snapshots alone are insufficient.
+6. Native lifecycle/attachment acceptance and registry-backed availability:
+   dirty/terminal/wait shutdown guards, duplicate launches, restart races,
+   single interactive ownership, handshake ordering, partial/stalled frames,
+   namespace isolation and cross-terminal authorization refusal.
+
+The protocol already supports generic asynchronous streams, so a second
+Windows protocol implementation is unnecessary. Windows persisted-path
+encoding, process/boot identity and detached ownership transfer are refined
+and reviewed in their owning packages. Dependency review finds no user
+decision blocker.
 
 ### Current implementation evidence
 

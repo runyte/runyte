@@ -261,6 +261,7 @@ impl FinderContentSource {
 mod completion_support;
 mod config_reload;
 mod editing;
+mod external_opening;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
@@ -2410,9 +2411,10 @@ impl CommandMatch<'_> {
     }
 }
 
-type DirectoryOpener = Box<dyn Fn(&Path) -> Result<()> + Send + Sync>;
+type DirectoryOpener = Box<dyn Fn(&Path) -> Result<external_open::Dispatch> + Send + Sync>;
 
-type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+type BrowserOpener = Box<dyn Fn(&str) -> Result<external_open::Dispatch> + Send + Sync>;
+type ProgramOpener = Box<dyn Fn(&str, &Path) -> Result<external_open::Dispatch> + Send + Sync>;
 
 /// Host-owned capabilities and outbound service work used by the editor.
 ///
@@ -2423,6 +2425,7 @@ type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 pub(crate) struct HostPorts {
     browser: BrowserOpener,
     directory_opener: DirectoryOpener,
+    program_opener: ProgramOpener,
     clipboard: Box<dyn SystemClipboard>,
     trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
@@ -2438,8 +2441,9 @@ pub(crate) struct HostPorts {
 impl HostPorts {
     fn live() -> Self {
         let mut ports = Self::isolated(Box::new(CommandClipboard));
-        ports.browser = Box::new(external_open::launch_browser);
-        ports.directory_opener = Box::new(|path| external_open::launch("", path));
+        ports.browser = Box::new(external_open::dispatch_browser);
+        ports.directory_opener = Box::new(|path| external_open::dispatch("", path));
+        ports.program_opener = Box::new(external_open::dispatch);
         ports
     }
 
@@ -2449,6 +2453,9 @@ impl HostPorts {
             browser: Box::new(|_| bail!("browser opening is unavailable in an isolated editor")),
             directory_opener: Box::new(|_| {
                 bail!("system file manager opening is unavailable in an isolated editor")
+            }),
+            program_opener: Box::new(|_, _| {
+                bail!("external program opening is unavailable in an isolated editor")
             }),
             trash: std::sync::Arc::new(SystemTrash),
             lsp: None,
@@ -2739,6 +2746,7 @@ pub struct App {
     /// The binary file waiting for a program to open it, set while
     /// `PromptKind::ExternalProgram` is collecting one.
     pub external_target: Option<PathBuf>,
+    pending_external_opens: Vec<external_opening::Pending>,
     /// Programs previously chosen for binary files and their persisted default.
     pub programs: ProgramCache,
     /// The mode the command palette was opened from.
@@ -3400,6 +3408,7 @@ impl App {
             home_directory: user_home_directory(),
             path_listings: RefCell::default(),
             external_target: None,
+            pending_external_opens: Vec::new(),
             programs,
             prompt_origin_mode: Mode::Normal,
             prompt_revision: 0,

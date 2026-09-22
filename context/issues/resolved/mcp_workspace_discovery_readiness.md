@@ -31,7 +31,8 @@ with a controlled clock: `test_delayed_discovery_requires_every_exact_root_and_r
 The real scenarios remain in `bridges/runyte-context/tests/test_runyte.py`:
 `test_concurrent_appends_from_two_agents_land_whole_without_a_revision` and
 `test_two_agent_clients_read_live_and_detached_workspaces_edit_unsaved_and_observe_revocation`.
-Their Unix CI acceptance is pending at the time of this record.
+Both scenarios pass in the Linux plugin-conformance job in
+[run 35612547548](https://github.com/runyte/runyte/actions/runs/35612547548).
 
 ## Report
 

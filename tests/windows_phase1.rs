@@ -12,7 +12,7 @@ use runyte::{
 };
 
 #[test]
-fn direct_keys_hints_and_help_report_platform_refusals() {
+fn native_explorer_opening_agrees_with_keys_hints_and_help() {
     use runyte::{
         command::{EditorCommand, GrammarKind, Mode},
         help::{self, HelpTopic},
@@ -44,18 +44,20 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     }
     assert_eq!(rows.len(), commands.len());
     for (index, command) in commands.iter().enumerate() {
-        let reason = runyte::command::CommandId::Editor(*command)
-            .platform_unavailable()
-            .unwrap();
+        assert!(
+            runyte::command::CommandId::Editor(*command)
+                .platform_unavailable()
+                .is_none()
+        );
         let row = rows
             .iter()
             .find(|row| row.target == Some((*command).into()))
             .unwrap();
-        assert_eq!(row.unavailable_reason.as_deref(), Some(reason));
+        assert!(row.unavailable_reason.is_none());
         app.handle_input(InputEvent::Key(Key::char('z'))).unwrap();
         app.handle_input(InputEvent::Key(Key::char((b'a' + index as u8) as char)))
             .unwrap();
-        assert_eq!(app.status, reason);
+        assert!(app.status.contains("not a directory buffer"));
     }
     let explorer = help::render(
         HelpTopic::Explorer,
@@ -64,7 +66,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
         default_keymap(),
         false,
     );
-    assert!(explorer.contains("External file opening is unavailable in Windows Phase 1"));
+    assert!(!explorer.contains("External file opening is unavailable in Windows Phase 1"));
     let text = help::render(
         HelpTopic::Text,
         GrammarKind::Runyte,
@@ -128,7 +130,7 @@ fn enabled_plugins_cannot_start_even_without_a_runtime() {
 }
 
 #[test]
-fn binary_open_refuses_without_offering_an_unusable_program_prompt() {
+fn binary_open_offers_a_program_prompt_without_loading_binary_text() {
     let root = TestRuntimeRoot::new("windows-binary").unwrap();
     let path = root.path().join("image.bin");
     std::fs::write(&path, [0, 1, 2, 3]).unwrap();
@@ -143,9 +145,10 @@ fn binary_open_refuses_without_offering_an_unusable_program_prompt() {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(app.mode, runyte::command::Mode::Normal);
+    assert_eq!(app.mode, runyte::command::Mode::Command);
+    assert_eq!(app.prompt_kind, runyte::app::PromptKind::ExternalProgram);
     assert_eq!(app.active_buffer().to_string(), before);
-    assert!(app.status.contains("External file opening is unavailable"));
+    assert!(app.status.contains("not a text file"));
 }
 
 #[tokio::test]

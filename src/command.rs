@@ -1291,9 +1291,6 @@ impl CommandId {
             return Some("persistent mode is not supported on this platform");
         }
         match self {
-            Self::Editor(EditorCommand::OpenExplorerSystem) => {
-                Some("External file opening is unavailable in Windows Phase 1")
-            }
             Self::Colon(ColonCommand::ContextAccess) => {
                 Some("External context access is unavailable in Windows Phase 1")
             }

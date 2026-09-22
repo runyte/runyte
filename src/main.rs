@@ -1784,7 +1784,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 services.git_monitor.sync(app.git_monitor_repository());
                 let changed = app.refresh_git_if_due(Instant::now());
                 let activity_changed = app.refresh_session_activity();
-                if !changed && !activity_changed {
+                let open_changed = app.app_mut().poll_external_opens(Instant::now());
+                if !changed && !activity_changed && !open_changed {
                     continue;
                 }
             }
@@ -2566,6 +2567,7 @@ async fn run_host_server(
                 services.file_monitor.sync(host.file_monitor_requests());
                 services.git_monitor.sync(host.git_monitor_repository());
                 changed = host.refresh_git_if_due(Instant::now());
+                changed |= host.app_mut().poll_external_opens(Instant::now());
                 if active.is_some() { changed |= host.refresh_session_activity(); }
             }
             _ = idle_tick.tick() => {

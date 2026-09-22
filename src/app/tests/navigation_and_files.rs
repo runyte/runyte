@@ -3064,7 +3064,7 @@ fn goto_file_opens_web_links_without_using_the_binary_program_cache() {
     let recorded = Arc::clone(&opened);
     ports.browser = Box::new(move |url| {
         recorded.lock().unwrap().push(url.to_owned());
-        Ok(())
+        Ok(external_open::Dispatch::Accepted)
     });
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     let source = root.join("links.txt");
@@ -3189,7 +3189,7 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
     let recorded = Arc::clone(&opened);
     ports.browser = Box::new(move |url| {
         recorded.lock().unwrap().push(url.to_owned());
-        Ok(())
+        Ok(external_open::Dispatch::Accepted)
     });
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
@@ -3239,7 +3239,6 @@ fn goto_file_in_terminal_review_opens_links_from_the_frozen_snapshot() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
     let root = temporary("explorer-system");
     let directory = root.join("space and 界");
@@ -3253,7 +3252,7 @@ fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
     let recorded = Arc::clone(&opened);
     app.ports.directory_opener = Box::new(move |path| {
         recorded.lock().unwrap().push(path.to_owned());
-        Ok(())
+        Ok(external_open::Dispatch::Accepted)
     });
     app.open_explorer(Some(directory.clone())).unwrap();
     app.focus_directory_entry(&child);
@@ -3283,7 +3282,6 @@ fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
     let root = temporary("explorer-system-errors");
     fs::create_dir_all(&root).unwrap();

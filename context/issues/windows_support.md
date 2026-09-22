@@ -155,8 +155,17 @@ required real rust-analyzer acceptance pass. The next package restores image
 paste through native PNG and DIB clipboard formats and private cache storage.
 Its independent reviews have no remaining findings; native clipboard, cache
 and editor tests, formatting, Clippy and the full suite (2,973 passed) succeed.
-External opening and shell-directory handoff are the following standalone
-work packages; cross-platform acceptance is pending.
+CI subsequently exposes shared window-station state between the text and image
+fixtures. Reviewed repair `b26d65f` uses distinct create-only stations and a
+coordinated isolation regression. Creating these stations requires privileges
+unavailable to the local development token; three explicitly required Windows
+CI tests provide that native acceptance, with no shared-clipboard fallback.
+External opening is now implemented with nonblocking, bounded native dispatch,
+literal file/URL arguments and program-cache updates after acceptance. Its
+independent review has no remaining findings. Formatting, Clippy, 2,993 local
+tests and required real rust-analyzer acceptance pass; privileged clipboard
+and cross-platform opener acceptance remain pending. Standalone `--wait` and
+PowerShell directory handoff are the following work packages.
 Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.

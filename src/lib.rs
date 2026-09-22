@@ -74,6 +74,8 @@ pub mod ui;
 #[cfg(any(unix, windows))]
 pub(crate) mod user_paths;
 #[cfg(windows)]
+mod windows_executable;
+#[cfg(windows)]
 mod windows_fs;
 #[cfg(windows)]
 mod windows_process;

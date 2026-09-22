@@ -173,6 +173,7 @@ mod comparisons;
 mod config_reload;
 mod editing;
 mod editing_and_buffers;
+mod external_dispatch;
 mod git;
 mod git_discovery;
 mod language;

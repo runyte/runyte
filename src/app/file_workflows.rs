@@ -10,8 +10,8 @@ use super::{
     ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory,
     Path, PathBuf, PickerItem, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId,
     Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
-    enclosing_area, ensure, expand_home_path, external_open, fs, open_or_new_at_identity,
-    resolved_operation_path, trailing_whitespace_changes,
+    enclosing_area, ensure, expand_home_path, external_open, external_opening, fs,
+    open_or_new_at_identity, resolved_operation_path, trailing_whitespace_changes,
 };
 use crate::{
     directory_buffer::ListingView,
@@ -135,12 +135,7 @@ impl App {
             return Ok(());
         };
         if let Some(url) = crate::navigation_target::web_url(&requested_text) {
-            match (self.ports.browser)(&url) {
-                Ok(()) => self.status(format!("opened {url} in the default browser")),
-                Err(error) => {
-                    self.error_from("Browser", "Browser launch failed", error.to_string())
-                }
-            }
+            self.dispatch_external_open(external_opening::Intent::Browser(url));
             return Ok(());
         }
 
@@ -203,17 +198,7 @@ impl App {
             .path
             .as_ref()
             .expect("directory buffers have paths");
-        match (self.ports.directory_opener)(directory) {
-            Ok(()) => self.status(format!(
-                "opened {} in the system file manager",
-                directory.display()
-            )),
-            Err(error) => self.error_from(
-                "File manager",
-                "System file manager launch failed",
-                error.to_string(),
-            ),
-        }
+        self.dispatch_external_open(external_opening::Intent::Directory(directory.clone()));
     }
 
     pub(super) fn open_active_directory_explorer(&mut self) -> Result<()> {
@@ -735,10 +720,6 @@ impl App {
 
     /// Asks which program should be given a binary file.
     pub(super) fn ask_for_external_program(&mut self, path: PathBuf) {
-        if cfg!(windows) {
-            self.action_failed("External file opening is unavailable in Windows Phase 1");
-            return;
-        }
         if self.prompt_kind == PromptKind::ExternalProgram && self.external_target.is_some() {
             // A language server answering a goto with a binary file must not
             // replace the question already on screen, or a half-typed program
@@ -761,31 +742,10 @@ impl App {
     /// Hands a binary file to the default app or a remembered explicit choice.
     pub(super) fn open_externally(&mut self, path: &Path, program: String) {
         let program = program.trim().to_owned();
-        if let Err(error) = external_open::launch(&program, path) {
-            // Nothing is remembered, because a program that will not run is
-            // not a hint worth offering back.
-            self.error_from(
-                "External program",
-                "Program launch failed",
-                error.to_string(),
-            );
-            return;
-        }
-        if program.is_empty() {
-            self.status(format!(
-                "opened {} with the system default application",
-                path.display()
-            ));
-            return;
-        }
-        if let Err(error) = self.programs.remember(&program) {
-            self.action_warning(
-                "Program choice was not saved",
-                format!("opened with {program}, but {error}"),
-            );
-            return;
-        }
-        self.status(format!("opened {} with {program}", path.display()));
+        self.dispatch_external_open(external_opening::Intent::Program {
+            path: path.to_owned(),
+            program,
+        });
     }
 
     /// Retires every jump into a directory buffer whose listing was replaced.

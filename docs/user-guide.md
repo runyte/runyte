@@ -1455,7 +1455,8 @@ does not bundle that runtime.
 | Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
-| Deferred | Plugins, context bridge, persistent sessions, external file/URL opening, `--wait` and `:quit-here` |
+| External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
+| Deferred | Plugins, context bridge, persistent sessions, `--wait` and `:quit-here` |
 
 Deferred commands remain discoverable and report why they are unavailable.
 Existing configuration cannot enable deferred services. Use `:notifications`
@@ -1515,10 +1516,26 @@ paths beginning with `-` or `+`, as in `runyte -- +draft.md -notes.md`.
 Binary startup targets still use the interactive external-program prompt;
 open binary files one at a time so no explicit target can be silently skipped.
 The prompt initially selects the preferred application registered with the
-desktop (`xdg-open` on Linux and `open` on macOS). Use Up and Down to select an
+desktop (`xdg-open` on Linux, `open` on macOS, and **System default** on Windows). Use Up and Down to select an
 application, Enter to open with the selected application, or type another
 program. Explicit choices are remembered. Press Tab on a remembered choice to
 delete it or make it the default selection for later binary files.
+
+On Windows, external applications open in the background while editing stays
+responsive. Runyte remembers an explicit program only after Windows accepts
+its launch. A launch whose result is still unknown after five seconds reports
+that uncertainty and is not retried automatically. Acceptance does not establish
+that the application displayed the target. Viewer applications can remain open
+after Runyte exits, subject to restrictions imposed by the process that started
+Runyte.
+
+An explicit Windows program uses native executable lookup and argument quoting;
+quote paths containing spaces, for example `"C:\Program Files\Viewer\viewer.exe" --fit`.
+The file is passed as one final argument. Shell operators are literal arguments;
+script wrappers are not discovered as native programs. The system-default file
+handler requires an equivalent ordinary path shorter than 260 UTF-16 units;
+an explicitly chosen viewer may support longer extended paths. Network-share
+opening is not part of the validated support claim.
 
 Piped/stdin scratch input (`runyte -`) is deliberately deferred: Crossterm
 owns stdin for terminal events in the current standalone process. Before `--`,
