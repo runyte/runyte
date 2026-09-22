@@ -610,6 +610,13 @@ Native PowerShell ConPTY startup
 passes in that run; the later handoff integration test is not reached because
 the library test fails. Finer startup diagnosis remains active, without longer
 deadlines or a claimed root cause.
+The next reviewed diagnostic refinement records fixed completion milestones
+after each bootstrap setup instruction. Ten focused filter tests pass, with
+one compiled fixture ignored; formatting and all-target Clippy pass. Production
+commands and deadlines are unchanged. Windows CI now uses `--no-fail-fast` so
+one failed library test does not prevent later integration binaries from
+reporting; Cargo and the job still return failure. Both changes have no
+remaining independent review findings.
 
 ### Sub-phase 2.5 preparation
 

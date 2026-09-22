@@ -46,7 +46,7 @@ jobs:
       - name: Test native editing, Git and ConPTY
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
       - name: Accept isolated native clipboard operations
         if: ${{ !cancelled() }}
         # Named private window stations require administrator privileges;

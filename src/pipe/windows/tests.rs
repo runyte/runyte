@@ -14,6 +14,28 @@ use windows_sys::Win32::{
 };
 
 const TRACE_ENV: &str = "RUNYTE_INTERNAL_FILTER_TRACE";
+const SETUP_MILESTONES: &[(&str, &str)] = &[
+    ("$ErrorActionPreference = 'Stop'", "policy-set"),
+    (
+        "    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)",
+        "utf8-created",
+    ),
+    ("    [Console]::InputEncoding = $utf8", "input-encoding-set"),
+    (
+        "    [Console]::OutputEncoding = $utf8",
+        "output-encoding-set",
+    ),
+    ("    $OutputEncoding = $utf8", "pipeline-encoding-set"),
+    (
+        "    $command = [Environment]::GetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_COMMAND')",
+        "command-read",
+    ),
+    (
+        "    [Environment]::SetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_COMMAND', $null)",
+        "command-cleared",
+    ),
+    ("    $global:LASTEXITCODE = 0", "ready"),
+];
 
 pub(super) struct InvocationTrace {
     started: Instant,
@@ -79,6 +101,8 @@ impl InvocationTrace {
     }
 
     pub(super) fn describe(&self) -> String {
+        // This is the last successfully recorded milestone, not proof that
+        // execution stopped there: later best-effort marker writes may fail.
         let marker = if !self.marker_reset {
             "reset-failed"
         } else if let Some(path) = &self.marker {
@@ -86,10 +110,12 @@ impl InvocationTrace {
             match fs::File::open(path).and_then(|file| file.take(32).read_to_end(&mut bytes)) {
                 Ok(_) => match bytes.as_slice() {
                     b"entered" => "entered",
-                    b"ready" => "ready",
                     b"returned" => "returned",
                     b"caught" => "caught",
-                    _ => "invalid",
+                    _ => SETUP_MILESTONES
+                        .iter()
+                        .find_map(|(_, stage)| (bytes == stage.as_bytes()).then_some(*stage))
+                        .unwrap_or("invalid"),
                 },
                 Err(error) if error.kind() == io::ErrorKind::NotFound => "missing",
                 Err(_) => "unreadable",
@@ -143,6 +169,27 @@ fn failure_diagnostics_bound_markers_and_exclude_command_input_and_paths() {
     assert!(report.contains("stdout_eof=true stderr_eof=false observed_exit=Some(Some(7))"));
     assert!(!report.contains("private"));
     assert!(report.len() < 512);
+    for stage in ["entered", "returned", "caught"]
+        .into_iter()
+        .chain(SETUP_MILESTONES.iter().map(|(_, stage)| *stage))
+    {
+        assert!(stage.len() < 32);
+        fs::write(&marker, stage).unwrap();
+        let report = trace.describe();
+        assert!(
+            report.contains(&format!("bootstrap={stage} stdin=")),
+            "{report}"
+        );
+        assert!(!report.contains("private"));
+        assert!(report.len() < 512);
+    }
+    // A recognized prefix followed by untrusted bytes is not a valid marker,
+    // including when the report's bounded read truncates the file.
+    fs::write(&marker, format!("utf8-created{}", "private".repeat(1000))).unwrap();
+    let report = trace.describe();
+    assert!(report.contains("bootstrap=invalid"));
+    assert!(!report.contains("private"));
+    assert!(report.len() < 512);
     fs::write(&marker, "unrestricted marker content".repeat(1000)).unwrap();
     let report = trace.describe();
     assert!(report.contains("bootstrap=invalid"));
@@ -163,17 +210,23 @@ fn configured(text: &str, root: &Path) -> Command {
         std::process::id(),
         NEXT_TRACE.fetch_add(1, Ordering::Relaxed)
     ));
-    // Test-only markers bracket shell startup, encoding setup and command
-    // execution. Marker failures never change the authored command's result.
+    // Test-only markers bracket each setup instruction and command execution.
+    // Marker failures never change the authored command's result, so the last
+    // recorded stage does not prove that execution never advanced past it.
     // The path is passed as child environment data, never interpolated as code.
-    let bootstrap = format!(r#"
+    let mut bootstrap = format!(r#"
 $runyteTrace = [Environment]::GetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_TRACE')
 [Environment]::SetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_TRACE', $null)
 try {{ [IO.File]::WriteAllText($runyteTrace, 'entered') }} catch {{}}
 {}"#, BOOTSTRAP)
-        .replace("    $global:LASTEXITCODE = 0", "    try { [IO.File]::WriteAllText($runyteTrace, 'ready') } catch {}\n    $global:LASTEXITCODE = 0")
         .replace("    $nativeExit = $LASTEXITCODE", "    $nativeExit = $LASTEXITCODE\n    try { [IO.File]::WriteAllText($runyteTrace, 'returned') } catch {}")
         .replace("    [Console]::Error.WriteLine($_.ToString())", "    $runyteOriginalFailure = $_\n    try { [IO.File]::WriteAllText($runyteTrace, 'caught') } catch {}\n    [Console]::Error.WriteLine($runyteOriginalFailure.ToString())");
+    for &(instruction, stage) in SETUP_MILESTONES {
+        assert_eq!(bootstrap.matches(instruction).count(), 1);
+        bootstrap = bootstrap.replace(instruction, &format!(
+            "{instruction}\n    try {{ [IO.File]::WriteAllText($runyteTrace, '{stage}') }} catch {{}}"
+        ));
+    }
     let mut command = command_with_bootstrap(text, root, &bootstrap).unwrap();
     command
         .env("XDG_CONFIG_HOME", root.join("config"))
