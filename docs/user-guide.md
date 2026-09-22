@@ -1505,10 +1505,14 @@ PowerShell and Git Bash are optional. See [terminals](#terminals) for command
 quoting and terminal working-directory limits. Network shares and long-path
 filesystem operations remain unvalidated; failures preserve recoverable edits.
 
-The outer terminal can reserve shortcuts such as `Ctrl-Shift-v` for paste.
+The outer terminal can reserve shortcuts such as `Ctrl-v` or `Ctrl-Shift-v`
+for paste.
 Bracketed text paste is delivered as text, including in Normal mode, so pasted
-command-looking lines do not execute editor commands. `Ctrl-v` uses the native
-clipboard for text and images. Keyboard-layout and IME behavior
+command-looking lines do not execute editor commands. `Ctrl-v` and `Alt-v` use
+the native clipboard for text and images. Windows Terminal reserves `Ctrl-v`
+for its paste action. Runyte recognizes the empty paste event that some
+versions send for an image; if the terminal sends no event, use `Alt-v`.
+Keyboard-layout and IME behavior
 beyond the automated input cases still needs reports from native setups.
 
 ### Startup files and input
@@ -1859,7 +1863,7 @@ context; scoped explorer keys are documented under
 | `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
-| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
+| `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
 | `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
 | `<n>` before a command | Repeat a motion or countable command |
@@ -1881,8 +1885,8 @@ from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
 
-`Ctrl-v` is the paste key an image arrives on, in Normal, Select, Insert, and
-Replace alike. A terminal cannot draw a picture, so a clipboard holding one is
+`Ctrl-v` and `Alt-v` paste an image in Normal, Select, Insert, and Replace
+alike. A terminal cannot draw a picture, so a clipboard holding one is
 stored under `.runyte/cache/images/` in the workspace and the document is given
 a numbered Markdown link to it, such as
 `[Image 1](.runyte/cache/images/1f0a2b3c4d5e6f70.png)`. The file is named by
@@ -1891,8 +1895,8 @@ file, and the number continues past the highest `[Image N]` the document
 already holds rather than counting how many it has. `?` renders that link as
 **Image 1** alone, without the path. A clipboard holding no image — or a
 machine with no helper that can hand one over, or one whose display server is
-not answering — pastes text instead, exactly as `Space c p` does, so `Ctrl-v`
-stays useful wherever an ordinary paste works.
+not answering — pastes text instead, exactly as `Space c p` does, so both keys
+stay useful wherever an ordinary paste works.
 
 Image-cache directories and images are private: `0700` and `0600` on Linux
 and macOS, and owner-only permissions on Windows local NTFS. Symlinked or
@@ -1917,8 +1921,9 @@ a screenshot tool and a browser's "Copy Image" both produce. If `Ctrl-v` pastes
 text where an image was expected, this rule is why, and the source is
 advertising a text form of what was copied. Once the clipboard has said it
 holds an image, failing to fetch it is reported rather than quietly pasting
-text in its place. `Ctrl-v` is deliberately unbound inside a terminal, where it
-still reaches the program running there.
+text in its place. Both keys are deliberately unbound in Terminal Insert,
+where they still reach the program running there if the outer terminal passes
+them through.
 
 `.runyte/` is not tracked by Git, so a pasted image travels with the working
 copy rather than with the commit. A document that will be read from another
@@ -1963,7 +1968,7 @@ The direct editing keys shared by Insert and Replace modes are:
 | `Ctrl-x` | Ask the language server for completions |
 | `Ctrl-c` | Comment or uncomment the lines holding the carets |
 | `Ctrl-s` | Save |
-| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
+| `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
 Backspace or Shift-Backspace in Replace mode retraces the current overwrite

@@ -944,23 +944,29 @@ fn pane_titles_show_structural_file_and_explorer_types() {
 
     let mut file = App::new(Config::default(), Some(path.clone())).unwrap();
     let screen = render(180, 20, &mut file, &hints);
+    let file_path = path.display().to_string();
+    let file_path = file_path.strip_prefix(r"\\?\").unwrap_or(&file_path);
     assert!(
         screen
             .lines()
             .next()
             .unwrap()
-            .contains(&format!("[file] {}", path.display())),
+            .contains(&format!("[file] {file_path}")),
         "{screen}"
     );
 
     let mut explorer = App::new(Config::default(), Some(directory.clone())).unwrap();
     let screen = render(180, 20, &mut explorer, &hints);
+    let explorer_path = directory.display().to_string();
+    let explorer_path = explorer_path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&explorer_path);
     assert!(
         screen
             .lines()
             .next()
             .unwrap()
-            .contains(&format!("[explorer] {}", directory.display())),
+            .contains(&format!("[explorer] {explorer_path}")),
         "{screen}"
     );
 

@@ -231,6 +231,21 @@ fn encoded_keys_keep_control_identity_defaults_releases_and_repeats() {
 }
 
 #[test]
+fn alternate_image_paste_key_survives_native_console_input() {
+    let mut decoder = Decoder::default();
+    for events in [
+        decoder.key(record('v' as u16, 86, true, LEFT_ALT_PRESSED)),
+        feed(&mut decoder, "\x1b[86;47;118;1;2;1_"),
+    ] {
+        assert_eq!(events, vec![key(KeyCode::Char('v'), KeyModifiers::ALT)]);
+        assert_eq!(
+            convert_event(events[0].clone()).unwrap(),
+            Some(InputEvent::Key(crate::input::KeyStroke::alt('v')))
+        );
+    }
+}
+
+#[test]
 fn encoded_and_legacy_paste_keep_frame_looking_text_literal() {
     let text = ":quit!\r\n\x08\n\x1b[72;35;8;1;8_😀";
     for wire in [

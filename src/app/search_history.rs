@@ -62,16 +62,15 @@ impl App {
 
     /// Pastes whatever the system clipboard holds, preferring an image.
     ///
-    /// This is the one key that can bring a picture into a document. A
+    /// This command brings a picture into a document. A
     /// terminal cannot draw one, so the image is stored in the workspace and
     /// the document is given a numbered Markdown reference to it; the rendered
     /// page then shows that reference as its description alone.
     ///
     /// A clipboard holding no image, or one this platform has no helper to
     /// hand an image over with, falls through to the ordinary system-clipboard
-    /// text paste. That is what makes this *the* paste key rather than a
-    /// second, differently-shaped one a reader has to choose between before
-    /// knowing what they copied.
+    /// text paste. Both bound keys use this command, so the clipboard format
+    /// does not require choosing a different command before pasting.
     pub(super) fn clipboard_paste_any(&mut self) {
         match self.ports.clipboard().read_image() {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),

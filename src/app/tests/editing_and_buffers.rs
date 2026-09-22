@@ -1030,10 +1030,9 @@ fn png(tail: &str) -> Vec<u8> {
     bytes
 }
 
-/// `Ctrl-v` is the only way a picture reaches a document, and what it writes
-/// is an ordinary Markdown link: the bytes go into the workspace under a name
-/// taken from their own content, and the document gets a numbered reference to
-/// that file.
+/// Clipboard image paste writes an ordinary Markdown link: the bytes go into
+/// the workspace under a name taken from their own content, and the document
+/// gets a numbered reference to that file.
 #[test]
 fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
     let fixture = temporary("clipboard-image-paste");
@@ -1094,6 +1093,42 @@ fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
         "the reference is emphasised on the page"
     );
 
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v() {
+    let fixture = temporary("alternate-clipboard-image-paste");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    let bytes = png("alternate");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&bytes)));
+
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::ALT);
+
+    let name = crate::pasted_image::file_name(&bytes, crate::pasted_image::ImageFormat::Png);
+    assert_eq!(
+        text(&app),
+        format!("[Image 1](.runyte/cache/images/{name})"),
+        "status: {}; mode: {:?}; kind: {:?}",
+        app.status,
+        app.mode,
+        app.active_buffer().kind
+    );
+    assert_eq!(
+        fs::read(project.join(".runyte/cache/images").join(name)).unwrap(),
+        bytes
+    );
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    let second = png("alternate in Normal mode");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&second)));
+    key(&mut app, KeyCode::Char('v'), Modifiers::ALT);
+    assert!(text(&app).contains("[Image 2](.runyte/cache/images/"));
     fs::remove_dir_all(fixture).unwrap();
 }
 

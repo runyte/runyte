@@ -30,8 +30,8 @@ roof. It gives us some unique benefits:
 
 If you work with agents a lot, you'll also appreciate our **Markdown formatting**
 with `?`, including wide tables and **image pasting** with
-`Ctrl+V`. Runyte saves images in the project's temporary cache and inserts a
-Markdown link into your document.
+`Ctrl+V` (or `Alt-v` when a terminal reserves `Ctrl+V`). Runyte saves images
+in the project's temporary cache and inserts a Markdown link into your document.
 
 Press `gf` on a file path in a buffer or terminal review to open it. Markdown
 link and image labels work too. Images and other binary files open in an external program you choose.
