@@ -11,7 +11,7 @@ use std::{
     mem::{size_of, zeroed},
     os::windows::{
         ffi::OsStrExt,
-        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle},
     },
     path::{Component, Path, PathBuf, Prefix},
     ptr,
@@ -22,7 +22,7 @@ use std::{
     thread,
 };
 use windows_sys::Win32::{
-    Foundation::{HANDLE, WAIT_OBJECT_0},
+    Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
     System::{Console::*, JobObjects::*, Pipes::CreatePipe, Threading::*},
 };
 
@@ -281,6 +281,41 @@ impl Pty {
     pub fn process_id(&self) -> u32 {
         self.pid
     }
+
+    pub(super) fn contains_live_peer(
+        &self,
+        peer: &crate::workspace::windows_process_identity::PinnedProcess,
+    ) -> io::Result<bool> {
+        if self.control.stopped() {
+            return Ok(false);
+        }
+        match unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => return Ok(false),
+            WAIT_TIMEOUT => {}
+            WAIT_FAILED => return Err(io::Error::last_os_error()),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected terminal leader wait result",
+                ));
+            }
+        }
+        if !peer.is_alive()? {
+            return Ok(false);
+        }
+        let mut member = 0;
+        if unsafe {
+            IsProcessInJob(
+                peer.as_handle().as_raw_handle(),
+                self.job.as_raw_handle(),
+                &mut member,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(member != 0)
+    }
     pub fn spawn(
         program: &OsStr,
         arguments: &[String],
@@ -298,7 +333,7 @@ impl Pty {
         directory: &Path,
         columns: u16,
         rows: u16,
-        _parent_context: Option<&str>,
+        parent_context: Option<&str>,
         events: impl Fn(PtyEvent) + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_checked(
@@ -307,6 +342,7 @@ impl Pty {
             directory,
             columns,
             rows,
+            parent_context,
             events,
             |_, _| Ok(()),
         )
@@ -318,6 +354,7 @@ impl Pty {
         directory: &Path,
         columns: u16,
         rows: u16,
+        parent_context: Option<&str>,
         events: impl Fn(PtyEvent) + Send + 'static,
         mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
     ) -> io::Result<Self> {
@@ -357,7 +394,7 @@ impl Pty {
             ));
         }
         let directory = crate::windows_fs::wide(&directory)?;
-        let environment = super::windows_command::environment();
+        let environment = super::windows_command::environment(parent_context);
         let control = Arc::new(Control {
             stop: event(true)?,
             readable: event(false)?,

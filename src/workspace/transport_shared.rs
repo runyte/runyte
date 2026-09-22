@@ -595,6 +595,8 @@ fn peer_hung_up(error: &anyhow::Error) -> bool {
 pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole) -> bool {
     match request {
         ClientRequest::Hello { .. } => false,
+        #[cfg(windows)]
+        ClientRequest::FrameDrawn { .. } => role == ClientRole::Interactive,
         ClientRequest::Input { .. }
         | ClientRequest::Invoke { .. }
         | ClientRequest::VisitDestination { .. }

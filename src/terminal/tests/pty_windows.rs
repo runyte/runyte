@@ -26,6 +26,7 @@ fn native_console_fixture() {
     println!("READY");
     io::stdout().flush().unwrap();
     let mut descendants = Vec::new();
+    let mut nested_jobs = Vec::new();
     for line in io::stdin().lock().lines() {
         match line.unwrap().as_str() {
             "size" => {
@@ -38,6 +39,10 @@ fn native_console_fixture() {
                 );
                 println!("SIZE {} {}", info.dwSize.X, info.dwSize.Y);
             }
+            "context" => println!(
+                "CONTEXT {}",
+                std::env::var(crate::workspace::parent::ENVIRONMENT).unwrap()
+            ),
             "descendant" => {
                 let child = std::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
@@ -46,6 +51,26 @@ fn native_console_fixture() {
                     .spawn()
                     .unwrap();
                 println!("DESCENDANT {}", child.id());
+                descendants.push(child);
+            }
+            "nested" => {
+                let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+                assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+                let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+                let child = std::process::Command::new(system_cmd())
+                    .args(["/d", "/q"])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                assert_ne!(
+                    unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) },
+                    0,
+                    "{}",
+                    io::Error::last_os_error()
+                );
+                println!("NESTED {}", child.id());
+                nested_jobs.push(job);
                 descendants.push(child);
             }
             "spam" => loop {
@@ -58,6 +83,7 @@ fn native_console_fixture() {
     }
     // Deliberately retain descendants on exit: the PTY's job owns cleanup.
     std::mem::forget(descendants);
+    std::mem::forget(nested_jobs);
 }
 
 fn fixture() -> (Pty, mpsc::Receiver<PtyEvent>) {
@@ -80,6 +106,34 @@ fn fixture() -> (Pty, mpsc::Receiver<PtyEvent>) {
     .unwrap();
     read_until(&receiver, "READY");
     (child, receiver)
+}
+
+#[test]
+fn native_parent_context_reaches_terminal_child() {
+    let (sender, receiver) = mpsc::channel();
+    let child = Pty::spawn_in_context(
+        std::env::current_exe().unwrap().as_os_str(),
+        &[
+            "--exact".into(),
+            FIXTURE.into(),
+            "--ignored".into(),
+            "--nocapture".into(),
+        ],
+        &std::env::temp_dir(),
+        80,
+        24,
+        Some("native-parent-context-probe"),
+        move |event| {
+            let _ = sender.send(event);
+        },
+    )
+    .unwrap();
+    read_until(&receiver, "READY");
+    assert!(child.write(b"context\r".to_vec()));
+    assert!(
+        read_until(&receiver, "CONTEXT native-parent-context-probe")
+            .contains("CONTEXT native-parent-context-probe")
+    );
 }
 
 fn read_until(events: &mpsc::Receiver<PtyEvent>, expected: &str) -> String {
@@ -136,6 +190,38 @@ fn native_resize_reaches_console_and_close_kills_descendants() {
         unsafe { WaitForSingleObject(descendant.as_raw_handle(), 5000) },
         WAIT_OBJECT_0
     );
+}
+
+#[test]
+fn terminal_job_accepts_only_live_member_peers() {
+    let (child, events) = fixture();
+    let member =
+        crate::workspace::windows_process_identity::PinnedProcess::open_peer(child.process_id())
+            .unwrap();
+    let outside =
+        crate::workspace::windows_process_identity::PinnedProcess::open_peer(std::process::id())
+            .unwrap();
+    assert!(child.contains_live_peer(&member).unwrap());
+    assert!(!child.contains_live_peer(&outside).unwrap());
+    assert!(child.write(b"nested\r".to_vec()));
+    let output = read_until(&events, "NESTED ");
+    let pid = output
+        .split("NESTED ")
+        .nth(1)
+        .unwrap()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse::<u32>()
+        .unwrap();
+    let nested = crate::workspace::windows_process_identity::PinnedProcess::open_peer(pid).unwrap();
+    assert!(child.contains_live_peer(&nested).unwrap());
+    assert!(child.write(b"exit\r".to_vec()));
+    while !matches!(
+        events.recv_timeout(Duration::from_secs(10)).unwrap(),
+        PtyEvent::Exited(_)
+    ) {}
+    assert!(!child.contains_live_peer(&member).unwrap());
 }
 
 fn native_shell(arguments: &[&str]) -> (Pty, mpsc::Receiver<PtyEvent>) {
@@ -340,6 +426,7 @@ fn failed_setup_owns_and_terminates_suspended_child() {
             &std::env::temp_dir(),
             80,
             24,
+            None,
             |_| {},
             |current, pid| {
                 if current != stage {

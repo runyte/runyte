@@ -6,8 +6,10 @@ use runyte::{
     app::App,
     config::Config,
     external_open::ProgramCache,
+    terminal::TerminalRequest,
     test_support::TestRuntimeRoot,
     workspace::{
+        parent::{ParentContext, ParentLaunch},
         windows_endpoint::{EndpointLocation, RegistrySet},
         windows_transport::{ResponseReceiver, response_channel},
     },
@@ -52,6 +54,18 @@ impl Fixture {
         self.connect_with_role(clients, id, true)
     }
 
+    fn acknowledge_initial_frame(&mut self, clients: &mut Clients, id: u64) {
+        let frame = clients.peers[&id]
+            .pending_ready_frames
+            .expect("interactive connection was issued a complete frame");
+        request(
+            clients,
+            &mut self.host,
+            id,
+            ClientRequest::FrameDrawn { frame: frame.1 },
+        );
+    }
+
     fn connect_with_role(
         &mut self,
         clients: &mut Clients,
@@ -76,6 +90,7 @@ impl Fixture {
     fn wait(&mut self, clients: &mut Clients, id: u64, name: &str) -> WaitToken {
         let path = self.root.join(name);
         std::fs::write(&path, "clean").unwrap();
+        let before = clients.peers[&id].waits.clone();
         request(
             clients,
             &mut self.host,
@@ -84,7 +99,24 @@ impl Fixture {
                 paths: vec![runyte::protocol::encode_path(&path)],
             },
         );
-        *clients.peers[&id].waits.iter().next().unwrap()
+        let created: Vec<_> = clients.peers[&id]
+            .waits
+            .difference(&before)
+            .copied()
+            .collect();
+        assert_eq!(
+            created.len(),
+            1,
+            "CreateWait must add exactly one owned token"
+        );
+        created[0]
+    }
+
+    fn show_terminal(&mut self, terminal: runyte::terminal::TerminalId) {
+        let command =
+            runyte::command::parse_colon_command(&format!("terminal-show {terminal}")).unwrap();
+        self.host.app_mut().execute(command).unwrap();
+        assert_eq!(self.host.app().active_terminal(), Some(terminal));
     }
 }
 
@@ -491,4 +523,298 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
         fixture.host.wait_status(second_wait.into()),
         Some(runyte::workspace::WaitStatus::Pending { .. })
     ));
+}
+
+#[test]
+fn wait_mutation_requires_the_creating_native_connection() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let _owner = fixture.connect(&mut clients, 2);
+    let _other = fixture.connect(&mut clients, 3);
+    let token = fixture.wait(&mut clients, 2, "owned-wait.txt");
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        3,
+        ClientRequest::CancelWait { token },
+    );
+    assert!(matches!(
+        fixture.host.wait_status(token.into()),
+        Some(runyte::workspace::WaitStatus::Pending { .. })
+    ));
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::CancelWait { token },
+    );
+    assert!(matches!(
+        fixture.host.wait_status(token.into()),
+        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+    ));
+}
+
+#[test]
+fn attachment_generation_loss_cancels_only_its_parent_waits() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let _parent = fixture.connect(&mut clients, 2);
+    let _unrelated = fixture.connect(&mut clients, 3);
+    let parent = fixture.wait(&mut clients, 2, "parent-wait.txt");
+    let unrelated = fixture.wait(&mut clients, 3, "unrelated-wait.txt");
+    clients
+        .peers
+        .get_mut(&2)
+        .unwrap()
+        .parent_waits
+        .insert(parent);
+
+    clients.disconnected(&mut fixture.host, 1);
+
+    assert!(matches!(
+        fixture.host.wait_status(parent.into()),
+        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+    ));
+    assert!(matches!(
+        fixture.host.wait_status(unrelated.into()),
+        Some(runyte::workspace::WaitStatus::Pending { .. })
+    ));
+    assert!(clients.peers[&2].waits.contains(&parent));
+}
+
+#[test]
+fn attachment_becomes_ready_only_after_acknowledging_its_latest_issued_frame() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let issued = clients.peers[&1].pending_ready_frames.unwrap().1;
+    assert_eq!(clients.active_ready, None);
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::FrameDrawn {
+            frame: runyte::protocol::FrameId::from_raw(issued.get() + 1),
+        },
+    );
+    assert_eq!(clients.active_ready, None);
+    fixture.acknowledge_initial_frame(&mut clients, 1);
+    assert_eq!(clients.active_ready, Some(1));
+    assert_eq!(clients.peers[&1].pending_ready_frames, None);
+}
+
+#[test]
+fn any_issued_pre_ready_frame_can_acknowledge_the_current_attachment() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let first = clients.peers[&1].pending_ready_frames.unwrap().0;
+    clients.publish_frame(&mut fixture.host);
+    let (_, second) = clients.peers[&1].pending_ready_frames.unwrap();
+    assert_ne!(first, second);
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::FrameDrawn { frame: first },
+    );
+    assert_eq!(clients.active_ready, Some(1));
+    assert_eq!(clients.peers[&1].pending_ready_frames, None);
+}
+
+#[test]
+fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _old = fixture.connect_interactive(&mut clients, 1);
+    fixture.acknowledge_initial_frame(&mut clients, 1);
+    let launch = ParentLaunch::new(fixture.metadata.clone()).unwrap();
+    fixture
+        .host
+        .app_mut()
+        .terminals
+        .set_parent_launch(launch.clone());
+    let terminal = fixture
+        .host
+        .app_mut()
+        .terminals
+        .open(
+            TerminalRequest {
+                program: "cmd.exe".into(),
+                arguments: vec!["/d".into(), "/q".into()],
+                directory: fixture.root.path().to_owned(),
+                label: "authority".into(),
+            },
+            80,
+            24,
+        )
+        .unwrap();
+    fixture.show_terminal(terminal);
+    let context: ParentContext = serde_json::from_str(&launch.context(terminal)).unwrap();
+    let process = fixture
+        .host
+        .app()
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .process_id()
+        .unwrap();
+    let proof = Arc::new(PinnedProcess::open_peer(process).unwrap());
+    assert!(
+        fixture
+            .host
+            .app()
+            .terminals
+            .validates_parent(terminal, &context.capability, Some(proof.as_ref()))
+            .unwrap()
+    );
+    let other_terminal = fixture
+        .host
+        .app_mut()
+        .terminals
+        .open(
+            TerminalRequest {
+                program: "cmd.exe".into(),
+                arguments: vec!["/d".into(), "/q".into()],
+                directory: fixture.root.path().to_owned(),
+                label: "other authority".into(),
+            },
+            80,
+            24,
+        )
+        .unwrap();
+    let other_process = fixture
+        .host
+        .app()
+        .terminals
+        .get(other_terminal)
+        .unwrap()
+        .process_id()
+        .unwrap();
+    let other_proof = PinnedProcess::open_peer(other_process).unwrap();
+    assert!(
+        !fixture
+            .host
+            .app()
+            .terminals
+            .validates_parent(terminal, &context.capability, Some(&other_proof))
+            .unwrap(),
+        "a copied marker from a different live terminal job is not authority"
+    );
+    let (responses, _control) = response_channel();
+    clients.connected(
+        &mut fixture.host,
+        ConnectedPeer {
+            id: 2,
+            proof,
+            responses,
+            interactive: false,
+            geometry: runyte::app::FrameGeometry::default(),
+        },
+    );
+    let original = fixture.root.join("original-generation.txt");
+    std::fs::write(&original, "clean").unwrap();
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::ParentWait {
+            terminal: terminal.get(),
+            capability: context.capability.clone(),
+            paths: vec![runyte::protocol::encode_path(&original)],
+        },
+    );
+    let accepted = *clients.peers[&2]
+        .parent_waits
+        .iter()
+        .next()
+        .expect("the original attachment generation admits its visible terminal");
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::CancelWait { token: accepted },
+    );
+    clients.reconcile(&mut fixture.host);
+    assert!(clients.peers[&2].parent_waits.is_empty());
+    fixture.show_terminal(terminal);
+
+    let deferred = fixture.root.join("deferred.txt");
+    std::fs::write(&deferred, "clean").unwrap();
+    clients.incoming(
+        &mut fixture.host,
+        2,
+        Incoming::Request(ClientRequest::RenameHost {
+            name: "held".into(),
+        }),
+        |_| Ok(Box::pin(std::future::pending())),
+    );
+    clients.incoming(
+        &mut fixture.host,
+        2,
+        Incoming::Request(ClientRequest::ParentWait {
+            terminal: terminal.get(),
+            capability: context.capability.clone(),
+            paths: vec![runyte::protocol::encode_path(&deferred)],
+        }),
+        no_rename,
+    );
+    assert!(clients.peers[&2].deferred.is_some());
+
+    clients.disconnected(&mut fixture.host, 1);
+    let _replacement = fixture.connect_interactive(&mut clients, 3);
+    fixture.acknowledge_initial_frame(&mut clients, 3);
+    let mut metadata = fixture.metadata.clone();
+    metadata.name = Some("held".into());
+    clients.renamed(&mut fixture.host, 2, Ok(metadata), no_rename);
+
+    assert!(clients.peers[&2].deferred.is_none());
+    assert!(clients.peers[&2].parent_waits.is_empty());
+    assert_eq!(clients.active_id(), Some(3));
+    assert!(fixture.host.app_mut().terminals.close(other_terminal));
+    assert!(fixture.host.app_mut().terminals.close(terminal));
+    assert!(
+        !fixture
+            .host
+            .app()
+            .terminals
+            .validates_parent(
+                terminal,
+                &context.capability,
+                Some(clients.peers[&2].proof.as_ref())
+            )
+            .unwrap(),
+        "a terminal removed before asynchronous process cleanup cannot retain authority"
+    );
+}
+
+#[test]
+fn completed_wait_ownership_is_retained_until_host_history_prunes_the_token() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _owner = fixture.connect(&mut clients, 2);
+    let token = fixture.wait(&mut clients, 2, "oldest.txt");
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::CancelWait { token },
+    );
+    clients.reconcile(&mut fixture.host);
+    assert!(clients.peers[&2].waits.contains(&token));
+
+    for index in 0..256 {
+        let path = fixture.root.join(format!("prune-{index}.txt"));
+        std::fs::write(&path, "clean").unwrap();
+        let (newer, _) = fixture.host.create_wait_request([path], false).unwrap();
+        fixture.host.cancel_wait(newer, "fixture complete").unwrap();
+    }
+    assert_eq!(fixture.host.wait_status(token.into()), None);
+    clients.reconcile(&mut fixture.host);
+    assert!(!clients.peers[&2].waits.contains(&token));
 }

@@ -4,7 +4,7 @@
 use super::{TerminationSignals, windows_frontend, windows_host};
 use runyte::{
     launch::LaunchArguments,
-    protocol::FeatureGroup,
+    protocol::{ClientRequest, FeatureGroup, HostResponse as ProtocolHostResponse, WaitStatus},
     startup::StartupTrace,
     terminal::{
         emulator::Emulator,
@@ -13,6 +13,8 @@ use runyte::{
     test_support::TestRuntimeRoot,
     workspace::{
         windows_endpoint::{EndpointLocation, EndpointMetadata, RegistrySet},
+        windows_lifecycle::connect_control,
+        windows_parent_identity::ForegroundParentSupervisor,
         windows_transport::{HostResponse, LocalServer, ServerEvent},
     },
 };
@@ -62,6 +64,13 @@ const SWITCH_FRONTEND: &str = "windows_frontend_acceptance::switch_frontend_fixt
 const SWITCH_BUSY_HOLDER: &str = "windows_frontend_acceptance::switch_busy_holder_fixture";
 const SWITCH_LOST_ACK: &str = "windows_frontend_acceptance::switch_lost_ack_fixture";
 const SWITCH_B_FRONTEND: &str = "windows_frontend_acceptance::switch_b_frontend_fixture";
+const PARENT_WAIT_PARENT: &str = "windows_frontend_acceptance::parent_wait_parent_fixture";
+const PARENT_WAIT_FRONTEND: &str = "windows_frontend_acceptance::parent_wait_frontend_fixture";
+const PARENT_WAIT_LAUNCHER: &str = "windows_frontend_acceptance::parent_wait_launcher_fixture";
+const PARENT_LOSS_LAUNCHER: &str = "windows_frontend_acceptance::parent_loss_launcher_fixture";
+const PARENT_LOSS_INTERMEDIATE: &str =
+    "windows_frontend_acceptance::parent_loss_intermediate_fixture";
+const PARENT_WAIT_CLIENT: &str = "windows_frontend_acceptance::parent_wait_client_fixture";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn root() -> PathBuf {
@@ -213,6 +222,383 @@ fn native_frontend_switches_between_exact_running_hosts() {
         "{}",
         fs::read_to_string(root.join("switch-fixture.log")).unwrap()
     );
+}
+
+#[test]
+fn native_parent_wait_requires_live_terminal_authority_and_survives_parent_loss() {
+    let root = TestRuntimeRoot::new("native-parent-wait").unwrap();
+    let raw_job = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+    assert!(!raw_job.is_null(), "{}", std::io::Error::last_os_error());
+    let job = unsafe { OwnedHandle::from_raw_handle(raw_job) };
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    assert_ne!(
+        unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    let log = fs::File::create(root.join("parent-wait-fixture.log")).unwrap();
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", PARENT_WAIT_PARENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, root.path())
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .unwrap();
+    let mut child = OwnedChild(child);
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.0.as_raw_handle()) },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    fs::write(root.join("fixture-admitted"), b"ready").unwrap();
+    let status = await_child(&mut child, Instant::now() + Duration::from_secs(80));
+    assert!(
+        status.success(),
+        "{}",
+        fs::read_to_string(root.join("parent-wait-fixture.log")).unwrap()
+    );
+}
+
+#[test]
+#[ignore = "reexecuted with a native host and real ConPTY parent clients"]
+fn parent_wait_parent_fixture() {
+    let root = root();
+    let deadline = Instant::now() + TIMEOUT;
+    while !root.join("fixture-admitted").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "fixture was not admitted to its job"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        Some(root.join("config").into())
+    );
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/config.yaml"), "lsp:\n  enable: false\n").unwrap();
+    let project = root.join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("note.txt"), "HOST_STILL_LIVE\n").unwrap();
+    fs::write(project.join("wait.txt"), "PARENT_WAIT_TARGET\n").unwrap();
+    fs::write(project.join("loss.txt"), "PARENT_LOSS_TARGET\n").unwrap();
+
+    let host_log = fs::File::create(root.join("parent-wait-host.log")).unwrap();
+    let host = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", HOST, "--ignored", "--nocapture"])
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .current_dir(&project)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(host_log.try_clone().unwrap())
+        .stderr(host_log)
+        .spawn()
+        .unwrap();
+    let mut host = OwnedChild(host);
+    let published = Instant::now() + TIMEOUT;
+    while !ready_record(&root).exists() {
+        assert!(
+            host.0.try_wait().unwrap().is_none() && Instant::now() < published,
+            "parent-wait host did not publish: {}",
+            fs::read_to_string(root.join("parent-wait-host.log")).unwrap()
+        );
+        thread::sleep(Duration::from_millis(15));
+    }
+
+    let wait_for = |path: &Path, label: &str| {
+        let deadline = Instant::now() + TIMEOUT;
+        while !path.exists() {
+            assert!(Instant::now() < deadline, "timed out waiting for {label}");
+            thread::sleep(Duration::from_millis(15));
+        }
+    };
+    let mut frontend = Console::spawn(&project, PARENT_WAIT_FRONTEND, 100);
+    frontend.until_screen("HOST_STILL_LIVE");
+    frontend.open_terminal_fixture(PARENT_WAIT_LAUNCHER);
+    frontend.until_screen("PARENT_WAIT_TARGET");
+    frontend.edit_and_finish_parent_wait("EDITED ");
+    wait_for(
+        &root.join("valid-complete"),
+        "successful ParentWait completion",
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("wait.txt")).unwrap(),
+        "EDITED PARENT_WAIT_TARGET\n"
+    );
+
+    fs::write(root.join("run-wrong-capability"), b"1").unwrap();
+    wait_for(
+        &root.join("wrong-capability-rejected"),
+        "same-job wrong-capability refusal",
+    );
+    let marker = fs::read_to_string(root.join("parent-context")).unwrap();
+    let outside_log = fs::File::create(root.join("outside-peer.log")).unwrap();
+    let outside = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", PARENT_WAIT_CLIENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, &root)
+        .env("RUNYTE_PARENT_WAIT_CASE", "outside-job")
+        .env("RUNYTE_PARENT_WAIT_PATH", project.join("wait.txt"))
+        .env("RUNYTE_PARENT_CONTEXT", marker)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(outside_log.try_clone().unwrap())
+        .stderr(outside_log)
+        .spawn()
+        .unwrap();
+    let mut outside = OwnedChild(outside);
+    let status = await_child(&mut outside, Instant::now() + TIMEOUT);
+    assert!(
+        status.success(),
+        "{}",
+        fs::read_to_string(root.join("outside-peer.log")).unwrap()
+    );
+    wait_for(
+        &root.join("outside-job-rejected"),
+        "copied-marker outside-job refusal",
+    );
+    fs::write(root.join("release-parent-launcher"), b"1").unwrap();
+    wait_for(
+        &root.join("parent-launcher-complete"),
+        "first terminal launcher exit",
+    );
+    frontend.until_screen("NOR");
+
+    let unrelated_path = project.join("unrelated.txt");
+    fs::write(&unrelated_path, "UNRELATED_WAIT\n").unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (mut unrelated, unrelated_token) = runtime.block_on(async {
+        let mut client = connect_control(&read_metadata(&root)).await.unwrap();
+        client
+            .send(&ClientRequest::CreateWait {
+                paths: vec![runyte::protocol::encode_path(&unrelated_path)],
+            })
+            .await
+            .unwrap();
+        let token = match client.recv().await.unwrap().unwrap() {
+            ProtocolHostResponse::WaitCreated { token, .. } => token,
+            response => panic!("unexpected unrelated-wait response: {response:?}"),
+        };
+        (client, token)
+    });
+
+    frontend.open_terminal_fixture(PARENT_LOSS_LAUNCHER);
+    frontend.until_screen("PARENT_LOSS_TARGET");
+    fs::write(root.join("release-loss-intermediate"), b"1").unwrap();
+    wait_for(
+        &root.join("parent-loss-cancelled"),
+        "natural-parent-loss cancellation",
+    );
+    frontend.send(":q");
+    frontend.until_screen(":q");
+    frontend.send("\r");
+    frontend.until_screen("INS");
+    runtime.block_on(async {
+        unrelated
+            .send(&ClientRequest::WaitStatus {
+                token: unrelated_token,
+            })
+            .await
+            .unwrap();
+        loop {
+            match unrelated.recv().await.unwrap().unwrap() {
+                ProtocolHostResponse::WaitState {
+                    token,
+                    status: WaitStatus::Pending { .. },
+                    ..
+                } if token == unrelated_token => break,
+                ProtocolHostResponse::WaitState { .. } => {}
+                response => panic!("unexpected unrelated-wait status: {response:?}"),
+            }
+        }
+        unrelated
+            .send(&ClientRequest::CancelWait {
+                token: unrelated_token,
+            })
+            .await
+            .unwrap();
+    });
+    fs::write(root.join("release-loss-leader"), b"1").unwrap();
+    wait_for(
+        &root.join("parent-loss-launcher-complete"),
+        "persistent loss terminal launcher exit",
+    );
+    frontend.until_screen("NOR");
+    frontend.send(":open note.txt\r");
+    frontend.until_screen("HOST_STILL_LIVE");
+    frontend.insert_and_write("AFTER_PARENT_LOSS ");
+    frontend.detach();
+    frontend.exit("PARENT_WAIT_FRONTEND_DONE");
+    assert_eq!(
+        fs::read_to_string(project.join("note.txt")).unwrap(),
+        "AFTER_PARENT_LOSS HOST_STILL_LIVE\n"
+    );
+    host.0.kill().unwrap();
+}
+
+#[test]
+#[ignore = "reexecuted inside ConPTY for native ParentWait acceptance"]
+fn parent_wait_frontend_fixture() {
+    run_frontend(None, "PARENT_WAIT_FRONTEND_DONE", false, false);
+}
+
+fn spawn_parent_wait_client(case: &str, path: &Path) -> Child {
+    let root = root();
+    Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", PARENT_WAIT_CLIENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, &root)
+        .env("RUNYTE_PARENT_WAIT_CASE", case)
+        .env("RUNYTE_PARENT_WAIT_PATH", path)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .spawn()
+        .unwrap()
+}
+
+fn await_fixture_marker(path: &Path, label: &str) {
+    let deadline = Instant::now() + TIMEOUT;
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "timed out waiting for {label}");
+        thread::sleep(Duration::from_millis(15));
+    }
+}
+
+#[test]
+#[ignore = "integrated-terminal launcher retained while native ParentWait completes"]
+fn parent_wait_launcher_fixture() {
+    let root = root();
+    let marker = std::env::var_os("RUNYTE_PARENT_CONTEXT").unwrap();
+    fs::write(
+        root.join("parent-context"),
+        marker.to_string_lossy().as_bytes(),
+    )
+    .unwrap();
+    let path = root.join("project/wait.txt");
+    let mut valid = spawn_parent_wait_client("valid", &path);
+    assert!(valid.wait().unwrap().success());
+    await_fixture_marker(
+        &root.join("run-wrong-capability"),
+        "wrong-capability trigger",
+    );
+    let mut wrong = spawn_parent_wait_client("wrong-capability", &path);
+    assert!(wrong.wait().unwrap().success());
+    await_fixture_marker(
+        &root.join("release-parent-launcher"),
+        "parent launcher release",
+    );
+    fs::write(root.join("parent-launcher-complete"), b"1").unwrap();
+}
+
+#[test]
+#[ignore = "persistent ConPTY leader retains the terminal while an intermediate parent exits"]
+fn parent_loss_launcher_fixture() {
+    let root = root();
+    let mut intermediate = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            PARENT_LOSS_INTERMEDIATE,
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(ROOT_ENV, &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .spawn()
+        .unwrap();
+    assert!(intermediate.wait().unwrap().success());
+    await_fixture_marker(&root.join("release-loss-leader"), "loss leader release");
+    fs::write(root.join("parent-loss-launcher-complete"), b"1").unwrap();
+}
+
+#[test]
+#[ignore = "disposable natural parent of the native ParentWait client"]
+fn parent_loss_intermediate_fixture() {
+    let root = root();
+    let child = spawn_parent_wait_client("parent-loss", &root.join("project/loss.txt"));
+    await_fixture_marker(
+        &root.join("release-loss-intermediate"),
+        "loss intermediate release",
+    );
+    // Dropping Child closes only this retained process handle. The waiter
+    // remains in the persistent terminal leader's job and observes this
+    // intermediate process exiting through its own retained parent handle.
+    drop(child);
+}
+
+#[test]
+#[ignore = "native ParentWait client spawned by an acceptance launcher"]
+fn parent_wait_client_fixture() {
+    let root = root();
+    let case = std::env::var("RUNYTE_PARENT_WAIT_CASE").unwrap();
+    let path = PathBuf::from(std::env::var_os("RUNYTE_PARENT_WAIT_PATH").unwrap());
+    let mut context = runyte::workspace::parent::ParentContext::from_environment()
+        .unwrap()
+        .expect("integrated terminal supplied a parent context");
+    if case == "wrong-capability" {
+        let replacement = if context.capability.starts_with('0') {
+            "1"
+        } else {
+            "0"
+        };
+        context.capability.replace_range(..1, replacement);
+    }
+    fs::write(root.join(format!("{case}-started")), b"1").unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime.block_on(async {
+        let parent = ForegroundParentSupervisor::capture().unwrap();
+        runyte::workspace::parent::run_wait(context, vec![path], &parent).await
+    });
+    match case.as_str() {
+        "valid" => {
+            result.unwrap();
+            fs::write(root.join("valid-complete"), b"1").unwrap();
+        }
+        "parent-loss" => {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(
+                error.contains("cancel"),
+                "unexpected parent-loss result: {error}"
+            );
+            fs::write(root.join("parent-loss-cancelled"), b"1").unwrap();
+        }
+        "wrong-capability" | "outside-job" => {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(
+                error.contains("stale") || error.contains("not owned"),
+                "unexpected authority refusal: {error}"
+            );
+            fs::write(root.join(format!("{case}-rejected")), b"1").unwrap();
+        }
+        other => panic!("unknown ParentWait fixture case {other}"),
+    }
 }
 
 #[test]
@@ -890,6 +1276,27 @@ impl Console {
 
     fn send(&self, input: &str) {
         assert!(self.child.write(input.as_bytes().to_vec()));
+    }
+
+    fn open_terminal_fixture(&mut self, helper: &str) {
+        let executable = std::env::current_exe().unwrap();
+        let command = format!(
+            ":terminal \"{}\" --exact {helper} --ignored --nocapture\r",
+            executable.display()
+        );
+        self.send(&command);
+    }
+
+    fn edit_and_finish_parent_wait(&mut self, text: &str) {
+        self.send("i");
+        self.until_screen("INS");
+        self.send(text);
+        self.until_screen(text.trim_end());
+        self.send("\x1b");
+        self.until_screen("NOR");
+        self.send(":wq");
+        self.until_screen(":wq");
+        self.send("\r");
     }
 
     fn insert_and_write(&mut self, text: &str) {

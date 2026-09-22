@@ -17,7 +17,7 @@ mod host;
 mod identity;
 #[cfg(unix)]
 pub mod lifecycle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod parent;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))] // Catalog wiring follows native history acceptance.

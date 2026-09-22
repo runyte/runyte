@@ -8,7 +8,7 @@ use futures_util::stream::FuturesUnordered;
 use runyte::{
     app::FrameGeometry,
     key_hints::KeyHintState,
-    protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken},
+    protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken, decode_path},
     workspace::{
         HostCommand, HostInputOutcome, WorkspaceHost, windows_endpoint::EndpointMetadata,
         windows_pipe::MAX_CONNECTIONS, windows_process_identity::PinnedProcess,
@@ -48,11 +48,14 @@ pub(super) struct ConnectedPeer {
 }
 
 struct Peer {
-    _proof: Arc<PinnedProcess>,
+    proof: Arc<PinnedProcess>,
     responses: ResponseSender,
     waits: HashSet<WaitToken>,
+    parent_waits: HashSet<WaitToken>,
     subscribed_waits: HashSet<WaitToken>,
+    attachment_generation: Option<u64>,
     geometry: Option<FrameGeometry>,
+    pending_ready_frames: Option<(runyte::protocol::FrameId, runyte::protocol::FrameId)>,
     renaming: bool,
     deferred: Option<Incoming>,
 }
@@ -60,6 +63,7 @@ struct Peer {
 pub(super) struct Clients {
     peers: HashMap<u64, Peer>,
     active: Option<u64>,
+    active_ready: Option<u64>,
     hints: KeyHintState,
     publish_requested: bool,
     last_detached: Instant,
@@ -73,6 +77,7 @@ impl Default for Clients {
         Self {
             peers: HashMap::new(),
             active: None,
+            active_ready: None,
             hints: KeyHintState::default(),
             publish_requested: false,
             last_detached: Instant::now(),
@@ -92,6 +97,7 @@ impl Clients {
             interactive,
             geometry,
         } = connection;
+        let attachment_generation = (!interactive).then_some(self.active).flatten();
         if (interactive && self.active.is_some()) || self.peers.len() >= MAX_CONNECTIONS {
             let _ = responses.try_send(HostResponse::Refused {
                 message: if interactive {
@@ -128,17 +134,21 @@ impl Clients {
             self.peers.insert(
                 id,
                 Peer {
-                    _proof: proof,
+                    proof,
                     responses,
                     waits: HashSet::new(),
+                    parent_waits: HashSet::new(),
                     subscribed_waits: HashSet::new(),
+                    attachment_generation,
                     geometry: interactive.then_some(geometry),
+                    pending_ready_frames: None,
                     renaming: false,
                     deferred: None,
                 },
             );
             if interactive {
                 self.active = Some(id);
+                self.active_ready = None;
                 // A private wire client cannot grant shell handoff until the
                 // public native frontend owns and validates that operation.
                 host.app_mut().set_quit_directory_handoff(false);
@@ -377,17 +387,30 @@ impl Clients {
         };
         let geometry = peer.geometry.expect("interactive geometry retained");
         host.mark_visible_terminals_viewed();
-        let frame = host
+        let frame: runyte::protocol::HostFrame = host
             .prepare_frame_with_hints(geometry, Some(&self.hints))
             .into();
+        let frame_id = frame.id;
         // Complete frames can replace an unseen visual response without a
         // delta base. The transport keeps exactly one coalesced visual slot.
-        if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
-            peer.responses.try_send(HostResponse::Frame {
-                frame: Box::new(frame),
-            })
-        {
-            self.disconnected(host, id);
+        let Some(peer) = self.peers.get_mut(&id) else {
+            return;
+        };
+        match peer.responses.try_send(HostResponse::Frame {
+            frame: Box::new(frame),
+        }) {
+            Ok(()) => {
+                if self.active_ready != Some(id) {
+                    peer.pending_ready_frames = Some(match peer.pending_ready_frames {
+                        Some((first, _)) => (first, frame_id),
+                        None => (frame_id, frame_id),
+                    });
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                self.disconnected(host, id);
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
         }
     }
 
@@ -397,7 +420,9 @@ impl Clients {
             self.switch_action = None;
         }
         if self.active == Some(id) {
+            self.cancel_parent_waits_for_generation(host, id);
             self.active = None;
+            self.active_ready = None;
             self.hints.clear();
             self.publish_requested = false;
             self.last_detached = Instant::now();
@@ -409,6 +434,19 @@ impl Clients {
             for token in peer.waits {
                 let _ =
                     host.cancel_wait(token.into(), "wait client disconnected before completion");
+            }
+        }
+    }
+
+    fn cancel_parent_waits_for_generation(&mut self, host: &mut WorkspaceHost, generation: u64) {
+        for peer in self.peers.values_mut().filter(|peer| {
+            peer.attachment_generation == Some(generation) && !peer.parent_waits.is_empty()
+        }) {
+            for token in peer.parent_waits.drain() {
+                let _ = host.cancel_wait(
+                    token.into(),
+                    "owning native TUI attachment ended before parent editing completed",
+                );
             }
         }
     }
@@ -502,6 +540,7 @@ impl Clients {
                     return false;
                 }
                 ClientRequest::Input { .. }
+                | ClientRequest::FrameDrawn { .. }
                 | ClientRequest::Pointer { .. }
                 | ClientRequest::Invoke { .. }
                 | ClientRequest::Notify { .. }
@@ -510,6 +549,17 @@ impl Clients {
             }
         }
         match request {
+            ClientRequest::FrameDrawn { frame } if interactive => {
+                let peer = self.peers.get_mut(&id).expect("active peer retained");
+                if peer
+                    .pending_ready_frames
+                    .is_some_and(|(first, last)| frame >= first && frame <= last)
+                {
+                    peer.pending_ready_frames = None;
+                    self.active_ready = Some(id);
+                }
+                false
+            }
             ClientRequest::Input {
                 event,
                 repeated,
@@ -643,7 +693,105 @@ impl Clients {
                 }
                 false
             }
+            ClientRequest::ParentWait {
+                terminal,
+                capability,
+                paths,
+            } if !interactive => {
+                let terminal = runyte::terminal::TerminalId::from_raw(terminal);
+                let authority = self.peers.get(&id).and_then(|peer| {
+                    peer.attachment_generation
+                        .filter(|generation| {
+                            self.active == Some(*generation)
+                                && self.active_ready == Some(*generation)
+                                && self.pending_switch.is_none()
+                        })
+                        .and_then(|generation| {
+                            self.peers.get(&generation).map(|active| {
+                                (
+                                    generation,
+                                    Arc::clone(&peer.proof),
+                                    Arc::clone(&active.proof),
+                                )
+                            })
+                        })
+                });
+                let result = match authority {
+                    Some((_generation, proof, active_proof)) => active_proof
+                        .is_alive()
+                        .map_err(anyhow::Error::from)
+                        .and_then(|valid| {
+                            anyhow::ensure!(
+                                valid,
+                                "parent editing context is stale or detached; return to the owning persistent session"
+                            );
+                            host.app()
+                                .terminals
+                                .validates_parent(
+                                    terminal,
+                                    &capability,
+                                    Some(proof.as_ref()),
+                                )
+                                .map_err(anyhow::Error::from)
+                        })
+                        .and_then(|valid| {
+                            anyhow::ensure!(
+                                valid,
+                                "parent editing context is stale, detached, or not owned by this terminal"
+                            );
+                            paths
+                                .into_iter()
+                                .map(decode_path)
+                                .collect::<io::Result<Vec<_>>>()
+                                .map_err(anyhow::Error::from)
+                        })
+                        .and_then(|paths| host.create_parent_wait_request(terminal, paths)),
+                    None => Err(anyhow::anyhow!(
+                        "parent editing context is stale or detached; return to the owning persistent session"
+                    )),
+                };
+                let response = result.map_or_else(
+                    |error| HostResponse::Error {
+                        message: error.to_string(),
+                    },
+                    |(token, buffers)| {
+                        let token: WaitToken = token.into();
+                        let peer = self.peers.get_mut(&id).expect("admitted parent peer");
+                        peer.waits.insert(token);
+                        peer.parent_waits.insert(token);
+                        peer.subscribed_waits.insert(token);
+                        HostResponse::WaitCreated {
+                            token,
+                            buffers: buffers.into_iter().map(Into::into).collect(),
+                            interactive_attached: true,
+                        }
+                    },
+                );
+                self.publish_requested |= matches!(response, HostResponse::WaitCreated { .. });
+                self.send(host, id, response);
+                false
+            }
             request if is_workspace_request(&request) => {
+                let mutation = match &request {
+                    ClientRequest::CompleteWaitBuffer { token, .. }
+                    | ClientRequest::CancelWait { token } => Some(*token),
+                    _ => None,
+                };
+                if mutation.is_some_and(|token| {
+                    !self
+                        .peers
+                        .get(&id)
+                        .is_some_and(|peer| peer.waits.contains(&token))
+                }) {
+                    self.send(
+                        host,
+                        id,
+                        HostResponse::Error {
+                            message: "wait token is not owned by this native connection".to_owned(),
+                        },
+                    );
+                    return false;
+                }
                 let reply = handle_workspace_request(host, request, self.attached(), interactive)
                     .expect("semantic request classified");
                 if let HostResponse::WaitCreated { token, .. } = &reply.response {
@@ -705,7 +853,9 @@ impl Clients {
         host.reconcile_wait_requests();
         let mut completions = Vec::new();
         for (&id, peer) in &mut self.peers {
-            peer.waits.retain(|token| {
+            peer.waits
+                .retain(|token| host.wait_status((*token).into()).is_some());
+            peer.parent_waits.retain(|token| {
                 matches!(
                     host.wait_status((*token).into()),
                     Some(runyte::workspace::WaitStatus::Pending { .. })
@@ -738,6 +888,7 @@ impl Clients {
         self.renames.clear();
         self.peers.clear();
         self.active = None;
+        self.active_ready = None;
         self.hints.clear();
         self.pending_switch = None;
         self.switch_action = None;

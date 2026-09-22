@@ -2389,7 +2389,7 @@ pub struct TerminalSessions {
     events: TerminalEventSender,
     receiver: Option<TerminalEvents>,
     default_colors: DefaultColors,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     parent_launch: Option<crate::workspace::parent::ParentLaunch>,
 }
 
@@ -2435,7 +2435,7 @@ impl TerminalSessions {
             events: TerminalEventSender(Arc::clone(&shared)),
             receiver: Some(TerminalEvents(shared)),
             default_colors: DefaultColors::default(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             parent_launch: None,
         }
     }
@@ -2540,7 +2540,7 @@ impl TerminalSessions {
             .max()
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn set_parent_launch(&mut self, context: crate::workspace::parent::ParentLaunch) {
         self.parent_launch = Some(context);
     }
@@ -2563,6 +2563,32 @@ impl TerminalSessions {
                 })
     }
 
+    #[cfg(windows)]
+    pub fn validates_parent(
+        &self,
+        id: TerminalId,
+        capability: &str,
+        peer: Option<&crate::workspace::windows_process_identity::PinnedProcess>,
+    ) -> std::io::Result<bool> {
+        if !self
+            .parent_launch
+            .as_ref()
+            .is_some_and(|launch| launch.validates(id, capability))
+        {
+            return Ok(false);
+        }
+        let Some(peer) = peer else {
+            return Ok(false);
+        };
+        let Some(terminal) = self.get(id).filter(|terminal| terminal.live()) else {
+            return Ok(false);
+        };
+        let Some(pty) = terminal.pty.as_ref() else {
+            return Ok(false);
+        };
+        pty.contains_live_peer(peer)
+    }
+
     /// Starts a child on a new pseudoterminal.
     #[cfg(any(unix, windows))]
     pub fn open(
@@ -2577,10 +2603,8 @@ impl TerminalSessions {
         events.register(id);
         let columns = columns.max(1);
         let rows = rows.max(1);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let parent_context = self.parent_launch.as_ref().map(|launch| launch.context(id));
-        #[cfg(windows)]
-        let parent_context: Option<String> = None;
         let child = match pty::Pty::spawn_in_context(
             &request.program,
             &request.arguments,

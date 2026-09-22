@@ -175,9 +175,10 @@ use crate::workspace::{
 /// Version 53 binds context review input to the last frame actually rendered
 /// by its physical frontend; prepared or dropped pages cannot authorize input.
 // Version 56 carries typed workspace-switch targets, fixed native publication
-// keys and the private two-phase native switch handoff. This private
-// bundled frontend version is independent of the stable runyte-1 plugin API.
-pub const VERSION: u32 = 56;
+// keys and the private two-phase native switch handoff. Version 57 adds the
+// native frontend's drawn-frame readiness acknowledgment. This private bundled
+// frontend version is independent of the stable runyte-1 plugin API.
+pub const VERSION: u32 = 57;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -450,6 +451,13 @@ pub enum ClientRequest {
         repeated: bool,
         /// Last frame successfully rendered by the physical frontend.
         presented_frame: Option<FrameId>,
+    },
+    /// Confirms that the bundled native frontend drew this complete
+    /// frame. This establishes attachment readiness only; it is never physical
+    /// input or approval for an editor action.
+    #[cfg(windows)]
+    FrameDrawn {
+        frame: FrameId,
     },
     Invoke {
         command: CommandRequest,
@@ -1414,7 +1422,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 56);
+        assert_eq!(VERSION, 57);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

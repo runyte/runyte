@@ -45,6 +45,7 @@ struct Attachment {
     current: HostFrame,
     exit: NativeHostExit,
     identity: WorkspaceSelection,
+    initial_frame_acknowledged: bool,
 }
 
 enum AttachmentOutcome {
@@ -152,7 +153,11 @@ async fn run_switching_session(
     depth: TerminalColorDepth,
     geometry: runyte::app::FrameGeometry,
 ) -> Result<()> {
-    let mut attachment = connect_attachment(metadata, geometry).await?;
+    let startup_deadline = tokio::time::Instant::now() + INITIAL_FRAME_BUDGET;
+    let mut attachment =
+        tokio::time::timeout_at(startup_deadline, connect_attachment(metadata, geometry))
+            .await
+            .context("native workspace attachment timed out before its first frame")??;
     terminal.resize(Rect::new(
         0,
         0,
@@ -160,6 +165,9 @@ async fn run_switching_session(
         geometry.screen.height,
     ))?;
     draw(terminal, &attachment.current, depth)?;
+    tokio::time::timeout_at(startup_deadline, acknowledge_initial_frame(&mut attachment))
+        .await
+        .context("native workspace attachment timed out acknowledging its first frame")??;
     let mut loop_state = FrontendLoop::new(geometry)?;
 
     loop {
@@ -185,7 +193,7 @@ async fn run_switching_session(
                     }
                     result = connect_attachment(&destination_metadata, loop_state.geometry) => result,
                 };
-                let destination = match destination {
+                let mut destination = match destination {
                     Ok(destination) => destination,
                     Err(error) => {
                         recover_switch_failure(&mut attachment, receipt, &error, switch_deadline)
@@ -205,6 +213,19 @@ async fn run_switching_session(
                 // is released. A failed commit never silently presents it as
                 // the current attachment.
                 draw(terminal, &destination.current, depth)?;
+                tokio::select! {
+                    biased;
+                    _ = attachment.exit.wait() => {
+                        drain_after_host_exit(&mut attachment.client).await?;
+                        bail!("source workspace host exited during native switch")
+                    }
+                    result = tokio::time::timeout_at(
+                        switch_deadline,
+                        acknowledge_initial_frame(&mut destination),
+                    ) => {
+                        result.context("native workspace switch timed out acknowledging its first frame")??;
+                    }
+                }
                 commit_switch(&mut attachment, receipt, switch_deadline).await?;
                 attachment = destination;
                 loop_state.repeats = KeyRepeatDetector::default();
@@ -259,7 +280,24 @@ async fn connect_attachment(
         current,
         exit,
         identity,
+        initial_frame_acknowledged: false,
     })
+}
+
+async fn acknowledge_initial_frame(attachment: &mut Attachment) -> Result<()> {
+    if attachment.initial_frame_acknowledged {
+        return Ok(());
+    }
+    let request = ClientRequest::FrameDrawn {
+        frame: attachment.current.id.into(),
+    };
+    if send_or_exit(&mut attachment.client, &attachment.exit, &request).await?
+        == WireOutcome::HostEnded
+    {
+        bail!("native workspace host exited before initial-frame acknowledgement")
+    }
+    attachment.initial_frame_acknowledged = true;
+    Ok(())
 }
 
 async fn run_attachment(

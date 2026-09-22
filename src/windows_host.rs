@@ -280,6 +280,9 @@ pub(super) async fn run(
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         server = Some(LocalServer::bind_with_names(prepared, names)?);
         let server = server.as_mut().expect("native server constructed");
+        host.app_mut().terminals.set_parent_launch(
+            runyte::workspace::parent::ParentLaunch::new(server.metadata_snapshot())?,
+        );
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         log_info!("host", "internal native persistent session published"; "workspace" => server.metadata_snapshot().id);
         if let Err(error) = startup.write_requested() { host.report_host_error(format!("failed to write startup timing report: {error}")); }
