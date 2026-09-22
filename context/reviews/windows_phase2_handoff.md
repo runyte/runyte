@@ -1,10 +1,11 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5j1 private
-native frontend attachment accepted in `180175d`. The macOS host queue EINTR
-repair is `dad1d86`; the Unix plugin fixture readiness repair is `26f6c4e`.
-The preceding native host attachment is `1e69755` and shared response ordering
-repair is `5d727db`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, typed switch intent and
+exact native target preparation accepted in `8657281` and `ec33c26`. Private
+native frontend attachment is `180175d`. The macOS host queue EINTR repair is
+`dad1d86`; Unix plugin fixture readiness repairs are `26f6c4e`, `333771d` and
+`0adcf38`. The preceding native host attachment is `1e69755` and shared response
+ordering repair is `5d727db`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -391,20 +392,60 @@ workspace suite pass: 3,345 tests, zero failures and 72 ignored entries across
 
 `dad1d86` retries only interrupted macOS `kevent` process-queue observations
 against the retained queue. An injected macOS regression observes EINTR then
-NOTE_EXIT. Independent Astra review found no blockers; native macOS compilation
-and execution remain for CI. `26f6c4e` makes the Unix plugin fixture wait for
-child-emitted, octal-encoded terminal output and the editor's rename status
-within one deadline. Independent Astra review found no remaining issue after
-the portable `\\0ddd` correction. Python is unavailable on this Windows host;
-Unix execution remains for CI. Neither CI repair has a passing post-fix run yet.
+NOTE_EXIT. Independent Astra review found no blockers. The subsequent macOS
+plugin job reached the later Python fixture assertion, validating that host
+repair. `26f6c4e`, `333771d` and `0adcf38` make the Unix plugin fixture wait for
+short child-emitted terminal output and compact rendered rename status within
+one deadline. Two CI runs exposed the command-echo and rendered-space races;
+the final adjacent-quoted shell command is independently reviewed but still
+needs Unix CI execution. Python is unavailable on this Windows host.
 
-## Next package: exact selected switching and waits
+## Accepted package: 4e.5j2 typed switch intent
 
-Propagate typed selected `WorkspaceSelection` through core switch requests,
-session-strip targets and private protocol values. Resolve a complete
-`PublicationKey` from the captured discovery scope; never replace a stale
-selection by project path or PID. Then add exact native target preparation and
-source recovery within the private frontend. A wait client's parent loss
+`8657281` replaces selector plus previous-session flags with explicit
+`WorkspaceSwitchTarget` variants for user selectors, captured
+`WorkspaceSelection` values and previous-session intent. Manager selection,
+numbered and cyclic navigation, destination visits and prepared session-strip
+targets retain publication keys. Colon, explorer, terminal-directory and Git
+worktree paths remain authored selectors. Private protocol version 55 carries
+the target with strict nested decoding and a fixed 32-byte optional publication
+key; Unix rejects a keyed native target before path resolution. Public Windows
+attachment and navigation gates remain closed.
+
+Independent Astra review found no remaining blockers after strict unknown-field
+rejection, the boxed wire payload, the Unix compile correction and the restored
+internal platform check. Same-project strip and cycle activation still require
+the current native attachment identity and belong to the private switching
+loop. The strict wire regression passes locally. The Unix same-project
+propagation and keyed-refusal cases are compiled only on Unix and require CI.
+
+## Accepted package: 4e.5j2b exact native target preparation
+
+`ec33c26` adds a bounded preparation request to the owned native catalog worker.
+It observes again through the worker's frozen scope, current known location and
+hidden-publication choice, selects the complete captured `WorkspaceSelection`,
+and returns exact endpoint metadata with its retained authenticated
+`PinnedProcess`. Project-only, stale, replaced, incompatible and incomplete
+targets refuse without path, name or PID fallback and without host creation.
+Renaming the same publication preserves its key.
+
+Preparation has one three-second admission-to-result deadline, observes service
+shutdown, skips abandoned queued requests and cancels an active health probe
+when its caller leaves. Independent Astra review found no remaining blockers
+after the backpressure and cancellation regressions retained real response
+ownership and exercised in-flight shutdown. All 15 native service tests pass.
+Formatting, all-target Clippy with warnings denied and the full Windows workspace
+suite pass across the combined j2 packages: 3,351 tests, zero failures and 72
+ignored entries across 47 libtest/doc-test groups, plus six native LSP transport
+cases. Unix compilation and coverage require CI after push.
+
+## Next package: private exact switching loop and waits
+
+Add exact source recovery and destination attachment within the private native
+frontend. Preserve current attachment identity by full `WorkspaceSelection`,
+so same-project publications do not collapse during strip, cycle, previous or
+no-op checks. A failed destination may recover only the exact source
+publication; a replacement source must refuse. A wait client's parent loss
 cancels only that client's wait, not the shared host. Complete real-host
 acceptance before opening public attachment, manager visit,
 numbered-session, restart or parent-terminal routing gates.
