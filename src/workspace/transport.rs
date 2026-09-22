@@ -43,7 +43,9 @@ const EVENT_CAPACITY: usize = 64;
 /// of incomplete handshakes from retaining one task and framing buffer each.
 const MAX_CONNECTIONS: usize = 16;
 const HOST_ID_LENGTH: usize = crate::workspace::WORKSPACE_ID_LENGTH;
-pub(crate) const MAX_HOST_NAME_BYTES: usize = 64;
+#[cfg(test)]
+pub(crate) use super::session_name::MAX_HOST_NAME_BYTES;
+pub(super) use super::session_name::validate_host_name;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
 const MAX_STORED_NAME_BYTES: usize = 1024;
 pub(super) const MAX_PERSISTED_PATH_BYTES: usize = 4 * 1024;
@@ -1275,23 +1277,6 @@ fn is_not_found(error: &anyhow::Error) -> bool {
         .chain()
         .filter_map(|cause| cause.downcast_ref::<io::Error>())
         .any(|error| error.kind() == io::ErrorKind::NotFound)
-}
-
-pub(super) fn validate_host_name(name: &str) -> Result<()> {
-    ensure!(!name.is_empty(), "session name cannot be empty");
-    ensure!(
-        name == name.trim(),
-        "session name cannot start or end with whitespace"
-    );
-    ensure!(
-        name.len() <= MAX_HOST_NAME_BYTES,
-        "session name cannot exceed {MAX_HOST_NAME_BYTES} UTF-8 bytes"
-    );
-    ensure!(
-        !name.chars().any(char::is_control),
-        "session name cannot contain control characters"
-    );
-    Ok(())
 }
 
 fn ensure_host_name_available(

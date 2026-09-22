@@ -927,6 +927,30 @@ complete serialized native suite pass: 3,110 tests, zero failures and 54 ignored
 fixture/performance entries across 44 libtest/doc-test groups, plus six native
 transport acceptance cases. Filesystem discovery remains synchronous and must
 run off the editor loop when catalog integration is enabled.
+Cross-platform CI passes at `fba21e4` in
+[run 35637975907](https://github.com/runyte/runyte/actions/runs/35637975907),
+including native Windows and both unchanged Unix coverage gates.
+
+Package 4b1 extracts recent-workspace history and logical name validation from
+the Unix catalog into shared modules. Numbering, explicit names, activity and
+vanished-directory retention keep their existing semantics; the Unix storage
+adapter retains its existing locking and replacement behavior. Native path
+validation checks decoded UTF-16 units, preserving unpaired units while refusing
+odd encodings and actual NUL characters.
+
+The Windows adapter holds a pinned private directory and a stable byte-range
+lock through each bounded read/modify/replace transaction. Lock contention is
+bounded to two seconds; the admitted lock identity is checked before reads and
+writes. History remains an optional regenerable cache, while malformed admitted
+content is reported without erasing it. This does not claim full-ancestry or
+power-loss durability. Fourteen focused native tests pass, including an
+independent compiled-process writer, replacement and hardlink refusal, and
+retained old readers. The pathname-replacement fixture exercises the gap before
+opening the lock: Windows can refuse a directory rename with an open child.
+Independent review accepted the fixture correction and explicit native test
+module path. Formatting, all-target Clippy and the complete serialized native
+suite pass: 3,124 tests, zero failures and 55 ignored fixture/performance entries
+across 44 libtest/doc-test groups, plus six native transport acceptance cases.
 
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,
@@ -964,6 +988,15 @@ compare the newly opened termination handle with the retained authenticated
 pipe-peer handle using
 [CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)
 before acting. Metadata and a matching PID alone never grant that authority.
+
+Control exchanges will live in a native lifecycle adapter, leaving host and
+catalog enablement for their later integration package. Each handshake and
+request/response exchange has a bounded deadline. A stop receipt retains the
+actual authenticated peer and publication identity; completion waits for that
+process to exit rather than treating a temporarily missing ready record as
+proof. Future selector resolution deduplicates repeated registry rows by
+publication identity, preserving ambiguity between distinct hosts for the same
+workspace in isolated namespaces.
 
 Foreground host and attached-wait supervision need retained process handles,
 separate from terminal authorization. Native parent discovery must reject a

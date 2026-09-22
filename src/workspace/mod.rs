@@ -16,7 +16,12 @@ mod identity;
 pub mod lifecycle;
 #[cfg(unix)]
 pub mod parent;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))] // Catalog wiring follows native history acceptance.
+mod recent_history;
 mod service;
+#[cfg(any(unix, windows))]
+mod session_name;
 #[cfg(unix)]
 pub mod transport;
 // Shared bounded framing and native/Unix adapter support.
