@@ -19,6 +19,9 @@ pub mod parent;
 mod service;
 #[cfg(unix)]
 pub mod transport;
+// Prepared for the native adapter without enabling Windows transport yet.
+#[cfg(unix)]
+mod transport_shared;
 #[cfg(windows)]
 pub mod windows_endpoint;
 #[cfg(windows)]

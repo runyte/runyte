@@ -743,6 +743,17 @@ and wall-clock/uptime approximations are unnecessary for this contract.
 
 #### Sub-phase 2.5 package 3 transport contract
 
+Package 3a extracts shared framing, response queues, role admission and visual
+coalescing from the Unix transport without enabling Windows transport. The
+independent review found no behavior changes in those paths. A generic retained
+peer value preserves the existing Unix PID API while allowing the native
+adapter to carry a pinned process proof throughout connection teardown. A new
+in-memory duplex regression covers proof retention after the host consumes the
+connection event, ordinary disconnect and cancellation. Formatting and native
+all-target Clippy pass; Unix compilation, existing transport regressions and
+coverage await CI because this development host has no Unix execution
+environment. The Windows module gate remains unchanged in this extraction.
+
 The transport will share bounded framing, role validation and response queues
 with Unix, while retaining separate native connection ownership. Windows
 reserves endpoint ownership, creates the first private named-pipe instance,
