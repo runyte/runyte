@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Private native endpoint publications. This foundation does not bind pipes,
-//! authenticate peers, enable persistent sessions, or infer stale ownership.
+//! Private native endpoint publications and bounded discovery. Native peer
+//! authentication and exact-record stale retirement remain separate operations;
+//! this foundation does not enable persistent-session frontend availability.
 
 use super::windows_process_identity::ProcessIdentity;
 use crate::{
@@ -16,8 +17,13 @@ use std::{
     sync::Arc,
 };
 
+mod discovery;
 mod locking;
 mod metadata;
+pub use discovery::{
+    AuthenticatedHost, Candidate, CandidateOrigin, Inspection, ProbeFailure, ProbedCandidate,
+    ProbedScan, Removal, Scan, ScanIssue, ScanLimit, StaleEvidence, StaleReason,
+};
 pub use metadata::{
     EndpointMetadata, MAX_METADATA_BYTES, MAX_PERSISTED_PATH_BYTES, PipeAddress, RegistryRecord,
 };

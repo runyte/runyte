@@ -897,7 +897,36 @@ bounded worker teardown, and oversized escaped payloads. Formatting and
 all-target Clippy pass. The complete serialized native suite passes 3,096 tests,
 with zero failures and 54 ignored fixture/performance entries across 44
 libtest/doc-test groups, plus six native transport acceptance cases.
-Cross-platform acceptance follows the checkpoint push.
+Checkpoint `3578705` passes every cross-platform CI job in
+[run 35635577266](https://github.com/runyte/runyte/actions/runs/35635577266).
+
+Package 4a adds bounded discovery observations. Native directory enumeration
+uses a separately reopened handle-relative cursor, preserving the pinned
+directory through pathname replacement and keeping concurrent cursors separate.
+It uses the documented directory information classes on
+[GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex).
+Scans count all non-dot entries (4,096), attempted candidate rows (1,024), and
+cumulative metadata reads (16 MiB), including malformed records and verification
+rereads. Exact configured-key observation reaches a known workspace's namespace
+and inventory records independently of broad scan limits. Scan errors and
+exhausted budgets remain explicit; they never establish absence.
+
+Process presence remains distinct from authentication of the actual pipe peer.
+Native authentication also recognizes an incompatible nonzero protocol without
+sending Hello. Sequential probes have a 250 ms per-candidate and two-second
+shared budget. Stale retirement repeats conclusive process inspection under
+known identity and registry locks, then verifies retained file identity, exact
+bytes, incarnation and public pathname. Hidden-inventory cleanup retires only
+its observed row; configured ready-record cleanup uses independently supplied
+namespace roots. No metadata pathname reconstructs hidden namespace authority.
+
+Independent review has zero findings after correcting the cumulative read
+budget and adding targeted observation. Ten discovery regressions and four
+native enumeration/parser fixtures pass. Formatting, all-target Clippy and the
+complete serialized native suite pass: 3,110 tests, zero failures and 54 ignored
+fixture/performance entries across 44 libtest/doc-test groups, plus six native
+transport acceptance cases. Filesystem discovery remains synchronous and must
+run off the editor loop when catalog integration is enabled.
 
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,
@@ -917,11 +946,34 @@ optional regenerable cache, but malformed admitted history remains an error.
 Live name updates belong to the publication owner and must update its issued
 file identities through replacement and rollback. Namespace registries govern
 name collisions; owner-wide inventory does not join isolated name scopes.
+The native rename package will take an explicit name store under configured
+`state_root/host-names`. Native rename has no expected-target identity operand,
+so preserving a foreign replacement requires verified owned removal followed by
+no-replace installation. This creates a brief missing-record window under the
+publication locks; readers must retain indeterminate status. Stage bounded files
+before mutation and record their handles and temporary/final names in the owner
+before calls that can fail after installation. Publish the stored name, registry
+rows, then ready metadata. Partial failures retain bounded recovery ownership;
+rollback must never overwrite a foreign replacement or discard cleanup handles.
+Keep these primitives separate from existing cache replacement behavior.
+The relevant native contracts are
+[rename flags](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)
+and [POSIX deletion with retained readers](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex).
 Later incompatible-host force termination requires a separate capability:
 compare the newly opened termination handle with the retained authenticated
 pipe-peer handle using
 [CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)
 before acting. Metadata and a matching PID alone never grant that authority.
+
+Foreground host and attached-wait supervision need retained process handles,
+separate from terminal authorization. Native parent discovery must reject a
+parent created after its child before retaining its identity. A process-exit
+watch can use a one-shot registered wait, preserving callback storage and the
+process handle through completed unregistration; it must not add idle polling.
+Internally detached hosts release launcher ownership only after authenticated
+startup. Console Ctrl+C, Ctrl+Break and close notifications use native event
+identities rather than Unix signal numbers. Console-close cleanup remains
+limited by the operating system's termination deadline.
 
 Detached startup retains ownership of its own child until authenticated
 readiness, and cleans up a losing child if another launcher wins. Console

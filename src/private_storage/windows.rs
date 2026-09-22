@@ -5,12 +5,12 @@
 use super::windows_security;
 use crate::windows_fs::{self, Identity};
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     mem::{offset_of, size_of},
     os::windows::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::OpenOptionsExt,
         io::{AsRawHandle, FromRawHandle},
     },
@@ -265,6 +265,58 @@ pub(crate) fn truncate(file: &File) -> io::Result<()> {
 
 #[allow(dead_code)] // Some callers remain disabled until their native integration is ready.
 impl Directory {
+    /// Enumerates names relative to this pinned directory, on a separately
+    /// reopened file object so simultaneous scans never share a native cursor.
+    /// Every non-dot entry counts, including names the caller will ignore.
+    /// The bool reports more entries than the supplied bounded limit.
+    pub(crate) fn entries(&self, limit: usize) -> io::Result<(Vec<OsString>, bool)> {
+        if limit > 4096 {
+            return Err(invalid("directory scan exceeds 4096-entry limit"));
+        }
+        let cursor = reopen(
+            &self.0,
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
+        )?;
+        regular(&cursor, true)?;
+        let mut buffer = vec![0_u64; 8192];
+        let mut names = Vec::new();
+        let mut restart = true;
+        loop {
+            buffer.fill(0);
+            let success = unsafe {
+                GetFileInformationByHandleEx(
+                    cursor.as_raw_handle(),
+                    if restart {
+                        FileIdBothDirectoryRestartInfo
+                    } else {
+                        FileIdBothDirectoryInfo
+                    },
+                    buffer.as_mut_ptr().cast(),
+                    (buffer.len() * size_of::<u64>()) as u32,
+                )
+            };
+            if success == 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error()
+                    == Some(windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES as i32)
+                {
+                    return Ok((names, false));
+                }
+                return Err(error);
+            }
+            restart = false;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    buffer.as_ptr().cast::<u8>(),
+                    buffer.len() * size_of::<u64>(),
+                )
+            };
+            if directory_names(bytes, limit, &mut names)? {
+                return Ok((names, true));
+            }
+        }
+    }
+
     pub fn open(path: &Path, private: bool) -> io::Result<Self> {
         Self::open_inner(path, private, false, true)
     }
@@ -609,6 +661,54 @@ impl Directory {
         Err(io::Error::other(
             "cannot create a unique runtime storage file",
         ))
+    }
+}
+
+fn directory_names(bytes: &[u8], limit: usize, names: &mut Vec<OsString>) -> io::Result<bool> {
+    const HEADER: usize = offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+    let mut offset = 0_usize;
+    loop {
+        let header = bytes
+            .get(
+                offset
+                    ..offset
+                        .checked_add(HEADER)
+                        .ok_or_else(|| invalid("directory entry overflow"))?,
+            )
+            .ok_or_else(|| invalid("truncated directory entry"))?;
+        let field = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap()) as usize;
+        let next = field(offset_of!(FILE_ID_BOTH_DIR_INFO, NextEntryOffset));
+        let length = field(offset_of!(FILE_ID_BOTH_DIR_INFO, FileNameLength));
+        if length == 0 || length % 2 != 0 || length > 510 {
+            return Err(invalid("invalid native directory filename length"));
+        }
+        let end = offset
+            .checked_add(HEADER)
+            .and_then(|value| value.checked_add(length))
+            .ok_or_else(|| invalid("directory filename overflow"))?;
+        let encoded = bytes
+            .get(offset + HEADER..end)
+            .ok_or_else(|| invalid("truncated native directory filename"))?;
+        let units: Vec<_> = encoded
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        let dot = units == [b'.' as u16] || units == [b'.' as u16, b'.' as u16];
+        if !dot {
+            if names.len() == limit {
+                return Ok(true);
+            }
+            names.push(OsString::from_wide(&units));
+        }
+        if next == 0 {
+            return Ok(false);
+        }
+        if next % 8 != 0 || next < HEADER + length {
+            return Err(invalid("invalid native directory entry offset"));
+        }
+        offset = offset
+            .checked_add(next)
+            .ok_or_else(|| invalid("directory entry offset overflow"))?;
     }
 }
 
@@ -996,5 +1096,121 @@ mod tests {
             Directory::open_durable_beneath(root.path(), Path::new("uncreated/../escape")).is_err()
         );
         assert!(!root.join("uncreated").exists());
+    }
+    #[test]
+    fn directory_enumeration_retains_its_pinned_root_after_path_replacement() {
+        let root = TestRuntimeRoot::new("native-enumeration-replacement").unwrap();
+        let path = root.path().join("directory");
+        let directory = Directory::open(&path, true).unwrap();
+        drop(directory.create_new(OsStr::new("original")).unwrap());
+        std::fs::rename(&path, root.path().join("retired")).unwrap();
+        let replacement = Directory::open(&path, true).unwrap();
+        drop(replacement.create_new(OsStr::new("replacement")).unwrap());
+        assert_eq!(
+            directory.entries(8).unwrap(),
+            (vec![OsString::from("original")], false)
+        );
+        assert_eq!(
+            replacement.entries(8).unwrap(),
+            (vec![OsString::from("replacement")], false)
+        );
+    }
+
+    #[test]
+    fn directory_enumeration_has_independent_cursors_and_counts_unrelated_names() {
+        let root = TestRuntimeRoot::new("native-enumeration-cursors").unwrap();
+        let directory =
+            std::sync::Arc::new(Directory::open(&root.path().join("directory"), true).unwrap());
+        let mut expected: Vec<OsString> = (0..700)
+            .map(|index| format!("unrelated-{index:04}").into())
+            .collect();
+        for name in &expected {
+            drop(directory.create_new(name).unwrap());
+        }
+        expected.sort();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let directory = directory.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    let (mut names, truncated) = directory.entries(700).unwrap();
+                    assert!(!truncated);
+                    names.sort();
+                    names
+                })
+            })
+            .collect();
+        start.wait();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), expected);
+        }
+        let (names, truncated) = directory.entries(17).unwrap();
+        assert_eq!(names.len(), 17);
+        assert!(truncated);
+        assert_eq!(directory.entries(0).unwrap(), (Vec::new(), true));
+        assert!(directory.entries(4097).is_err());
+    }
+
+    #[test]
+    fn directory_enumeration_preserves_native_filename_units() {
+        let root = TestRuntimeRoot::new("native-enumeration-units").unwrap();
+        let directory = Directory::open(&root.path().join("directory"), true).unwrap();
+        let mut expected = vec![
+            OsString::from("Unicode-\u{96ea}-\u{1f680}"),
+            OsString::from("x".repeat(255)),
+        ];
+        for name in &expected {
+            drop(directory.create_new(name).unwrap());
+        }
+        // Enumeration must preserve even names that private leaf admission
+        // would refuse. Create that external entry only in the fixture root.
+        let raw_name = OsString::from_wide(&[b'x' as u16, 0xd800, b'y' as u16]);
+        drop(File::create(root.path().join("directory").join(&raw_name)).unwrap());
+        expected.push(raw_name);
+        let (mut names, truncated) = directory.entries(3).unwrap();
+        assert!(!truncated);
+        names.sort();
+        expected.sort();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn directory_record_parser_checks_offsets_lengths_and_limit_before_retaining_names() {
+        const HEADER: usize = offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+        fn record(units: &[u16]) -> Vec<u8> {
+            let mut bytes = vec![0; HEADER + units.len() * 2];
+            let length = offset_of!(FILE_ID_BOTH_DIR_INFO, FileNameLength);
+            bytes[length..length + 4].copy_from_slice(&((units.len() * 2) as u32).to_le_bytes());
+            for (chunk, unit) in bytes[HEADER..].chunks_exact_mut(2).zip(units) {
+                chunk.copy_from_slice(&unit.to_le_bytes());
+            }
+            bytes
+        }
+        let raw_name = [b'x' as u16, 0xd800];
+        let valid = record(&raw_name);
+        let mut names = Vec::new();
+        assert!(!directory_names(&valid, 1, &mut names).unwrap());
+        assert_eq!(names, vec![OsString::from_wide(&raw_name)]);
+        assert!(directory_names(&valid, 0, &mut Vec::new()).unwrap());
+        for dot in [vec![b'.' as u16], vec![b'.' as u16; 2]] {
+            assert!(!directory_names(&record(&dot), 0, &mut Vec::new()).unwrap());
+        }
+        for truncated in [&valid[..HEADER - 1], &valid[..valid.len() - 1]] {
+            assert!(directory_names(truncated, 2, &mut Vec::new()).is_err());
+        }
+        let length = offset_of!(FILE_ID_BOTH_DIR_INFO, FileNameLength);
+        for bad_length in [0_u32, 3, 512, u32::MAX] {
+            let mut malformed = valid.clone();
+            malformed[length..length + 4].copy_from_slice(&bad_length.to_le_bytes());
+            assert!(directory_names(&malformed, 2, &mut Vec::new()).is_err());
+        }
+        for bad_offset in [8_u32, (HEADER + raw_name.len() * 2) as u32 | 1, 65_536] {
+            let mut malformed = valid.clone();
+            let offset = offset_of!(FILE_ID_BOTH_DIR_INFO, NextEntryOffset);
+            malformed[offset..offset + 4].copy_from_slice(&bad_offset.to_le_bytes());
+            assert!(directory_names(&malformed, 2, &mut Vec::new()).is_err());
+        }
     }
 }
