@@ -54,10 +54,14 @@ fn shell() -> io::Result<PathBuf> {
 }
 
 fn command(text: &str, directory: &Path) -> Result<Command> {
+    command_with_bootstrap(text, directory, BOOTSTRAP)
+}
+
+fn command_with_bootstrap(text: &str, directory: &Path, bootstrap: &str) -> Result<Command> {
     ensure!(text.len() <= 16 * 1024, "pipe command exceeds 16 KiB");
     ensure!(!text.contains('\0'), "pipe command contains NUL");
     let encoded = STANDARD.encode(
-        BOOTSTRAP
+        bootstrap
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>(),
@@ -132,15 +136,21 @@ async fn invoke(
     deadline: Instant,
     limit: usize,
 ) -> Result<Vec<u8>> {
+    #[cfg(test)]
+    let mut trace = tests::InvocationTrace::new(command);
     ensure!(!cancel.load(Ordering::Acquire), "pipe cancelled");
     ensure!(Instant::now() < deadline, "pipe timed out");
     let (stdin, child_stdin) = crate::windows_process::overlapped::pipe(false)?;
     let (mut stdout, child_stdout) = crate::windows_process::overlapped::pipe(true)?;
     let (mut stderr, child_stderr) = crate::windows_process::overlapped::pipe(true)?;
+    #[cfg(test)]
+    trace.pipes_ready();
     let mut child = crate::windows_process::spawn_with_stdio(
         command,
         [child_stdin, child_stdout, child_stderr],
     )?;
+    #[cfg(test)]
+    trace.spawned();
     let mut stdin = Some(stdin);
     let mut errors = Vec::new();
     let mut truncated = false;
@@ -153,11 +163,15 @@ async fn invoke(
         let mut out_buffer = [0u8; 8192];
         let mut err_buffer = [0u8; 8192];
         loop {
+            #[cfg(test)]
+            trace.progress(written, input.len(), out_done, err_done);
             ensure!(!cancel.load(Ordering::Acquire), "pipe cancelled");
             ensure!(Instant::now() < deadline, "pipe timed out");
             if exited.is_none() {
                 exited = child.try_wait()?; // Also terminates inherited-pipe descendants.
             }
+            #[cfg(test)]
+            { trace.exit = exited.map(|status| status.code()); }
             if written == input.len() || exited.is_some() { stdin = None; }
             if let Some(status) = exited && out_done && err_done {
                 ensure!(status.success(), "pipe exited with {status}");
@@ -174,12 +188,16 @@ async fn invoke(
                 }
                 result = read(&mut stdout, &mut out_buffer), if !out_done => {
                     let n = result?;
+                    #[cfg(test)]
+                    { trace.stdout_bytes = trace.stdout_bytes.saturating_add(n); }
                     out_done = n == 0;
                     ensure!(n <= limit.saturating_sub(output.len()), "pipe stdout exceeds the 8 MiB job limit");
                     output.extend_from_slice(&out_buffer[..n]);
                 }
                 result = read(&mut stderr, &mut err_buffer), if !err_done => {
                     let n = result?;
+                    #[cfg(test)]
+                    { trace.stderr_bytes = trace.stderr_bytes.saturating_add(n); }
                     err_done = n == 0;
                     let take = n.min(STDERR_BYTES.saturating_sub(errors.len()));
                     errors.extend_from_slice(&err_buffer[..take]);
@@ -193,6 +211,8 @@ async fn invoke(
     // handles in this worker. No runtime shutdown depends on synchronous I/O.
     let _ = child.kill();
     result.map_err(|error: anyhow::Error| {
+        #[cfg(test)]
+        let error = trace.annotate(error);
         if errors.is_empty() {
             error
         } else {

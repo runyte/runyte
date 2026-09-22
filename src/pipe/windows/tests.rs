@@ -13,12 +13,195 @@ use windows_sys::Win32::{
     System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
 };
 
+const TRACE_ENV: &str = "RUNYTE_INTERNAL_FILTER_TRACE";
+
+pub(super) struct InvocationTrace {
+    started: Instant,
+    pipes_ms: Option<u128>,
+    spawn_ms: Option<u128>,
+    marker: Option<PathBuf>,
+    marker_reset: bool,
+    stdin_written: usize,
+    stdin_length: usize,
+    pub(super) stdout_bytes: usize,
+    pub(super) stderr_bytes: usize,
+    stdout_eof: bool,
+    stderr_eof: bool,
+    pub(super) exit: Option<Option<i32>>,
+}
+
+impl InvocationTrace {
+    pub(super) fn new(command: &Command) -> Self {
+        let started = Instant::now();
+        let marker = command.get_envs().find_map(|(key, value)| {
+            (key == TRACE_ENV)
+                .then_some(value)
+                .flatten()
+                .map(PathBuf::from)
+        });
+        // Each configured command owns a fresh fixture marker. Clear it before
+        // every selection so an earlier selection cannot masquerade as startup.
+        let marker_reset = marker
+            .as_ref()
+            .is_none_or(|path| match fs::remove_file(path) {
+                Ok(()) => true,
+                Err(error) => error.kind() == io::ErrorKind::NotFound,
+            });
+        Self {
+            started,
+            pipes_ms: None,
+            spawn_ms: None,
+            marker,
+            marker_reset,
+            stdin_written: 0,
+            stdin_length: 0,
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            stdout_eof: false,
+            stderr_eof: false,
+            exit: None,
+        }
+    }
+
+    pub(super) fn pipes_ready(&mut self) {
+        self.pipes_ms = Some(self.started.elapsed().as_millis());
+    }
+
+    pub(super) fn spawned(&mut self) {
+        self.spawn_ms = Some(self.started.elapsed().as_millis());
+    }
+
+    pub(super) fn progress(&mut self, written: usize, length: usize, out_eof: bool, err_eof: bool) {
+        self.stdin_written = written;
+        self.stdin_length = length;
+        self.stdout_eof = out_eof;
+        self.stderr_eof = err_eof;
+    }
+
+    pub(super) fn describe(&self) -> String {
+        let marker = if !self.marker_reset {
+            "reset-failed"
+        } else if let Some(path) = &self.marker {
+            let mut bytes = Vec::new();
+            match fs::File::open(path).and_then(|file| file.take(32).read_to_end(&mut bytes)) {
+                Ok(_) => match bytes.as_slice() {
+                    b"entered" => "entered",
+                    b"ready" => "ready",
+                    b"returned" => "returned",
+                    b"caught" => "caught",
+                    _ => "invalid",
+                },
+                Err(error) if error.kind() == io::ErrorKind::NotFound => "missing",
+                Err(_) => "unreadable",
+            }
+        } else {
+            "not-instrumented"
+        };
+        format!(
+            "elapsed_ms={} pipes_ready_ms={:?} spawned_ms={:?} bootstrap={} stdin={}/{} stdout={} stderr={} stdout_eof={} stderr_eof={} observed_exit={:?}",
+            self.started.elapsed().as_millis(),
+            self.pipes_ms,
+            self.spawn_ms,
+            marker,
+            self.stdin_written,
+            self.stdin_length,
+            self.stdout_bytes,
+            self.stderr_bytes,
+            self.stdout_eof,
+            self.stderr_eof,
+            self.exit,
+        )
+    }
+
+    pub(super) fn annotate(&self, error: anyhow::Error) -> anyhow::Error {
+        let message = format!("{error}; native pipe trace: {}", self.describe());
+        error.context(message)
+    }
+}
+
+#[test]
+fn failure_diagnostics_bound_markers_and_exclude_command_input_and_paths() {
+    let root = crate::test_support::TestRuntimeRoot::new("native-pipe-trace").unwrap();
+    let mut command = Command::new("not executed");
+    let marker = root.join("private-marker-path");
+    command
+        .arg("private authored command")
+        .env(TRACE_ENV, &marker);
+    fs::write(&marker, b"ready").unwrap();
+    let mut trace = InvocationTrace::new(&command);
+    assert!(!marker.exists(), "an earlier selection's marker remained");
+    assert!(trace.describe().contains("bootstrap=missing"));
+    trace.pipes_ready();
+    trace.spawned();
+    trace.progress(17, 32, true, false);
+    trace.stdout_bytes = 21;
+    trace.stderr_bytes = 45;
+    trace.exit = Some(Some(7));
+    fs::write(&marker, b"caught").unwrap();
+    let report = trace.describe();
+    assert!(report.contains("bootstrap=caught stdin=17/32 stdout=21 stderr=45"));
+    assert!(report.contains("stdout_eof=true stderr_eof=false observed_exit=Some(Some(7))"));
+    assert!(!report.contains("private"));
+    assert!(report.len() < 512);
+    fs::write(&marker, "unrestricted marker content".repeat(1000)).unwrap();
+    let report = trace.describe();
+    assert!(report.contains("bootstrap=invalid"));
+    assert!(!report.contains("unrestricted"));
+    assert!(report.len() < 512);
+    let error = trace.annotate(io::Error::from_raw_os_error(5).into());
+    assert_eq!(
+        error.downcast_ref::<io::Error>().unwrap().raw_os_error(),
+        Some(5)
+    );
+    assert!(error.to_string().contains("native pipe trace:"));
+}
+
 fn configured(text: &str, root: &Path) -> Command {
-    let mut command = command(text, root).unwrap();
+    static NEXT_TRACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let marker = root.join(format!(
+        "bootstrap-{}-{}.trace",
+        std::process::id(),
+        NEXT_TRACE.fetch_add(1, Ordering::Relaxed)
+    ));
+    // Test-only markers bracket shell startup, encoding setup and command
+    // execution. Marker failures never change the authored command's result.
+    // The path is passed as child environment data, never interpolated as code.
+    let bootstrap = format!(r#"
+$runyteTrace = [Environment]::GetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_TRACE')
+[Environment]::SetEnvironmentVariable('RUNYTE_INTERNAL_FILTER_TRACE', $null)
+try {{ [IO.File]::WriteAllText($runyteTrace, 'entered') }} catch {{}}
+{}"#, BOOTSTRAP)
+        .replace("    $global:LASTEXITCODE = 0", "    try { [IO.File]::WriteAllText($runyteTrace, 'ready') } catch {}\n    $global:LASTEXITCODE = 0")
+        .replace("    $nativeExit = $LASTEXITCODE", "    $nativeExit = $LASTEXITCODE\n    try { [IO.File]::WriteAllText($runyteTrace, 'returned') } catch {}")
+        .replace("    [Console]::Error.WriteLine($_.ToString())", "    $runyteOriginalFailure = $_\n    try { [IO.File]::WriteAllText($runyteTrace, 'caught') } catch {}\n    [Console]::Error.WriteLine($runyteOriginalFailure.ToString())");
+    let mut command = command_with_bootstrap(text, root, &bootstrap).unwrap();
     command
         .env("XDG_CONFIG_HOME", root.join("config"))
-        .env("XDG_CACHE_HOME", root.join("cache"));
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env(TRACE_ENV, marker);
     command
+}
+
+#[test]
+fn marker_write_failure_preserves_the_authored_powershell_error() {
+    let root = crate::test_support::TestRuntimeRoot::new("native-pipe-trace-failure").unwrap();
+    let marker = root.join("marker-directory");
+    fs::create_dir(&marker).unwrap();
+    let mut command = configured("throw 'authored fixture failure'", root.path());
+    // A directory cannot be written as the marker file. Every marker stage
+    // fails, including the nested catch while handling the authored exception.
+    command.env(TRACE_ENV, &marker);
+    let error = run_command(
+        &command,
+        vec![String::new()],
+        &AtomicBool::new(false),
+        Duration::from_secs(15),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("authored fixture failure"), "{error}");
+    assert!(error.contains("bootstrap=reset-failed"), "{error}");
+    assert!(!error.contains("marker-directory"), "{error}");
 }
 
 fn execute(text: &str, input: Vec<String>) -> Result<Vec<String>> {
@@ -123,13 +306,24 @@ fn powershell_preserves_text_and_keeps_selection_out_of_code() {
 fn direct_native_stdin_stderr_exit_and_environment_contract() {
     let root = crate::test_support::TestRuntimeRoot::new("native-pipe-child").unwrap();
     let input = "é😀\r\nline\nno trailing newline";
+    let echo_command = native(root.path(), "echo");
     let output = run_command(
-        &native(root.path(), "echo"),
+        &echo_command,
         vec![input.into()],
         &AtomicBool::new(false),
         Duration::from_secs(15),
     )
     .unwrap();
+    let marker = echo_command
+        .get_envs()
+        .find_map(|(key, value)| {
+            (key == TRACE_ENV)
+                .then_some(value)
+                .flatten()
+                .map(PathBuf::from)
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(marker).unwrap(), "returned");
     assert!(
         output[0].contains(&format!("PAYLOAD:{}", STANDARD.encode(input))),
         "{:?}",
@@ -360,6 +554,10 @@ fn native_fixture() {
     assert!(
         std::env::var_os(COMMAND_ENV).is_none(),
         "bootstrap command leaked to native child"
+    );
+    assert!(
+        std::env::var_os(TRACE_ENV).is_none(),
+        "trace marker leaked to native child"
     );
     match std::env::var("RUNYTE_PIPE_FIXTURE").unwrap().as_str() {
         "echo" => {
