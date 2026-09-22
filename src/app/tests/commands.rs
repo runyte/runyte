@@ -3602,7 +3602,9 @@ fn showing_a_terminal_that_has_already_gone_is_refused() {
     app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
     app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, id);
     app.terminals.close(id);
+    cleanup();
 
     app.show_terminal(id);
     assert!(app.status_error && app.status.contains("that terminal is gone"));
@@ -3762,7 +3764,9 @@ fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
     );
 
     app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, id);
     app.terminals.close(id);
+    cleanup();
     app.rename_terminal_id(id, "gone");
     assert!(app.status_error && app.status.contains("that terminal is gone"));
     app.open_listed_terminal_rename_prompt(id);
