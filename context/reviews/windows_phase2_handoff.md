@@ -1,11 +1,12 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, typed switch intent and
-exact native target preparation accepted in `8657281` and `ec33c26`. Private
-native frontend attachment is `180175d`. The macOS host queue EINTR repair is
-`dad1d86`; Unix plugin fixture readiness repairs are `26f6c4e`, `333771d` and
-`0adcf38`. The preceding native host attachment is `1e69755` and shared response
-ordering repair is `5d727db`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, private exact native
+switching is accepted in `11963b1` and the native plugin worker foundation is
+accepted in `ce888ee`. Typed switch intent and exact native target preparation
+are `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
+The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
+repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
+attachment is `1e69755` and shared response ordering repair is `5d727db`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -13,7 +14,7 @@ before the older chronological progress entries. No previous chat is required.
 ## Scope and delivery
 
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j correction
-are complete. Phase 2.5 is in progress; Phase 2.6 remains to implement. Integrated
+are complete. Phase 2.5 is in progress; Phase 2.6 has begun. Integrated
 Git is optional: missing Git must leave the integration disabled without failed
 spawn loops or runtime errors. Combined branch/worktree deletion still needs the
 native persistent-session coordinator; separate guarded operations work.
@@ -439,16 +440,81 @@ suite pass across the combined j2 packages: 3,351 tests, zero failures and 72
 ignored entries across 47 libtest/doc-test groups, plus six native LSP transport
 cases. Unix compilation and coverage require CI after push.
 
-## Next package: private exact switching loop and waits
+## Accepted package: 4e.5j3 private exact switching loop
 
-Add exact source recovery and destination attachment within the private native
-frontend. Preserve current attachment identity by full `WorkspaceSelection`,
-so same-project publications do not collapse during strip, cycle, previous or
-no-op checks. A failed destination may recover only the exact source
-publication; a replacement source must refuse. A wait client's parent loss
-cancels only that client's wait, not the shared host. Complete real-host
-acceptance before opening public attachment, manager visit,
-numbered-session, restart or parent-terminal routing gates.
+`11963b1` implements a two-phase private native switch. The source connection
+and its interactive reservation remain owned while the source host prepares an
+exact selected publication through its catalog service. The frontend
+independently authenticates the destination and draws its first complete frame
+before sending a receipt-matched commit. Abort resumes the retained source
+without discovery or reconnection. A lost commit acknowledgement is treated as
+uncertain: the frontend closes the destination and exits within the whole
+operation deadline without replaying the commit or assuming success.
+
+Same-project publications compare their complete `WorkspaceSelection` keys.
+An exact-current selection is a no-op. Commit cancels only source-owned waits;
+abort preserves them and control-client waits continue through a pending
+switch. Source-owner loss cancels active preparation immediately. Commit and
+abort requests are interactive-only, and public attachment, manager visits,
+numbered sessions, restart and parent-terminal routes remain gated.
+
+Independent Astra review found no remaining blockers after request-role,
+asynchronous reply, preparation cancellation and fixture corrections. The real
+ConPTY acceptance uses three native hosts and proves busy-destination abort with
+continued source editing, A-to-B-to-A switching with saved edits, an
+exact-current no-op followed by a fresh edit, and lost-acknowledgement bounded
+exit followed by successful destination reattachment. The pre-existing native
+frontend acceptance also passes.
+
+## Accepted package: 5a native plugin worker foundation
+
+`ce888ee` adds the native Windows plugin process worker while leaving public
+plugin startup unavailable. Shared NDJSON supervision is transport-generic;
+the Windows adapter uses overlapped private stdin/stdout, a null stderr handle,
+the existing isolated native process launcher and one retained launch-handle
+exit watcher. Complete frames already read from stdout are delivered before the
+terminal `WorkerStopped` event, including an exit or write-error race. Partial,
+malformed and oversized frames fail closed, and an uncertain partial write
+suppresses a registration rejection frame.
+
+Cleanup terminates the private job and reports `reaped` only after the exact
+leader handle is signalled and job accounting reports no active processes.
+That contract proves the direct child is settled and no descendant is running;
+an externally retained historical descendant process object may become
+signalled immediately afterward. The acceptance fixture waits that handle with
+a bounded kernel wait before deleting its storage.
+
+Independent Astra review found no remaining blockers. The harness-free native
+acceptance passes seven cases: fragmented/coalesced framing and exit order,
+saturated output with the reserved final event, malformed/oversized input,
+write-failure final-reply drain, blocked-write cancellation, descendant
+settlement and runtime-shutdown ownership. Formatting and all-target Clippy
+with warnings denied pass. The full Windows workspace suite passes 3,369 tests,
+zero failures and 78 ignored entries across 47 libtest/doc-test groups,
+including the seven native worker cases, plus six native LSP transport cases.
+CI for these two new commits requires their push. CI run 35766489261 for the
+preceding `1935ff9` checkpoint is fully green on Windows, Linux and macOS,
+including both coverage gates and plugin conformance.
+
+## Next packages: waits, parent routing and durable plugin state
+
+Finish the remaining Phase 2.5 wait-client parent-loss and authenticated parent
+terminal routing work before opening public attachment, manager visit,
+numbered-session, restart or directory-handoff gates. A wait client's parent
+loss cancels only that client's wait, not the shared host. Parent-terminal
+authorization still requires actual retained pipe-peer membership in the exact
+ConPTY job, a terminal capability and current attachment ownership.
+
+For Phase 2.6 durable plugin state, use the reviewed explicit Windows policy:
+add optional `workspace.state_anchor: profile | local-app-data`, resolved from
+OS known folders. `workspace.state` remains the only destination and must be a
+proper descendant of the selected anchor. Do not accept arbitrary anchors,
+infer an ancestor after failure or relocate state. Traverse existing ordinary
+parents through retained handles without hardening their ACLs; create/admit only
+the final state directory privately, then use existing descriptor-relative
+children. Omission retains the current full-ancestry behavior and refusal.
+Context identity and grant storage uses a separate LocalAppData policy and must
+not inherit the plugin state anchor.
 
 ## Phase 2.5 implementation order
 
@@ -524,12 +590,12 @@ wait without killing an unrelated shared host.
 
 ## Remaining 2.6
 
-Implement native plugin worker/process ownership and framing, durable state,
-handoffs and approval ownership, then context transport/grants and the Windows
-Python MCP bridge. Preserve existing protocol bounds and physical-frontend-only
-approval. Durable plugin state needs an explicitly provisioned OS storage anchor;
-do not introduce a broad user-directory fallback. Validate immutable and current
-Node/plugin conformance plus real Windows context clients.
+Native plugin worker/process ownership and framing is accepted in `ce888ee`.
+Implement durable state next, then handoffs and approval ownership, context
+transport/grants and the Windows Python MCP bridge. Preserve existing protocol
+bounds and physical-frontend-only approval. Use the explicit state-anchor
+contract above; do not introduce a broad user-directory fallback. Validate
+immutable and current Node/plugin conformance plus real Windows context clients.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
