@@ -7,9 +7,10 @@ use super::{
     catalog_values::{WorkspaceEvent, WorkspaceRow, WorkspaceSelection},
     windows_catalog::HistoryTarget,
     windows_control::{ControlSnapshot, UserSelector},
-    windows_endpoint::MAX_PERSISTED_PATH_BYTES,
+    windows_endpoint::{EndpointMetadata, MAX_PERSISTED_PATH_BYTES},
     windows_lifecycle::connect_control,
     windows_location::{DiscoveryScope, KnownReadLocation},
+    windows_process_identity::PinnedProcess,
 };
 use crate::{
     git::{GitCliProvider, GitProvider},
@@ -19,6 +20,7 @@ use anyhow::{Context, Result, ensure};
 use std::{
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
+    sync::Arc,
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -30,6 +32,7 @@ const MAX_ERROR_BYTES: usize = 1024;
 const MAX_WARNING_DETAILS: usize = 8;
 const MAX_WARNING_BYTES: usize = 4096;
 const PREVIEW_BUDGET: Duration = Duration::from_secs(2);
+const PREPARE_BUDGET: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug)]
 enum Target {
@@ -81,6 +84,10 @@ enum Request {
         generation: u64,
         path: PathBuf,
     },
+    PrepareSelectedLive {
+        selection: WorkspaceSelection,
+        reply: oneshot::Sender<Result<PreparedLiveTarget>>,
+    },
     #[cfg(test)]
     Hold {
         entered: oneshot::Sender<()>,
@@ -101,6 +108,25 @@ enum Request {
     },
 }
 
+/// One exact live publication prepared by the catalog worker that observed it.
+/// Metadata alone is never authority: the authenticated process object stays
+/// retained through the future frontend handoff.
+#[derive(Debug)]
+pub struct PreparedLiveTarget {
+    metadata: EndpointMetadata,
+    peer: Arc<PinnedProcess>,
+}
+
+impl PreparedLiveTarget {
+    pub fn metadata(&self) -> &EndpointMetadata {
+        &self.metadata
+    }
+
+    pub fn peer(&self) -> &Arc<PinnedProcess> {
+        &self.peer
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PreviewRequest {
     generation: u64,
@@ -116,6 +142,48 @@ pub struct WorkspaceServiceHandle {
 }
 
 impl WorkspaceServiceHandle {
+    /// Prepares only the exact live publication named by a displayed native
+    /// row. It never resolves a replacement through its project, name or PID.
+    pub async fn prepare_selected_live(
+        &self,
+        selection: WorkspaceSelection,
+    ) -> Result<PreparedLiveTarget> {
+        self.check_open().map_err(anyhow::Error::msg)?;
+        validate_selection(&selection).map_err(anyhow::Error::msg)?;
+        ensure!(
+            selection.publication_key().is_some(),
+            "stopped session has no live publication"
+        );
+        let (reply, result) = oneshot::channel();
+        self.requests
+            .try_send(Request::PrepareSelectedLive { selection, reply })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    anyhow::anyhow!("native session service queue is full")
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    anyhow::anyhow!("native session service is unavailable")
+                }
+            })?;
+        let mut stop = self.stop.clone();
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        tokio::time::timeout(PREPARE_BUDGET, async {
+            tokio::select! {
+                biased;
+                changed = stop.changed() => {
+                    match changed {
+                        Ok(()) => anyhow::bail!("native session service is shutting down"),
+                        Err(_) => anyhow::bail!("native session service is unavailable"),
+                    }
+                }
+                result = result => result
+                    .context("native session service stopped before preparing selection")?,
+            }
+        })
+        .await
+        .context("native session preparation timed out")?
+    }
+
     pub fn try_refresh(&self, generation: u64, include_hidden: bool) -> Result<(), &'static str> {
         self.submit(Request::Refresh {
             generation,
@@ -510,6 +578,42 @@ impl Worker {
         }
     }
 
+    async fn prepare_selected_live(
+        &mut self,
+        selection: &WorkspaceSelection,
+    ) -> Result<PreparedLiveTarget> {
+        self.recover()?;
+        ensure!(
+            selection.publication_key().is_some(),
+            "stopped session has no live publication"
+        );
+        // Observe again through this worker's frozen scope, current known-ready
+        // location and hidden-publication choice. A cached row cannot prove its
+        // publication still exists, and another scope must not replace it.
+        let snapshot = self.observe_cancellable(self.include_hidden).await?;
+        let index = snapshot
+            .history()
+            .select_selection(selection)?
+            .context("selected session changed; choose it again")?;
+        let HistoryTarget::Live { publication, .. } = snapshot
+            .history()
+            .target(index)
+            .context("selected session is unavailable")?
+        else {
+            anyhow::bail!("stopped session has no live publication");
+        };
+        ensure!(
+            publication.metadata().protocol == crate::protocol::VERSION,
+            "incompatible session cannot be attached"
+        );
+        let prepared = PreparedLiveTarget {
+            metadata: publication.metadata().clone(),
+            peer: Arc::clone(publication.peer()),
+        };
+        self.snapshot = Some(snapshot);
+        Ok(prepared)
+    }
+
     async fn handle_request(&mut self, request: Request) -> Result<()> {
         let event = match request {
             Request::Refresh {
@@ -608,6 +712,21 @@ impl Worker {
                     generation,
                     result: discover_worktrees(git.as_ref(), &path),
                 }
+            }
+            Request::PrepareSelectedLive {
+                selection,
+                mut reply,
+            } => {
+                if reply.is_closed() {
+                    return Ok(());
+                }
+                let result = tokio::select! {
+                    biased;
+                    _ = reply.closed() => return Ok(()),
+                    result = self.prepare_selected_live(&selection) => result,
+                };
+                let _ = reply.send(result);
+                return Ok(());
             }
             #[cfg(test)]
             Request::Hold { entered, release } => {
