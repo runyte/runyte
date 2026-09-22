@@ -1,8 +1,9 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5f native
-foreground parent identity accepted in `4aa792b` (`Pin native foreground parent
-identity`). The preceding process-exit watcher is `1359c1a`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5g typed
+native console termination accepted in `c6dea6a` (`Handle native console
+termination through owned cleanup`). The preceding foreground parent identity
+is `4aa792b`; Unix CI compile repair is `4a3b1bd`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -268,17 +269,40 @@ helpers prove live parent identity, rejection of a later-created process, and
 the original retained parent handle after its exit. Formatting, all-target
 Clippy with warnings denied, and the complete native workspace suite pass:
 3,330 tests, zero failures, 62 ignored across 47 libtest/doc-test groups, plus
-six native LSP transport cases. Native CI and Unix coverage acceptance are
-pending the push of this checkpoint.
+six native LSP transport cases. CI run 35745358533 exposed a Unix test compile
+error: the inventory identity test accessed private navigation fields. `4a3b1bd`
+replaces that access with an immutable test-only accessor and preserves the
+test's generation and selected-publication assertions. Its cross-platform CI
+result is pending the next push; the run above must not be called passing.
 
-## Next package: native console events and foreground supervision
+## Accepted package: 4e.5g typed native console termination
 
-Install typed Windows Ctrl+C, Ctrl+Break and console-close listeners before
-configuration, App or host startup. Keep one listener owner through normal
-cleanup; console-close cleanup is limited by the operating system deadline.
-Use an isolated compiled console fixture for real Ctrl+C and Ctrl+Break events,
-and prove close-event routing and cleanup separately. Then connect retained
-parent exit and console termination to foreground-host supervision. Keep public
+`c6dea6a` registers one Windows listener owner before launch parsing and keeps
+it through standalone and detached-host cleanup and logging. Ctrl+C, Ctrl+Break
+and console Close remain distinct typed events. The native host returns through
+its existing joined service and transport cleanup; standalone input and draw
+errors also reach joined cleanup. A Close arriving during cleanup or before
+startup returns is reconciled before any top-level error reporting to a dead
+console. The user guide states the operating system's limited Close deadline.
+
+Independent Astra review found no remaining findings after cleanup and fixture
+ownership corrections. Compiled helpers use an isolated new console and prove
+real Ctrl+C and Ctrl+Break delivery without signaling the test runner. Close
+routing tests cover startup, input and cleanup failures and Close after Ctrl+C.
+Formatting, all-target Clippy with warnings denied, and the complete native
+workspace suite pass: 3,333 tests, zero failures, 63 ignored across 47
+libtest/doc-test groups, plus six native LSP transport cases. Native CI and Unix
+coverage acceptance remain pending the next push.
+
+## Next package: native foreground-host supervision
+
+Connect the retained foreground-parent observation and one-shot process-exit
+watcher to the foreground host lifecycle. Keep the parent handle pinned from
+startup, distinguish parent loss from typed console events, and carry either
+termination through the same joined host cleanup. Detached hosts have a
+synthetic inheritance parent and must remain independent. Use compiled
+real-process fixtures for parent exit during startup and while serving; a wait
+client's parent loss cancels its wait without killing a shared host. Keep public
 attachment and parent-terminal routing gated until their own real-host
 acceptance.
 
