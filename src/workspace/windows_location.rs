@@ -97,6 +97,28 @@ pub struct ResolvedLayout {
     cache: Option<PathBuf>,
     roots: CapturedRoots,
     cache_error: Option<String>,
+    reserved: Vec<PathBuf>,
+}
+
+/// A configured observation address, never a publication constructor.
+/// Its project may have disappeared after its canonical identity was recorded.
+#[derive(Clone, Debug)]
+pub struct KnownReadLocation {
+    project: PathBuf,
+    directory: PathBuf,
+    namespaces: Vec<PathBuf>,
+}
+
+impl KnownReadLocation {
+    pub fn project_root(&self) -> &Path {
+        &self.project
+    }
+    pub fn endpoint_directory(&self) -> &Path {
+        &self.directory
+    }
+    pub(crate) fn namespace_roots(&self) -> &[PathBuf] {
+        &self.namespaces
+    }
 }
 
 impl ResolvedLayout {
@@ -161,6 +183,7 @@ impl ResolvedLayout {
             cache,
             roots: inputs.roots,
             cache_error,
+            reserved,
         })
     }
 
@@ -178,6 +201,58 @@ impl ResolvedLayout {
     }
     pub fn name_store_root(&self) -> &Path {
         &self.names
+    }
+
+    /// The selected optional history cache. Does not prepare or harden it.
+    pub fn cache_root(&self) -> io::Result<Option<&Path>> {
+        if let Some(error) = &self.cache_error {
+            return Err(io::Error::other(error.clone()));
+        }
+        Ok(self.cache.as_deref())
+    }
+
+    /// A read-only snapshot of this already resolved project's ready location.
+    pub(crate) fn read_location(&self) -> KnownReadLocation {
+        KnownReadLocation {
+            project: self.project.clone(),
+            directory: self.endpoint.clone(),
+            namespaces: self.namespaces.clone(),
+        }
+    }
+
+    /// Derives only an observation address from a stored canonical identity.
+    /// Missing projects retain their bytes. Existing identity changes, denied
+    /// resolution and unsafe paths fail rather than silently retarget history.
+    /// The frozen runtime/cache selection is never readmitted or recaptured.
+    pub fn known_read_location(
+        &self,
+        project: &Path,
+        state: &Path,
+    ) -> io::Result<KnownReadLocation> {
+        validate_path(project)?;
+        validate_path(state)?;
+        match project.canonicalize() {
+            Ok(current) if encode_path(&current) != encode_path(project) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "remembered project directory identity changed",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        validate_state_separation(state, &self.reserved)?;
+        let directory = self.runtime.as_ref().map_or_else(
+            || state.join("host"),
+            |runtime| runtime.join("runyte").join(super::workspace_id(project)),
+        );
+        validate_path(&directory.join("endpoint.json"))?;
+        Ok(KnownReadLocation {
+            project: project.to_owned(),
+            directory,
+            namespaces: self.namespaces.clone(),
+        })
     }
 
     /// Normal discovery never opens or requires owner-wide inventory. Failure

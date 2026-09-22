@@ -1208,6 +1208,9 @@ Combined native acceptance for this extraction and the CI corrections passes
 formatting, all-target Clippy, and the complete suite: 3,225 tests, zero failures,
 58 ignored entries across 45 libtest/doc-test groups, plus the six native LSP
 transport cases. Build and test concurrency remain one and two respectively.
+The reviewed corrections and extraction are committed as `249173f` and
+`dd54f43`; [CI run 35651437666](https://github.com/runyte/runyte/actions/runs/35651437666)
+passes every job, including native Windows and both unchanged Unix coverage gates.
 
 The catalog adapter will keep presentation values shared but retain native
 publication identities privately beside their observed candidates. Repeated rows
@@ -1219,6 +1222,67 @@ records preserve the previous catalog and history without pruning. Control
 actions authenticate the selected exact metadata anew. Inventory-only cleanup
 uses its observed rows and never reconstructs namespace roots from advertised
 paths. Snapshot merging retains concurrent explicit names and stable numbers.
+
+Package 4e.3b implements the read-only live catalog and exact-publication
+selector. Ten native tests pass, and independent review is clear after a fixture
+was corrected to keep live publication state outside a removable project
+directory. A subsequent Clippy correction preserves the ready-observation
+short circuit. Replica rows retain every observed source and deduplicate only
+for one exact project/process/incarnation/address; distinct publications remain
+ambiguous. Compatible health uses the authenticated connection, incompatible
+rows require actual peer proof, and uncertain observations fail the whole result.
+
+Package 4e.3c adds read-only recent-history decoration with frozen cache/runtime
+roots and explicitly configured per-project state paths. Remembered directories
+may be missing; a separate observation value bypasses publication construction
+and grants no ready-record cleanup rights. Every remembered address receives an
+exact ready check, including all 256 entries plus the current project. Hidden
+and duplicate-project publications retain their identities without acquiring
+local names or number shortcuts. No read path creates storage, writes history,
+or removes stale records. Independent review corrected the pre-allocation bound
+and the last-entry malformed-ready fixture. All nineteen catalog/history tests,
+twelve location tests, and 48 endpoint tests pass on native Windows; one compiled
+endpoint fixture remains ignored and is exercised by its parent test.
+
+Package 4e.3d implements explicit captured-layout visits and guarded history
+updates under the existing stable lock. Refresh writes compare observed values
+with the latest records, preserving concurrent names, digits, visits, ordering
+and new entries. Hidden, duplicate-project and unobserved rows cannot change
+local history. Explicit renumbering requires an available cache and unchanged
+scoped live records; forget/clear affect only unchanged displayed stopped rows.
+Missing stopped directories are never automatically pruned. These are cache
+transactions, not a lock spanning host liveness and history.
+
+Independent review found that compatibility decoding could persist an unseen
+duplicate-digit repair, and that sequential name collision checks could prevent
+valid name swaps from converging. Native guarded writes now refuse duplicate
+raw digits before normalization and apply collision-free name batches. Unix
+decoding remains unchanged. A persistence write does not rebase the observation;
+later explicit actions must obtain a fresh complete snapshot. All ten transaction
+regressions pass, with all 29 catalog/history tests passing together. Final review
+has no remaining findings. Combined native acceptance for packages 4e.3b through
+4e.3d passes formatting, all-target Clippy and the full suite: 3,254 tests,
+zero failures and 58 ignored entries across 45 libtest/doc-test groups, plus
+six native LSP transport cases. Build/test concurrency stays at one/two.
+
+Native control actions and the background service
+must retain exact publication identity through selected rows, prompts, previews
+and in-flight requests; a stale selection must not fall back to a project path.
+The native service will own its runtime/thread through joined shutdown and keep
+synchronous filesystem work off the editor loop. These controls remain disabled
+until their integration and real-host acceptance.
+
+The next CLI integration needs a frozen discovery scope independent of any
+current project. Selector-only commands must not invent a cwd project merely to
+enumerate namespaces and remembered ready addresses. The same captured scope
+will supply project layouts without changing their publication fingerprints.
+For native stopped-session rename, the configured name store will be authoritative
+and recent-history names will remain a cache/default fallback. A verified stored
+name commit must remain successful if cache refresh fails. Read-only discovery
+therefore needs a noncreating stored-name reader; live publication metadata stays
+authoritative while a host runs, and hidden hosts never inherit locally inferred
+stored names. This avoids a second authoritative file transaction without
+weakening vacancy, locking, exact-file ownership or rollback requirements.
 
 Foreground host and attached-wait supervision need retained process handles,
 separate from terminal authorization. Native parent discovery must reject a

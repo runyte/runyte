@@ -544,33 +544,52 @@ impl EndpointLocation {
     /// Unlike an inventory hint, this independently configured location already
     /// owns the namespace roots needed to lock and retire its ready record.
     pub fn observe_ready(&self) -> io::Result<Option<Candidate>> {
-        let directory = match Directory::open_existing(&self.directory, true) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            result => Arc::new(result?),
-        };
-        let Some((file, bytes)) = read_optional(&directory, READY_NAME)? else {
-            return Ok(None);
-        };
-        let metadata = EndpointMetadata::from_json(&bytes)?;
-        if metadata.project_root_bytes != encode_path(&self.project) {
-            return Err(invalid("ready record workspace identity mismatch"));
-        }
-        let issued = Issued {
-            directory,
-            path: self.ready_record(),
-            name: READY_NAME.to_owned(),
-            file,
-            bytes,
-            registry: false,
-        };
-        issued.verify_path()?;
-        Ok(Some(Candidate {
-            issued,
-            source: Source::Ready(self.clone()),
-            metadata,
-            record: None,
-        }))
+        observe_ready_record(&self.project, &self.directory, Source::Ready(self.clone()))
     }
+}
+
+/// Read stored identity directly; unlike EndpointLocation::new this does not
+/// require a still-existing project or create any publication capability.
+pub(super) fn observe_snapshot_ready(
+    project: &Path,
+    directory: &Path,
+) -> io::Result<Option<Candidate>> {
+    metadata::persisted_path(&encode_path(project))?;
+    metadata::persisted_path(&encode_path(&directory.join(READY_NAME)))?;
+    observe_ready_record(project, directory, Source::UnscopedReady)
+}
+
+fn observe_ready_record(
+    project: &Path,
+    path: &Path,
+    source: Source,
+) -> io::Result<Option<Candidate>> {
+    let directory = match Directory::open_existing(path, true) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        result => Arc::new(result?),
+    };
+    let Some((file, bytes)) = read_optional(&directory, READY_NAME)? else {
+        return Ok(None);
+    };
+    let metadata = EndpointMetadata::from_json(&bytes)?;
+    if metadata.project_root_bytes != encode_path(project) {
+        return Err(invalid("ready record workspace identity mismatch"));
+    }
+    let issued = Issued {
+        directory,
+        path: path.join(READY_NAME),
+        name: READY_NAME.to_owned(),
+        file,
+        bytes,
+        registry: false,
+    };
+    issued.verify_path()?;
+    Ok(Some(Candidate {
+        issued,
+        source,
+        metadata,
+        record: None,
+    }))
 }
 
 #[cfg(test)]

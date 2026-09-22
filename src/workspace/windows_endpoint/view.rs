@@ -73,6 +73,15 @@ impl RegistryView {
         self.registries.observe(id)
     }
 
+    /// Observes exact stored native identity without recanonicalizing a
+    /// possibly missing project. This candidate has no ready-cleanup authority.
+    pub(crate) fn observe_snapshot_ready(
+        &self,
+        known: &crate::workspace::windows_location::KnownReadLocation,
+    ) -> io::Result<Option<Candidate>> {
+        discovery::observe_snapshot_ready(known.project_root(), known.endpoint_directory())
+    }
+
     /// Read the configured ready record even when registry roots are absent.
     /// Such a candidate still needs native peer authentication; without the
     /// namespace identities, exact ready-record retirement is unavailable.

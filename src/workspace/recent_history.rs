@@ -547,6 +547,44 @@ pub(super) fn update_recents_result(
     storage.write(&encode_recents(&paths)?)
 }
 
+/// Native adapters retain captured identity and choose their own guarded
+/// operation. Do not rewrite the history when a compare guard made no change.
+#[cfg(windows)]
+pub(super) fn update_recents_if_changed<T>(
+    path: &Path,
+    update: impl FnOnce(&mut Vec<RecentEntry>) -> Result<T>,
+) -> Result<T> {
+    let mut storage = storage::LockedHistory::acquire(path)?;
+    let bytes = storage.read()?;
+    // The compatibility reader repairs duplicate digits. A native guarded
+    // transaction must not silently serialize that repair into unrelated rows.
+    anyhow::ensure!(
+        bytes.len() <= MAX_RECENTS_BYTES,
+        "workspace recents exceed {MAX_RECENTS_BYTES} bytes"
+    );
+    {
+        let raw: Vec<RecentWorkspace> = serde_json::from_slice(&bytes)?;
+        anyhow::ensure!(
+            raw.len() <= RECENT_LIMIT,
+            "workspace recents contain more than {RECENT_LIMIT} entries"
+        );
+        let mut claimed = std::collections::BTreeSet::new();
+        anyhow::ensure!(
+            raw.iter()
+                .filter_map(|entry| entry.number)
+                .all(|number| claimed.insert(number)),
+            "native history transaction refuses duplicate session numbers"
+        );
+    }
+    let mut paths = decode_recents(&bytes)?;
+    let before = paths.clone();
+    let result = update(&mut paths)?;
+    if paths != before {
+        storage.write(&encode_recents(&paths)?)?;
+    }
+    Ok(result)
+}
+
 pub(super) fn encode_recents(paths: &[RecentEntry]) -> Result<Vec<u8>> {
     anyhow::ensure!(
         paths.len() <= RECENT_LIMIT,

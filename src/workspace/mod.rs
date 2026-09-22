@@ -31,6 +31,8 @@ pub mod transport;
 #[cfg(any(unix, windows))]
 mod transport_shared;
 #[cfg(windows)]
+pub mod windows_catalog;
+#[cfg(windows)]
 pub mod windows_endpoint;
 #[cfg(windows)]
 pub mod windows_lifecycle;
