@@ -21,6 +21,7 @@ mod discovery;
 mod locking;
 mod metadata;
 mod names;
+mod view;
 pub use discovery::{
     AuthenticatedHost, Candidate, CandidateOrigin, Inspection, ProbeFailure, ProbedCandidate,
     ProbedScan, Removal, Scan, ScanIssue, ScanLimit, StaleEvidence, StaleReason,
@@ -29,6 +30,7 @@ pub use metadata::{
     EndpointMetadata, MAX_METADATA_BYTES, MAX_PERSISTED_PATH_BYTES, PipeAddress, RegistryRecord,
 };
 pub use names::NameStore;
+pub use view::RegistryView;
 
 const REGISTRY_LOCK: &str = ".registry.lock";
 const READY_NAME: &str = "endpoint.json";
@@ -62,7 +64,7 @@ impl RegistrySet {
                 "publication requires namespace roots and at most three total registry roots",
             ));
         }
-        let mut roots = paths
+        let roots = paths
             .iter()
             .map(|path| (path, false))
             .chain(inventory.as_ref().map(|path| (path, true)))
@@ -78,6 +80,10 @@ impl RegistrySet {
                 })
             })
             .collect::<io::Result<Vec<_>>>()?;
+        Self::from_roots(roots)
+    }
+
+    fn from_roots(mut roots: Vec<RegistryRoot>) -> io::Result<Self> {
         roots.sort_by_key(|root| root.key);
         if roots
             .windows(2)
@@ -435,8 +441,8 @@ pub fn inventory_root() -> io::Result<PathBuf> {
         })
 }
 
-fn inventory_root_in(local_app_data: &Path) -> PathBuf {
-    local_app_data.join("runyte").join("hosts-v1")
+pub(crate) fn inventory_root_in(local_app_data: &Path) -> PathBuf {
+    local_app_data.join("runyte").join("all-hosts")
 }
 
 fn read_optional(directory: &Directory, name: &str) -> io::Result<Option<(File, Vec<u8>)>> {

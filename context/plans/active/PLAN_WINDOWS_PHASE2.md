@@ -1133,6 +1133,74 @@ authority. Enforce that internal check only for the dedicated detached-host
 launch, so ordinary editor invocations inheriting the environment do not become
 bound to the parent's workspace. Every startup supplies its own expected layout.
 
+Package 4e.1 implements that resolver and existing-only registry view. Independent
+review corrected native case/verbatim aliases through missing ancestor paths,
+kept unusable optional caches from blocking runtime fallback, and moved inventory
+overlap validation before publication mutation. No findings remain. All nineteen
+new native tests pass: twelve location tests and seven registry-view tests; the
+full endpoint filter passes forty-eight tests with one compiled fixture ignored.
+No account storage is touched by these fixtures. Full integration gates follow
+the shared-request and publication-worker packages.
+
+Package 4e.2a extracts the binary's semantic host request handler and response
+classification without changing Unix dispatch, roles or protocol version. Its
+independent review verified production-body parity. All eight native behavior
+tests pass, including malformed native paths, stale revisions, role refusal,
+wait completion and bounded destination inventories.
+
+Package 4e.2b adds one owned filesystem worker to rename-capable native servers,
+with at most one active and one queued operation. A cancelled unstarted request
+can be skipped; a started rename completes with its recovery ledger retained.
+The live metadata snapshot follows verified commits even if the caller leaves.
+Worker failure retains publication until connection and pending-listener owners
+are closed. Normal retirement and Drop join the worker; cancellation does not
+detach cleanup. Existing low-level listeners retain inline ownership. The
+three-second response drain bounds network work, not synchronous filesystem
+calls. All seven worker tests, thirteen server tests and sixteen name tests
+pass. Independent review corrected one fixture thread's unwind ownership and
+has no remaining findings.
+
+Package 4e.2c wires the dedicated internal Windows
+`--serve --detached-host --project-root` invocation through those owners and the
+shared semantic handler. Foreground host and interactive attachment remain
+refused. A control peer retains its native identity and only its pending wait
+tokens; disconnect cancels that peer's pending waits. A rename permits one
+deferred request or protocol error on its initiating connection, preserving FIFO
+while other clients and services progress. Overflow drops that connection without
+an out-of-order reply. All service receivers disable closed branches, and every
+host error reaches common wait/service/transport cleanup.
+
+Independent review reports zero findings. Six host state tests and four real
+binary acceptance tests pass, covering retained revisions, unsaved edits/save,
+dirty shutdown refusal, two-client wait cancellation, protocol/role admission,
+rename response order and early layout/foreground refusal. Acceptance fixtures
+wait on exact child handles before removing temporary storage, use injected
+configuration/cache/inventory roots, and retain a bounded stderr excerpt for
+early startup failures. Formatting, all-target Clippy and the complete native
+suite pass for packages 4e.1 through 4e.2c: 3,211 tests, zero failures and 58
+ignored fixture/performance entries across 45 libtest/doc-test groups, plus six
+native LSP transport acceptance cases. Builds use one Cargo job and tests use
+two threads.
+
+Startup checkpoint `af36cb6` passes native Windows and all Unix build, test and
+coverage jobs in [CI run 35647413375](https://github.com/runyte/runyte/actions/runs/35647413375).
+The separate Linux Node-conformance job reproduced its initial-registration
+timeout before publication timing began. Correction `aadaf48` adds bounded
+failure evidence and repairs the distinct buffered publication-wait gap; it
+preserves response deadlines and passes six deterministic reader tests. The
+initial-registration cause remains open in `node_conformance_readiness.md`.
+
+The catalog adapter will keep presentation values shared but retain native
+publication identities privately beside their observed candidates. Repeated rows
+for one exact process/incarnation/address can merge; distinct publications for
+the same project remain ambiguous for destructive selectors. Conflicting copies
+of one publication are uncertainty, not a choice of whichever root was scanned
+first. Incomplete scans, admission/probe/health failures and malformed ready
+records preserve the previous catalog and history without pruning. Control
+actions authenticate the selected exact metadata anew. Inventory-only cleanup
+uses its observed rows and never reconstructs namespace roots from advertised
+paths. Snapshot merging retains concurrent explicit names and stable numbers.
+
 Foreground host and attached-wait supervision need retained process handles,
 separate from terminal authorization. Native parent discovery must reject a
 parent created after its child before retaining its identity. A process-exit

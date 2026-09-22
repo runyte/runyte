@@ -32,6 +32,8 @@ pub mod windows_endpoint;
 #[cfg(windows)]
 pub mod windows_lifecycle;
 #[cfg(windows)]
+pub mod windows_location;
+#[cfg(windows)]
 pub mod windows_pipe;
 #[cfg(windows)]
 pub mod windows_process_identity;

@@ -178,6 +178,35 @@ async fn pending<F: Future>(future: &mut Pin<Box<F>>) {
 
 type RetainedProof = Arc<Mutex<Option<Weak<PinnedProcess>>>>;
 
+fn managed(
+    endpoint: &EndpointLocation,
+    names: NameStore,
+    audit: Option<DropAudit>,
+    operation: impl FnMut(
+        &mut crate::workspace::windows_endpoint::Publication,
+        &NameStore,
+        &str,
+    ) -> io::Result<()>
+    + Send
+    + 'static,
+) -> (LocalServer, watch::Receiver<usize>) {
+    let listener = Listener::bind_with_name_operation(
+        endpoint.prepare_named(&names, None).unwrap(),
+        names,
+        operation,
+    )
+    .unwrap();
+    let (observer, progress) = watch::channel(0);
+    let owner = Owner {
+        connections: FuturesUnordered::new(),
+        _before_listener_drop: audit,
+        listener,
+        drain_budget: Duration::from_millis(75),
+        observer: Some(observer),
+    };
+    (LocalServer::from_owner(owner), progress)
+}
+
 fn audit(endpoint: &EndpointLocation) -> (DropAudit, RetainedProof, Arc<AtomicBool>) {
     let retained: RetainedProof = Arc::new(Mutex::new(None));
     let checked = Arc::new(AtomicBool::new(false));
@@ -479,5 +508,182 @@ fn owner_panic_reaches_shutdown_after_connection_drop_before_publication_cleanup
         assert!(proof.upgrade().is_none());
         assert!(endpoint.read_ready().unwrap().is_none());
         drop(client);
+    });
+}
+
+#[test]
+fn named_server_canceled_rename_updates_snapshot_while_other_peer_io_progresses() {
+    runtime().block_on(async {
+        let (root, endpoint) = fixture();
+        let names = NameStore::open(&root.join("state")).unwrap();
+        let (entered, entry) = oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let mut entered = Some(entered);
+        let (mut server, _) = managed(&endpoint, names.clone(), None, move |publication, names, name| {
+            if let Some(entered) = entered.take() { let _ = entered.send(()); }
+            released.recv_timeout(Duration::from_secs(5)).map_err(io::Error::other)?;
+            publication.rename(names, name)
+        });
+        let (mut peer, id, responses, _) = admitted(&mut server).await;
+        let ticket = server.try_rename("new-name").unwrap();
+        timeout_at(deadline(), entry).await.unwrap().unwrap();
+        let mut waiting = Box::pin(ticket.wait());
+        pending(&mut waiting).await;
+        drop(waiting);
+        write_message(&mut peer.writer, &ClientRequest::Health).await.unwrap();
+        assert!(matches!(next(&mut server).await, ServerEvent::Request { id: found, request: ClientRequest::Health } if found == id));
+        responses.send(HostResponse::HostRenamed { name: "independent-response".into() }).await.unwrap();
+        assert!(matches!(timeout_at(deadline(), peer.reader.read::<HostResponse>()).await.unwrap().unwrap(), Some(HostResponse::HostRenamed { name }) if name == "independent-response"));
+        release.send(()).unwrap();
+        timeout_at(deadline(), async {
+            while server.metadata_snapshot().name.as_deref() != Some("new-name") {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert_eq!(endpoint.read_ready().unwrap().unwrap().name.as_deref(), Some("new-name"));
+        assert_eq!(names.load(&server.metadata().id).unwrap().as_deref(), Some("new-name"));
+        assert!(server.metadata().name.is_none(), "borrowed metadata remains the documented bind snapshot");
+        drop(responses);
+        drop(peer);
+        server.shutdown().await.unwrap();
+        assert!(endpoint.read_ready().unwrap().is_none());
+    });
+}
+
+#[test]
+fn managed_shutdown_drops_connections_before_waiting_for_active_publication_work() {
+    runtime().block_on(async {
+        let (root, endpoint) = fixture();
+        let names = NameStore::open(&root.join("state")).unwrap();
+        let (drop_audit, retained, checked) = audit(&endpoint);
+        let (entered, entry) = oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let mut entered = Some(entered);
+        let (mut server, mut progress) = managed(
+            &endpoint,
+            names,
+            Some(drop_audit),
+            move |publication, names, name| {
+                if let Some(entered) = entered.take() {
+                    let _ = entered.send(());
+                }
+                released
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(io::Error::other)?;
+                publication.rename(names, name)
+            },
+        );
+        let (peer, _, responses, proof) = admitted(&mut server).await;
+        *retained.lock().unwrap() = Some(proof.clone());
+        let ticket = server.try_rename("finishing").unwrap();
+        timeout_at(deadline(), entry).await.unwrap().unwrap();
+        let mut stopping = Box::pin(server.shutdown());
+        pending(&mut stopping).await;
+        wait_count(&mut progress, 0).await;
+        assert!(proof.upgrade().is_none());
+        assert!(checked.load(Ordering::Acquire));
+        assert!(endpoint.read_ready().unwrap().is_some());
+        drop(stopping);
+        release.send(()).unwrap();
+        ticket.wait().await.unwrap();
+        server.shutdown().await.unwrap();
+        assert!(endpoint.read_ready().unwrap().is_none());
+        drop(responses);
+        drop(peer);
+    });
+}
+
+#[test]
+fn publication_worker_panic_reaches_host_after_connection_owner_cleanup() {
+    runtime().block_on(async {
+        let (root, endpoint) = fixture();
+        let names = NameStore::open(&root.join("state")).unwrap();
+        let (drop_audit, retained, checked) = audit(&endpoint);
+        let (mut server, _) = managed(
+            &endpoint,
+            names,
+            Some(drop_audit),
+            |publication, names, name| {
+                publication.rename(names, name)?;
+                panic!("injected named server publication worker failure");
+            },
+        );
+        let (peer, _, responses, proof) = admitted(&mut server).await;
+        *retained.lock().unwrap() = Some(proof.clone());
+        assert!(
+            server
+                .try_rename("committed")
+                .unwrap()
+                .wait()
+                .await
+                .is_err()
+        );
+        assert!(server.shutdown().await.is_err());
+        assert!(checked.load(Ordering::Acquire));
+        assert!(proof.upgrade().is_none());
+        assert!(endpoint.read_ready().unwrap().is_none());
+        assert_eq!(
+            server.metadata_snapshot().name.as_deref(),
+            Some("committed")
+        );
+        drop(responses);
+        drop(peer);
+    });
+}
+
+#[test]
+fn stopping_admission_preserves_existing_io_until_explicit_shutdown() {
+    runtime().block_on(async {
+        let (_root, endpoint) = fixture();
+        let (mut server, _) = bind(&endpoint, None);
+        let (mut active, id, responses, _) = admitted(&mut server).await;
+        assert_eq!(server.try_rename("unsupported").unwrap_err().kind(), io::ErrorKind::Unsupported);
+        server.stop_admission();
+        let mut waiting = connect(server.metadata()).await;
+        write_message(&mut waiting.writer, &hello(server.metadata())).await.unwrap();
+        write_message(&mut active.writer, &ClientRequest::Health).await.unwrap();
+        assert!(matches!(next(&mut server).await, ServerEvent::Request { id: found, request: ClientRequest::Health } if found == id));
+        assert!(tokio::time::timeout(Duration::from_millis(50), server.recv()).await.is_err(), "new peer was admitted after stop_admission");
+        assert!(endpoint.read_ready().unwrap().is_some());
+        drop(responses);
+        drop(active);
+        drop(waiting);
+        server.shutdown().await.unwrap();
+        assert!(endpoint.read_ready().unwrap().is_none());
+    });
+}
+
+#[test]
+fn dropping_managed_server_retires_only_after_live_connection_owners() {
+    runtime().block_on(async {
+        let (root, endpoint) = fixture();
+        let names = NameStore::open(&root.join("state")).unwrap();
+        let (drop_audit, retained, checked) = audit(&endpoint);
+        let (mut server, _) = managed(
+            &endpoint,
+            names,
+            Some(drop_audit),
+            crate::workspace::windows_endpoint::Publication::rename,
+        );
+        let (peer, _, responses, proof) = admitted(&mut server).await;
+        *retained.lock().unwrap() = Some(proof.clone());
+        server
+            .try_rename("before-drop")
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        drop(server);
+        timeout_at(deadline(), async {
+            while endpoint.read_ready().unwrap().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(checked.load(Ordering::Acquire));
+        assert!(proof.upgrade().is_none());
+        drop(responses);
+        drop(peer);
     });
 }

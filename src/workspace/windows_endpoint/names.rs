@@ -215,6 +215,23 @@ enum Step {
 }
 
 impl Publication {
+    // Retained-ledger fixture for the publication-worker ownership boundary.
+    // Inject after a successful install, then block rollback; not an OS fault.
+    #[cfg(test)]
+    pub(crate) fn fixture_pending_name_update(
+        &mut self,
+        names: &NameStore,
+        name: &str,
+    ) -> io::Result<()> {
+        self.rename_with(names, name, |index, step, _| {
+            if (index == 1 && step == Step::Installed) || step == Step::RollingBack {
+                Err(io::Error::other("injected retained name-update recovery"))
+            } else {
+                Ok(())
+            }
+        })
+    }
+
     pub fn rename_recovery_pending(&self) -> bool {
         self.rename_recovery.is_some()
     }

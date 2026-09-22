@@ -32,6 +32,7 @@ enum Source {
         inventory: bool,
     },
     Ready(EndpointLocation),
+    UnscopedReady,
 }
 
 /// Metadata and an exact admitted file are observations, never process/control
@@ -59,7 +60,7 @@ impl Candidate {
             Source::Row {
                 inventory: false, ..
             } => CandidateOrigin::ConfiguredNamespace,
-            Source::Ready(_) => CandidateOrigin::ConfiguredReady,
+            Source::Ready(_) | Source::UnscopedReady => CandidateOrigin::ConfiguredReady,
         }
     }
 
@@ -96,8 +97,15 @@ impl Candidate {
         })
     }
 
+    pub(super) fn disallow_unscoped_ready_cleanup(&mut self) {
+        self.source = Source::UnscopedReady;
+    }
+
     fn locks(&self) -> io::Result<Vec<locking::Lock>> {
         match &self.source {
+            Source::UnscopedReady => Err(invalid(
+                "ready retirement requires configured namespace identities",
+            )),
             Source::Ready(location) => {
                 let mut locks = location.registries.identity_locks(&self.metadata.id)?;
                 locks.extend(location.registries.registry_locks()?);
@@ -373,12 +381,21 @@ impl RegistrySet {
     /// Unrelated inventory rows and broad scan/probe budgets cannot hide these
     /// recovery observations. Missing rows are normal; bad rows remain errors.
     pub fn observe(&self, id: &str) -> io::Result<Scan> {
+        self.observe_filtered(id, true)
+    }
+
+    pub(super) fn observe_filtered(&self, id: &str, inventory: bool) -> io::Result<Scan> {
         metadata::validate_id(id)?;
         let mut scan = Scan::default();
         let mut budget = ReadBudget {
             remaining: MAX_SCAN_BYTES,
         };
-        for (index, root) in self.0.iter().enumerate() {
+        for (index, root) in self
+            .0
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| inventory || !root.inventory)
+        {
             let name = format!("{}.json", self.record_key(root, id));
             match self.observe_row(index, &name, &mut budget) {
                 Ok(Some(candidate)) => scan.candidates.push(candidate),

@@ -4,7 +4,7 @@
 //! No lifecycle, detached-host startup, or frontend availability is enabled.
 
 use super::{
-    windows_endpoint::{EndpointMetadata, PipeAddress, PreparedEndpoint, Publication},
+    windows_endpoint::{EndpointMetadata, NameStore, PipeAddress, PreparedEndpoint},
     windows_process_identity::PinnedProcess,
 };
 use std::{
@@ -33,6 +33,9 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_CONNECTIONS: usize = 16;
+mod publication;
+pub(crate) use publication::RenameSender;
+pub use publication::RenameTicket;
 const MAX_INSTANCES: usize = MAX_CONNECTIONS + 1;
 const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
 const WRITE_CHUNK_BYTES: usize = 16 * 1024;
@@ -47,7 +50,7 @@ pub struct Listener {
     // already handed to the caller or to terminate any peer process.
     pending: Option<NamedPipeServer>,
     retiring: Option<io::Error>,
-    publication: Publication,
+    publication: publication::Ownership,
     slots: Arc<Semaphore>,
 }
 
@@ -55,8 +58,47 @@ impl Listener {
     /// Must run inside a Tokio I/O runtime. Creates the first private instance
     /// while PreparedEndpoint still owns every publication guard.
     pub fn bind(prepared: PreparedEndpoint) -> io::Result<Self> {
+        Self::bind_with_store(prepared, None)
+    }
+
+    pub(crate) fn bind_with_names(
+        prepared: PreparedEndpoint,
+        names: NameStore,
+    ) -> io::Result<Self> {
+        Self::bind_with_store(prepared, Some(names))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_with_name_operation(
+        prepared: PreparedEndpoint,
+        names: NameStore,
+        operation: impl FnMut(
+            &mut super::windows_endpoint::Publication,
+            &NameStore,
+            &str,
+        ) -> io::Result<()>
+        + Send
+        + 'static,
+    ) -> io::Result<Self> {
+        let pending = instance(&prepared.metadata().address, true)?;
+        let publication = publication::Worker::start_with(prepared.publish()?, names, operation)?;
+        Ok(Self {
+            pending: Some(pending),
+            retiring: None,
+            publication: publication::Ownership::Managed(publication),
+            slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
+        })
+    }
+
+    fn bind_with_store(prepared: PreparedEndpoint, names: Option<NameStore>) -> io::Result<Self> {
         let pending = instance(&prepared.metadata().address, true)?;
         let publication = prepared.publish()?;
+        let publication = match names {
+            Some(names) => {
+                publication::Ownership::Managed(publication::Worker::start(publication, names)?)
+            }
+            None => publication::Ownership::Inline(publication),
+        };
         Ok(Self {
             pending: Some(pending),
             retiring: None,
@@ -65,8 +107,31 @@ impl Listener {
         })
     }
 
+    /// Bind-time metadata. Managed name changes do not alter the pipe address,
+    /// project or process identity; the server exposes current name snapshots.
     pub fn metadata(&self) -> &EndpointMetadata {
-        self.publication.metadata()
+        self.publication.initial()
+    }
+
+    pub(crate) fn metadata_updates(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<EndpointMetadata>> {
+        self.publication.snapshot()
+    }
+
+    pub(crate) fn publication_failure(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.publication.failure()
+    }
+
+    pub(crate) fn rename_sender(&self) -> Option<RenameSender> {
+        self.publication.requests()
+    }
+
+    /// Caller must first drop all returned connections. Close the pending pipe
+    /// before asking the publication owner to retire and join its worker.
+    pub(crate) async fn retire(&mut self) -> io::Result<()> {
+        self.pending.take();
+        self.publication.retire().await
     }
 
     /// Whether this listener still owns its pending instance. This reflects

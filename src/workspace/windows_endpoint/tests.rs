@@ -55,7 +55,7 @@ fn metadata_separates_pipe_address_and_filesystem_record_with_exact_native_paths
     );
     assert_eq!(
         inventory_root_in(Path::new(r"D:\account")),
-        Path::new(r"D:\account\runyte\hosts-v1")
+        Path::new(r"D:\account\runyte\all-hosts")
     );
 }
 
