@@ -61,7 +61,7 @@ mod tests {
             "863c29bb9a6e7822955a80f7e09466e1"
         );
         let path = PathBuf::from(OsString::from_vec(b"/workspace/\xff".to_vec()));
-        assert_eq!(workspace_id(&path), "25a377951b8ec475873878b73ff22d64f");
+        assert_eq!(workspace_id(&path), "25a377951b8ec475873878b73ff22d64");
     }
 
     #[test]
