@@ -24,7 +24,10 @@ them, regardless of which extensibility direction is chosen.
   file's bytes, or the entries an explorer's directory lists. It is
   independent of `[+]`, which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
-  presented, and is absent in an ordinary layout.
+  presented, and is absent in an ordinary layout. On Windows, file and
+  explorer titles show ordinary drive or UNC spelling for ordinary names;
+  verbatim spelling stays visible for names that need it. This affects
+  presentation only, not the stored path identity.
 - **Pane body** — the complete drawable interior of a pane border.
 - **Gutter** — the left part of a pane body reserved for line numbers,
   soft-wrap continuation markers, syntax-fold markers, Git change marks, and
