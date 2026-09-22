@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5e native
-process-exit supervision accepted in `1359c1a` (`Supervise native host exit with
-retained process wait`). The preceding manager controls are `5b86575`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5f native
+foreground parent identity accepted in `4aa792b` (`Pin native foreground parent
+identity`). The preceding process-exit watcher is `1359c1a`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -18,9 +18,10 @@ native persistent-session coordinator; separate guarded operations work.
 Continue sequential work packages with an independent subagent review after
 each package. Incorporate findings and repeat review until none remain before
 advancing. Commit and push accepted checkpoints to `feat/windows-support`.
-The user authorized the specific push through `5947fbb` to
-`git@github.com:runyte/runyte.git`, and that push succeeded. Subsequent local
-checkpoints are not included in that authorization; ask before pushing them.
+The user authorized pushing accepted checkpoints to `feat/windows-support`,
+but not to other branches. The exact push through `d9361e6` to
+`git@github.com:runyte/runyte.git` succeeded; later checkpoints may be pushed
+to that branch after review and local validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
 decision. Do not enable public persistent
 attachment, plugins, or context access merely because their foundations exist.
@@ -251,18 +252,35 @@ zero failures, 61 ignored across 47 libtest/doc-test groups, plus six native LSP
 transport cases. Native CI and Unix coverage acceptance remain pending a later
 authorized push.
 
-## Next package: native parent identity and foreground supervision
+## Accepted package: 4e.5f native foreground parent identity
 
-Observe a foreground process's candidate parent once, immediately retain the
-same-user process handle, and verify creation order against the child. A PID is
-only a discovery hint, not ongoing identity or an authorization proof. Keep
-missing or unobservable parents explicit. A detached host uses a short-lived
-inheritance parent during launch, so do not attach natural-parent supervision
-to detached hosts. Use an isolated compiled parent-child fixture to prove live
-identity, process exit after pinning, and later-created candidate refusal.
-Then add typed console events and foreground-host supervision before frontend
-attachment/switching and connection-owned waits. Keep public attachment and
-parent-terminal routing gated until their own real-host acceptance.
+`4aa792b` obtains a candidate parent PID from one bounded ToolHelp snapshot,
+then immediately opens a retained same-account process handle and rejects a
+candidate created after the child. A missing parent, an exited parent before
+pinning, and a detached host's synthetic inheritance parent have explicit
+outcomes. Only an `OpenProcess` absence is classified as gone; later identity,
+owner and liveness query errors remain errors. This value does not yet supervise
+a foreground host or authorize terminal requests.
+
+Independent Astra review found no remaining findings after error classification,
+atomic fixture report publication and process-tree cleanup corrections. Compiled
+helpers prove live parent identity, rejection of a later-created process, and
+the original retained parent handle after its exit. Formatting, all-target
+Clippy with warnings denied, and the complete native workspace suite pass:
+3,330 tests, zero failures, 62 ignored across 47 libtest/doc-test groups, plus
+six native LSP transport cases. Native CI and Unix coverage acceptance are
+pending the push of this checkpoint.
+
+## Next package: native console events and foreground supervision
+
+Install typed Windows Ctrl+C, Ctrl+Break and console-close listeners before
+configuration, App or host startup. Keep one listener owner through normal
+cleanup; console-close cleanup is limited by the operating system deadline.
+Use an isolated compiled console fixture for real Ctrl+C and Ctrl+Break events,
+and prove close-event routing and cleanup separately. Then connect retained
+parent exit and console termination to foreground-host supervision. Keep public
+attachment and parent-terminal routing gated until their own real-host
+acceptance.
 
 ## Phase 2.5 implementation order
 
