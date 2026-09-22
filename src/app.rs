@@ -1809,6 +1809,7 @@ pub struct FsConfirmation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BufferAction {
     BringHere,
+    CloseHidden,
     Save,
     Discard,
     Close,
@@ -1818,6 +1819,7 @@ impl BufferAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::BringHere => "Bring into active pane",
+            Self::CloseHidden => "Close hidden buffers",
             Self::Save => "Save",
             Self::Discard => "Discard changes",
             Self::Close => "Close",

@@ -3223,7 +3223,10 @@ impl App {
         let Some(ListAction::Buffer(buffer)) = self.selected_list_action() else {
             return;
         };
-        let actions = self.available_buffer_actions(buffer);
+        let mut actions = self.available_buffer_actions(buffer);
+        if (0..self.buffers.len()).any(|id| self.can_close_hidden_buffer(id)) {
+            actions.push(BufferAction::CloseHidden);
+        }
         if actions.is_empty() {
             if self.buffers[buffer].is_directory() {
                 self.status("explorer buffers have no management actions here");
@@ -3270,6 +3273,16 @@ impl App {
         }
     }
 
+    fn can_close_hidden_buffer(&self, buffer: usize) -> bool {
+        !self.closed_buffers.contains(&buffer)
+            && !self.buffers[buffer].dirty
+            && !self.document_mutation_pending(buffer)
+            && !self
+                .panes
+                .values()
+                .any(|pane| pane.destination() == super::OpenDestination::Buffer(buffer))
+    }
+
     fn run_buffer_action(&mut self, buffer: usize, action: BufferAction) -> Result<()> {
         match action {
             BufferAction::BringHere => {
@@ -3292,6 +3305,19 @@ impl App {
                 ));
             }
             BufferAction::Close => self.close_buffer(buffer),
+            BufferAction::CloseHidden => {
+                self.buffer_action_menu = None;
+                let mut count = 0;
+                for id in 0..self.buffers.len() {
+                    if self.can_close_hidden_buffer(id) {
+                        self.retire_buffer(id, false);
+                        count += 1;
+                    }
+                }
+                self.status(format!(
+                    "closed {count} hidden buffers; unsaved buffers kept"
+                ));
+            }
         }
         Ok(())
     }

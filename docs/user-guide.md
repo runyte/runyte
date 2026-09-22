@@ -2417,14 +2417,16 @@ state, and the new pane opens the working directory as an explorer, exactly as
 
 In the buffer picker, Enter opens the selected buffer, `Ctrl-t` toggles its
 bounded preview of authoritative in-memory text, and Tab opens contextual
-actions. A modified file offers Save and Discard changes; discard
+actions. **Close hidden buffers** closes clean buffers that are not visible in
+any pane, preserving unsaved edits and pending saves. It applies to the whole
+workspace even when the picker is filtered. A modified file offers Save and Discard changes; discard
 requires a separate Enter confirmation. Close appears only after a buffer is
 clean, never discards edits implicitly, and redirects every pane that shared
 the closed buffer. The first column shows a file or directory name, or the
 existing structural name of another buffer type; the active name is surrounded
 by `*`, and read-only types carry `[RO]`. The second column is reserved for file
 and directory paths, relative to the project root when they are inside it and
-absolute otherwise. Explorer buffers deliberately expose no management
+absolute otherwise. Explorer buffers expose no per-buffer management
 actions in this view: filesystem changes remain available only by editing the
 explorer and confirming its `:write` plan.
 

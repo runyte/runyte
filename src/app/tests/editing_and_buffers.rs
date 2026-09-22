@@ -2704,3 +2704,42 @@ fn scrolling_the_view_without_soft_wrap_moves_one_line_and_stops_at_the_top() {
     press(&mut app, 'j');
     assert_eq!(app.active().scroll_row, 1);
 }
+
+#[test]
+fn buffer_picker_closes_hidden_buffers_across_filter_preserving_visible_and_dirty() {
+    let directory = temporary("close-hidden-buffers");
+    fs::create_dir_all(&directory).unwrap();
+    for name in ["visible.txt", "hidden.txt", "dirty.txt"] {
+        fs::write(directory.join(name), "original").unwrap();
+    }
+    let mut app = App::new(Config::default(), Some(directory.join("hidden.txt"))).unwrap();
+    let hidden = app.active().buffer;
+    app.open_file(directory.join("dirty.txt")).unwrap();
+    let dirty = app.active().buffer;
+    app.apply_to_buffer(dirty, &Transaction::insert(0, "unsaved "));
+    app.open_file(directory.join("visible.txt")).unwrap();
+    let visible = app.active().buffer;
+    app.open_buffer_picker();
+    for character in "visible".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let menu = app.buffer_action_menu.as_mut().unwrap();
+    menu.selected = menu
+        .actions
+        .iter()
+        .position(|action| *action == BufferAction::CloseHidden)
+        .unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.closed_buffers.contains(&hidden));
+    assert!(!app.closed_buffers.contains(&dirty));
+    assert!(!app.closed_buffers.contains(&visible));
+    assert!(app.buffers[dirty].dirty);
+    assert_eq!(app.active().buffer, visible);
+    assert_eq!(app.list.as_ref().unwrap().filter, "visible");
+    assert_eq!(
+        fs::read_to_string(directory.join("dirty.txt")).unwrap(),
+        "original"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
