@@ -17,7 +17,9 @@ use crate::windows_process::StartupChild;
 use anyhow::{Context, Result, ensure};
 use std::{
     ffi::OsString,
-    fmt, fs, io,
+    fmt, fs,
+    future::Future,
+    io,
     os::windows::io::{AsHandle, AsRawHandle},
     path::{Path, PathBuf},
     process::Command,
@@ -63,6 +65,7 @@ pub struct HostStartup {
     pub env: Vec<(OsString, Option<OsString>)>,
     pub verbosity: u8,
     pub log: Option<PathBuf>,
+    test_harness_helper: Option<String>,
 }
 
 impl HostStartup {
@@ -75,7 +78,14 @@ impl HostStartup {
             env: Vec::new(),
             verbosity: 0,
             log: None,
+            test_harness_helper: None,
         }
+    }
+
+    #[doc(hidden)]
+    pub fn with_test_harness_helper(mut self, helper: impl Into<String>) -> Self {
+        self.test_harness_helper = Some(helper.into());
+        self
     }
 
     fn command(&self, location: &EndpointLocation) -> Result<Command> {
@@ -108,22 +118,32 @@ impl HostStartup {
         );
         let directory = crate::windows_fs::ordinary_working_directory(&directory)?;
         let mut command = Command::new(executable);
-        command
-            .args(["--serve", "--detached-host", "--project-root"])
-            .arg(location.project_root())
-            .current_dir(directory);
-        if let Some(config) = &self.config {
-            command.arg("--config").arg(absolute(config));
+        if let Some(helper) = &self.test_harness_helper {
+            command.args([
+                "--exact",
+                helper,
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ]);
+        } else {
+            command
+                .args(["--serve", "--detached-host", "--project-root"])
+                .arg(location.project_root());
+            if let Some(config) = &self.config {
+                command.arg("--config").arg(absolute(config));
+            }
+            for _ in 0..self.verbosity {
+                command.arg("-v");
+            }
+            if let Some(log) = &self.log {
+                command.arg("--log").arg(absolute(log));
+            }
+            command
+                .arg("--")
+                .args(self.targets.iter().map(|path| absolute(path)));
         }
-        for _ in 0..self.verbosity {
-            command.arg("-v");
-        }
-        if let Some(log) = &self.log {
-            command.arg("--log").arg(absolute(log));
-        }
-        command
-            .arg("--")
-            .args(self.targets.iter().map(|path| absolute(path)));
+        command.current_dir(directory);
         for (name, value) in &self.env {
             if let Some(value) = value {
                 command.env(name, value);
@@ -149,6 +169,82 @@ pub struct StartedHost {
     peer: Arc<PinnedProcess>,
     disposition: StartDisposition,
 }
+
+struct ProvisionalHost {
+    child: StartupChild,
+    location: EndpointLocation,
+    identity: ProcessIdentity,
+}
+
+/// An authenticated startup result whose newly-created process remains in its
+/// kill-on-close job until the caller explicitly accepts it. Existing winners
+/// carry no provisional ownership and are never terminated by cancellation.
+pub(crate) struct PreparedHost {
+    metadata: EndpointMetadata,
+    peer: Arc<PinnedProcess>,
+    disposition: StartDisposition,
+    provisional: Option<ProvisionalHost>,
+}
+
+pub(crate) enum PreparedAcceptance {
+    Accepted,
+    Refused {
+        error: anyhow::Error,
+        cleanup: Result<()>,
+    },
+}
+
+impl PreparedHost {
+    pub(crate) fn metadata(&self) -> &EndpointMetadata {
+        &self.metadata
+    }
+
+    pub(crate) fn peer(&self) -> &Arc<PinnedProcess> {
+        &self.peer
+    }
+
+    pub(crate) fn disposition(&self) -> StartDisposition {
+        self.disposition
+    }
+
+    pub(crate) fn accept(mut self) -> Result<StartedHost> {
+        if let Some(provisional) = self.provisional.as_mut() {
+            provisional.child.release()?;
+        }
+        self.provisional = None;
+        Ok(StartedHost {
+            metadata: self.metadata,
+            peer: self.peer,
+            disposition: self.disposition,
+        })
+    }
+
+    /// Releases a prepared host, but keeps failed release ownership long
+    /// enough to terminate the complete provisional job and remove only that
+    /// launch's publication before returning the error.
+    pub(crate) async fn accept_or_settle(mut self) -> PreparedAcceptance {
+        if let Some(provisional) = self.provisional.as_mut()
+            && let Err(error) = provisional.child.release()
+        {
+            let error = anyhow::Error::from(error).context("cannot release prepared native host");
+            let cleanup = self
+                .settle()
+                .await
+                .context("failed native host release cleanup did not settle");
+            return PreparedAcceptance::Refused { error, cleanup };
+        }
+        self.provisional = None;
+        PreparedAcceptance::Accepted
+    }
+
+    pub(crate) async fn settle(mut self) -> Result<()> {
+        let Some(provisional) = self.provisional.take() else {
+            return Ok(());
+        };
+        stop_provisional(&provisional.child).await?;
+        cleanup_failed_launch(&provisional.location, provisional.identity)
+    }
+}
 impl StartedHost {
     pub fn metadata(&self) -> &EndpointMetadata {
         &self.metadata
@@ -169,9 +265,39 @@ pub async fn start_detached_host(
     location: &EndpointLocation,
     startup: HostStartup,
 ) -> Result<StartedHost> {
+    prepare_detached_host(location, startup).await?.accept()
+}
+
+/// Authenticates readiness without releasing a newly-created host from its
+/// provisional job. This is used by workflows whose own authority must remain
+/// valid through a later commit boundary.
+pub(crate) async fn prepare_detached_host(
+    location: &EndpointLocation,
+    startup: HostStartup,
+) -> Result<PreparedHost> {
+    prepare_detached_host_cancellable(location, startup, std::future::pending::<&'static str>())
+        .await
+}
+
+/// The service-owned ParentAttach variant interrupts readiness as soon as its
+/// caller loses authority. The still-armed child remains here while its one
+/// cleanup budget proves job emptiness and removes its exact publication.
+pub(crate) async fn prepare_detached_host_cancellable<C>(
+    location: &EndpointLocation,
+    startup: HostStartup,
+    cancellation: C,
+) -> Result<PreparedHost>
+where
+    C: Future<Output = &'static str>,
+{
     let deadline = Instant::now() + READINESS_BUDGET;
     if retire_stale(location)? {
-        return wait_existing(location, deadline).await;
+        tokio::pin!(cancellation);
+        return tokio::select! {
+            biased;
+            reason = &mut cancellation => anyhow::bail!(reason),
+            result = wait_existing_prepared(location, deadline) => result,
+        };
     }
     let command = startup.command(location)?;
     ensure!(
@@ -179,14 +305,26 @@ pub async fn start_detached_host(
         "startup preparation exceeded its readiness budget"
     );
     let child = spawn_prepared(&command)?;
-    let result = wait_ready(location, child, deadline).await;
-    result.with_context(|| match startup.log {
-        Some(log) => format!(
-            "native host startup failed; selected diagnostic log: {}",
-            log.display()
-        ),
-        None => "native host startup failed before authenticated readiness".to_owned(),
-    })
+    let identity = identity_for_handle(child.handle(), unsafe { GetProcessId(child.handle()) })?;
+    tokio::pin!(cancellation);
+    let observed = tokio::select! {
+        biased;
+        reason = &mut cancellation => {
+            stop_provisional(&child).await?;
+            cleanup_failed_launch(location, identity)?;
+            anyhow::bail!(reason);
+        }
+        result = observe_ready_prepared(location, &child, identity, deadline) => result,
+    };
+    finish_prepared_observation(location, child, identity, deadline, observed)
+        .await
+        .with_context(|| match startup.log {
+            Some(log) => format!(
+                "native host startup failed; selected diagnostic log: {}",
+                log.display()
+            ),
+            None => "native host startup failed before authenticated readiness".to_owned(),
+        })
 }
 
 fn spawn_prepared(command: &Command) -> Result<StartupChild> {
@@ -236,7 +374,10 @@ fn retire_stale(location: &EndpointLocation) -> Result<bool> {
     Ok(occupied)
 }
 
-async fn wait_existing(location: &EndpointLocation, deadline: Instant) -> Result<StartedHost> {
+async fn wait_existing_prepared(
+    location: &EndpointLocation,
+    deadline: Instant,
+) -> Result<PreparedHost> {
     let mut detail = "configured publication is occupied without a ready record".to_owned();
     loop {
         let now = Instant::now();
@@ -244,7 +385,7 @@ async fn wait_existing(location: &EndpointLocation, deadline: Instant) -> Result
             anyhow::bail!("existing publication could not be authenticated: {detail}");
         }
         match ready(location, deadline.min(now + PROBE_BUDGET)).await {
-            Ok(Some((metadata, peer))) => return finish_winner(metadata, peer, deadline),
+            Ok(Some((metadata, peer))) => return finish_winner_prepared(metadata, peer, deadline),
             Ok(None) => {}
             Err(error) => detail = bounded_detail(&error.to_string()),
         }
@@ -266,12 +407,39 @@ async fn ready(
     Ok(Some((metadata, client.peer().clone())))
 }
 
+#[cfg(test)]
 async fn wait_ready(
     location: &EndpointLocation,
-    mut child: StartupChild,
+    child: StartupChild,
     deadline: Instant,
 ) -> Result<StartedHost> {
+    wait_ready_prepared(location, child, deadline)
+        .await?
+        .accept()
+}
+
+#[cfg(test)]
+async fn wait_ready_prepared(
+    location: &EndpointLocation,
+    child: StartupChild,
+    deadline: Instant,
+) -> Result<PreparedHost> {
     let identity = identity_for_handle(child.handle(), unsafe { GetProcessId(child.handle()) })?;
+    let observed = observe_ready_prepared(location, &child, identity, deadline).await;
+    finish_prepared_observation(location, child, identity, deadline, observed).await
+}
+
+enum PreparedObservation {
+    Created(EndpointMetadata, Arc<PinnedProcess>),
+    Winner(EndpointMetadata, Arc<PinnedProcess>),
+}
+
+async fn observe_ready_prepared(
+    location: &EndpointLocation,
+    child: &StartupChild,
+    identity: ProcessIdentity,
+    deadline: Instant,
+) -> Result<PreparedObservation> {
     let mut detail = "host has not published a ready record".to_owned();
     loop {
         let now = Instant::now();
@@ -293,20 +461,13 @@ async fn wait_ready(
                         Instant::now() < deadline,
                         "native host readiness deadline expired before handoff"
                     );
-                    child.release()?;
-                    // No await is permitted between disarming and returning.
-                    return Ok(StartedHost {
-                        metadata,
-                        peer,
-                        disposition: StartDisposition::Started,
-                    });
+                    return Ok(PreparedObservation::Created(metadata, peer));
                 }
                 ensure!(
                     !child.contains_process(peer.as_handle().as_raw_handle())?,
                     "a provisional child descendant cannot be treated as an external startup winner"
                 );
-                stop_provisional(&child).await?;
-                return finish_winner(metadata, peer, deadline);
+                return Ok(PreparedObservation::Winner(metadata, peer));
             }
             Ok(None) => {}
             Err(error) => {
@@ -318,20 +479,56 @@ async fn wait_ready(
         sleep_until(deadline.min(Instant::now() + RETRY_INTERVAL)).await;
     }
     let status = child.exit_status()?;
-    stop_provisional(&child).await?;
-    // Only observations carrying this exact created identity are considered
-    // here; another launcher's replacement and indeterminate records survive.
-    cleanup_failed_launch(location, identity)?;
     anyhow::bail!(
         "host did not become ready within its startup budget (exit: {status:?}): {detail}"
     )
 }
 
+async fn finish_prepared_observation(
+    location: &EndpointLocation,
+    child: StartupChild,
+    identity: ProcessIdentity,
+    deadline: Instant,
+    observed: Result<PreparedObservation>,
+) -> Result<PreparedHost> {
+    match observed {
+        Ok(PreparedObservation::Created(metadata, peer)) => Ok(PreparedHost {
+            metadata,
+            peer,
+            disposition: StartDisposition::Started,
+            provisional: Some(ProvisionalHost {
+                child,
+                location: location.clone(),
+                identity,
+            }),
+        }),
+        Ok(PreparedObservation::Winner(metadata, peer)) => {
+            stop_provisional(&child).await?;
+            cleanup_failed_launch(location, identity)?;
+            finish_winner_prepared(metadata, peer, deadline)
+        }
+        Err(error) => {
+            stop_provisional(&child).await?;
+            cleanup_failed_launch(location, identity)?;
+            Err(error)
+        }
+    }
+}
+
+#[cfg(test)]
 fn finish_winner(
     metadata: EndpointMetadata,
     peer: Arc<PinnedProcess>,
     deadline: Instant,
 ) -> Result<StartedHost> {
+    finish_winner_prepared(metadata, peer, deadline)?.accept()
+}
+
+fn finish_winner_prepared(
+    metadata: EndpointMetadata,
+    peer: Arc<PinnedProcess>,
+    deadline: Instant,
+) -> Result<PreparedHost> {
     ensure!(
         Instant::now() < deadline,
         "startup winner readiness deadline expired during loser cleanup"
@@ -340,10 +537,11 @@ fn finish_winner(
         peer.is_alive()?,
         "authenticated startup winner exited during loser cleanup"
     );
-    Ok(StartedHost {
+    Ok(PreparedHost {
         metadata,
         peer,
         disposition: StartDisposition::ExistingWinner,
+        provisional: None,
     })
 }
 

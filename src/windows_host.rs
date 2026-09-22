@@ -6,7 +6,9 @@
 
 mod clients;
 
-use self::clients::{Clients, ConnectedPeer, Incoming, NativeSwitchAction, RenameFuture};
+use self::clients::{
+    Clients, ConnectedPeer, Incoming, NativeSwitchAction, ParentAttachIntent, RenameFuture,
+};
 use super::{
     FINDER_TERMINAL_REFRESH_INTERVAL, FRAME_INTERVAL, HostServices, MAINTENANCE_INTERVAL,
     STATUS_ANIMATION_INTERVAL, about_invocation, context_timeout, frame_publication_ready,
@@ -42,27 +44,52 @@ use std::{
 };
 
 type NativeSwitchPreparation = Pin<
+    Box<dyn Future<Output = Result<runyte::workspace::windows_service::PreparedLiveTarget>> + Send>,
+>;
+type ParentSwitchPreparation = Pin<
     Box<
-        dyn Future<
-                Output = (
-                    runyte::workspace::WorkspaceSelection,
-                    Result<runyte::workspace::windows_service::PreparedLiveTarget>,
-                ),
-            > + Send,
+        dyn Future<Output = Result<runyte::workspace::windows_service::PreparedAcceptanceDecision>>
+            + Send,
     >,
 >;
+type ParentSwitchCommit = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+const PARENT_ATTACH_ADMISSION_BUDGET: Duration = Duration::from_secs(15);
+const PARENT_ATTACH_CLEANUP_ALLOWANCE: Duration = Duration::from_secs(5);
+
+enum NativeSwitchPurpose {
+    Ordinary(runyte::workspace::WorkspaceSelection),
+    Parent(ParentAttachIntent),
+}
 
 struct PreparingNativeSwitch {
     owner: u64,
     receipt: u64,
+    purpose: NativeSwitchPurpose,
+    expires: Option<Instant>,
     future: NativeSwitchPreparation,
 }
 
 struct PendingNativeSwitch {
     owner: u64,
     receipt: u64,
-    _target: runyte::workspace::windows_service::PreparedLiveTarget,
+    target: runyte::workspace::windows_service::PreparedLiveTarget,
+    purpose: NativeSwitchPurpose,
     expires: Instant,
+}
+
+struct AcceptingParentSwitch {
+    owner: u64,
+    receipt: u64,
+    attach: ParentAttachIntent,
+    expires: Instant,
+    future: ParentSwitchPreparation,
+}
+
+struct CommittingParentSwitch {
+    owner: u64,
+    receipt: u64,
+    attach: ParentAttachIntent,
+    future: ParentSwitchCommit,
 }
 
 fn native_switch_candidate(
@@ -83,6 +110,39 @@ fn native_switch_candidate(
             .publication_key()
             .expect("prepared live selection has a publication key")
             .to_bytes(),
+    }
+}
+
+fn prepared_selection(
+    target: &runyte::workspace::windows_service::PreparedLiveTarget,
+) -> Result<runyte::workspace::WorkspaceSelection> {
+    let metadata = target.metadata();
+    Ok(runyte::workspace::WorkspaceSelection::selected(
+        metadata.project_root()?,
+        runyte::workspace::PublicationKey::from_authenticated_metadata(metadata),
+    ))
+}
+
+fn random_switch_receipt() -> Result<u64> {
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    };
+
+    loop {
+        let mut bytes = [0_u8; 8];
+        let status = unsafe {
+            BCryptGenRandom(
+                std::ptr::null_mut(),
+                bytes.as_mut_ptr(),
+                bytes.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        ensure!(status >= 0, "system random generator failed ({status:#x})");
+        let receipt = u64::from_ne_bytes(bytes);
+        if receipt != 0 {
+            return Ok(receipt);
+        }
     }
 }
 
@@ -263,9 +323,22 @@ pub(super) async fn run(
     let outcome = async {
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         if show_about { host.app_mut().execute(about_invocation()?)?; }
+        let parent_attach_startup =
+            runyte::workspace::windows_service::ParentAttachStartup::capture(
+                &std::env::current_exe()?,
+                config_path.as_deref(),
+                arguments.verbosity,
+                arguments.log.as_deref(),
+            )?;
+        #[cfg(test)]
+        let parent_attach_startup = match std::env::var("RUNYTE_TEST_PARENT_ATTACH_HOST_FIXTURE") {
+            Ok(helper) => parent_attach_startup.with_test_harness_helper(helper),
+            Err(_) => parent_attach_startup,
+        };
         let native_catalog = super::NativeCatalogConfig::from_layout(
             &layout,
             host.config.workspace.state.clone(),
+            parent_attach_startup,
         );
         services = Some(start_host_services(
             &mut host,
@@ -365,6 +438,8 @@ async fn run_loop(
     let mut switch_receipt = 0_u64;
     let mut switch_preparation: Option<PreparingNativeSwitch> = None;
     let mut pending_switch: Option<PendingNativeSwitch> = None;
+    let mut accepting_parent_switch: Option<AcceptingParentSwitch> = None;
+    let mut committing_parent_switch: Option<CommittingParentSwitch> = None;
     loop {
         let attached = clients.attached();
         host.note_plugin_frontend(attached);
@@ -381,6 +456,19 @@ async fn run_loop(
         let pointer_delay = attached
             .then(|| host.pointer_autoscroll_delay(Instant::now()))
             .flatten();
+        let native_switch_deadline = pending_switch
+            .as_ref()
+            .map(|pending| pending.expires)
+            .or_else(|| {
+                accepting_parent_switch
+                    .as_ref()
+                    .map(|accepting| accepting.expires)
+            })
+            .or_else(|| {
+                switch_preparation
+                    .as_ref()
+                    .and_then(|preparation| preparation.expires)
+            });
         let mut stop = false;
         let mut changed = false;
         tokio::select! {
@@ -422,13 +510,64 @@ async fn run_loop(
                 let preparation = switch_preparation.take().expect("selected preparation exists");
                 let owner = preparation.owner;
                 let receipt = preparation.receipt;
-                let (selection, result) = prepared;
-                if clients.active_id() != Some(owner) {
+                let expires = preparation.expires;
+                let purpose = preparation.purpose;
+                let deadline_valid = expires.is_none_or(|expires| Instant::now() < expires);
+                let authority_valid = deadline_valid && match &purpose {
+                    NativeSwitchPurpose::Ordinary(_) => clients.active_id() == Some(owner),
+                    NativeSwitchPurpose::Parent(attach) => clients.parent_attach_valid(host, attach),
+                };
+                if !authority_valid {
                     // The preparation retained authority only for its original
                     // source attachment. A later owner cannot inherit it.
+                    clients.cancel_switch_reservation(owner, receipt);
+                    if let NativeSwitchPurpose::Parent(attach) = purpose {
+                        clients.reply_parent_attach(
+                            host,
+                            attach.child,
+                            Err(if deadline_valid {
+                                "parent attach authority ended during destination preparation".to_owned()
+                            } else {
+                                "native parent attach exceeded its admission deadline".to_owned()
+                            }),
+                        );
+                    }
                 } else {
-                    match result {
+                    match prepared {
                         Ok(target) => {
+                            if expires.is_some_and(|expires| Instant::now() >= expires) {
+                                clients.cancel_switch_reservation(owner, receipt);
+                                if let NativeSwitchPurpose::Parent(attach) = purpose {
+                                    clients.reply_parent_attach(
+                                        host,
+                                        attach.child,
+                                        Err("native parent attach exceeded its admission deadline"
+                                            .to_owned()),
+                                    );
+                                }
+                                continue;
+                            }
+                            let selection = match &purpose {
+                                NativeSwitchPurpose::Ordinary(selection) => selection.clone(),
+                                NativeSwitchPurpose::Parent(_) => prepared_selection(&target)?,
+                            };
+                            if matches!(&purpose, NativeSwitchPurpose::Parent(_)) {
+                                let metadata = server.metadata_snapshot();
+                                let source = runyte::workspace::WorkspaceSelection::selected(
+                                    metadata.project_root()?,
+                                    runyte::workspace::PublicationKey::from_authenticated_metadata(
+                                        &metadata,
+                                    ),
+                                );
+                                if selection == source {
+                                    clients.cancel_switch_reservation(owner, receipt);
+                                    let NativeSwitchPurpose::Parent(attach) = purpose else {
+                                        unreachable!("parent no-op matched ordinary switch")
+                                    };
+                                    clients.reply_parent_attach(host, attach.child, Ok(()));
+                                    continue;
+                                }
+                            }
                             let candidate = native_switch_candidate(&target, &selection);
                             if clients.begin_switch(
                                 host,
@@ -442,32 +581,203 @@ async fn run_loop(
                                 pending_switch = Some(PendingNativeSwitch {
                                     owner,
                                     receipt,
-                                    _target: target,
-                                    expires: Instant::now() + Duration::from_secs(12),
+                                    target,
+                                    purpose,
+                                    expires: expires.unwrap_or_else(|| {
+                                        Instant::now() + Duration::from_secs(12)
+                                    }),
                                 });
                                 #[cfg(test)]
                                 note_switch_fixture("prepared");
+                            } else if let NativeSwitchPurpose::Parent(attach) = purpose {
+                                clients.cancel_switch_reservation(owner, receipt);
+                                clients.reply_parent_attach(
+                                    host,
+                                    attach.child,
+                                    Err("source frontend disconnected before destination preparation was delivered".to_owned()),
+                                );
                             }
                         }
                         Err(error) => {
                             clients.cancel_switch_reservation(owner, receipt);
                             #[cfg(test)]
                             note_switch_fixture("prepare-failed");
-                            host.report_host_error(format!("native session switch failed: {error:#}"));
-                            clients.send_active(host, HostResponse::NativeSwitchUnchanged);
+                            match purpose {
+                                NativeSwitchPurpose::Ordinary(_) => {
+                                    host.report_host_error(format!("native session switch failed: {error:#}"));
+                                    clients.send_active(host, HostResponse::NativeSwitchUnchanged);
+                                }
+                                NativeSwitchPurpose::Parent(attach) => {
+                                    clients.reply_parent_attach(
+                                        host,
+                                        attach.child,
+                                        Err(format!("native parent attach failed: {error:#}")),
+                                    );
+                                }
+                            }
                             changed = true;
                         }
                     }
                 }
             }
-            _ = async {
-                match pending_switch.as_ref() {
-                    Some(pending) => tokio::time::sleep_until(pending.expires.into()).await,
+            accepted = async {
+                match accepting_parent_switch.as_mut() {
+                    Some(accepting) => accepting.future.as_mut().await,
                     None => std::future::pending().await,
                 }
             } => {
-                if let Some(pending) = pending_switch.take() {
+                let accepting = accepting_parent_switch
+                    .take()
+                    .expect("selected parent acceptance exists");
+                let unexpired = Instant::now() < accepting.expires;
+                let authority_valid = unexpired
+                    && clients.parent_attach_confirmed_valid(host, &accepting.attach);
+                match accepted {
+                    Ok(decision) if authority_valid => {
+                        match decision.commit() {
+                            Ok(commit) => {
+                                committing_parent_switch = Some(CommittingParentSwitch {
+                                    owner: accepting.owner,
+                                    receipt: accepting.receipt,
+                                    attach: accepting.attach,
+                                    future: Box::pin(commit.finish()),
+                                });
+                            }
+                            Err(error) => {
+                                clients.reply_parent_attach(
+                                    host,
+                                    accepting.attach.child,
+                                    Err(format!(
+                                        "native parent attach destination commit failed: {error:#}"
+                                    )),
+                                );
+                                clients.finish_confirmed_parent_switch(
+                                    host,
+                                    accepting.owner,
+                                    accepting.receipt,
+                                    false,
+                                );
+                            }
+                        }
+                    }
+                    result => {
+                        let message = match result {
+                            Err(error) => format!(
+                                "native parent attach destination acceptance failed: {error:#}"
+                            ),
+                            Ok(_) if !unexpired => {
+                                "native parent attach exceeded its admission deadline".to_owned()
+                            }
+                            Ok(_) => {
+                                "parent attach authority ended during destination acceptance"
+                                    .to_owned()
+                            }
+                        };
+                        clients.reply_parent_attach(
+                            host,
+                            accepting.attach.child,
+                            Err(message),
+                        );
+                        clients.finish_confirmed_parent_switch(
+                            host,
+                            accepting.owner,
+                            accepting.receipt,
+                            false,
+                        );
+                    }
+                }
+            }
+            committed = async {
+                match committing_parent_switch.as_mut() {
+                    Some(committing) => committing.future.as_mut().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let committing = committing_parent_switch
+                    .take()
+                    .expect("selected parent commit exists");
+                match committed {
+                    Ok(()) => {
+                        clients.reply_parent_attach(host, committing.attach.child, Ok(()));
+                        #[cfg(test)]
+                        if drop_commit_ack_requested() {
+                            clients.drop_confirmed_parent_switch_receipt(
+                                host,
+                                committing.owner,
+                                committing.receipt,
+                            );
+                        } else {
+                            clients.finish_confirmed_parent_switch(
+                                host,
+                                committing.owner,
+                                committing.receipt,
+                                true,
+                            );
+                        }
+                        #[cfg(not(test))]
+                        clients.finish_confirmed_parent_switch(
+                            host,
+                            committing.owner,
+                            committing.receipt,
+                            true,
+                        );
+                    }
+                    Err(error) => {
+                        clients.reply_parent_attach(
+                            host,
+                            committing.attach.child,
+                            Err(format!(
+                                "native parent attach destination acceptance failed: {error:#}"
+                            )),
+                        );
+                        clients.finish_confirmed_parent_switch(
+                            host,
+                            committing.owner,
+                            committing.receipt,
+                            false,
+                        );
+                    }
+                }
+            }
+            _ = async {
+                match native_switch_deadline {
+                    Some(expires) => tokio::time::sleep_until(expires.into()).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(preparation) = switch_preparation.take() {
+                    clients.cancel_switch_reservation(preparation.owner, preparation.receipt);
+                    if let NativeSwitchPurpose::Parent(attach) = preparation.purpose {
+                        clients.reply_parent_attach(
+                            host,
+                            attach.child,
+                            Err(format!(
+                                "native parent attach exceeded its admission deadline; cleanup remains bounded to {} seconds",
+                                PARENT_ATTACH_CLEANUP_ALLOWANCE.as_secs()
+                            )),
+                        );
+                    }
+                } else if let Some(pending) = pending_switch.take() {
+                    if let NativeSwitchPurpose::Parent(attach) = &pending.purpose {
+                        clients.reply_parent_attach(
+                            host,
+                            attach.child,
+                            Err("native parent attach confirmation timed out".to_owned()),
+                        );
+                    }
                     clients.abort_switch(host, pending.owner, pending.receipt);
+                } else if let Some(accepting) = accepting_parent_switch.take() {
+                    clients.reply_parent_attach(
+                        host,
+                        accepting.attach.child,
+                        Err("native parent attach destination acceptance timed out".to_owned()),
+                    );
+                    clients.finish_confirmed_parent_switch(
+                        host,
+                        accepting.owner,
+                        accepting.receipt,
+                        false,
+                    );
                 }
             }
             event = services.context_events.recv(), if !ended.contains("context") => {
@@ -584,29 +894,106 @@ async fn run_loop(
         if switch_preparation.as_ref().is_some_and(|preparation| {
             clients.active_id() != Some(preparation.owner)
                 || !clients.owns_switch_reservation(preparation.owner, preparation.receipt)
+                || matches!(&preparation.purpose, NativeSwitchPurpose::Parent(attach) if !clients.parent_attach_valid(host, attach))
         }) {
             // Dropping the future closes its one-shot receiver. The catalog
             // worker observes that cancellation before retaining a result.
-            switch_preparation = None;
+            let preparation = switch_preparation.take().expect("invalid preparation retained");
+            clients.cancel_switch_reservation(preparation.owner, preparation.receipt);
+            if let NativeSwitchPurpose::Parent(attach) = preparation.purpose {
+                clients.reply_parent_attach(
+                    host,
+                    attach.child,
+                    Err("parent attach authority ended during destination preparation".to_owned()),
+                );
+            }
         }
         if let Some(action) = clients.take_switch_action() {
             match action {
                 NativeSwitchAction::Commit { owner, receipt } => {
-                    if pending_switch
-                        .as_ref()
-                        .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
-                    {
-                        pending_switch = None;
-                        #[cfg(test)]
-                        note_switch_fixture("committed");
-                        #[cfg(test)]
-                        if drop_commit_ack_requested() {
-                            clients.drop_switch_without_ack(host, owner, receipt);
+                    let matches = pending_switch.as_ref().is_some_and(|pending| {
+                        pending.owner == owner && pending.receipt == receipt
+                    });
+                    if matches {
+                        let parent =
+                            pending_switch
+                                .as_ref()
+                                .and_then(|pending| match &pending.purpose {
+                                    NativeSwitchPurpose::Parent(attach) => Some(attach),
+                                    NativeSwitchPurpose::Ordinary(_) => None,
+                                });
+                        if let Some(attach) = parent {
+                            let unexpired = pending_switch
+                                .as_ref()
+                                .is_some_and(|pending| Instant::now() < pending.expires);
+                            if unexpired && clients.parent_attach_valid(host, attach) {
+                                clients.accept_parent_commit(host, owner, receipt);
+                            } else if let Some(pending) = pending_switch.take() {
+                                if let NativeSwitchPurpose::Parent(attach) = pending.purpose {
+                                    clients.reply_parent_attach(
+                                        host,
+                                        attach.child,
+                                        Err(if unexpired {
+                                            "parent attach authority ended before commit".to_owned()
+                                        } else {
+                                            "native parent attach exceeded its admission deadline"
+                                                .to_owned()
+                                        }),
+                                    );
+                                }
+                                clients.abort_switch(host, owner, receipt);
+                            }
                         } else {
+                            pending_switch = None;
+                            #[cfg(test)]
+                            note_switch_fixture("committed");
+                            #[cfg(test)]
+                            if drop_commit_ack_requested() {
+                                clients.drop_switch_without_ack(host, owner, receipt);
+                            } else {
+                                clients.commit_switch(host, owner, receipt);
+                            }
+                            #[cfg(not(test))]
                             clients.commit_switch(host, owner, receipt);
                         }
-                        #[cfg(not(test))]
-                        clients.commit_switch(host, owner, receipt);
+                    }
+                }
+                NativeSwitchAction::ParentCommitObserved { owner, receipt } => {
+                    let confirmed = pending_switch.as_ref().is_some_and(|pending| {
+                        pending.owner == owner
+                            && pending.receipt == receipt
+                            && matches!(&pending.purpose, NativeSwitchPurpose::Parent(_))
+                    });
+                    if confirmed {
+                        let pending = pending_switch.take().expect("confirmed parent switch");
+                        let NativeSwitchPurpose::Parent(attach) = pending.purpose else {
+                            unreachable!("parent confirmation matched ordinary switch")
+                        };
+                        let unexpired = Instant::now() < pending.expires;
+                        if !unexpired || !clients.parent_attach_valid(host, &attach) {
+                            clients.reply_parent_attach(
+                                host,
+                                attach.child,
+                                Err(if unexpired {
+                                    "parent attach authority ended before frontend confirmation"
+                                        .to_owned()
+                                } else {
+                                    "native parent attach exceeded its admission deadline"
+                                        .to_owned()
+                                }),
+                            );
+                            clients.abort_switch(host, owner, receipt);
+                        } else {
+                            let future =
+                                Box::pin(pending.target.prepare_acceptance(pending.expires));
+                            accepting_parent_switch = Some(AcceptingParentSwitch {
+                                owner,
+                                receipt,
+                                attach,
+                                expires: pending.expires,
+                                future,
+                            });
+                        }
                     }
                 }
                 NativeSwitchAction::Abort { owner, receipt } => {
@@ -614,16 +1001,67 @@ async fn run_loop(
                         .as_ref()
                         .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
                     {
-                        pending_switch = None;
+                        let pending = pending_switch.take().expect("matching pending switch");
+                        if let NativeSwitchPurpose::Parent(attach) = pending.purpose {
+                            clients.reply_parent_attach(
+                                host,
+                                attach.child,
+                                Err("native parent attach was canceled by its source frontend"
+                                    .to_owned()),
+                            );
+                        }
                         clients.abort_switch(host, owner, receipt);
                         #[cfg(test)]
                         note_switch_fixture("aborted");
+                    } else if accepting_parent_switch.as_ref().is_some_and(|accepting| {
+                        accepting.owner == owner && accepting.receipt == receipt
+                    }) {
+                        let accepting = accepting_parent_switch
+                            .take()
+                            .expect("matching parent acceptance");
+                        clients.reply_parent_attach(
+                            host,
+                            accepting.attach.child,
+                            Err("native parent attach was canceled by its source frontend"
+                                .to_owned()),
+                        );
+                        clients.finish_confirmed_parent_switch(host, owner, receipt, false);
                     }
                 }
             }
         }
+        if pending_switch.as_ref().is_some_and(|pending| {
+            matches!(&pending.purpose, NativeSwitchPurpose::Parent(attach) if !clients.parent_attach_valid(host, attach))
+        }) {
+            let pending = pending_switch.take().expect("invalid parent switch retained");
+            let NativeSwitchPurpose::Parent(attach) = pending.purpose else {
+                unreachable!("parent validity matched ordinary switch")
+            };
+            clients.reply_parent_attach(
+                host,
+                attach.child,
+                Err("parent attach authority ended before completion".to_owned()),
+            );
+            clients.abort_switch(host, pending.owner, pending.receipt);
+        }
+        if accepting_parent_switch.as_ref().is_some_and(|accepting| {
+            !clients.parent_attach_confirmed_valid(host, &accepting.attach)
+        }) {
+            let accepting = accepting_parent_switch
+                .take()
+                .expect("invalid parent acceptance retained");
+            clients.reply_parent_attach(
+                host,
+                accepting.attach.child,
+                Err("parent attach authority ended during destination acceptance".to_owned()),
+            );
+            clients.finish_confirmed_parent_switch(host, accepting.owner, accepting.receipt, false);
+        }
         if pending_switch.is_some() && !clients.switch_pending() {
             pending_switch = None;
+        }
+        if let Some((id, incoming)) = clients.take_released_parent_request() {
+            stop |= clients.incoming(host, id, incoming, |name| rename(server, name));
         }
         clients.reconcile(host);
         // Detached background work cannot manufacture a future physical TUI
@@ -640,7 +1078,11 @@ async fn run_loop(
         #[cfg(not(test))]
         let injected: Option<runyte::app::WorkspaceSwitchRequest> = None;
         if let Some(request) = injected.or_else(|| host.take_workspace_switch()) {
-            if switch_preparation.is_some() || pending_switch.is_some() {
+            if switch_preparation.is_some()
+                || pending_switch.is_some()
+                || accepting_parent_switch.is_some()
+                || committing_parent_switch.is_some()
+            {
                 clients.refuse_switch_with(host, "a native session switch is already in progress");
             } else if request.visit.is_some() {
                 clients.refuse_switch_with(host, "native destination visits are not available yet");
@@ -668,9 +1110,10 @@ async fn run_loop(
                         switch_preparation = Some(PreparingNativeSwitch {
                             owner,
                             receipt,
+                            purpose: NativeSwitchPurpose::Ordinary(selection.clone()),
+                            expires: None,
                             future: Box::pin(async move {
-                                let result = service.prepare_selected_live(selection.clone()).await;
-                                (selection, result)
+                                service.prepare_selected_live(selection).await
                             }),
                         });
                     }
@@ -681,6 +1124,53 @@ async fn run_loop(
                 }
             } else {
                 clients.refuse_switch(host);
+            }
+            changed = true;
+        } else if let Some(attach) = clients.take_parent_attach() {
+            if switch_preparation.is_some()
+                || pending_switch.is_some()
+                || accepting_parent_switch.is_some()
+                || committing_parent_switch.is_some()
+            {
+                clients.reply_parent_attach(
+                    host,
+                    attach.child,
+                    Err("a native session switch is already in progress".to_owned()),
+                );
+            } else if !clients.parent_attach_valid(host, &attach) {
+                clients.reply_parent_attach(
+                    host,
+                    attach.child,
+                    Err("parent attach authority is stale or detached".to_owned()),
+                );
+            } else if let Some(service) = services.native_catalog.clone() {
+                let selector = attach.selector.clone();
+                let directory = attach.directory.clone();
+                let receipt = random_switch_receipt()?;
+                if clients.reserve_parent_switch(host, attach.generation, receipt) {
+                    let expires = Instant::now() + PARENT_ATTACH_ADMISSION_BUDGET;
+                    switch_preparation = Some(PreparingNativeSwitch {
+                        owner: attach.generation,
+                        receipt,
+                        purpose: NativeSwitchPurpose::Parent(attach),
+                        expires: Some(expires),
+                        future: Box::pin(async move {
+                            service.prepare_parent_attach(&selector, &directory).await
+                        }),
+                    });
+                } else {
+                    clients.reply_parent_attach(
+                        host,
+                        attach.child,
+                        Err("native source frontend could not reserve parent attach".to_owned()),
+                    );
+                }
+            } else {
+                clients.reply_parent_attach(
+                    host,
+                    attach.child,
+                    Err("native session service is unavailable".to_owned()),
+                );
             }
             changed = true;
         } else if let Some(request) = host.take_persistent_exit_request() {

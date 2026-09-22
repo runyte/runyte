@@ -176,9 +176,11 @@ use crate::workspace::{
 /// by its physical frontend; prepared or dropped pages cannot authorize input.
 // Version 56 carries typed workspace-switch targets, fixed native publication
 // keys and the private two-phase native switch handoff. Version 57 adds the
-// native frontend's drawn-frame readiness acknowledgment. This private bundled
-// frontend version is independent of the stable runyte-1 plugin API.
-pub const VERSION: u32 = 57;
+// native frontend's drawn-frame readiness acknowledgment. Version 58 adds the
+// parent-only nonfinal native commit acknowledgment and its original-frontend
+// confirmation. This private bundled frontend version is independent of the
+// stable runyte-1 plugin API.
+pub const VERSION: u32 = 58;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -544,6 +546,11 @@ pub enum ClientRequest {
     NativeSwitchCommit {
         receipt: u64,
     },
+    /// Confirms that the original source frontend observed the parent-only
+    /// nonfinal commit acknowledgment while it still owns that connection.
+    NativeParentSwitchCommitObserved {
+        receipt: u64,
+    },
     /// Releases a prepared destination while retaining this exact source
     /// attachment.
     NativeSwitchAbort {
@@ -874,7 +881,9 @@ impl ClientRequest {
                 "destination identity is invalid",
             ),
             Self::Resize { geometry } => geometry.validate(),
-            Self::NativeSwitchCommit { receipt } | Self::NativeSwitchAbort { receipt } => {
+            Self::NativeSwitchCommit { receipt }
+            | Self::NativeParentSwitchCommitObserved { receipt }
+            | Self::NativeSwitchAbort { receipt } => {
                 require(*receipt != 0, "native switch receipt is invalid")
             }
             _ => Ok(()),
@@ -1051,6 +1060,11 @@ pub enum HostResponse {
         candidate: Box<NativeSwitchCandidate>,
     },
     NativeSwitchUnchanged,
+    /// The source host accepted a parent-owned commit but retains the source
+    /// reservation and child until the original frontend confirms this reply.
+    NativeParentSwitchCommitAccepted {
+        receipt: u64,
+    },
     NativeSwitchAborted {
         receipt: u64,
     },
@@ -1422,7 +1436,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 57);
+        assert_eq!(VERSION, 58);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1639,6 +1653,11 @@ mod tests {
     fn native_switch_receipts_and_candidate_fields_are_strict() {
         assert!(
             ClientRequest::NativeSwitchCommit { receipt: 0 }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ClientRequest::NativeParentSwitchCommitObserved { receipt: 0 }
                 .validate()
                 .is_err()
         );

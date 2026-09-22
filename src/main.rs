@@ -1797,6 +1797,7 @@ async fn run(
             scope,
             current,
             configured_state: app.config.workspace.state.clone(),
+            parent_attach: None,
         })
     })
     .map(Some)
@@ -2726,6 +2727,7 @@ async fn run_host_server(
                                 changed = true;
                             }
                             request @ (ClientRequest::NativeSwitchCommit { .. }
+                            | ClientRequest::NativeParentSwitchCommitObserved { .. }
                             | ClientRequest::NativeSwitchAbort { .. }) => {
                                 send_active_response(
                                     &mut active,
@@ -3386,7 +3388,9 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
 fn unix_native_switch_refusal(request: &ClientRequest) -> Option<HostResponse> {
     matches!(
         request,
-        ClientRequest::NativeSwitchCommit { .. } | ClientRequest::NativeSwitchAbort { .. }
+        ClientRequest::NativeSwitchCommit { .. }
+            | ClientRequest::NativeParentSwitchCommitObserved { .. }
+            | ClientRequest::NativeSwitchAbort { .. }
     )
     .then(|| HostResponse::Refused {
         message: "provisional native session switching is unavailable on this host".to_owned(),
@@ -5385,6 +5389,7 @@ struct NativeCatalogConfig {
     scope: DiscoveryScope,
     current: runyte::workspace::windows_location::KnownReadLocation,
     configured_state: PathBuf,
+    parent_attach: Option<runyte::workspace::windows_service::ParentAttachStartup>,
 }
 
 #[cfg(windows)]
@@ -5392,11 +5397,13 @@ impl NativeCatalogConfig {
     fn from_layout(
         layout: &runyte::workspace::windows_location::ResolvedLayout,
         configured_state: PathBuf,
+        parent_attach: runyte::workspace::windows_service::ParentAttachStartup,
     ) -> Self {
         Self {
             scope: layout.discovery_scope().clone(),
             current: layout.read_location(),
             configured_state,
+            parent_attach: Some(parent_attach),
         }
     }
 }
@@ -5434,11 +5441,28 @@ fn start_host_services(
     let (native_catalog_handle, native_catalog_owner, native_catalog_events) = if let Some(config) =
         native_catalog
     {
-        match runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
-            config.scope,
-            Some(config.current),
-            config.configured_state,
-        ) {
+        let NativeCatalogConfig {
+            scope,
+            current,
+            configured_state,
+            parent_attach,
+        } = config;
+        let spawned = match parent_attach {
+            Some(parent_attach) => {
+                runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_parent_attach(
+                    scope,
+                    Some(current),
+                    configured_state,
+                    parent_attach,
+                )
+            }
+            None => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
+                scope,
+                Some(current),
+                configured_state,
+            ),
+        };
+        match spawned {
             Ok((handle, owner, events)) => (Some(handle), Some(owner), Some(events)),
             Err(error) => {
                 app.report_host_error(format!("native session catalog could not start: {error}"));
@@ -6479,6 +6503,7 @@ mod tests {
     fn unix_refuses_provisional_native_switch_receipts() {
         for request in [
             runyte::protocol::ClientRequest::NativeSwitchCommit { receipt: 7 },
+            runyte::protocol::ClientRequest::NativeParentSwitchCommitObserved { receipt: 7 },
             runyte::protocol::ClientRequest::NativeSwitchAbort { receipt: 7 },
         ] {
             assert!(matches!(

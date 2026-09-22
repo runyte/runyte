@@ -3454,6 +3454,7 @@ mod tests {
         ));
         for request in [
             ClientRequest::NativeSwitchCommit { receipt: 1 },
+            ClientRequest::NativeParentSwitchCommitObserved { receipt: 1 },
             ClientRequest::NativeSwitchAbort { receipt: 1 },
         ] {
             assert!(request_allowed_for_role(&request, ClientRole::Interactive));

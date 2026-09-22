@@ -533,6 +533,7 @@ impl Pty {
         let lifecycle_control = control.clone();
         let lifecycle_process = process.clone();
         let lifecycle_job = job.clone();
+        let lifecycle_pid = info.dwProcessId;
         thread::Builder::new()
             .name("runyte-conpty-lifecycle".into())
             .spawn(move || {
@@ -568,6 +569,8 @@ impl Pty {
                 drop(console);
                 let _ = writer.join();
                 let _ = reader.join();
+                #[cfg(debug_assertions)]
+                note_conpty_cleanup_fixture(lifecycle_pid);
                 #[cfg(test)]
                 unsafe {
                     SetEvent(lifecycle_control.completed.as_raw_handle());
@@ -642,6 +645,18 @@ impl Pty {
     pub fn finished(&mut self) -> Option<Option<i32>> {
         (unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } == WAIT_OBJECT_0)
             .then(|| exit_code(&self.process))
+    }
+}
+
+#[cfg(debug_assertions)]
+fn note_conpty_cleanup_fixture(pid: u32) {
+    let Some(directory) = std::env::var_os("RUNYTE_TEST_CONPTY_CLEANUP_DIR") else {
+        return;
+    };
+    let marker = PathBuf::from(directory).join(format!("conpty-cleanup-{pid}"));
+    let pending = marker.with_extension("pending");
+    if std::fs::write(&pending, b"complete").is_ok() {
+        let _ = std::fs::rename(pending, marker);
     }
 }
 fn exit_code(process: &OwnedHandle) -> Option<i32> {

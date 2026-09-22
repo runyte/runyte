@@ -185,6 +185,20 @@ impl DiscoveryScope {
         &self.namespaces
     }
 
+    /// Initializes one explicitly selected project with this already captured
+    /// account/storage scope, then composes its publication layout. This is the
+    /// mutating boundary used by the native parent-side startup coordinator;
+    /// ordinary discovery remains read-only.
+    pub fn initialize_layout(
+        &self,
+        requested: &Path,
+        configured_state: &Path,
+    ) -> anyhow::Result<ResolvedLayout> {
+        let project = crate::project_root::initialize(requested, configured_state, &self.reserved)?;
+        let state = crate::project_root::resolve_state_root(&project, configured_state);
+        ResolvedLayout::from_scope(self.clone(), &project, state).map_err(Into::into)
+    }
+
     /// The selected optional history cache. Does not prepare or harden it.
     pub fn cache_root(&self) -> io::Result<Option<&Path>> {
         if let Some(error) = &self.cache_error {

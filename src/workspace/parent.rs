@@ -246,6 +246,73 @@ pub async fn run_wait(
     }
 }
 
+/// Runs the private native ParentAttach relay over the exact source endpoint
+/// and retained terminal authority. No public launch route calls this yet.
+#[cfg(windows)]
+pub async fn run_attach(
+    context: ParentContext,
+    selector: PathBuf,
+    directory: PathBuf,
+    parent: &crate::workspace::windows_parent_identity::ForegroundParentSupervisor,
+) -> Result<()> {
+    use crate::{
+        protocol::{ClientRequest, HostResponse},
+        workspace::windows_lifecycle::connect_control,
+    };
+    use tokio::time::{Instant, timeout_at};
+
+    parent.ensure_alive()?;
+    // Connection admission, destination preparation, the source frontend
+    // handshake and the final child reply share one whole-operation budget.
+    // Dropping this exact connection on parent loss revokes the retained child
+    // proof and makes the source host abort any provisional destination.
+    // The host admits and completes the handoff within fifteen seconds. Keep
+    // the child connection alive for its separate five-second cleanup
+    // allowance so an owned provisional startup can settle and return one
+    // terminal result instead of becoming an ambiguous timeout.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut client = tokio::select! {
+        biased;
+        _ = parent.wait() => anyhow::bail!("supervising parent exited before parent attach was admitted"),
+        connected = timeout_at(deadline, connect_control(&context.metadata)) => {
+            connected.context("owning native Runyte host did not answer")?
+                .context("cannot connect to owning native Runyte host")?
+        }
+    };
+    let request = ClientRequest::ParentAttach {
+        terminal: context.terminal,
+        capability: context.capability,
+        selector: crate::protocol::encode_path(&selector),
+        directory: crate::protocol::encode_path(&directory),
+    };
+    tokio::select! {
+        biased;
+        _ = parent.wait() => anyhow::bail!("supervising parent exited before parent attach was admitted"),
+        sent = timeout_at(deadline, client.send(&request)) => {
+            sent.context("parent editor did not accept the attach request")??;
+        }
+    }
+    loop {
+        let response = tokio::select! {
+            biased;
+            _ = parent.wait() => anyhow::bail!("supervising parent exited before parent attach completed"),
+            response = timeout_at(deadline, client.recv()) => {
+                response.context("parent attach exceeded its whole-operation deadline")??
+            }
+        };
+        match response {
+            Some(HostResponse::ParentAttached) => return Ok(()),
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(_) => {}
+            None => anyhow::bail!(
+                "owning native Runyte host disconnected before parent attach completed"
+            ),
+        }
+    }
+}
+
 #[cfg(windows)]
 async fn cancel_after_parent_loss(
     client: &mut crate::workspace::windows_transport::LocalClient,

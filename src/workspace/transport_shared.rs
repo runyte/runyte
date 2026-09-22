@@ -606,6 +606,7 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
         | ClientRequest::Resize { .. }
         | ClientRequest::Resynchronize
         | ClientRequest::NativeSwitchCommit { .. }
+        | ClientRequest::NativeParentSwitchCommitObserved { .. }
         | ClientRequest::NativeSwitchAbort { .. }
         | ClientRequest::Detach => role == ClientRole::Interactive,
         ClientRequest::RenameHost { .. }

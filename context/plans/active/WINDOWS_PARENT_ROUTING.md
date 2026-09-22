@@ -1,34 +1,33 @@
 # WP5: native parent-terminal authorization and routing
 
-Read-only design against the current Windows branch. No source edits, builds,
-tests or native probes were performed. This package supplies parent authority
-and routing; it does not implement the interactive frontend or process watcher.
+Retained architecture for native parent authority and routing. ParentWait and
+the private ParentAttach handoff are implemented behind closed public launch
+gates; the remaining work is the separately reviewed public routing package.
 
 ## Existing seams
 
-- `src/workspace/parent.rs`: Unix-only host seed, terminal-specific capability,
-  bounded `RUNYTE_PARENT_CONTEXT` parser and redacted `ParentLaunch` debug output.
-  Its marker currently names a ready-record path; the capability is not sufficient
-  authority by itself.
-- `src/terminal/mod.rs:2543`: Unix `TerminalSessions::validates_parent` combines
-  capability, live terminal and socket peer session membership. Windows currently
-  passes no parent context from `open`.
-- `src/terminal/pty_windows.rs:295`: `spawn_in_context` ignores its context.
-  `Pty` already retains the exact process and per-terminal job; the child is
-  created suspended, assigned to that job, then resumed. Close removes the
-  session and starts owned asynchronous job/ConPTY teardown.
-- `src/terminal/windows_command.rs::environment`: strips inherited parent marker
-  names case-insensitively and installs `standalone`. This is the injection point
-  for an explicitly supplied native context, with no global environment mutation.
-- `src/windows_host/clients.rs`: each accepted peer retains `Arc<PinnedProcess>`;
-  `_proof` is available to become the actual authorization input. It currently
-  refuses interactive and parent requests, and owns wait tokens per connection.
-- `src/main.rs:2219` and `run_parent_request`: Unix ParentAttach/ParentWait relay,
-  active-attachment checks, one outstanding switch, receipt completion and expiry.
-  `ParentSwitchWorkspace` is handled by the outer frontend; the Unix child does
-  not create a nested TUI. `prepare_switch_target` runs in that outer frontend.
-- `WorkspaceHost::create_parent_wait_request`: existing visible-terminal,
-  overlay, buffer-lease and origin restoration rules remain shared.
+- `src/workspace/parent.rs` now owns the platform-specific parent marker and the
+  private Windows `run_wait` and `run_attach` clients. Both authenticate one
+  captured endpoint and retain natural-parent supervision; public launch routing
+  remains separate.
+- `src/terminal/mod.rs`, `pty_windows.rs` and `windows_command.rs` install the
+  explicit marker, retain the terminal job and validate the requesting process
+  by handle and exact job membership. Inherited markers are still removed
+  case-insensitively.
+- `src/windows_host/clients.rs` binds parent requests to the live control peer,
+  ready interactive attachment generation, visible terminal and capability. It
+  owns wait tokens and the bounded ParentAttach response ordering.
+- `src/workspace/windows_service.rs` resolves each ParentAttach against a fresh
+  catalog and starts an exact missing destination with frozen inputs outside the
+  ConPTY job. Request cancellation remains service-owned through provisional
+  startup cleanup and never retires an authenticated existing winner.
+- `src/tui/windows_frontend.rs` performs the prepared destination attachment and
+  original-source confirmation. The parent-only commit acknowledgment is the
+  readiness signal; the frontend's same-connection confirmation is the
+  irreversible handoff point. A lost final source receipt cannot discard the
+  authenticated destination.
+- `WorkspaceHost::create_parent_wait_request` continues to provide the shared
+  visible-terminal, overlay, buffer-lease and origin restoration rules.
 
 ## Minimal native authority
 
@@ -103,17 +102,41 @@ ParentAttach additionally requires the active terminal, ready parent UI, the
 same active attachment generation and no other handoff. Use one bounded pending
 handoff record containing child connection/proof, terminal ID, frontend
 connection/proof, unpredictable receipt, captured target request and deadline.
-Bind completion to the same retained frontend process, not just receipt text
-received on any later control connection. A reconnect can prove the same process
-through its newly authenticated peer handle. Receipt replay, wrong peer, detach,
-origin close and expiration return one terminal result and release the record.
+Bind confirmation to the same retained frontend process and original source
+connection, not just receipt text received on any later control connection. A
+reconnect cannot inherit its reservation. After that connection confirms the
+nonfinal commit acknowledgment, its expected close may leave the already
+authenticated frontend process proof as owner through the atomic destination
+decision. Receipt replay, wrong peer, detach, origin close and expiration before
+that decision return one terminal result and release the record.
+
+The parent path reuses `NativeSwitchPrepared`, but commit acceptance is not its
+terminal result. The source host first sends a parent-only nonfinal commit
+acknowledgment on the original interactive connection and retains both the
+source reservation and child. The frontend confirms observation on that same
+connection. Only then may the host answer `ParentAttached`, release the source
+reservation and send the ordinary final committed receipt. Ordinary native
+switches retain their existing two-phase behavior.
 
 Destination preparation must run outside the requesting ConPTY job. The preferred
 native coordinator has the authenticated parent host resolve/prepare the target
 using its captured configuration and DiscoveryScope, then uses existing native
 startup to obtain actual ready-peer proof. Its provisional child remains owned
-through cancellation. The future outer frontend receives the switch only after
-the target is prepared, and acknowledges only after successful attachment.
+through cancellation. Cancellation interrupts readiness immediately and spends
+one cleanup budget proving job emptiness and removing only the provisional
+publication. Destination release is a bounded pending host-loop state rather
+than an inline await; input, transport and terminal events continue while it is
+settled. Release failure retains the armed owner through the same job and
+publication cleanup. The service first yields a still-armed commit decision;
+the host revalidates the exact child, retained frontend proof, terminal authority
+and deadline before making that single irreversible decision, then retains the
+result receiver until the worker reports released or settled. A successful
+release can therefore produce `ParentAttached` without a contradictory later
+authority check.
+Expected source-connection closure after same-connection confirmation keeps the
+already retained frontend process proof rather than undoing the commit. The
+future outer frontend receives the switch only after the
+target is prepared, and acknowledges only after successful attachment.
 Alternatively, preserving the Unix outer-frontend preparation is viable once
 native frontend ownership proves that executor is outside the terminal job;
 that dependency should be explicit, not a child-side breakaway fallback.
@@ -125,11 +148,10 @@ observable native startup errors. Keep destination startup work off the host
 event loop, admission bounded, and retain the routing owner until cancellation
 and child cleanup finish. This design does not add a new process-watch mechanism.
 
-The current internal native host has no interactive attachment. It can accept
-the authority/plumbing implementation and tests, but must continue to refuse
-ParentAttach/ParentWait until the native frontend supplies attachment-generation
-and origin ownership. This is an existing integration dependency, not a new
-architecture blocker.
+The private native host/frontend pair now supplies attachment-generation and
+drawn-frame readiness for ParentWait and ParentAttach. Public persistent-session,
+`--wait` and parent-attach launch routing remains gated until its own acceptance
+package opens those routes.
 
 ## Bounded implementation and acceptance sequence
 

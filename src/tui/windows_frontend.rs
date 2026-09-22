@@ -58,6 +58,7 @@ enum AttachmentOutcome {
 
 enum SwitchReceiptState {
     Pending,
+    ParentCommitAccepted,
     Complete,
 }
 
@@ -336,7 +337,9 @@ async fn run_attachment(
                     Some(HostResponse::SwitchWorkspace { .. } | HostResponse::ParentSwitchWorkspace { .. }) => {
                         bail!("this native workspace switch route is not available yet")
                     }
-                    Some(HostResponse::NativeSwitchAborted { .. } | HostResponse::NativeSwitchCommitted { .. }) => {
+                    Some(HostResponse::NativeSwitchAborted { .. }
+                        | HostResponse::NativeSwitchCommitted { .. }
+                        | HostResponse::NativeParentSwitchCommitAccepted { .. }) => {
                         bail!("native workspace host sent an unexpected switch receipt")
                     }
                     Some(_) => {}
@@ -523,21 +526,21 @@ async fn commit_switch(
     receipt: u64,
     deadline: tokio::time::Instant,
 ) -> Result<()> {
-    tokio::time::timeout_at(deadline, async {
-        if send_or_exit(
+    if tokio::time::timeout_at(
+        deadline,
+        send_or_exit(
             &mut attachment.client,
             &attachment.exit,
             &ClientRequest::NativeSwitchCommit { receipt },
-        )
-        .await?
-            == WireOutcome::HostEnded
-        {
-            bail!("source workspace host ended before switch commit")
-        }
-        await_switch_receipt(attachment, receipt, true, deadline).await
-    })
+        ),
+    )
     .await
-    .context("native switch commit exceeded its whole-operation deadline")?
+    .context("native switch commit exceeded its whole-operation deadline")??
+        == WireOutcome::HostEnded
+    {
+        bail!("source workspace host ended before switch commit")
+    }
+    await_switch_receipt(attachment, receipt, true, deadline).await
 }
 
 async fn await_switch_receipt(
@@ -561,11 +564,30 @@ async fn await_switch_receipt(
         let Some(response) = response else {
             bail!("source workspace host disconnected before switch acknowledgement")
         };
-        if matches!(
-            observe_switch_receipt(response, receipt, committed)?,
-            SwitchReceiptState::Complete
-        ) {
-            return Ok(());
+        match observe_switch_receipt(response, receipt, committed)? {
+            SwitchReceiptState::Pending => {}
+            SwitchReceiptState::ParentCommitAccepted => {
+                let outcome = tokio::time::timeout_at(
+                    deadline,
+                    send_or_exit(
+                        &mut attachment.client,
+                        &attachment.exit,
+                        &ClientRequest::NativeParentSwitchCommitObserved { receipt },
+                    ),
+                )
+                .await
+                .context("source frontend did not confirm parent switch commit")??;
+                if outcome == WireOutcome::HostEnded {
+                    bail!("source workspace host ended before parent switch confirmation")
+                }
+                // The original frontend has now observed the source commit and
+                // confirmed it on that same connection. This is the one
+                // irreversible parent handoff point: a lost final source
+                // receipt cannot make this frontend abandon the already drawn,
+                // authenticated destination.
+                return Ok(());
+            }
+            SwitchReceiptState::Complete => return Ok(()),
         }
     }
 }
@@ -576,6 +598,11 @@ fn observe_switch_receipt(
     committed: bool,
 ) -> Result<SwitchReceiptState> {
     match response {
+        HostResponse::NativeParentSwitchCommitAccepted { receipt: received }
+            if committed && received == receipt =>
+        {
+            Ok(SwitchReceiptState::ParentCommitAccepted)
+        }
         HostResponse::NativeSwitchCommitted { receipt: received }
             if committed && received == receipt =>
         {
@@ -868,6 +895,17 @@ mod tests {
                 observe_switch_receipt(receipt, 9, committed).unwrap(),
                 SwitchReceiptState::Complete
             ));
+            if committed {
+                assert!(matches!(
+                    observe_switch_receipt(
+                        HostResponse::NativeParentSwitchCommitAccepted { receipt: 9 },
+                        9,
+                        true,
+                    )
+                    .unwrap(),
+                    SwitchReceiptState::ParentCommitAccepted
+                ));
+            }
         }
         assert!(
             observe_switch_receipt(HostResponse::NativeSwitchCommitted { receipt: 8 }, 9, true,)

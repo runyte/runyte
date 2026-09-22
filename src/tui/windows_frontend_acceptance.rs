@@ -13,8 +13,9 @@ use runyte::{
     test_support::TestRuntimeRoot,
     workspace::{
         windows_endpoint::{EndpointLocation, EndpointMetadata, RegistrySet},
-        windows_lifecycle::connect_control,
+        windows_lifecycle::{await_host_stopped, connect_control, shutdown_host},
         windows_parent_identity::ForegroundParentSupervisor,
+        windows_process_identity::PinnedProcess,
         windows_transport::{HostResponse, LocalServer, ServerEvent},
     },
 };
@@ -42,11 +43,11 @@ use windows_sys::Win32::System::{
         CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE,
     },
     JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
     },
-    Threading::CREATE_NO_WINDOW,
+    Threading::{CREATE_NO_WINDOW, GetCurrentProcess},
 };
 
 const ROOT_ENV: &str = "RUNYTE_NATIVE_FRONTEND_ACCEPTANCE_ROOT";
@@ -71,6 +72,9 @@ const PARENT_LOSS_LAUNCHER: &str = "windows_frontend_acceptance::parent_loss_lau
 const PARENT_LOSS_INTERMEDIATE: &str =
     "windows_frontend_acceptance::parent_loss_intermediate_fixture";
 const PARENT_WAIT_CLIENT: &str = "windows_frontend_acceptance::parent_wait_client_fixture";
+const PARENT_ATTACH_LAUNCHER: &str = "windows_frontend_acceptance::parent_attach_launcher_fixture";
+const PARENT_ATTACH_CLIENT: &str = "windows_frontend_acceptance::parent_attach_client_fixture";
+const PARENT_ATTACH_HOST: &str = "windows_frontend_acceptance::parent_attach_host_fixture";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn root() -> PathBuf {
@@ -87,6 +91,37 @@ fn stall_ready_record(root: &Path) -> PathBuf {
 
 fn read_metadata(root: &Path) -> EndpointMetadata {
     EndpointMetadata::from_json(&fs::read(ready_record(root)).unwrap()).unwrap()
+}
+
+fn enter_parent_attach_breakaway_job() -> OwnedHandle {
+    let raw = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+    assert!(!raw.is_null(), "{}", std::io::Error::last_os_error());
+    let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    // The acceptance test's outer kill-on-close job remains the lifetime
+    // owner. This immediate inner job permits only the host's explicit native
+    // startup breakaway while the parent fixture retains the job handle.
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+    assert_ne!(
+        unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(job.as_raw_handle(), GetCurrentProcess()) },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    job
 }
 
 fn runtime_ready_record(root: &Path, project: &Path) -> PathBuf {
@@ -286,6 +321,7 @@ fn parent_wait_parent_fixture() {
         );
         thread::sleep(Duration::from_millis(10));
     }
+    let _parent_attach_breakaway = enter_parent_attach_breakaway_job();
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME"),
         Some(root.join("config").into())
@@ -297,6 +333,12 @@ fn parent_wait_parent_fixture() {
     fs::write(project.join("note.txt"), "HOST_STILL_LIVE\n").unwrap();
     fs::write(project.join("wait.txt"), "PARENT_WAIT_TARGET\n").unwrap();
     fs::write(project.join("loss.txt"), "PARENT_LOSS_TARGET\n").unwrap();
+    let destination = root.join("attach-destination");
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("note.txt"), "PARENT_ATTACH_DESTINATION\n").unwrap();
+    fs::create_dir(root.join("failed-attach-destination")).unwrap();
+    let source_inbox = root.join("parent-attach-source-inbox");
+    fs::create_dir(&source_inbox).unwrap();
 
     let host_log = fs::File::create(root.join("parent-wait-host.log")).unwrap();
     let host = Command::new(std::env::current_exe().unwrap())
@@ -304,6 +346,9 @@ fn parent_wait_parent_fixture() {
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &source_inbox)
+        .env("RUNYTE_TEST_PARENT_ATTACH_HOST_FIXTURE", PARENT_ATTACH_HOST)
+        .env("RUNYTE_TEST_CONPTY_CLEANUP_DIR", &root)
         .env_remove("XDG_RUNTIME_DIR")
         .current_dir(&project)
         .creation_flags(CREATE_NO_WINDOW)
@@ -322,7 +367,6 @@ fn parent_wait_parent_fixture() {
         );
         thread::sleep(Duration::from_millis(15));
     }
-
     let wait_for = |path: &Path, label: &str| {
         let deadline = Instant::now() + TIMEOUT;
         while !path.exists() {
@@ -450,12 +494,60 @@ fn parent_wait_parent_fixture() {
     frontend.send(":open note.txt\r");
     frontend.until_screen("HOST_STILL_LIVE");
     frontend.insert_and_write("AFTER_PARENT_LOSS ");
+    fs::write(source_inbox.join("drop-commit-ack"), b"1").unwrap();
+    frontend.open_terminal_fixture(PARENT_ATTACH_LAUNCHER);
+    frontend.until_screen("PARENT_ATTACH_DESTINATION");
+    wait_for(
+        &root.join("parent-attach-client-complete"),
+        "native ParentAttach client completion",
+    );
+    let launcher_pid = fs::read_to_string(root.join("parent-attach-launcher-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let launcher = PinnedProcess::open_peer(launcher_pid).unwrap();
+    fs::write(root.join("release-parent-attach-launcher"), b"1").unwrap();
+    let launcher_deadline = Instant::now() + TIMEOUT;
+    while launcher.is_alive().unwrap() {
+        assert!(
+            Instant::now() < launcher_deadline,
+            "requesting ParentAttach terminal launcher did not exit"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    wait_for(
+        &root.join(format!("conpty-cleanup-{launcher_pid}")),
+        "requesting ParentAttach terminal job and ConPTY cleanup",
+    );
+    assert!(root.join("parent-attach-startup-refused").exists());
+    assert!(root.join("parent-side-destination-started").exists());
+    assert!(
+        !source_inbox.join("drop-commit-ack").exists(),
+        "source did not exercise injected final-receipt loss"
+    );
+    frontend.insert_and_write("ATTACHED ");
     frontend.detach();
     frontend.exit("PARENT_WAIT_FRONTEND_DONE");
     assert_eq!(
         fs::read_to_string(project.join("note.txt")).unwrap(),
         "AFTER_PARENT_LOSS HOST_STILL_LIVE\n"
     );
+    assert_eq!(
+        fs::read_to_string(destination.join("note.txt")).unwrap(),
+        "ATTACHED PARENT_ATTACH_DESTINATION\n"
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let metadata = EndpointMetadata::from_json(
+            &fs::read(destination.join(".runyte/host/endpoint.json")).unwrap(),
+        )
+        .unwrap();
+        let stopped = shutdown_host(&metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+    });
     host.0.kill().unwrap();
 }
 
@@ -599,6 +691,128 @@ fn parent_wait_client_fixture() {
         }
         other => panic!("unknown ParentWait fixture case {other}"),
     }
+}
+
+#[test]
+#[ignore = "integrated-terminal launcher retained while native ParentAttach completes"]
+fn parent_attach_launcher_fixture() {
+    let root = root();
+    fs::write(
+        root.join("parent-attach-launcher-pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    let mut failed = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", PARENT_ATTACH_CLIENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, &root)
+        .env("RUNYTE_PARENT_ATTACH_CASE", "startup-failure")
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .spawn()
+        .unwrap();
+    assert!(failed.wait().unwrap().success());
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", PARENT_ATTACH_CLIENT, "--ignored", "--nocapture"])
+        .env(ROOT_ENV, &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .spawn()
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    fs::write(root.join("parent-attach-client-complete"), b"1").unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while !root.join("release-parent-attach-launcher").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "ParentAttach launcher release timed out"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[ignore = "native ParentAttach client spawned inside an integrated terminal job"]
+fn parent_attach_client_fixture() {
+    let root = root();
+    let context = runyte::workspace::parent::ParentContext::from_environment()
+        .unwrap()
+        .expect("integrated terminal supplied a parent context");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let failed = std::env::var_os("RUNYTE_PARENT_ATTACH_CASE").is_some();
+    let selector = if failed {
+        root.join("failed-attach-destination")
+    } else {
+        root.join("attach-destination")
+    };
+    let result = runtime.block_on(async {
+        let parent = ForegroundParentSupervisor::capture().unwrap();
+        runyte::workspace::parent::run_attach(context, selector, root.join("project"), &parent)
+            .await
+    });
+    if failed {
+        let error = format!("{:#}", result.unwrap_err());
+        assert!(
+            root.join("failed-startup-invoked").exists(),
+            "parent-side startup helper was not invoked: {error}"
+        );
+        assert!(
+            error.contains("native host startup failed before authenticated readiness"),
+            "unexpected parent-side startup failure: {error}"
+        );
+        fs::write(root.join("parent-attach-startup-refused"), b"1").unwrap();
+    } else {
+        result.unwrap();
+    }
+}
+
+#[test]
+#[ignore = "started by the parent host worker outside the requesting ConPTY job"]
+fn parent_attach_host_fixture() {
+    let root = root();
+    let project = PathBuf::from(
+        std::env::var_os("RUNYTE_TEST_PARENT_ATTACH_PROJECT")
+            .expect("parent attach service supplied its exact project"),
+    );
+    if project.ends_with("failed-attach-destination") {
+        fs::write(root.join("failed-startup-invoked"), b"1").unwrap();
+        return;
+    }
+    assert_eq!(
+        project,
+        root.join("attach-destination").canonicalize().unwrap()
+    );
+    fs::write(root.join("parent-side-destination-started"), b"1").unwrap();
+    let args: Vec<OsString> = vec![
+        "--serve".into(),
+        "--detached-host".into(),
+        "--project-root".into(),
+        project.clone().into_os_string(),
+        "--config".into(),
+        root.join("config/config.yaml").into_os_string(),
+        "--".into(),
+        project.join("note.txt").into_os_string(),
+    ];
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut startup = StartupTrace::new();
+        let mut termination = TerminationSignals::new().unwrap();
+        windows_host::run(
+            LaunchArguments::parse_from(args).unwrap(),
+            &mut startup,
+            &mut termination,
+            None,
+        )
+        .await
+        .unwrap();
+    });
 }
 
 #[test]

@@ -9,8 +9,9 @@ use super::{
     windows_control::{ControlSnapshot, UserSelector},
     windows_endpoint::{EndpointMetadata, MAX_PERSISTED_PATH_BYTES},
     windows_lifecycle::connect_control,
-    windows_location::{DiscoveryScope, KnownReadLocation},
+    windows_location::{DiscoveryScope, KnownReadLocation, ResolvedLayout},
     windows_process_identity::PinnedProcess,
+    windows_startup::{self, HostStartup, StartDisposition},
 };
 use crate::{
     git::{GitCliProvider, GitProvider},
@@ -22,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -33,6 +34,7 @@ const MAX_WARNING_DETAILS: usize = 8;
 const MAX_WARNING_BYTES: usize = 4096;
 const PREVIEW_BUDGET: Duration = Duration::from_secs(2);
 const PREPARE_BUDGET: Duration = Duration::from_secs(3);
+const PARENT_ATTACH_BUDGET: Duration = Duration::from_secs(12);
 
 #[derive(Clone, Debug)]
 enum Target {
@@ -88,6 +90,11 @@ enum Request {
         selection: WorkspaceSelection,
         reply: oneshot::Sender<Result<PreparedLiveTarget>>,
     },
+    PrepareParentAttach {
+        selector: PathBuf,
+        working_directory: PathBuf,
+        reply: oneshot::Sender<Result<PreparedLiveTarget>>,
+    },
     #[cfg(test)]
     Hold {
         entered: oneshot::Sender<()>,
@@ -115,6 +122,7 @@ enum Request {
 pub struct PreparedLiveTarget {
     metadata: EndpointMetadata,
     peer: Arc<PinnedProcess>,
+    acceptance: Option<oneshot::Sender<StartupAcceptance>>,
 }
 
 impl PreparedLiveTarget {
@@ -124,6 +132,171 @@ impl PreparedLiveTarget {
 
     pub fn peer(&self) -> &Arc<PinnedProcess> {
         &self.peer
+    }
+
+    pub async fn accept(self, deadline: Instant) -> Result<()> {
+        self.prepare_acceptance(deadline)
+            .await?
+            .commit()?
+            .finish()
+            .await
+    }
+
+    /// Starts the final release handshake without committing it. Dropping the
+    /// returned decision closes the worker-owned request and settles an armed
+    /// provisional host. `commit` is the single irreversible boundary.
+    pub async fn prepare_acceptance(
+        mut self,
+        deadline: std::time::Instant,
+    ) -> Result<PreparedAcceptanceDecision> {
+        let Some(acceptance) = self.acceptance.take() else {
+            return Ok(PreparedAcceptanceDecision {
+                decision: None,
+                result: None,
+            });
+        };
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "native parent attach admission deadline expired before destination acceptance"
+        );
+        let (reply, ready) = oneshot::channel();
+        acceptance
+            .send(StartupAcceptance { deadline, reply })
+            .map_err(|_| anyhow::anyhow!("native parent attach startup owner is unavailable"))?;
+        ready
+            .await
+            .context("native parent attach startup owner stopped before commit decision")?
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+/// One worker-owned startup waiting for the host's final atomic decision.
+/// Dropping before `commit` cancels and settles it. After `commit`, only the
+/// returned result can describe whether the destination was released.
+#[derive(Debug)]
+pub struct PreparedAcceptanceDecision {
+    decision: Option<oneshot::Sender<StartupDecision>>,
+    result: Option<oneshot::Receiver<Result<(), String>>>,
+}
+
+impl PreparedAcceptanceDecision {
+    pub fn commit(mut self) -> Result<CommittedAcceptance> {
+        if let Some(decision) = self.decision.take() {
+            decision.send(StartupDecision::Commit).map_err(|_| {
+                anyhow::anyhow!("native parent attach startup owner is unavailable")
+            })?;
+        }
+        Ok(CommittedAcceptance {
+            result: self.result.take(),
+        })
+    }
+}
+
+pub struct CommittedAcceptance {
+    result: Option<oneshot::Receiver<Result<(), String>>>,
+}
+
+impl CommittedAcceptance {
+    pub async fn finish(self) -> Result<()> {
+        let Some(result) = self.result else {
+            return Ok(());
+        };
+        result
+            .await
+            .context("native parent attach startup owner stopped during committed release")?
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+#[derive(Debug)]
+struct StartupAcceptance {
+    deadline: std::time::Instant,
+    reply: oneshot::Sender<Result<PreparedAcceptanceDecision, String>>,
+}
+
+#[derive(Debug)]
+enum StartupDecision {
+    Commit,
+}
+
+struct ParentAttachPreparation {
+    target: PreparedLiveTarget,
+    startup: Option<windows_startup::PreparedHost>,
+}
+
+/// Process/configuration choices captured before the catalog worker starts.
+/// Destination-specific storage environment is derived later from the same
+/// frozen discovery scope; no request reads process environment or cwd.
+#[derive(Clone, Debug)]
+pub struct ParentAttachStartup {
+    executable: PathBuf,
+    config: Option<PathBuf>,
+    verbosity: u8,
+    log: Option<PathBuf>,
+    test_harness_helper: Option<String>,
+}
+
+impl ParentAttachStartup {
+    pub fn capture(
+        executable: &Path,
+        config: Option<&Path>,
+        verbosity: u8,
+        log: Option<&Path>,
+    ) -> std::io::Result<Self> {
+        let directory = std::env::current_dir()?;
+        let startup = Self {
+            executable: absolute_from(&directory, executable),
+            config: config.map(|path| absolute_from(&directory, path)),
+            verbosity,
+            log: log.map(|path| absolute_from(&directory, path)),
+            test_harness_helper: None,
+        };
+        validate_path(&startup.executable).map_err(std::io::Error::other)?;
+        if let Some(path) = startup.config.as_deref() {
+            validate_path(path).map_err(std::io::Error::other)?;
+        }
+        if let Some(path) = startup.log.as_deref() {
+            validate_path(path).map_err(std::io::Error::other)?;
+        }
+        Ok(startup)
+    }
+
+    #[doc(hidden)]
+    pub fn with_test_harness_helper(mut self, helper: impl Into<String>) -> Self {
+        self.test_harness_helper = Some(helper.into());
+        self
+    }
+
+    fn for_layout(&self, layout: &ResolvedLayout) -> Result<HostStartup> {
+        let mut startup = HostStartup::new(self.executable.clone());
+        startup.config = self.config.clone();
+        startup.verbosity = self.verbosity;
+        startup.log = self.log.clone();
+        startup.env = layout.detached_environment()?;
+        if let Some(helper) = &self.test_harness_helper {
+            startup = startup.with_test_harness_helper(helper.clone());
+            startup.env.push((
+                "RUNYTE_TEST_PARENT_ATTACH_PROJECT".into(),
+                Some(layout.project_root().as_os_str().to_owned()),
+            ));
+            startup.env.push((
+                "RUNYTE_TEST_PARENT_ATTACH_STATE".into(),
+                Some(layout.state_root().as_os_str().to_owned()),
+            ));
+            startup.env.push((
+                "XDG_CONFIG_HOME".into(),
+                Some(layout.project_root().join(".test-config").into_os_string()),
+            ));
+        }
+        Ok(startup)
+    }
+}
+
+fn absolute_from(directory: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        directory.join(path)
     }
 }
 
@@ -142,6 +315,48 @@ pub struct WorkspaceServiceHandle {
 }
 
 impl WorkspaceServiceHandle {
+    /// Resolves a terminal-authored selector against a fresh complete catalog.
+    /// A stopped or previously unseen project is initialized and started by the
+    /// parent-side worker, outside the requesting terminal's ConPTY job.
+    pub async fn prepare_parent_attach(
+        &self,
+        selector: &Path,
+        working_directory: &Path,
+    ) -> Result<PreparedLiveTarget> {
+        self.check_open().map_err(anyhow::Error::msg)?;
+        validate_path(selector).map_err(anyhow::Error::msg)?;
+        validate_path(working_directory).map_err(anyhow::Error::msg)?;
+        ensure!(
+            working_directory.is_absolute(),
+            "parent attach working directory must be absolute"
+        );
+        let (reply, result) = oneshot::channel();
+        self.requests
+            .try_send(Request::PrepareParentAttach {
+                selector: selector.to_owned(),
+                working_directory: working_directory.to_owned(),
+                reply,
+            })
+            .map_err(request_error)?;
+        let mut stop = self.stop.clone();
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        tokio::time::timeout(PARENT_ATTACH_BUDGET, async {
+            tokio::select! {
+                biased;
+                changed = stop.changed() => {
+                    match changed {
+                        Ok(()) => anyhow::bail!("native session service is shutting down"),
+                        Err(_) => anyhow::bail!("native session service is unavailable"),
+                    }
+                }
+                result = result => result
+                    .context("native session service stopped before preparing parent attach")?,
+            }
+        })
+        .await
+        .context("native parent attach preparation timed out")?
+    }
+
     /// Prepares only the exact live publication named by a displayed native
     /// row. It never resolves a replacement through its project, name or PID.
     pub async fn prepare_selected_live(
@@ -157,14 +372,7 @@ impl WorkspaceServiceHandle {
         let (reply, result) = oneshot::channel();
         self.requests
             .try_send(Request::PrepareSelectedLive { selection, reply })
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => {
-                    anyhow::anyhow!("native session service queue is full")
-                }
-                mpsc::error::TrySendError::Closed(_) => {
-                    anyhow::anyhow!("native session service is unavailable")
-                }
-            })?;
+            .map_err(request_error)?;
         let mut stop = self.stop.clone();
         ensure!(!*stop.borrow(), "native session service is shutting down");
         tokio::time::timeout(PREPARE_BUDGET, async {
@@ -313,6 +521,17 @@ impl WorkspaceServiceHandle {
     }
 }
 
+fn request_error<T>(error: mpsc::error::TrySendError<T>) -> anyhow::Error {
+    match error {
+        mpsc::error::TrySendError::Full(_) => {
+            anyhow::anyhow!("native session service queue is full")
+        }
+        mpsc::error::TrySendError::Closed(_) => {
+            anyhow::anyhow!("native session service is unavailable")
+        }
+    }
+}
+
 fn validate_path(path: &Path) -> Result<(), &'static str> {
     if path
         .as_os_str()
@@ -365,13 +584,33 @@ impl WorkspaceServiceOwner {
         current: Option<KnownReadLocation>,
         configured_state: PathBuf,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
-        Self::spawn_with_snapshot(scope, current, configured_state, None)
+        Self::spawn_inner(scope, current, configured_state, None, None)
     }
 
+    pub fn spawn_with_parent_attach(
+        scope: DiscoveryScope,
+        current: Option<KnownReadLocation>,
+        configured_state: PathBuf,
+        startup: ParentAttachStartup,
+    ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
+        Self::spawn_inner(scope, current, configured_state, Some(startup), None)
+    }
+
+    #[cfg(test)]
     fn spawn_with_snapshot(
         scope: DiscoveryScope,
         current: Option<KnownReadLocation>,
         configured_state: PathBuf,
+        snapshot: Option<ControlSnapshot>,
+    ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
+        Self::spawn_inner(scope, current, configured_state, None, snapshot)
+    }
+
+    fn spawn_inner(
+        scope: DiscoveryScope,
+        current: Option<KnownReadLocation>,
+        configured_state: PathBuf,
+        parent_attach: Option<ParentAttachStartup>,
         snapshot: Option<ControlSnapshot>,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
         validate_path(&configured_state).map_err(std::io::Error::other)?;
@@ -393,6 +632,7 @@ impl WorkspaceServiceOwner {
                                 scope,
                                 current,
                                 configured_state,
+                                parent_attach,
                                 snapshot,
                                 include_hidden: false,
                                 requests: request_rx,
@@ -453,6 +693,7 @@ struct Worker {
     scope: DiscoveryScope,
     current: Option<KnownReadLocation>,
     configured_state: PathBuf,
+    parent_attach: Option<ParentAttachStartup>,
     snapshot: Option<ControlSnapshot>,
     include_hidden: bool,
     requests: mpsc::Receiver<Request>,
@@ -609,9 +850,94 @@ impl Worker {
         let prepared = PreparedLiveTarget {
             metadata: publication.metadata().clone(),
             peer: Arc::clone(publication.peer()),
+            acceptance: None,
         };
         self.snapshot = Some(snapshot);
         Ok(prepared)
+    }
+
+    async fn prepare_parent_attach(
+        &mut self,
+        selector: &Path,
+        working_directory: &Path,
+        reply: &mut oneshot::Sender<Result<PreparedLiveTarget>>,
+    ) -> Result<ParentAttachPreparation> {
+        self.recover()?;
+        let mut stop = self.stop.clone();
+        ensure!(!reply.is_closed(), "parent attach requester disconnected");
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        let snapshot = tokio::select! {
+            biased;
+            _ = reply.closed() => anyhow::bail!("parent attach requester disconnected"),
+            changed = stop.changed() => {
+                match changed {
+                    Ok(()) => anyhow::bail!("native session service is shutting down"),
+                    Err(_) => anyhow::bail!("native session service is unavailable"),
+                }
+            }
+            result = self.observe(self.include_hidden) => result?,
+        };
+        let target = snapshot
+            .history()
+            .select(selector, Some(working_directory))?;
+        let project = match target {
+            Some(HistoryTarget::Live { publication, .. }) => {
+                ensure!(
+                    publication.metadata().protocol == crate::protocol::VERSION,
+                    "incompatible session cannot be attached"
+                );
+                let prepared = PreparedLiveTarget {
+                    metadata: publication.metadata().clone(),
+                    peer: Arc::clone(publication.peer()),
+                    acceptance: None,
+                };
+                ensure!(!reply.is_closed(), "parent attach requester disconnected");
+                ensure!(!*stop.borrow(), "native session service is shutting down");
+                self.snapshot = Some(snapshot);
+                return Ok(ParentAttachPreparation {
+                    target: prepared,
+                    startup: None,
+                });
+            }
+            Some(HistoryTarget::Stopped { row }) => row.project_root.clone(),
+            None if selector.is_absolute() => selector.to_owned(),
+            None => working_directory.join(selector),
+        };
+        self.snapshot = Some(snapshot);
+        let startup = self
+            .parent_attach
+            .as_ref()
+            .context("native parent attach startup is unavailable")?;
+        let layout = self
+            .scope
+            .initialize_layout(&project, &self.configured_state)?;
+        let location = layout.publication_location()?;
+        ensure!(!reply.is_closed(), "parent attach requester disconnected");
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        let cancellation = async {
+            tokio::select! {
+                biased;
+                _ = reply.closed() => "parent attach requester disconnected",
+                changed = stop.changed() => if changed.is_ok() {
+                    "native session service is shutting down"
+                } else {
+                    "native session service is unavailable"
+                },
+            }
+        };
+        let startup = windows_startup::prepare_detached_host_cancellable(
+            &location,
+            startup.for_layout(&layout)?,
+            cancellation,
+        )
+        .await?;
+        let target = PreparedLiveTarget {
+            metadata: startup.metadata().clone(),
+            peer: Arc::clone(startup.peer()),
+            acceptance: None,
+        };
+        let startup = (startup.disposition() == StartDisposition::Started).then_some(startup);
+        Ok(ParentAttachPreparation { target, startup })
     }
 
     async fn handle_request(&mut self, request: Request) -> Result<()> {
@@ -726,6 +1052,40 @@ impl Worker {
                     result = self.prepare_selected_live(&selection) => result,
                 };
                 let _ = reply.send(result);
+                return Ok(());
+            }
+            Request::PrepareParentAttach {
+                selector,
+                working_directory,
+                mut reply,
+            } => {
+                // Skip requests abandoned while queued. Once startup begins,
+                // cancellation remains worker-owned until a provisional host
+                // is settled; an authenticated existing winner is preserved.
+                if reply.is_closed() {
+                    return Ok(());
+                }
+                let result = self
+                    .prepare_parent_attach(&selector, &working_directory, &mut reply)
+                    .await;
+                let mut prepared = match result {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        return Ok(());
+                    }
+                };
+                let Some(startup) = prepared.startup.take() else {
+                    let _ = reply.send(Ok(prepared.target));
+                    return Ok(());
+                };
+                let (acceptance, decision) = oneshot::channel();
+                prepared.target.acceptance = Some(acceptance);
+                if reply.send(Ok(prepared.target)).is_err() {
+                    startup.settle().await?;
+                    return Ok(());
+                }
+                settle_startup_decision(startup, decision, &mut self.stop).await?;
                 return Ok(());
             }
             #[cfg(test)]
@@ -844,6 +1204,85 @@ impl Worker {
             },
         }
     }
+}
+
+async fn settle_startup_decision(
+    startup: windows_startup::PreparedHost,
+    decision: oneshot::Receiver<StartupAcceptance>,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<()> {
+    let acceptance = tokio::select! {
+        biased;
+        _ = stop.changed() => None,
+        decision = decision => decision.ok(),
+    };
+    let Some(acceptance) = acceptance else {
+        return startup.settle().await;
+    };
+    if *stop.borrow() || acceptance.reply.is_closed() || Instant::now() >= acceptance.deadline {
+        let _ = acceptance.reply.send(Err(
+            "native parent attach authority ended before destination acceptance".to_owned(),
+        ));
+        return startup.settle().await;
+    }
+    let (decision, decision_rx) = oneshot::channel();
+    let (result, result_rx) = oneshot::channel();
+    if acceptance
+        .reply
+        .send(Ok(PreparedAcceptanceDecision {
+            decision: Some(decision),
+            result: Some(result_rx),
+        }))
+        .is_err()
+    {
+        return startup.settle().await;
+    }
+    let commit = tokio::select! {
+        biased;
+        decision = decision_rx => matches!(decision, Ok(StartupDecision::Commit)),
+        _ = stop.changed() => false,
+    };
+    if !commit {
+        let _ = result.send(Err(
+            "native parent attach authority ended before destination commit".to_owned(),
+        ));
+        return startup.settle().await;
+    }
+    #[cfg(test)]
+    let project = startup.metadata().project_root().ok();
+    match startup.accept_or_settle().await {
+        windows_startup::PreparedAcceptance::Accepted => {
+            #[cfg(test)]
+            if let Some(project) = project.as_deref() {
+                wait_after_parent_release(project).await?;
+            }
+            let _ = result.send(Ok(()));
+            Ok(())
+        }
+        windows_startup::PreparedAcceptance::Refused { error, cleanup } => {
+            let _ = result.send(Err(error.to_string()));
+            cleanup
+        }
+    }
+}
+
+#[cfg(test)]
+async fn wait_after_parent_release(project: &Path) -> Result<()> {
+    if !project.join("hold-parent-commit-ack").exists() {
+        return Ok(());
+    }
+    let pending = project.join("parent-released.pending");
+    std::fs::write(&pending, b"released")?;
+    std::fs::rename(pending, project.join("parent-released"))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !project.join("allow-parent-commit-ack").exists() {
+        ensure!(
+            Instant::now() < deadline,
+            "parent commit acknowledgement fixture was not released"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    Ok(())
 }
 
 fn discover_worktrees(git: Option<&GitCliProvider>, path: &Path) -> Result<Vec<PathBuf>, String> {

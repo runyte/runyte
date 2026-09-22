@@ -197,6 +197,56 @@ fn late_native_switch_receipt_cannot_release_a_replacement_owner() {
 }
 
 #[test]
+fn parent_switch_requires_original_frontend_to_confirm_nonfinal_commit_ack() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _source = fixture.connect_interactive(&mut clients, 1);
+    let _control = fixture.connect(&mut clients, 2);
+    assert!(clients.reserve_parent_switch(&mut fixture.host, 1, 23));
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeSwitchCommit { receipt: 23 },
+    );
+    assert_eq!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::Commit {
+            owner: 1,
+            receipt: 23,
+        })
+    );
+    assert!(clients.accept_parent_commit(&mut fixture.host, 1, 23));
+    assert!(clients.switch_pending());
+    assert_eq!(clients.active_id(), Some(1));
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::NativeParentSwitchCommitObserved { receipt: 23 },
+    );
+    assert!(clients.take_switch_action().is_none());
+    assert!(clients.switch_pending());
+
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeParentSwitchCommitObserved { receipt: 23 },
+    );
+    assert_eq!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::ParentCommitObserved {
+            owner: 1,
+            receipt: 23,
+        })
+    );
+    assert!(clients.switch_pending());
+}
+
+#[test]
 fn prepared_response_send_failure_releases_reservation_and_owner() {
     let mut fixture = Fixture::new();
     let mut clients = Clients::default();
@@ -743,7 +793,66 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
     clients.reconcile(&mut fixture.host);
     assert!(clients.peers[&2].parent_waits.is_empty());
     fixture.show_terminal(terminal);
-
+    request(
+        &mut clients,
+        &mut fixture.host,
+        2,
+        ClientRequest::ParentAttach {
+            terminal: terminal.get(),
+            capability: context.capability.clone(),
+            selector: runyte::protocol::encode_path(&fixture.root.join("destination")),
+            directory: runyte::protocol::encode_path(fixture.root.path()),
+        },
+    );
+    let parent_attach = clients
+        .take_parent_attach()
+        .expect("the original generation admits ParentAttach authority");
+    assert!(clients.parent_attach_valid(&fixture.host, &parent_attach));
+    assert!(clients.reserve_parent_switch(&mut fixture.host, 1, 91));
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeSwitchCommit { receipt: 91 },
+    );
+    assert!(matches!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::Commit {
+            owner: 1,
+            receipt: 91
+        })
+    ));
+    assert!(clients.accept_parent_commit(&mut fixture.host, 1, 91));
+    request(
+        &mut clients,
+        &mut fixture.host,
+        1,
+        ClientRequest::NativeParentSwitchCommitObserved { receipt: 91 },
+    );
+    assert!(matches!(
+        clients.take_switch_action(),
+        Some(NativeSwitchAction::ParentCommitObserved {
+            owner: 1,
+            receipt: 91
+        })
+    ));
+    clients.disconnected(&mut fixture.host, 1);
+    assert!(
+        clients.parent_attach_confirmed_valid(&fixture.host, &parent_attach),
+        "expected source closure after same-connection confirmation preserves retained proof"
+    );
+    request(&mut clients, &mut fixture.host, 2, ClientRequest::Health);
+    assert!(matches!(
+        clients.peers[&2].deferred,
+        Some(Incoming::Request(ClientRequest::Health))
+    ));
+    assert!(clients.reply_parent_attach(&mut fixture.host, 2, Ok(())));
+    let (released, health) = clients
+        .take_released_parent_request()
+        .expect("one bounded request follows ParentAttached");
+    assert_eq!(released, 2);
+    assert!(!clients.incoming(&mut fixture.host, released, health, no_rename));
+    assert!(clients.peers[&2].deferred.is_none());
     let deferred = fixture.root.join("deferred.txt");
     std::fs::write(&deferred, "clean").unwrap();
     clients.incoming(
@@ -776,6 +885,10 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
     assert!(clients.peers[&2].deferred.is_none());
     assert!(clients.peers[&2].parent_waits.is_empty());
     assert_eq!(clients.active_id(), Some(3));
+    assert!(
+        !clients.parent_attach_valid(&fixture.host, &parent_attach),
+        "an attachment replacement cannot inherit a retained ParentAttach"
+    );
     assert!(fixture.host.app_mut().terminals.close(other_terminal));
     assert!(fixture.host.app_mut().terminals.close(terminal));
     assert!(

@@ -4,6 +4,7 @@
 //! every accepted request; no metadata PID or control request is frontend input.
 
 use crate::host_requests::{handle_workspace_request, is_workspace_request};
+use anyhow::Context;
 use futures_util::stream::FuturesUnordered;
 use runyte::{
     app::FrameGeometry,
@@ -36,7 +37,33 @@ pub(super) enum Incoming {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NativeSwitchAction {
     Commit { owner: u64, receipt: u64 },
+    ParentCommitObserved { owner: u64, receipt: u64 },
     Abort { owner: u64, receipt: u64 },
+}
+
+pub(super) struct ParentAttachIntent {
+    pub(super) child: u64,
+    pub(super) terminal: runyte::terminal::TerminalId,
+    pub(super) generation: u64,
+    pub(super) child_proof: Arc<PinnedProcess>,
+    pub(super) frontend_proof: Arc<PinnedProcess>,
+    pub(super) capability: String,
+    pub(super) selector: std::path::PathBuf,
+    pub(super) directory: std::path::PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SwitchReservationKind {
+    Ordinary,
+    ParentPreparing,
+    ParentCommitAccepted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SwitchReservation {
+    owner: u64,
+    receipt: u64,
+    kind: SwitchReservationKind,
 }
 
 pub(super) struct ConnectedPeer {
@@ -57,6 +84,7 @@ struct Peer {
     geometry: Option<FrameGeometry>,
     pending_ready_frames: Option<(runyte::protocol::FrameId, runyte::protocol::FrameId)>,
     renaming: bool,
+    parent_attaching: bool,
     deferred: Option<Incoming>,
 }
 
@@ -68,8 +96,10 @@ pub(super) struct Clients {
     publish_requested: bool,
     last_detached: Instant,
     pub(super) renames: FuturesUnordered<RenameCompletion>,
-    pending_switch: Option<(u64, u64)>,
+    pending_switch: Option<SwitchReservation>,
     switch_action: Option<NativeSwitchAction>,
+    parent_attach: Option<ParentAttachIntent>,
+    released_parent_request: Option<(u64, Incoming)>,
 }
 
 impl Default for Clients {
@@ -84,6 +114,8 @@ impl Default for Clients {
             renames: FuturesUnordered::new(),
             pending_switch: None,
             switch_action: None,
+            parent_attach: None,
+            released_parent_request: None,
         }
     }
 }
@@ -143,6 +175,7 @@ impl Clients {
                     geometry: interactive.then_some(geometry),
                     pending_ready_frames: None,
                     renaming: false,
+                    parent_attaching: false,
                     deferred: None,
                 },
             );
@@ -172,7 +205,10 @@ impl Clients {
     }
 
     pub(super) fn owns_switch_reservation(&self, owner: u64, receipt: u64) -> bool {
-        self.active == Some(owner) && self.pending_switch == Some((owner, receipt))
+        self.active == Some(owner)
+            && self
+                .pending_switch
+                .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
     }
 
     pub(super) fn begin_switch(
@@ -182,7 +218,7 @@ impl Clients {
         receipt: u64,
         response: HostResponse,
     ) -> bool {
-        if self.active != Some(owner) || self.pending_switch != Some((owner, receipt)) {
+        if !self.owns_switch_reservation(owner, receipt) {
             return false;
         }
         self.send(host, owner, response)
@@ -199,14 +235,48 @@ impl Clients {
         }
         self.hints.clear();
         host.cancel_pointer_drag();
-        self.pending_switch = Some((owner, receipt));
+        self.pending_switch = Some(SwitchReservation {
+            owner,
+            receipt,
+            kind: SwitchReservationKind::Ordinary,
+        });
+        true
+    }
+
+    pub(super) fn reserve_parent_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) -> bool {
+        if self.active != Some(owner) || self.pending_switch.is_some() {
+            return false;
+        }
+        self.hints.clear();
+        host.cancel_pointer_drag();
+        self.pending_switch = Some(SwitchReservation {
+            owner,
+            receipt,
+            kind: SwitchReservationKind::ParentPreparing,
+        });
         true
     }
 
     pub(super) fn cancel_switch_reservation(&mut self, owner: u64, receipt: u64) {
-        if self.pending_switch == Some((owner, receipt)) {
+        if self
+            .pending_switch
+            .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
+        {
             self.pending_switch = None;
         }
+    }
+
+    pub(super) fn take_parent_attach(&mut self) -> Option<ParentAttachIntent> {
+        self.parent_attach.take()
+    }
+
+    pub(super) fn take_released_parent_request(&mut self) -> Option<(u64, Incoming)> {
+        self.released_parent_request.take()
     }
 
     pub(super) fn take_switch_action(&mut self) -> Option<NativeSwitchAction> {
@@ -219,7 +289,7 @@ impl Clients {
         owner: u64,
         receipt: u64,
     ) -> bool {
-        if self.pending_switch != Some((owner, receipt)) {
+        if !self.owns_switch_reservation(owner, receipt) {
             return false;
         }
         self.pending_switch = None;
@@ -233,7 +303,7 @@ impl Clients {
         owner: u64,
         receipt: u64,
     ) -> bool {
-        if self.pending_switch != Some((owner, receipt)) {
+        if !self.owns_switch_reservation(owner, receipt) {
             return false;
         }
         self.pending_switch = None;
@@ -256,6 +326,120 @@ impl Clients {
         sent
     }
 
+    pub(super) fn accept_parent_commit(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) -> bool {
+        let Some(pending) = self.pending_switch.as_mut() else {
+            return false;
+        };
+        if pending.owner != owner
+            || pending.receipt != receipt
+            || pending.kind != SwitchReservationKind::ParentPreparing
+        {
+            return false;
+        }
+        pending.kind = SwitchReservationKind::ParentCommitAccepted;
+        self.send(
+            host,
+            owner,
+            HostResponse::NativeParentSwitchCommitAccepted { receipt },
+        )
+    }
+
+    pub(super) fn parent_commit_confirmed(&self, owner: u64, receipt: u64) -> bool {
+        self.active == Some(owner)
+            && self.pending_switch.is_some_and(|pending| {
+                pending.owner == owner
+                    && pending.receipt == receipt
+                    && pending.kind == SwitchReservationKind::ParentCommitAccepted
+            })
+    }
+
+    pub(super) fn finish_confirmed_parent_switch(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+        committed: bool,
+    ) {
+        self.finish_confirmed_parent_switch_with_receipt(host, owner, receipt, committed, true);
+    }
+
+    #[cfg(test)]
+    pub(super) fn drop_confirmed_parent_switch_receipt(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+    ) {
+        self.finish_confirmed_parent_switch_with_receipt(host, owner, receipt, true, false);
+    }
+
+    fn finish_confirmed_parent_switch_with_receipt(
+        &mut self,
+        host: &mut WorkspaceHost,
+        owner: u64,
+        receipt: u64,
+        committed: bool,
+        send_receipt: bool,
+    ) {
+        if self
+            .pending_switch
+            .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
+        {
+            self.pending_switch = None;
+        }
+        let waits = self
+            .peers
+            .get(&owner)
+            .map(|peer| peer.waits.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for token in waits {
+            let _ = host.cancel_wait(token.into(), "TUI switched to another workspace");
+        }
+        if let Some(peer) = self.peers.get_mut(&owner) {
+            peer.waits.clear();
+            peer.subscribed_waits.clear();
+        }
+        let response = if committed {
+            HostResponse::NativeSwitchCommitted { receipt }
+        } else {
+            HostResponse::NativeSwitchAborted { receipt }
+        };
+        if send_receipt && self.peers.contains_key(&owner) {
+            let _ = self.send(host, owner, response);
+        }
+        if self.active == Some(owner) {
+            self.disconnected(host, owner);
+        }
+        self.publish_requested = true;
+    }
+
+    pub(super) fn reply_parent_attach(
+        &mut self,
+        host: &mut WorkspaceHost,
+        child: u64,
+        result: Result<(), String>,
+    ) -> bool {
+        let response = match result {
+            Ok(()) => HostResponse::ParentAttached,
+            Err(message) => HostResponse::Error { message },
+        };
+        let deferred = self.peers.get_mut(&child).and_then(|peer| {
+            peer.parent_attaching = false;
+            peer.deferred.take()
+        });
+        let sent = self.send(host, child, response);
+        if sent && let Some(deferred) = deferred {
+            debug_assert!(self.released_parent_request.is_none());
+            self.released_parent_request = Some((child, deferred));
+        }
+        sent
+    }
+
     #[cfg(test)]
     pub(super) fn drop_switch_without_ack(
         &mut self,
@@ -263,7 +447,10 @@ impl Clients {
         owner: u64,
         receipt: u64,
     ) {
-        if self.pending_switch == Some((owner, receipt)) {
+        if self
+            .pending_switch
+            .is_some_and(|pending| pending.owner == owner && pending.receipt == receipt)
+        {
             self.pending_switch = None;
             self.disconnected(host, owner);
         }
@@ -415,9 +602,19 @@ impl Clients {
     }
 
     pub(super) fn disconnected(&mut self, host: &mut WorkspaceHost, id: u64) {
-        if self.pending_switch.is_some_and(|(owner, _)| owner == id) {
+        if self
+            .pending_switch
+            .is_some_and(|pending| pending.owner == id)
+        {
             self.pending_switch = None;
             self.switch_action = None;
+        }
+        if self
+            .parent_attach
+            .as_ref()
+            .is_some_and(|attach| attach.child == id || attach.generation == id)
+        {
+            self.parent_attach = None;
         }
         if self.active == Some(id) {
             self.cancel_parent_waits_for_generation(host, id);
@@ -464,9 +661,10 @@ impl Clients {
         }
     }
 
-    /// At most one later request/error waits behind a rename on this stream.
-    /// Overflow closes the peer without replying out of order. Other peers and
-    /// services continue; a dropped peer never receives its late rename result.
+    /// At most one later request/error waits behind a rename or ParentAttach on
+    /// this stream. Overflow closes the peer without replying out of order.
+    /// Other peers and services continue; a dropped peer never receives a late
+    /// rename or parent handoff result.
     pub(super) fn incoming(
         &mut self,
         host: &mut WorkspaceHost,
@@ -477,7 +675,7 @@ impl Clients {
         let Some(peer) = self.peers.get_mut(&id) else {
             return false;
         };
-        if peer.renaming {
+        if peer.renaming || peer.parent_attaching {
             if peer.deferred.is_some() {
                 self.disconnected(host, id);
             } else {
@@ -506,7 +704,11 @@ impl Clients {
         if interactive && self.pending_switch.is_some() {
             match &request {
                 ClientRequest::NativeSwitchCommit { receipt } => {
-                    if self.pending_switch == Some((id, *receipt)) {
+                    if self.owns_switch_reservation(id, *receipt)
+                        && self.pending_switch.is_some_and(|pending| {
+                            pending.kind != SwitchReservationKind::ParentCommitAccepted
+                        })
+                    {
                         self.switch_action = Some(NativeSwitchAction::Commit {
                             owner: id,
                             receipt: *receipt,
@@ -522,8 +724,25 @@ impl Clients {
                     }
                     return false;
                 }
+                ClientRequest::NativeParentSwitchCommitObserved { receipt } => {
+                    if self.parent_commit_confirmed(id, *receipt) {
+                        self.switch_action = Some(NativeSwitchAction::ParentCommitObserved {
+                            owner: id,
+                            receipt: *receipt,
+                        });
+                    } else {
+                        self.send(
+                            host,
+                            id,
+                            HostResponse::Error {
+                                message: "native parent switch receipt is stale".to_owned(),
+                            },
+                        );
+                    }
+                    return false;
+                }
                 ClientRequest::NativeSwitchAbort { receipt } => {
-                    if self.pending_switch == Some((id, *receipt)) {
+                    if self.owns_switch_reservation(id, *receipt) {
                         self.switch_action = Some(NativeSwitchAction::Abort {
                             owner: id,
                             receipt: *receipt,
@@ -771,6 +990,50 @@ impl Clients {
                 self.send(host, id, response);
                 false
             }
+            ClientRequest::ParentAttach {
+                terminal,
+                capability,
+                selector,
+                directory,
+            } if !interactive => {
+                let terminal = runyte::terminal::TerminalId::from_raw(terminal);
+                let authority = self.parent_authority(host, id, terminal, &capability);
+                let result = authority.and_then(|(generation, child_proof, frontend_proof)| {
+                    anyhow::ensure!(
+                        self.parent_attach.is_none(),
+                        "another parent attach is already in progress"
+                    );
+                    Ok(ParentAttachIntent {
+                        child: id,
+                        terminal,
+                        generation,
+                        child_proof,
+                        frontend_proof,
+                        capability,
+                        selector: decode_path(selector)?,
+                        directory: decode_path(directory)?,
+                    })
+                });
+                match result {
+                    Ok(intent) => {
+                        self.peers
+                            .get_mut(&id)
+                            .expect("admitted parent peer")
+                            .parent_attaching = true;
+                        self.parent_attach = Some(intent);
+                    }
+                    Err(error) => {
+                        self.send(
+                            host,
+                            id,
+                            HostResponse::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
+                }
+                false
+            }
             request if is_workspace_request(&request) => {
                 let mutation = match &request {
                     ClientRequest::CompleteWaitBuffer { token, .. }
@@ -892,6 +1155,111 @@ impl Clients {
         self.hints.clear();
         self.pending_switch = None;
         self.switch_action = None;
+        self.parent_attach = None;
+        self.released_parent_request = None;
+    }
+
+    pub(super) fn parent_attach_valid(
+        &self,
+        host: &WorkspaceHost,
+        attach: &ParentAttachIntent,
+    ) -> bool {
+        self.active == Some(attach.generation)
+            && self.active_ready == Some(attach.generation)
+            && self.peers.get(&attach.child).is_some_and(|peer| {
+                Arc::ptr_eq(&peer.proof, &attach.child_proof)
+                    && peer.attachment_generation == Some(attach.generation)
+            })
+            && self
+                .peers
+                .get(&attach.generation)
+                .is_some_and(|peer| Arc::ptr_eq(&peer.proof, &attach.frontend_proof))
+            && attach.child_proof.is_alive().unwrap_or(false)
+            && attach.frontend_proof.is_alive().unwrap_or(false)
+            && host.app().active_terminal() == Some(attach.terminal)
+            && host.parent_request_ready()
+            && host
+                .app()
+                .terminals
+                .validates_parent(
+                    attach.terminal,
+                    &attach.capability,
+                    Some(attach.child_proof.as_ref()),
+                )
+                .unwrap_or(false)
+    }
+
+    /// After the original frontend confirms the nonfinal commit reply, its
+    /// control connection may close as it adopts the destination. Retained
+    /// process proof plus the exact child and terminal remain authoritative
+    /// until the host makes its atomic destination commit decision.
+    pub(super) fn parent_attach_confirmed_valid(
+        &self,
+        host: &WorkspaceHost,
+        attach: &ParentAttachIntent,
+    ) -> bool {
+        self.peers.get(&attach.child).is_some_and(|peer| {
+            Arc::ptr_eq(&peer.proof, &attach.child_proof)
+                && peer.attachment_generation == Some(attach.generation)
+        }) && attach.child_proof.is_alive().unwrap_or(false)
+            && attach.frontend_proof.is_alive().unwrap_or(false)
+            && host.app().active_terminal() == Some(attach.terminal)
+            && host.parent_request_ready()
+            && host
+                .app()
+                .terminals
+                .validates_parent(
+                    attach.terminal,
+                    &attach.capability,
+                    Some(attach.child_proof.as_ref()),
+                )
+                .unwrap_or(false)
+    }
+
+    fn parent_authority(
+        &self,
+        host: &WorkspaceHost,
+        id: u64,
+        terminal: runyte::terminal::TerminalId,
+        capability: &str,
+    ) -> anyhow::Result<(u64, Arc<PinnedProcess>, Arc<PinnedProcess>)> {
+        let peer = self
+            .peers
+            .get(&id)
+            .context("parent control connection ended")?;
+        let generation = peer.attachment_generation.context(
+            "parent editing context is stale or detached; return to the owning persistent session",
+        )?;
+        anyhow::ensure!(
+            self.active == Some(generation)
+                && self.active_ready == Some(generation)
+                && self.pending_switch.is_none(),
+            "parent editing context is stale or detached; return to the owning persistent session"
+        );
+        let active = self.peers.get(&generation).context(
+            "parent editing context is stale or detached; return to the owning persistent session",
+        )?;
+        anyhow::ensure!(
+            active.proof.is_alive()? && peer.proof.is_alive()?,
+            "parent editing context is stale or detached; return to the owning persistent session"
+        );
+        anyhow::ensure!(
+            host.app().active_terminal() == Some(terminal) && host.parent_request_ready(),
+            "originating terminal is no longer visible or ready"
+        );
+        anyhow::ensure!(
+            host.app().terminals.validates_parent(
+                terminal,
+                capability,
+                Some(peer.proof.as_ref()),
+            )?,
+            "parent editing context is stale, detached, or not owned by this terminal"
+        );
+        Ok((
+            generation,
+            Arc::clone(&peer.proof),
+            Arc::clone(&active.proof),
+        ))
     }
 }
 
