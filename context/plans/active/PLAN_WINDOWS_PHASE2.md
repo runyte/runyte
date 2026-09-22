@@ -989,6 +989,29 @@ formatting, all-target Clippy and the complete serialized native suite pass:
 3,140 tests, zero failures and 55 ignored fixture/performance entries across
 44 libtest/doc-test groups, plus six native transport acceptance cases.
 
+Package 4c adds native lifecycle control without enabling frontend commands.
+Connect, Hello and validated Welcome share one two-second deadline; each rename
+or shutdown exchange has its own two-second bound. Welcome must identify the
+actual authenticated pipe peer. Compatible ordinary and forced shutdown remain
+protocol requests. A stop receipt follows acknowledgment or EOF after sending;
+it is not proof of exit. Confirmation observes only its retained process handle
+for at most five seconds, with polling confined to that active operation.
+
+Incompatible recovery authenticates the actual pipe peer before opening a
+separate termination-capable handle and comparing the native process objects.
+It refuses compatible hosts and the lifecycle client's own process. Cleanup
+requires the stopped receipt's exact publication identity and reuses locked,
+observed-record retirement. Independent review has zero findings after
+clarifying receipt wording. Two fixture corrections preserve the shared
+semantic-only handshake gate: use a semantic unexpected reply rather than a
+final shutdown response, and let the first reply observe an already-cancelled
+client before expecting disconnect. Both corrections received independent
+review with no findings. All nine focused tests pass. Formatting, all-target
+Clippy and the complete serialized native suite pass: 3,149 tests, zero failures
+and 56 ignored fixture/performance entries across 44 libtest/doc-test groups,
+plus six native transport acceptance cases. Host, catalog and frontend wiring
+remain separate packages.
+
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,
 detached startup, then catalog/host integration. A configured publication
@@ -1046,6 +1069,22 @@ switching, persistent wait, foreground supervision and parent-terminal
 authorization pass their later acceptance package. Host rename belongs to the
 server's publication owner; teardown must finish bounded server shutdown before
 retiring its publication, rather than copying the Unix cleanup ordering.
+
+The configured-location contract separates creating publication admission from
+read-only listing. A read-only registry view reuses scanning and candidate
+logic, opens existing private directories and lock identities without creating
+or hardening them, and supports owner-inventory scans with zero namespace
+roots. Missing locks beside existing records remain indeterminate. The default
+native inventory is OS-resolved LocalAppData `runyte/all-hosts`; process creation
+identity and actual pipe authentication replace the Unix boot-directory need.
+Tests inject every root and never use account storage.
+
+Launcher and child share a frozen layout and explicit environment set/remove
+overrides. A versioned, length-framed fingerprint of lossless native paths and
+field roles detects layout changes before child publication; it grants no
+authority. Enforce that internal check only for the dedicated detached-host
+launch, so ordinary editor invocations inheriting the environment do not become
+bound to the parent's workspace. Every startup supplies its own expected layout.
 
 Foreground host and attached-wait supervision need retained process handles,
 separate from terminal authorization. Native parent discovery must reject a

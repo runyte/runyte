@@ -30,6 +30,8 @@ mod transport_shared;
 #[cfg(windows)]
 pub mod windows_endpoint;
 #[cfg(windows)]
+pub mod windows_lifecycle;
+#[cfg(windows)]
 pub mod windows_pipe;
 #[cfg(windows)]
 pub mod windows_process_identity;
