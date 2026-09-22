@@ -3688,7 +3688,7 @@ fn unix_switch_selector(
             Ok(previous.map(|endpoint| endpoint.project_root().to_owned()))
         }
         runyte::protocol::WorkspaceSwitchTarget::UserSelector { selector_bytes } => {
-            decode_path(selector_bytes).map(Some)
+            Ok(Some(decode_path(selector_bytes)?))
         }
         runyte::protocol::WorkspaceSwitchTarget::Selected {
             publication_key: Some(_),
@@ -3699,7 +3699,7 @@ fn unix_switch_selector(
         runyte::protocol::WorkspaceSwitchTarget::Selected {
             project_root_bytes,
             publication_key: None,
-        } => decode_path(project_root_bytes).map(Some),
+        } => Ok(Some(decode_path(project_root_bytes)?)),
     }
 }
 
