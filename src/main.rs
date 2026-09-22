@@ -5794,9 +5794,9 @@ mod tests {
     use super::write_cwd_file;
     #[cfg(unix)]
     use super::{
-        AttachedClient, AttachedWorkspaceActivity, HostResponse, PointerBatcher,
-        apply_prepared_switch, atomic_write_cwd_file_with, dispatch_host_key_or_text,
-        recover_switched_attachment, send_active_response, start_workspace_switch_host,
+        AttachedClient, AttachedWorkspaceActivity, PointerBatcher, apply_prepared_switch,
+        atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
+        send_active_response, start_workspace_switch_host,
     };
     use super::{
         KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,

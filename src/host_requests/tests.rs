@@ -318,12 +318,21 @@ fn malformed_native_paths_return_request_errors_without_partial_buffer_or_wait_c
     ));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
-fn unix_native_path_bytes_still_open_non_utf8_filenames() {
+fn linux_native_path_bytes_still_open_non_utf8_filenames() {
     use std::os::unix::ffi::OsStringExt;
+    assert_native_path_opens(&std::ffi::OsString::from_vec(b"native-\xff.txt".to_vec()));
+}
+
+#[test]
+fn native_path_bytes_open_unicode_filenames() {
+    assert_native_path_opens(std::ffi::OsStr::new("native-\u{00e9}-\u{1f600}.txt"));
+}
+
+fn assert_native_path_opens(name: &std::ffi::OsStr) {
     let (root, mut host) = fixture("host-unix-path");
-    let path = root.join(std::ffi::OsString::from_vec(b"native-\xff.txt".to_vec()));
+    let path = root.join(name);
     std::fs::write(&path, "raw path").unwrap();
     let reply = control(
         &mut host,
