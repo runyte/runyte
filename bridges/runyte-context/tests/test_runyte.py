@@ -48,6 +48,17 @@ def seed_identity(root, name, projects):
         private_json(root / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'scopes': SCOPES})
 
 
+def terminal_command(marker, stop):
+    # The prompt renders the command before the child starts. Encode every
+    # marker byte so cursor motion cannot close a displayed gap into a match.
+    encoded = ''.join(f'\\0{byte:03o}' for byte in marker.encode('utf-8'))
+    script = 'printf "%b\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
+    arguments = ['/bin/sh', '-c', script, 'context-fixture', encoded, str(stop)]
+    command = 'terminal ' + ' '.join(shlex.quote(value) for value in arguments)
+    assert marker not in command
+    return command
+
+
 class NativeEditor:
     def __init__(self, binary, project, config, env, persistent=False):
         self.binary, self.project, self.config, self.env = binary, project, config, env
@@ -139,8 +150,8 @@ class NativeEditor:
         except Exception as error:
             self.errors.append(type(error).__name__)
 
-    def wait_output(self, marker, seconds=15):
-        deadline = time.monotonic() + seconds
+    def wait_output(self, marker, seconds=15, *, deadline=None):
+        deadline = time.monotonic() + seconds if deadline is None else deadline
         while time.monotonic() < deadline:
             with self.lock:
                 if marker.encode() in CONTROL.sub(b'', bytes(self.output)):
@@ -175,16 +186,16 @@ class NativeEditor:
         time.sleep(.15)
 
     def terminal(self, name, marker):
+        deadline = time.monotonic() + 15
         self.terminal_number += 1
         stop = self.project / ('terminal-stop-' + str(self.terminal_number))
         self.stop_files.append(stop)
         # A data file ends the checked system shell. Nothing executable is written.
-        script = 'printf "%s\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
-        arguments = ['/bin/sh', '-c', script, 'context-fixture', marker, str(stop)]
-        self.command('terminal ' + ' '.join(shlex.quote(value) for value in arguments))
+        self.command(terminal_command(marker, stop))
         self.terminal_input = True
-        self.wait_output(marker)
+        self.wait_output(marker, deadline=deadline)
         self.command('terminal-rename ' + name)
+        self.wait_output('named ' + name, deadline=deadline)
 
     def detach(self):
         self.command('detach')
@@ -293,6 +304,53 @@ class RealMCPClient(MCPClient):
             raise AssertionError('Real MCP tool failed: ' + name)
         structured = result['structuredContent']
         return structured if name == 'list_workspaces' else structured['data']
+
+
+class NativeFixtureSynchronizationTests(unittest.TestCase):
+    def test_terminal_marker_is_child_output_and_absent_from_typed_command(self):
+        with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
+            stop = Path(directory) / 'stop'
+            stop.touch()
+            for marker in ('CLAUDE_LIVE_MARKER', 'é MARKER'):
+                command = terminal_command(marker, stop)
+                self.assertNotIn(marker, command)
+                child = subprocess.run(shlex.split(command.removeprefix('terminal ')),
+                                       capture_output=True, encoding='utf-8', timeout=5, check=True)
+                self.assertEqual(child.stdout, marker + '\n')
+
+    def test_omitted_prompt_gaps_cannot_reconstruct_a_child_marker(self):
+        marker = 'CLAUDE_LIVE_MARKER'
+        split = len(marker) // 2
+        old_prompt = (marker[:split] + ' ' + marker[split:]).encode()
+        self.assertEqual(CONTROL.sub(b'', old_prompt.replace(b' ', b'\x1b[2D')), marker.encode())
+        command = terminal_command(marker, Path('/fixture/stop'))
+        # The PTY reader removes cursor controls; a terminal can also omit
+        # blank cells that separated the old literal marker halves.
+        rendered = command.encode().replace(b' ', b'\x1b[2D')
+        self.assertNotIn(marker.encode(), CONTROL.sub(b'', rendered))
+
+    def test_terminal_waits_for_child_output_and_rename_acknowledgement(self):
+        with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
+            editor = NativeEditor.__new__(NativeEditor)
+            editor.project = Path(directory)
+            editor.terminal_number = 0
+            editor.stop_files = []
+            editor.terminal_input = False
+            events = []
+            editor.command = lambda command: events.append(('command', command))
+            editor.wait_output = lambda marker, **kwargs: events.append(('output', marker, kwargs['deadline']))
+            editor.terminal('Claude', 'CLAUDE_LIVE_MARKER')
+            self.assertEqual([event[:2] for event in events if event[0] == 'output'], [
+                ('output', 'CLAUDE_LIVE_MARKER'),
+                ('output', 'named Claude'),
+            ])
+            self.assertEqual(events[1][2], events[3][2])
+            self.assertEqual([event[:2] for event in events], [
+                ('command', terminal_command('CLAUDE_LIVE_MARKER', editor.stop_files[0])),
+                ('output', 'CLAUDE_LIVE_MARKER'),
+                ('command', 'terminal-rename Claude'),
+                ('output', 'named Claude'),
+            ])
 
 
 @unittest.skipUnless(BINARY, 'set RUNYTE_CONTEXT_TEST_BINARY to run real editor/bridge integration')
