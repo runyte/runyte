@@ -1287,7 +1287,11 @@ same scope without changing publication fingerprints or detached environments.
 Scope-based ready observations remain read-only and cannot authorize cleanup.
 Independent review has no remaining findings; all 15 location and 34 catalog
 tests pass, including eight new scope regressions. Formatting and all-target
-Clippy also pass; complete native acceptance follows with the naming package.
+Clippy also pass. Final native acceptance for this package passes 3,262 tests,
+zero failures and 58 ignored entries across 45 libtest/doc-test groups, plus
+six native LSP transport cases. The six source files still match the reviewed
+snapshots. Package 4e.3e is delivered separately; the reviewed naming package
+remains staged and needs its own native validation before application acceptance.
 
 For native stopped-session rename, the configured name store will be authoritative
 and recent-history names will remain a cache/default fallback. A verified stored

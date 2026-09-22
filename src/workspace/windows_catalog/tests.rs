@@ -431,3 +431,100 @@ fn incompatible_live_rows_require_actual_pipe_proof_and_have_unknown_health() {
         host.shutdown().await.unwrap();
     });
 }
+
+#[test]
+fn projectless_catalog_does_not_invent_current_ready_or_create_missing_roots() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("scope-empty-catalog").unwrap();
+        let scope = DiscoveryScope::resolve(crate::workspace::windows_location::DiscoveryInputs {
+            roots: CapturedRoots {
+                cache_home: Some(root.join("cache")),
+                inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
+            },
+            reserved_user_roots: vec![root.join("config")],
+        })
+        .unwrap();
+        let result = snapshot_in_scope(&scope, None, &[], false).await.unwrap();
+        assert!(result.entries().is_empty());
+        assert!(result.absent_projects().is_empty());
+        assert!(!root.join("cache").exists());
+        assert!(!root.join("inventory").exists());
+        assert!(!root.join("config").exists());
+        assert!(!root.join(".runyte").exists());
+    });
+}
+
+#[test]
+fn projectless_catalog_authenticates_registered_host_and_checks_optional_current_scope() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("scope-live-catalog").unwrap();
+        let layout = layout(&root, "project", "cache");
+        let (_, mut host) = server(&layout, "live");
+        let (result, ()) = tokio::join!(
+            snapshot_in_scope(layout.discovery_scope(), None, &[], false),
+            answer(&mut host, health()),
+        );
+        let result = result.unwrap();
+        assert_eq!(result.entries().len(), 1);
+        assert_eq!(result.entries()[0].observations().len(), 1);
+        assert_eq!(
+            result.entries()[0].observations()[0].origin(),
+            CandidateOrigin::ConfiguredNamespace
+        );
+        assert!(result.absent_projects().is_empty());
+        let foreign = super::tests::layout(&root, "other", "foreign-cache").read_location();
+        let error = snapshot_in_scope(layout.discovery_scope(), Some(&foreign), &[], false)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("different configured namespace"));
+        let repeated = vec![layout.read_location(); MAX_KNOWN_PROJECTS];
+        assert!(
+            snapshot_in_scope(
+                layout.discovery_scope(),
+                Some(&layout.read_location()),
+                &repeated,
+                false
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("limit")
+        );
+        host.shutdown().await.unwrap();
+    });
+}
+
+#[test]
+fn projectless_inventory_only_scope_retains_hidden_peer_proof_without_ready_inference() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("scope-inventory-only").unwrap();
+        let layout = layout(&root, "hidden", "host-cache");
+        let (_, mut host) = server(&layout, "hidden");
+        let scope = DiscoveryScope::resolve(crate::workspace::windows_location::DiscoveryInputs {
+            roots: CapturedRoots {
+                inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
+            },
+            reserved_user_roots: vec![],
+        })
+        .unwrap();
+        assert!(scope.namespace_roots().is_empty());
+        assert!(scope.cache_root().unwrap().is_none());
+        let (result, ()) = tokio::join!(
+            snapshot_in_scope(&scope, None, &[], true),
+            answer(&mut host, health()),
+        );
+        let result = result.unwrap();
+        let entry = &result.entries()[0];
+        assert_eq!(entry.observations().len(), 1);
+        assert_eq!(
+            entry.observations()[0].origin(),
+            CandidateOrigin::OwnerInventory
+        );
+        assert_eq!(entry.peer().identity(), host.metadata().process);
+        assert!(result.absent_projects().is_empty());
+        assert!(!root.join(".runyte").exists());
+        host.shutdown().await.unwrap();
+    });
+}

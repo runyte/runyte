@@ -10,14 +10,14 @@ mod history;
 use super::{
     windows_endpoint::{Candidate, EndpointMetadata, Inspection, Scan},
     windows_lifecycle::connect_control,
-    windows_location::{KnownReadLocation, ResolvedLayout},
+    windows_location::{DiscoveryScope, KnownReadLocation, ResolvedLayout},
     windows_process_identity::PinnedProcess,
 };
 use crate::protocol::{ClientRequest, HostResponse};
 use anyhow::{Context, Result, ensure};
 pub use history::{
     HistoryEntry, HistorySnapshot, HistoryTarget, ensure_recorded, record_activity, remember,
-    snapshot_with_history,
+    snapshot_with_history, snapshot_with_history_in_scope,
 };
 use std::{
     collections::BTreeMap,
@@ -115,34 +115,53 @@ pub async fn snapshot(
         .iter()
         .map(ResolvedLayout::read_location)
         .collect::<Vec<_>>();
-    snapshot_locations(layout, &known, include_hidden, true).await
+    let current = layout.read_location();
+    snapshot_locations(
+        layout.discovery_scope(),
+        Some(&current),
+        &known,
+        include_hidden,
+        true,
+    )
+    .await
+}
+
+/// Observes a frozen namespace without inventing a current project. Known
+/// ready addresses retain read-only provenance and cannot authorize cleanup.
+pub async fn snapshot_in_scope(
+    scope: &DiscoveryScope,
+    current: Option<&KnownReadLocation>,
+    known: &[KnownReadLocation],
+    include_hidden: bool,
+) -> Result<CatalogSnapshot> {
+    snapshot_locations(scope, current, known, include_hidden, false).await
 }
 
 async fn snapshot_locations(
-    layout: &ResolvedLayout,
+    scope: &DiscoveryScope,
+    current: Option<&KnownReadLocation>,
     known: &[KnownReadLocation],
     include_hidden: bool,
     allow_ready_cleanup: bool,
 ) -> Result<CatalogSnapshot> {
     ensure!(
-        known.len() < MAX_KNOWN_PROJECTS,
+        known.len().saturating_add(usize::from(current.is_some())) <= MAX_KNOWN_PROJECTS,
         "native catalog known-project limit exceeded"
     );
-    for project in known {
+    for project in current.into_iter().chain(known) {
         ensure!(
-            project.namespace_roots() == layout.namespace_roots(),
+            project.namespace_roots() == scope.namespace_roots(),
             "known project belongs to a different configured namespace"
         );
     }
-    let view = layout.discovery_view(include_hidden)?;
+    let view = scope.discovery_view(include_hidden)?;
     let mut observations = Vec::new();
     add_scan(&mut observations, view.scan_namespaces())?;
     if include_hidden {
         add_scan(&mut observations, view.scan_inventory())?;
     }
     let mut projects = BTreeMap::new();
-    let current = layout.read_location();
-    for project in std::iter::once(&current).chain(known) {
+    for project in current.into_iter().chain(known) {
         let location = (
             project.project_root().to_owned(),
             project.endpoint_directory().to_owned(),

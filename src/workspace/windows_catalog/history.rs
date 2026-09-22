@@ -8,7 +8,7 @@ use crate::workspace::{
     catalog_values::{apply_recent_activity, apply_recent_names, assign_running_workspace_numbers},
     recent_history::{RecentEntry, assign_missing_default_workspace_names, read_recents},
     windows_endpoint::CandidateOrigin,
-    windows_location::ResolvedLayout,
+    windows_location::{DiscoveryScope, KnownReadLocation, ResolvedLayout},
 };
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -104,7 +104,25 @@ pub async fn snapshot_with_history(
     configured_state: &Path,
     include_hidden: bool,
 ) -> Result<HistorySnapshot> {
-    let history_path = layout
+    let current = layout.read_location();
+    snapshot_with_history_in_scope(
+        layout.discovery_scope(),
+        Some(&current),
+        configured_state,
+        include_hidden,
+    )
+    .await
+}
+
+/// Selector-only discovery passes no current ready location. The remembered
+/// paths and history cache still come from this explicitly captured scope.
+pub async fn snapshot_with_history_in_scope(
+    scope: &DiscoveryScope,
+    current: Option<&KnownReadLocation>,
+    configured_state: &Path,
+    include_hidden: bool,
+) -> Result<HistorySnapshot> {
+    let history_path = scope
         .cache_root()?
         .map(|cache| cache.join("workspaces.json"));
     let remembered = read_recents(history_path.as_deref())?;
@@ -116,7 +134,7 @@ pub async fn snapshot_with_history(
             "recent history contains duplicate project identity"
         );
         let state = crate::project_root::resolve_state_root(&entry.project_root, configured_state);
-        known.push(layout.known_read_location(&entry.project_root, &state)?);
+        known.push(scope.known_read_location(&entry.project_root, &state)?);
         let exists = match entry.project_root.metadata() {
             Ok(metadata) => metadata.is_dir(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
@@ -127,7 +145,7 @@ pub async fn snapshot_with_history(
         present.insert(entry.project_root.clone(), exists);
     }
     // No partial result or write survives a failed exact ready/peer observation.
-    let live = snapshot_locations(layout, &known, include_hidden, false).await?;
+    let live = snapshot_locations(scope, current, &known, include_hidden, false).await?;
     merge(live, remembered, present, history_path)
 }
 

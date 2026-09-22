@@ -86,18 +86,31 @@ pub struct LocationInputs {
     pub roots: CapturedRoots,
 }
 
+/// Project-independent, explicitly captured native discovery inputs.
+pub struct DiscoveryInputs {
+    pub reserved_user_roots: Vec<PathBuf>,
+    pub roots: CapturedRoots,
+}
+
+/// Frozen namespace/cache selection without a current project or ready address.
+/// Resolution and observation never create storage or invent a project from cwd.
 #[derive(Clone, Debug)]
-pub struct ResolvedLayout {
-    project: PathBuf,
-    state: PathBuf,
-    endpoint: PathBuf,
+pub struct DiscoveryScope {
     namespaces: Vec<PathBuf>,
-    names: PathBuf,
     runtime: Option<PathBuf>,
     cache: Option<PathBuf>,
     roots: CapturedRoots,
     cache_error: Option<String>,
     reserved: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedLayout {
+    project: PathBuf,
+    state: PathBuf,
+    endpoint: PathBuf,
+    names: PathBuf,
+    scope: DiscoveryScope,
 }
 
 /// A configured observation address, never a publication constructor.
@@ -121,17 +134,10 @@ impl KnownReadLocation {
     }
 }
 
-impl ResolvedLayout {
-    /// Captures fallback choices without creating or hardening any directory.
-    /// A missing cache can be prepared later beneath an admitted local NTFS
-    /// ancestor. Read admission does not promise future write access; a later
-    /// publication failure never silently changes this frozen layout.
-    pub fn resolve(inputs: LocationInputs) -> io::Result<Self> {
-        validate_path(&inputs.state_root)?;
-        let project = WorkspaceIdentity::resolve(&inputs.project_root)?
-            .root()
-            .to_owned();
-        validate_path(&project)?;
+impl DiscoveryScope {
+    /// Selects roots once without preparing/hardening directories. An intended
+    /// but unavailable cache remains an error for complete discovery.
+    pub fn resolve(inputs: DiscoveryInputs) -> io::Result<Self> {
         let cache_candidate = inputs.roots.cache_root();
         let runtime = inputs
             .roots
@@ -155,11 +161,6 @@ impl ResolvedLayout {
         if let Some(cache) = &cache {
             reserved.push(cache.clone());
         }
-        validate_state_separation(&inputs.state_root, &reserved)?;
-        let endpoint = runtime.as_ref().map_or_else(
-            || inputs.state_root.join("host"),
-            |root| root.join("runyte").join(super::workspace_id(&project)),
-        );
         let mut namespaces = Vec::new();
         if let Some(cache) = &cache {
             namespaces.push(cache.join("hosts"));
@@ -167,18 +168,11 @@ impl ResolvedLayout {
         if let Some(runtime) = &runtime {
             namespaces.push(runtime.join("runyte").join("hosts"));
         }
-        let names = inputs.state_root.join("host-names");
-        validate_path(&endpoint.join("endpoint.json"))?;
-        validate_path(&names)?;
         for root in &namespaces {
             validate_path(root)?;
         }
         Ok(Self {
-            project,
-            state: inputs.state_root,
-            endpoint,
             namespaces,
-            names,
             runtime,
             cache,
             roots: inputs.roots,
@@ -187,20 +181,8 @@ impl ResolvedLayout {
         })
     }
 
-    pub fn project_root(&self) -> &Path {
-        &self.project
-    }
-    pub fn state_root(&self) -> &Path {
-        &self.state
-    }
-    pub fn endpoint_directory(&self) -> &Path {
-        &self.endpoint
-    }
     pub fn namespace_roots(&self) -> &[PathBuf] {
         &self.namespaces
-    }
-    pub fn name_store_root(&self) -> &Path {
-        &self.names
     }
 
     /// The selected optional history cache. Does not prepare or harden it.
@@ -209,15 +191,6 @@ impl ResolvedLayout {
             return Err(io::Error::other(error.clone()));
         }
         Ok(self.cache.as_deref())
-    }
-
-    /// A read-only snapshot of this already resolved project's ready location.
-    pub(crate) fn read_location(&self) -> KnownReadLocation {
-        KnownReadLocation {
-            project: self.project.clone(),
-            directory: self.endpoint.clone(),
-            namespaces: self.namespaces.clone(),
-        }
     }
 
     /// Derives only an observation address from a stored canonical identity.
@@ -266,26 +239,116 @@ impl ResolvedLayout {
             .transpose()?;
         RegistryView::open(&self.namespaces, inventory)
     }
+}
+
+impl ResolvedLayout {
+    /// Resolves a real project and composes it with one frozen discovery scope.
+    /// Existing fallback choices, fingerprint fields and child environment stay
+    /// identical to project-specific resolution before the scope extraction.
+    pub fn resolve(inputs: LocationInputs) -> io::Result<Self> {
+        validate_path(&inputs.state_root)?;
+        let project = WorkspaceIdentity::resolve(&inputs.project_root)?
+            .root()
+            .to_owned();
+        validate_path(&project)?;
+        let scope = DiscoveryScope::resolve(DiscoveryInputs {
+            reserved_user_roots: inputs.reserved_user_roots,
+            roots: inputs.roots,
+        })?;
+        Self::compose(scope, project, inputs.state_root)
+    }
+
+    /// Composes a real project with previously selected roots without recapture
+    /// or readmission of runtime/cache fallback choices.
+    pub fn from_scope(scope: DiscoveryScope, project: &Path, state: PathBuf) -> io::Result<Self> {
+        validate_path(&state)?;
+        let project = WorkspaceIdentity::resolve(project)?.root().to_owned();
+        validate_path(&project)?;
+        Self::compose(scope, project, state)
+    }
+
+    fn compose(scope: DiscoveryScope, project: PathBuf, state: PathBuf) -> io::Result<Self> {
+        validate_state_separation(&state, &scope.reserved)?;
+        let endpoint = scope.runtime.as_ref().map_or_else(
+            || state.join("host"),
+            |root| root.join("runyte").join(super::workspace_id(&project)),
+        );
+        let names = state.join("host-names");
+        validate_path(&endpoint.join("endpoint.json"))?;
+        validate_path(&names)?;
+        Ok(Self {
+            project,
+            state,
+            endpoint,
+            names,
+            scope,
+        })
+    }
+
+    pub fn discovery_scope(&self) -> &DiscoveryScope {
+        &self.scope
+    }
+
+    pub fn project_root(&self) -> &Path {
+        &self.project
+    }
+    pub fn state_root(&self) -> &Path {
+        &self.state
+    }
+    pub fn endpoint_directory(&self) -> &Path {
+        &self.endpoint
+    }
+    pub fn namespace_roots(&self) -> &[PathBuf] {
+        &self.scope.namespaces
+    }
+    pub fn name_store_root(&self) -> &Path {
+        &self.names
+    }
+
+    pub fn cache_root(&self) -> io::Result<Option<&Path>> {
+        self.scope.cache_root()
+    }
+
+    /// A read-only snapshot of this already resolved project's ready location.
+    pub fn read_location(&self) -> KnownReadLocation {
+        KnownReadLocation {
+            project: self.project.clone(),
+            directory: self.endpoint.clone(),
+            namespaces: self.scope.namespaces.clone(),
+        }
+    }
+
+    pub fn known_read_location(
+        &self,
+        project: &Path,
+        state: &Path,
+    ) -> io::Result<KnownReadLocation> {
+        self.scope.known_read_location(project, state)
+    }
+
+    pub fn discovery_view(&self, include_hidden: bool) -> io::Result<RegistryView> {
+        self.scope.discovery_view(include_hidden)
+    }
 
     /// Mutating admission is reserved for actual publication. At least one
     /// namespace plus the owner inventory are required for a new native host.
     pub fn publication_location(&self) -> io::Result<EndpointLocation> {
-        if self.namespaces.is_empty() {
+        if self.scope.namespaces.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "native host requires a usable namespace root",
             ));
         }
-        let inventory = self.roots.inventory_root()?;
+        let inventory = self.scope.roots.inventory_root()?;
         validate_state_separation(&self.state, std::slice::from_ref(&inventory))?;
-        let registries = RegistrySet::with_inventory(&self.namespaces, Some(inventory))?;
+        let registries = RegistrySet::with_inventory(&self.scope.namespaces, Some(inventory))?;
         EndpointLocation::new(&self.project, self.endpoint.clone(), registries)
     }
 
     /// Bounded, lossless and role/order-sensitive. This detects a changed child
     /// fallback/default before publication; it grants no filesystem authority.
     pub fn fingerprint(&self) -> io::Result<String> {
-        let inventory = self.roots.inventory_root()?;
+        let inventory = self.scope.roots.inventory_root()?;
         let mut bytes = b"runyte-windows-layout-v1\0".to_vec();
         for (role, path) in [
             (1, &self.project),
@@ -296,11 +359,11 @@ impl ResolvedLayout {
         ] {
             fingerprint_path(&mut bytes, role, path)?;
         }
-        bytes.push(self.namespaces.len() as u8);
-        for path in &self.namespaces {
+        bytes.push(self.scope.namespaces.len() as u8);
+        for path in &self.scope.namespaces {
             fingerprint_path(&mut bytes, 6, path)?;
         }
-        if let Some(path) = &self.cache {
+        if let Some(path) = &self.scope.cache {
             fingerprint_path(&mut bytes, 7, path)?;
         }
         Ok(crate::hash::sha256_hex(&bytes))
@@ -312,13 +375,15 @@ impl ResolvedLayout {
         Ok(vec![
             (
                 "XDG_RUNTIME_DIR".into(),
-                self.runtime
+                self.scope
+                    .runtime
                     .as_ref()
                     .map(|path| path.as_os_str().to_owned()),
             ),
             (
                 "XDG_CACHE_HOME".into(),
-                self.roots
+                self.scope
+                    .roots
                     .cache_home
                     .as_ref()
                     .filter(|path| path.is_absolute())
@@ -326,7 +391,7 @@ impl ResolvedLayout {
             ),
             (
                 "RUNYTE_ALL_HOSTS_DIR".into(),
-                Some(self.roots.inventory_root()?.into_os_string()),
+                Some(self.scope.roots.inventory_root()?.into_os_string()),
             ),
             (EXPECTED_LAYOUT_ENV.into(), Some(self.fingerprint()?.into())),
         ])

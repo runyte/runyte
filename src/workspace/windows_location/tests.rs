@@ -314,7 +314,7 @@ fn fingerprint_preserves_native_units_field_framing_and_namespace_order() {
     ))
     .unwrap();
     let original = layout.fingerprint().unwrap();
-    layout.namespaces.reverse();
+    layout.scope.namespaces.reverse();
     assert_ne!(original, layout.fingerprint().unwrap());
     let mut joined_a = Vec::new();
     fingerprint_path(&mut joined_a, 1, Path::new(r"C:\a")).unwrap();
@@ -358,4 +358,120 @@ fn changed_parent_fallback_is_rejected_only_for_a_dedicated_detached_launch() {
         .unwrap();
     assert_ne!(marker, expected);
     assert!(!root.join("inventory").exists());
+}
+
+#[test]
+fn projectless_scope_and_direct_layout_preserve_fingerprint_and_environment() {
+    let root = TestRuntimeRoot::new("scope-layout-parity").unwrap();
+    let runtime = root.create_private_dir("runtime").unwrap();
+    for runtime_root in [None, Some(runtime)] {
+        for cache_home in [None, Some(root.join("cache-home"))] {
+            let roots = CapturedRoots {
+                runtime_root: runtime_root.clone(),
+                cache_home,
+                local_app_data: Some(root.join("account")),
+                inventory_override: Some(root.join("inventory")),
+            };
+            let scope = DiscoveryScope::resolve(DiscoveryInputs {
+                roots: roots.clone(),
+                reserved_user_roots: vec![root.join("config")],
+            })
+            .unwrap();
+            let direct = ResolvedLayout::resolve(inputs(&root, roots)).unwrap();
+            let composed = ResolvedLayout::from_scope(
+                scope,
+                direct.project_root(),
+                direct.state_root().to_owned(),
+            )
+            .unwrap();
+            assert_eq!(composed.namespace_roots(), direct.namespace_roots());
+            assert_eq!(composed.cache_root().unwrap(), direct.cache_root().unwrap());
+            assert_eq!(composed.endpoint_directory(), direct.endpoint_directory());
+            assert_eq!(composed.name_store_root(), direct.name_store_root());
+            assert_eq!(
+                composed.fingerprint().unwrap(),
+                direct.fingerprint().unwrap()
+            );
+            assert_eq!(
+                composed.detached_environment().unwrap(),
+                direct.detached_environment().unwrap()
+            );
+        }
+    }
+    assert!(!root.join("cache-home").exists());
+    assert!(!root.join("account").exists());
+    assert!(!root.join("inventory").exists());
+    assert!(!root.join("project/.runyte").exists());
+}
+
+#[test]
+fn scope_freezes_missing_runtime_and_reserved_paths_without_a_project() {
+    let root = TestRuntimeRoot::new("scope-frozen").unwrap();
+    let runtime = root.join("runtime");
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        roots: CapturedRoots {
+            runtime_root: Some(runtime.clone()),
+            cache_home: Some(root.join("cache")),
+            inventory_override: Some(root.join("inventory")),
+            ..CapturedRoots::default()
+        },
+        reserved_user_roots: vec![root.join("reserved")],
+    })
+    .unwrap();
+    assert_eq!(scope.namespace_roots(), &[root.join("cache/runyte/hosts")]);
+    assert!(!root.join("project").exists());
+    root.create_private_dir("runtime").unwrap();
+    let absent = root.join("missing-project");
+    let known = scope
+        .known_read_location(&absent, &absent.join(".runyte"))
+        .unwrap();
+    assert_eq!(known.endpoint_directory(), absent.join(".runyte/host"));
+    assert!(
+        scope
+            .known_read_location(&absent, &root.join("reserved/state"))
+            .is_err()
+    );
+    let project = root.create_private_dir("project").unwrap();
+    let composed = ResolvedLayout::from_scope(scope, &project, project.join(".runyte")).unwrap();
+    assert_eq!(composed.endpoint_directory(), project.join(".runyte/host"));
+    assert!(
+        composed
+            .detached_environment()
+            .unwrap()
+            .contains(&("XDG_RUNTIME_DIR".into(), None))
+    );
+    assert!(!root.join("cache").exists());
+    assert!(!root.join("reserved").exists());
+    assert!(!absent.exists());
+}
+
+#[test]
+fn scope_selected_runtime_is_not_readmitted_after_it_disappears() {
+    let root = TestRuntimeRoot::new("scope-runtime-removal").unwrap();
+    let runtime = root.create_private_dir("runtime").unwrap();
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        roots: CapturedRoots {
+            runtime_root: Some(runtime.clone()),
+            inventory_override: Some(root.join("inventory")),
+            ..CapturedRoots::default()
+        },
+        reserved_user_roots: vec![],
+    })
+    .unwrap();
+    fs::remove_dir(&runtime).unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let layout = ResolvedLayout::from_scope(scope, &project, project.join(".runyte")).unwrap();
+    assert_eq!(
+        layout.endpoint_directory(),
+        runtime
+            .join("runyte")
+            .join(super::super::workspace_id(layout.project_root()))
+    );
+    assert!(
+        layout
+            .detached_environment()
+            .unwrap()
+            .contains(&("XDG_RUNTIME_DIR".into(), Some(runtime.into_os_string())))
+    );
+    assert!(!project.join(".runyte").exists());
 }

@@ -46,6 +46,129 @@ fn missing_history_and_namespace_roots_are_not_created_by_refresh() {
 }
 
 #[test]
+fn selector_history_without_a_current_project_preserves_its_captured_cache() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("scope-history-cache").unwrap();
+        let scope = DiscoveryScope::resolve(crate::workspace::windows_location::DiscoveryInputs {
+            roots: CapturedRoots {
+                cache_home: Some(root.join("cache")),
+                inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
+            },
+            reserved_user_roots: vec![root.join("config")],
+        })
+        .unwrap();
+        let empty = snapshot_with_history_in_scope(&scope, None, Path::new(".runyte"), false)
+            .await
+            .unwrap();
+        assert!(empty.entries().is_empty());
+        assert!(empty.live().absent_projects().is_empty());
+        assert!(!root.join("cache").exists());
+        assert!(!root.join("inventory").exists());
+        let project = root
+            .create_private_dir("remembered")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let cache = scope.cache_root().unwrap().unwrap();
+        Directory::open(cache, true)
+            .unwrap()
+            .atomic_write(
+                OsStr::new("workspaces.json"),
+                &encode_recents(&[remembered(&project, Some("saved"), Some(3))]).unwrap(),
+            )
+            .unwrap();
+        let history_path = cache.join("workspaces.json");
+        let before = fs::read(&history_path).unwrap();
+        let result = snapshot_with_history_in_scope(&scope, None, Path::new(".runyte"), false)
+            .await
+            .unwrap();
+        assert_eq!(result.entries().len(), 1);
+        assert_eq!(result.history_path.as_deref(), Some(history_path.as_path()));
+        assert_eq!(
+            result.live().absent_projects(),
+            std::slice::from_ref(&project)
+        );
+        assert!(matches!(
+            result.select(Path::new("saved"), None).unwrap(),
+            Some(HistoryTarget::Stopped { .. })
+        ));
+        assert_eq!(fs::read(&history_path).unwrap(), before);
+        assert!(!history_path.with_extension("lock").exists());
+        assert!(!project.join(".runyte").exists());
+        assert!(!root.join(".runyte").exists());
+        // A later independent scope cannot redirect this snapshot's explicit
+        // history transaction into a newly selected cache.
+        let other = DiscoveryScope::resolve(crate::workspace::windows_location::DiscoveryInputs {
+            roots: CapturedRoots {
+                cache_home: Some(root.join("other-cache")),
+                ..CapturedRoots::default()
+            },
+            reserved_user_roots: vec![],
+        })
+        .unwrap();
+        assert_eq!(result.persist().unwrap(), 1);
+        assert_eq!(read_recents(Some(&history_path)).unwrap()[0].number, None);
+        assert!(!other.cache_root().unwrap().unwrap().exists());
+    });
+}
+
+#[test]
+fn selector_history_observes_remembered_ready_without_current_or_registry_rows() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("scope-history-ready").unwrap();
+        let project = root.create_private_dir("known").unwrap();
+        let known = ResolvedLayout::resolve(LocationInputs {
+            state_root: project.join(".runyte"),
+            project_root: project,
+            reserved_user_roots: vec![root.join("config")],
+            roots: CapturedRoots {
+                runtime_root: Some(root.create_private_dir("runtime").unwrap()),
+                cache_home: Some(root.join("cache")),
+                inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
+            },
+        })
+        .unwrap();
+        let (_, mut host) = server(&known, "ready-only");
+        let path = write_history(
+            &known,
+            &[remembered(known.project_root(), Some("cached"), None)],
+        );
+        let before = fs::read(&path).unwrap();
+        for namespace in known.namespace_roots() {
+            fs::remove_file(namespace.join(format!("{}.json", host.metadata().id))).unwrap();
+        }
+        fs::remove_dir(known.project_root()).unwrap();
+        let (result, ()) = tokio::join!(
+            snapshot_with_history_in_scope(
+                known.discovery_scope(),
+                None,
+                Path::new(".runyte"),
+                false
+            ),
+            answer(&mut host, health()),
+        );
+        let result = result.unwrap();
+        assert_eq!(result.entries().len(), 1);
+        assert!(result.live().absent_projects().is_empty());
+        let Some(HistoryTarget::Live { row, publication }) = result.target(0) else {
+            panic!("expected exact remembered ready host")
+        };
+        assert_eq!(row.name.as_deref(), Some("ready-only"));
+        assert!(row.missing_directory);
+        assert_eq!(publication.metadata(), host.metadata());
+        assert_eq!(publication.observations().len(), 1);
+        assert_eq!(
+            publication.observations()[0].origin(),
+            CandidateOrigin::ConfiguredReady
+        );
+        assert_eq!(fs::read(path).unwrap(), before);
+        host.shutdown().await.unwrap();
+    });
+}
+
+#[test]
 fn complete_history_adds_only_existing_stopped_directories_and_preserves_bytes() {
     runtime().block_on(async {
         let root = TestRuntimeRoot::new("history-stopped").unwrap();

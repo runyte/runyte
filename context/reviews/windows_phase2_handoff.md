@@ -1,7 +1,9 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-21, branch `feat/windows-support`, implementation commit
-`221a48d` (`Add exact native session discovery and guarded history updates`).
+Checkpoint: 2026-09-21, branch `feat/windows-support`, package 4e.3e discovery
+scope accepted for its own commit after documentation checkpoint `d22897b`.
+The preceding implementation commit is `221a48d`
+(`Add exact native session discovery and guarded history updates`).
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -39,7 +41,7 @@ to Linux and adds an actual Unicode OpenBuffers test on every platform. Unix
 raw-byte codec coverage remains enabled; do not restore the invalid filename
 filesystem fixture on macOS.
 
-## Uncommitted applied package: 4e.3e discovery scope
+## Accepted package: 4e.3e discovery scope
 
 Six source files contain the independently reviewed DiscoveryScope package:
 
@@ -54,15 +56,19 @@ remain equivalent to the preceding implementation. New scope-based catalog and
 history APIs accept an optional current ready address; their ready observations
 do not authorize cleanup. Existing layout APIs remain compatible.
 
-Final independent review has no findings. Fifteen location tests and 34 catalog
-tests pass, including eight new scope regressions. Formatting and all-target
-Clippy pass. The full native suite has not yet run on these uncommitted changes;
-combine that acceptance with the next reviewed naming package. Do not describe
-the full 3,254-test result as a result for this working tree.
+Final independent review has no findings. All six files were compared with the
+reviewed snapshots before acceptance and still match. Fifteen location tests and
+34 catalog tests pass, including eight new scope regressions. Final formatting,
+all-target Clippy and the complete native workspace suite pass: 3,262 tests,
+zero failures and 58 ignored entries across 45 libtest/doc-test groups, plus
+six native LSP transport cases. This package is delivered in its own commit;
+the naming package below remains unapplied. Remote acceptance of this new
+checkpoint is pending; the all-green CI result above belongs to `221a48d`.
 
 Local diagnostic logs are `target/windows-discovery-scope-location-tests.log`,
-`target/windows-discovery-scope-catalog-tests.log`, and
-`target/windows-discovery-scope-clippy.log`. They are disposable evidence, not
+`target/windows-discovery-scope-catalog-tests.log`,
+`target/windows-scope-checkpoint-clippy.log`, and
+`target/windows-scope-checkpoint-tests.log`. They are disposable evidence, not
 required development records.
 
 ## Next package: 4e.3f authoritative stopped names
@@ -112,8 +118,8 @@ After applying, run the two focused filters
 `workspace::windows_endpoint::names::stopped::tests` and
 `workspace::windows_catalog::history::stopped_names::tests`, then existing endpoint
 and catalog tests. Complete formatting, Clippy and the full workspace suite,
-review any corrections, update acceptance evidence, then commit and push both
-accepted packages. Keep the Windows support issue open until the entire scope is
+review any corrections, update acceptance evidence, then commit and push the
+accepted naming package. Keep the Windows support issue open until the entire scope is
 resolved; issue resolution requires the repository's separate follow-up commit.
 
 ## Remaining 2.5 implementation order
@@ -225,6 +231,7 @@ The coordinating agent has no pending validation command, and the naming
 author/reviewer have finished. A separate `cargo run --release` was observed
 during the handoff; its ownership is outside this validation work. Leave it alone
 and check for overlapping builds before starting new validation. Closing the chat
-does not require a live agent to finish a transaction. Uncommitted source and
-ignored staging remain local to this checkout; a different checkout will need those changes transferred
-or reconstructed from the retained contracts. Inspect git status before editing.
+does not require a live agent to finish a transaction. The discovery-scope source
+is included in this checkpoint. Ignored naming-package staging remains local to
+this checkout; a different checkout will need that package transferred or
+reconstructed from the retained contract. Inspect git status before editing.
