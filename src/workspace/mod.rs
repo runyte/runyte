@@ -19,9 +19,8 @@ pub mod parent;
 mod service;
 #[cfg(unix)]
 pub mod transport;
-// Compile the shared boundary natively before enabling the Windows adapter.
+// Shared bounded framing and native/Unix adapter support.
 #[cfg(any(unix, windows))]
-#[cfg_attr(windows, allow(dead_code))] // Native adapter wiring follows separately.
 mod transport_shared;
 #[cfg(windows)]
 pub mod windows_endpoint;

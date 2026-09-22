@@ -669,6 +669,7 @@ pub(super) async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     write_message_with_timeout(writer, message, CONNECTION_WRITE_STALL).await
 }
 
+#[cfg(unix)]
 pub(super) async fn write_client_message<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut Option<W>,
     message: &T,
@@ -704,12 +705,61 @@ pub(super) async fn write_message_with_timeout<W: AsyncWrite + Unpin, T: Seriali
     message: &T,
     stall: Duration,
 ) -> Result<()> {
-    let mut bytes = serde_json::to_vec(message)?;
-    ensure!(
-        bytes.len() < MAX_MESSAGE_BYTES,
-        "workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes"
-    );
-    bytes.push(b'\n');
+    let message = encode_message(message)?;
+    write_encoded_with_timeout(writer, &message, stall).await
+}
+
+/// A bounded JSON message with its required newline. Only the encoder can
+/// construct this value, so an outgoing queue cannot admit an unframed payload.
+pub(super) struct EncodedMessage(Vec<u8>);
+
+pub(super) fn encode_message<T: Serialize>(message: &T) -> Result<EncodedMessage> {
+    struct BoundedJson(Vec<u8>);
+    impl std::io::Write for BoundedJson {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > (MAX_MESSAGE_BYTES - 1).saturating_sub(self.0.len()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes"),
+                ));
+            }
+            let needed = self.0.len() + bytes.len();
+            if needed > self.0.capacity() {
+                let capacity = needed
+                    .saturating_add(1)
+                    .max(self.0.capacity().saturating_mul(2))
+                    .clamp(1024, MAX_MESSAGE_BYTES);
+                // Bound the requested payload capacity, including newline room;
+                // allocator bookkeeping/rounding remains allocator-owned.
+                self.0.reserve_exact(capacity - self.0.len());
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut bytes = BoundedJson(Vec::new());
+    serde_json::to_writer(&mut bytes, message)?;
+    bytes.0.push(b'\n');
+    Ok(EncodedMessage(bytes.0))
+}
+
+#[cfg(windows)]
+pub(super) async fn write_encoded_message<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    message: &EncodedMessage,
+) -> Result<()> {
+    write_encoded_with_timeout(writer, message, CONNECTION_WRITE_STALL).await
+}
+
+async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    message: &EncodedMessage,
+    stall: Duration,
+) -> Result<()> {
+    let bytes = &message.0;
     let mut written = 0;
     while written < bytes.len() {
         let count = tokio::time::timeout(stall, writer.write(&bytes[written..]))
@@ -730,6 +780,38 @@ pub(super) async fn write_message_with_timeout<W: AsyncWrite + Unpin, T: Seriali
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_encoder_preserves_wire_bytes_and_exact_limit_including_json_escaping() {
+        let value = serde_json::json!({ "quote": "\"\\\n", "unicode": "雪", "number": 42 });
+        let mut expected = serde_json::to_vec(&value).unwrap();
+        expected.push(b'\n');
+        assert_eq!(encode_message(&value).unwrap().0, expected);
+
+        // String quotes count toward JSON, and the final newline occupies the
+        // last permitted wire byte. The next JSON byte must be rejected.
+        let maximum = "x".repeat(MAX_MESSAGE_BYTES - 3);
+        let encoded = encode_message(&maximum).unwrap();
+        assert_eq!(encoded.0.len(), MAX_MESSAGE_BYTES);
+        assert_eq!(encoded.0.last(), Some(&b'\n'));
+        drop(encoded);
+        let oversized = "x".repeat(MAX_MESSAGE_BYTES - 2);
+        let error = encode_message(&oversized).err().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("workspace transport message exceeds")
+        );
+        let escaped = "\0".repeat(MAX_MESSAGE_BYTES / 6);
+        assert!(escaped.len() < MAX_MESSAGE_BYTES);
+        assert!(
+            encode_message(&escaped)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("workspace transport message exceeds")
+        );
+    }
 
     #[tokio::test]
     async fn connection_retains_peer_proof_after_event_consumption_until_exit_or_cancellation() {

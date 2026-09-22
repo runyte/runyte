@@ -873,8 +873,31 @@ panic regression that checks connection teardown before publication cleanup.
 All 13 native adapter tests pass. Native formatting, all-target Clippy and the
 complete workspace suite also pass: 3,084 passed, zero failures and 54 ignored
 entries across 44 libtest/doc-test groups, plus six transport acceptance cases.
-The buffered frontend client is next; public persistent-session availability
-still awaits lifecycle and attachment work.
+Checkpoint `260b902` passes every CI job in
+[run 35633587438](https://github.com/runyte/runyte/actions/runs/35633587438),
+including Windows acceptance and both unchanged Unix coverage gates.
+Public persistent-session availability still awaits lifecycle and attachment
+work.
+
+Package 3d adds the buffered frontend client. One owned thread and current-thread
+Tokio runtime authenticate the pipe, send Hello, and keep reading independently
+of frontend rendering. Cancellation during startup stops and joins the worker;
+ordinary drop also joins it. A failed or cancelled send permanently disables
+outgoing requests while preserving incoming lifecycle responses. The bounded
+queue owns an encoded message rather than cloning an arbitrarily large request.
+The shared encoder limits JSON allocation before escaping can expand a payload,
+preserving the existing eight-MiB framing limit and valid wire representation.
+Handshake reads accept semantic responses only; normal reads drain queued
+responses before reporting the worker's terminal error once.
+
+Independent review has no remaining findings. Eleven buffered-client tests and
+both shared transport tests pass, covering startup and send cancellation,
+abandoned acknowledgements, partial framing, response ordering, frontend stalls,
+bounded worker teardown, and oversized escaped payloads. Formatting and
+all-target Clippy pass. The complete serialized native suite passes 3,096 tests,
+with zero failures and 54 ignored fixture/performance entries across 44
+libtest/doc-test groups, plus six native transport acceptance cases.
+Cross-platform acceptance follows the checkpoint push.
 
 The reviewed lifecycle preparation splits the following work into discovery
 and stale-record recovery, names and recent history, control lifecycle,
@@ -887,6 +910,18 @@ Native discovery uses async bounded probes rather than placing Tokio pipe I/O
 inside the existing Unix blocking scan. Missing or busy pipes, denied access
 and timeouts remain indeterminate; only conclusive process identity evidence
 permits locked, exact-incarnation stale cleanup.
+
+Recent-history extraction must validate decoded native path units: rejecting
+every zero byte would reject ordinary Windows UTF-16 paths. History remains an
+optional regenerable cache, but malformed admitted history remains an error.
+Live name updates belong to the publication owner and must update its issued
+file identities through replacement and rollback. Namespace registries govern
+name collisions; owner-wide inventory does not join isolated name scopes.
+Later incompatible-host force termination requires a separate capability:
+compare the newly opened termination handle with the retained authenticated
+pipe-peer handle using
+[CompareObjectHandles](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)
+before acting. Metadata and a matching PID alone never grant that authority.
 
 Detached startup retains ownership of its own child until authenticated
 readiness, and cleans up a losing child if another launcher wins. Console

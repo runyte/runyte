@@ -3,6 +3,8 @@
 //! Native adapters for the private bundled workspace protocol.
 //! Lifecycle discovery and frontend availability are enabled separately.
 
+mod buffered;
+pub use buffered::BufferedLocalClient;
 mod client;
 mod server;
 pub use super::transport_shared::{ResponseReceiver, ResponseSender, response_channel};
