@@ -3,6 +3,10 @@
 #[cfg(any(unix, windows))]
 mod host_requests;
 #[cfg(windows)]
+#[cfg_attr(not(test), allow(dead_code))]
+#[path = "tui/windows_frontend.rs"]
+mod windows_frontend;
+#[cfg(windows)]
 mod windows_host;
 #[cfg(unix)]
 use host_requests::{bounded_destination_label, handle_workspace_request, is_workspace_request};
@@ -10,6 +14,10 @@ use host_requests::{bounded_destination_label, handle_workspace_request, is_work
 #[cfg(all(test, windows))]
 #[path = "tui/windows_console_acceptance.rs"]
 mod windows_console_acceptance;
+
+#[cfg(all(test, windows))]
+#[path = "tui/windows_frontend_acceptance.rs"]
+mod windows_frontend_acceptance;
 
 #[cfg(all(test, windows))]
 #[path = "tui/windows_git_acceptance.rs"]

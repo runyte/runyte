@@ -47,6 +47,21 @@ pub mod windows_pipe;
 #[cfg(windows)]
 mod windows_process_exit;
 #[cfg(windows)]
+pub struct NativeHostExit(windows_process_exit::ProcessExitWatcher);
+
+#[cfg(windows)]
+impl NativeHostExit {
+    pub fn new(
+        peer: std::sync::Arc<windows_process_identity::PinnedProcess>,
+    ) -> std::io::Result<Self> {
+        windows_process_exit::ProcessExitWatcher::new(peer).map(Self)
+    }
+
+    pub async fn wait(&self) {
+        self.0.wait().await;
+    }
+}
+#[cfg(windows)]
 pub mod windows_process_identity;
 #[cfg(windows)]
 pub mod windows_service;

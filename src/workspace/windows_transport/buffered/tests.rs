@@ -284,6 +284,7 @@ fn send_harness() -> (
             outgoing: Some(OutgoingCapability { requests, cancel }),
             responses: response_rx,
             worker: Worker { stop, thread: None },
+            peer: None,
         },
         receiver,
         cancelled,
@@ -558,6 +559,8 @@ async fn real_native_buffered_client_authenticates_and_fully_writes_hello_before
     );
     let mut server = server.unwrap();
     let mut client = client.unwrap();
+    assert_eq!(client.peer().unwrap().identity().pid, std::process::id());
+    assert!(client.peer().unwrap().is_alive().unwrap());
     let request = MessageReader::new(&mut server)
         .read::<ClientRequest>()
         .await

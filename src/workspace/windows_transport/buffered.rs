@@ -2,7 +2,7 @@
 
 //! A native duplex connection whose runtime is independent of terminal drawing.
 
-use std::{future::Future, thread, time::Duration};
+use std::{future::Future, sync::Arc, thread, time::Duration};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use tokio::{
@@ -21,6 +21,7 @@ use crate::{
         },
         windows_endpoint::EndpointMetadata,
         windows_pipe,
+        windows_process_identity::PinnedProcess,
     },
 };
 
@@ -31,6 +32,7 @@ pub struct BufferedLocalClient {
     outgoing: Option<OutgoingCapability>,
     responses: ResponseReceiver,
     worker: Worker,
+    peer: Option<Arc<PinnedProcess>>,
 }
 
 struct OutgoingCapability {
@@ -95,19 +97,32 @@ impl BufferedLocalClient {
         );
         let hello = client_hello(metadata, geometry, true, directory_handoff);
         let metadata = metadata.clone();
-        Self::start(
+        Self::start_with_peer(
             move || async move {
-                Ok(windows_pipe::connect(&metadata, Instant::now() + CONNECT_BUDGET).await?)
+                let stream =
+                    windows_pipe::connect(&metadata, Instant::now() + CONNECT_BUDGET).await?;
+                let peer = Arc::clone(stream.peer());
+                Ok((stream, Some(peer)))
             },
             hello,
         )
         .await
     }
 
+    #[cfg(test)]
     async fn start<F, C, S>(connect: F, hello: ClientRequest) -> Result<Self>
     where
         F: FnOnce() -> C + Send + 'static,
         C: Future<Output = Result<S>>,
+        S: AsyncRead + AsyncWrite + Unpin + 'static,
+    {
+        Self::start_with_peer(move || async move { Ok((connect().await?, None)) }, hello).await
+    }
+
+    async fn start_with_peer<F, C, S>(connect: F, hello: ClientRequest) -> Result<Self>
+    where
+        F: FnOnce() -> C + Send + 'static,
+        C: Future<Output = Result<(S, Option<Arc<PinnedProcess>>)>>,
         S: AsyncRead + AsyncWrite + Unpin + 'static,
     {
         let (responses, response_rx) = response_channel();
@@ -123,7 +138,7 @@ impl BufferedLocalClient {
                     .build()
                     .context("cannot start native buffered transport runtime")?;
                 runtime.block_on(async move {
-                    let mut stream = tokio::select! {
+                    let (mut stream, peer) = tokio::select! {
                         biased;
                         _ = cancelled(&mut stop_rx) => return Ok(()),
                         connected = connect() => connected?,
@@ -133,7 +148,7 @@ impl BufferedLocalClient {
                         _ = cancelled(&mut stop_rx) => return Ok(()),
                         result = write_message(&mut stream, &hello) => result?,
                     }
-                    if startup.send(()).is_err() {
+                    if startup.send(peer).is_err() {
                         return Ok(());
                     }
                     run_connected(stream, responses, request_rx, cancel_rx, stop_rx).await
@@ -146,15 +161,24 @@ impl BufferedLocalClient {
             stop,
             thread: Some(thread),
         };
-        if started.await.is_err() {
-            worker.finish()?;
-            return Err(anyhow!("native buffered transport stopped before startup"));
-        }
+        let peer = match started.await {
+            Ok(peer) => peer,
+            Err(_) => {
+                worker.finish()?;
+                return Err(anyhow!("native buffered transport stopped before startup"));
+            }
+        };
         Ok(Self {
             outgoing: Some(OutgoingCapability { requests, cancel }),
             responses: response_rx,
             worker,
+            peer,
         })
+    }
+
+    /// Actual authenticated pipe peer retained at connect, never metadata PID.
+    pub fn peer(&self) -> Option<&Arc<PinnedProcess>> {
+        self.peer.as_ref()
     }
 
     /// Failure or cancellation disables all later sends. Incoming responses
