@@ -18,6 +18,14 @@ use std::path::{Path, PathBuf};
 pub struct PublicationKey([u8; 32]);
 
 impl PublicationKey {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(tag: &[u8]) -> Self {
         Self(crate::hash::sha256(tag))
@@ -68,6 +76,13 @@ impl WorkspaceSelection {
         Self {
             project_root,
             publication_key: None,
+        }
+    }
+
+    pub fn selected(project_root: PathBuf, publication_key: PublicationKey) -> Self {
+        Self {
+            project_root,
+            publication_key: Some(publication_key),
         }
     }
 

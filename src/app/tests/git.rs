@@ -504,13 +504,15 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
         )
         .unwrap();
         assert_eq!(
-            app.take_workspace_switch().map(|request| request.selector),
+            app.take_workspace_switch()
+                .map(|request| switch_target_path(&request).to_path_buf()),
             Some(linked.clone()),
             "the command and worktree picker share the switch request"
         );
         app.open_selected_worktree();
         assert_eq!(
-            app.take_workspace_switch().map(|request| request.selector),
+            app.take_workspace_switch()
+                .map(|request| switch_target_path(&request).to_path_buf()),
             Some(linked.clone())
         );
     }
@@ -528,7 +530,8 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
     app.open_selected_worktree();
     #[cfg(unix)]
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(linked.clone())
     );
     #[cfg(windows)]

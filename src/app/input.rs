@@ -761,9 +761,9 @@ impl App {
                         .entries
                         .iter()
                         .find(|label| label.cells.contains(&column))
-                        && let Some(path) = strip.targets.get(label.index)
-                        && path != &self.project_root
-                        && self.request_workspace_switch(path.clone())
+                        && let Some(selection) = strip.targets.get(label.index)
+                        && selection.project_root() != self.project_root
+                        && self.request_selected_workspace_switch(selection.clone())
                     {
                         self.workspace_switch.as_mut().unwrap().running_only = true;
                     }

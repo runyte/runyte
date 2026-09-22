@@ -3487,10 +3487,26 @@ fn switch_attached_workspace(
     send_active_response(
         active,
         HostResponse::SwitchWorkspace {
-            selector_bytes: encode_path(&request.selector),
+            target: Box::new(match request.target {
+                runyte::app::WorkspaceSwitchTarget::UserSelector(selector) => {
+                    runyte::protocol::WorkspaceSwitchTarget::UserSelector {
+                        selector_bytes: encode_path(&selector),
+                    }
+                }
+                runyte::app::WorkspaceSwitchTarget::Selected(selection) => {
+                    runyte::protocol::WorkspaceSwitchTarget::Selected {
+                        project_root_bytes: encode_path(selection.project_root()),
+                        publication_key: selection
+                            .publication_key()
+                            .map(runyte::workspace::PublicationKey::to_bytes),
+                    }
+                }
+                runyte::app::WorkspaceSwitchTarget::Previous => {
+                    runyte::protocol::WorkspaceSwitchTarget::Previous
+                }
+            }),
             working_directory_bytes: encode_path(&request.working_directory),
             running_only: request.running_only,
-            previous_session: request.previous_session,
             visit: request
                 .visit
                 .map(|visit| runyte::protocol::DestinationVisit {
@@ -3603,10 +3619,9 @@ async fn run_workspace_switcher(
                 quit_returns = Some(candidates);
             }
             AttachOutcome::Switch {
-                mut selector,
+                target,
                 working_directory,
                 running_only,
-                previous_session,
                 parent_receipt,
                 visit,
             } => {
@@ -3616,13 +3631,18 @@ async fn run_workspace_switcher(
                         receipt,
                     });
                 }
-                if previous_session {
-                    let Some(previous_session) = history.previous.as_ref() else {
+                let selector = match unix_switch_selector(target, history.previous.as_ref()) {
+                    Ok(Some(selector)) => selector,
+                    Ok(None) => {
                         notice = Some("No previous persistent session".to_owned());
                         continue;
-                    };
-                    selector = previous_session.project_root().to_owned();
-                }
+                    }
+                    Err(error) => {
+                        let prepared = Err(error);
+                        apply_prepared_switch(prepared, &mut current, &mut previous, &mut notice);
+                        continue;
+                    }
+                };
                 let prepared = if running_only {
                     resolve_registered_host_from_directory(&selector, &working_directory)
                         .map(|host| (host.project_root != current.project_root()).then(|| host.endpoint().clone()))
@@ -3655,6 +3675,31 @@ async fn run_workspace_switcher(
                 None => anyhow::bail!(message),
             },
         }
+    }
+}
+
+#[cfg(unix)]
+fn unix_switch_selector(
+    target: runyte::protocol::WorkspaceSwitchTarget,
+    previous: Option<&LocalEndpoint>,
+) -> Result<Option<PathBuf>> {
+    match target {
+        runyte::protocol::WorkspaceSwitchTarget::Previous => {
+            Ok(previous.map(|endpoint| endpoint.project_root().to_owned()))
+        }
+        runyte::protocol::WorkspaceSwitchTarget::UserSelector { selector_bytes } => {
+            decode_path(selector_bytes).map(Some)
+        }
+        runyte::protocol::WorkspaceSwitchTarget::Selected {
+            publication_key: Some(_),
+            ..
+        } => anyhow::bail!(
+            "native publication selections cannot be resolved by the Unix session switcher"
+        ),
+        runyte::protocol::WorkspaceSwitchTarget::Selected {
+            project_root_bytes,
+            publication_key: None,
+        } => decode_path(project_root_bytes).map(Some),
     }
 }
 
@@ -4036,10 +4081,9 @@ enum AttachOutcome {
     Quit,
     /// The editor asked to move to another workspace.
     Switch {
-        selector: std::path::PathBuf,
+        target: runyte::protocol::WorkspaceSwitchTarget,
         working_directory: std::path::PathBuf,
         running_only: bool,
-        previous_session: bool,
         parent_receipt: Option<String>,
         visit: Option<runyte::protocol::DestinationVisit>,
     },
@@ -4361,10 +4405,9 @@ async fn run_attached(
                         anyhow::bail!("workspace host disconnected without ending the attachment");
                     }
                     Some(HostResponse::SwitchWorkspace {
-                        selector_bytes,
+                        target,
                         working_directory_bytes,
                         running_only,
-                        previous_session,
                         visit,
                     }) => {
                         anyhow::ensure!(
@@ -4372,10 +4415,9 @@ async fn run_attached(
                             "wait request was cancelled by a workspace switch"
                         );
                         return Ok(AttachOutcome::Switch {
-                            selector: decode_path(selector_bytes)?,
+                            target: *target,
                             working_directory: decode_path(working_directory_bytes)?,
                             running_only,
-                            previous_session,
                             parent_receipt: None,
                             visit,
                         });
@@ -4385,8 +4427,12 @@ async fn run_attached(
                     }
                     Some(HostResponse::ParentSwitchWorkspace { selector, directory, receipt }) => {
                         anyhow::ensure!(wait_token.is_none(), "a wait-owned attachment cannot switch persistent sessions");
-                        return Ok(AttachOutcome::Switch { selector: decode_path(selector)?, working_directory: decode_path(directory)?,
-                            running_only: false, previous_session: false, parent_receipt: Some(receipt), visit: None });
+                        return Ok(AttachOutcome::Switch {
+                            target: runyte::protocol::WorkspaceSwitchTarget::UserSelector {
+                                selector_bytes: selector,
+                            },
+                            working_directory: decode_path(directory)?, running_only: false,
+                            parent_receipt: Some(receipt), visit: None });
                     }
                     Some(HostResponse::Welcome { .. }) => {}
                     Some(_) => {}
@@ -6359,7 +6405,7 @@ mod tests {
     use super::{
         AttachedClient, AttachedWorkspaceActivity, PointerBatcher, apply_prepared_switch,
         atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
-        send_active_response, start_workspace_switch_host,
+        send_active_response, start_workspace_switch_host, unix_switch_selector,
     };
     use super::{
         KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
@@ -6640,6 +6686,20 @@ mod tests {
         assert_eq!(notice.as_deref(), Some("destination handshake failed"));
 
         drop(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_switcher_rejects_native_keys_before_decoding_the_project_path() {
+        let error = unix_switch_selector(
+            runyte::protocol::WorkspaceSwitchTarget::Selected {
+                project_root_bytes: vec![0xff; runyte::protocol::MAX_PATH_BYTES + 1],
+                publication_key: Some([9; 32]),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("native publication selections"));
     }
 
     #[cfg(unix)]

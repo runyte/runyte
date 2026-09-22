@@ -2644,18 +2644,20 @@ struct PendingWorkspaceSearch {
 /// generated view a session ever opened.
 const SPECIAL_BUFFER_RETENTION_LIMIT: usize = 8;
 
-/// A workspace selector together with the editor directory in which it was
-/// entered.
-///
-/// The selector stays untouched because a relative-looking value may instead
-/// be an exact workspace name or an ID prefix. The attached client uses the
-/// captured directory only when interpreting the selector as a path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkspaceSwitchTarget {
+    UserSelector(PathBuf),
+    Selected(crate::workspace::WorkspaceSelection),
+    Previous,
+}
+
+/// A typed switch target together with the editor directory in which any user
+/// selector was entered.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceSwitchRequest {
     pub visit: Option<DestinationVisit>,
     pub running_only: bool,
-    pub previous_session: bool,
-    pub selector: PathBuf,
+    pub target: WorkspaceSwitchTarget,
     pub working_directory: PathBuf,
 }
 

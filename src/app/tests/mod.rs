@@ -25,6 +25,14 @@ fn press(app: &mut App, character: char) {
     key(app, KeyCode::Char(character), Modifiers::NONE);
 }
 
+fn switch_target_path(request: &WorkspaceSwitchRequest) -> &Path {
+    match &request.target {
+        WorkspaceSwitchTarget::UserSelector(path) => path,
+        WorkspaceSwitchTarget::Selected(selection) => selection.project_root(),
+        WorkspaceSwitchTarget::Previous => panic!("previous session has no captured path"),
+    }
+}
+
 fn finish_macro_replay(app: &mut App) {
     let mut slices = 0;
     while app.macro_replay_pending() {

@@ -174,9 +174,10 @@ use crate::workspace::{
 /// bounded lease ownership and cancellation state, in session health.
 /// Version 53 binds context review input to the last frame actually rendered
 /// by its physical frontend; prepared or dropped pages cannot authorize input.
-// Version 54 carries non-selectable grouped-picker heading rows. This private
+// Version 55 carries typed workspace-switch targets and fixed native
+// publication keys. This private
 // bundled frontend version is independent of the stable runyte-1 plugin API.
-pub const VERSION: u32 = 54;
+pub const VERSION: u32 = 55;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -955,6 +956,21 @@ impl From<ActivityLeaseHealth> for crate::service_health::ActivityLeaseHealth {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WorkspaceSwitchTarget {
+    UserSelector {
+        #[serde(deserialize_with = "deserialize_path")]
+        selector_bytes: Vec<u8>,
+    },
+    Selected {
+        #[serde(deserialize_with = "deserialize_path")]
+        project_root_bytes: Vec<u8>,
+        publication_key: Option<[u8; 32]>,
+    },
+    Previous,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HostResponse {
     Welcome {
@@ -984,12 +1000,10 @@ pub enum HostResponse {
         name: String,
     },
     SwitchWorkspace {
-        #[serde(deserialize_with = "deserialize_path")]
-        selector_bytes: Vec<u8>,
+        target: Box<WorkspaceSwitchTarget>,
         #[serde(deserialize_with = "deserialize_path")]
         working_directory_bytes: Vec<u8>,
         running_only: bool,
-        previous_session: bool,
         visit: Option<DestinationVisit>,
     },
     ParentSwitchWorkspace {
@@ -1208,17 +1222,19 @@ mod tests {
                 directory_bytes: Some(bytes.clone()),
             },
             HostResponse::SwitchWorkspace {
-                selector_bytes: bytes.clone(),
+                target: Box::new(WorkspaceSwitchTarget::UserSelector {
+                    selector_bytes: bytes.clone(),
+                }),
                 working_directory_bytes: valid.clone(),
                 running_only: false,
-                previous_session: false,
                 visit: None,
             },
             HostResponse::SwitchWorkspace {
-                selector_bytes: valid.clone(),
+                target: Box::new(WorkspaceSwitchTarget::UserSelector {
+                    selector_bytes: valid.clone(),
+                }),
                 working_directory_bytes: bytes.clone(),
                 running_only: false,
-                previous_session: false,
                 visit: None,
             },
             HostResponse::ParentSwitchWorkspace {
@@ -1341,7 +1357,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 54);
+        assert_eq!(VERSION, 55);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1507,6 +1523,51 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn workspace_switch_targets_round_trip_and_reject_malformed_keys() {
+        let key = [7_u8; 32];
+        let response = HostResponse::SwitchWorkspace {
+            target: Box::new(WorkspaceSwitchTarget::Selected {
+                project_root_bytes: encode_path(std::path::Path::new("project")),
+                publication_key: Some(key),
+            }),
+            working_directory_bytes: encode_path(std::path::Path::new("working")),
+            running_only: true,
+            visit: None,
+        };
+        let encoded = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serde_json::from_value::<HostResponse>(encoded.clone()).unwrap(),
+            response
+        );
+
+        let mut malformed = encoded;
+        malformed["target"]["publication_key"] = serde_json::json!(vec![7_u8; 31]);
+        assert!(serde_json::from_value::<HostResponse>(malformed).is_err());
+
+        let mut misspelled = serde_json::to_value(&response).unwrap();
+        let key = misspelled["target"]
+            .as_object_mut()
+            .unwrap()
+            .remove("publication_key")
+            .unwrap();
+        misspelled["target"]["publication-keey"] = key;
+        assert!(serde_json::from_value::<HostResponse>(misspelled).is_err());
+
+        for target in [
+            WorkspaceSwitchTarget::UserSelector {
+                selector_bytes: encode_path(std::path::Path::new("named")),
+            },
+            WorkspaceSwitchTarget::Previous,
+        ] {
+            let encoded = serde_json::to_value(&target).unwrap();
+            assert_eq!(
+                serde_json::from_value::<WorkspaceSwitchTarget>(encoded).unwrap(),
+                target
+            );
+        }
     }
 
     #[test]

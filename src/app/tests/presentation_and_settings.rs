@@ -1776,7 +1776,7 @@ fn successful_worktree_creation_attaches_only_in_persistent_mode() {
     assert_eq!(
         persistent
             .take_workspace_switch()
-            .map(|request| request.selector),
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(destination)
     );
 }

@@ -3,7 +3,7 @@
 //! Persistent-session discovery, selection, preview, and lifecycle requests.
 
 // Application-module dependencies:
-use super::{App, InputGrammar, PathBuf, WorkspaceSwitchRequest};
+use super::{App, InputGrammar, PathBuf, WorkspaceSwitchRequest, WorkspaceSwitchTarget};
 #[cfg(any(unix, windows))]
 use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
@@ -861,10 +861,29 @@ impl App {
             return false;
         }
         self.workspace_switch = Some(WorkspaceSwitchRequest {
-            selector: path,
+            target: WorkspaceSwitchTarget::UserSelector(path),
             working_directory: self.working_directory.clone(),
             running_only: false,
-            previous_session: false,
+            visit: None,
+        });
+        true
+    }
+
+    pub(super) fn request_selected_workspace_switch(
+        &mut self,
+        selection: WorkspaceSelection,
+    ) -> bool {
+        if self.reject_unavailable_persistent_session(cfg!(unix), false) {
+            return false;
+        }
+        if !self.persistent_session {
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            return false;
+        }
+        self.workspace_switch = Some(WorkspaceSwitchRequest {
+            target: WorkspaceSwitchTarget::Selected(selection),
+            working_directory: self.working_directory.clone(),
+            running_only: false,
             visit: None,
         });
         true
@@ -1734,18 +1753,18 @@ impl App {
             let Some(number) = digit.to_digit(10).map(|number| number as u8) else {
                 return;
             };
-            let Some(path) = self
+            let Some(selection) = self
                 .workspace_rows
                 .iter()
                 .find(|row| row.running && row.number == Some(number))
-                .map(|row| row.project_root.clone())
+                .map(crate::workspace::WorkspaceRow::selection)
             else {
                 self.action_failed(format!("no session is numbered {number}"));
                 return;
             };
             self.list = None;
             self.session_action_menu = None;
-            if self.request_workspace_switch(path) {
+            if self.request_selected_workspace_switch(selection) {
                 self.workspace_switch.as_mut().unwrap().running_only = true;
                 self.should_quit = true;
             }
@@ -1755,11 +1774,19 @@ impl App {
     }
 
     pub(super) fn previous_persistent_session(&mut self) {
-        if self.request_workspace_switch(self.project_root.clone()) {
-            let request = self.workspace_switch.as_mut().unwrap();
-            request.previous_session = true;
-            request.running_only = true;
+        if self.reject_unavailable_persistent_session(cfg!(unix), false) {
+            return;
         }
+        if !self.persistent_session {
+            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            return;
+        }
+        self.workspace_switch = Some(WorkspaceSwitchRequest {
+            target: WorkspaceSwitchTarget::Previous,
+            working_directory: self.working_directory.clone(),
+            running_only: true,
+            visit: None,
+        });
     }
 
     pub(super) fn cycle_persistent_session(&mut self, next: bool) {
@@ -1769,13 +1796,13 @@ impl App {
                 self.action_failed("session navigation needs workspace.mode: persistent");
                 return;
             }
-            let roots = self
+            let selections = self
                 .workspace_rows
                 .iter()
                 .filter(|row| row.running)
-                .map(|row| row.project_root.clone())
+                .map(crate::workspace::WorkspaceRow::selection)
                 .collect::<Vec<_>>();
-            if roots.is_empty() {
+            if selections.is_empty() {
                 if self.ports.workspace_service.is_none() {
                     self.action_failed("session service is unavailable");
                     return;
@@ -1785,17 +1812,19 @@ impl App {
                 self.observe_session_strip();
                 return;
             }
-            if roots.len() == 1 && roots[0] == self.project_root {
+            if selections.len() == 1 && selections[0].project_root() == self.project_root {
                 return;
             }
-            let current = roots.iter().position(|root| root == &self.project_root);
+            let current = selections
+                .iter()
+                .position(|selection| selection.project_root() == self.project_root);
             let index = match (current, next) {
-                (Some(index), true) => (index + 1) % roots.len(),
-                (Some(index), false) => (index + roots.len() - 1) % roots.len(),
+                (Some(index), true) => (index + 1) % selections.len(),
+                (Some(index), false) => (index + selections.len() - 1) % selections.len(),
                 (None, true) => 0,
-                (None, false) => roots.len() - 1,
+                (None, false) => selections.len() - 1,
             };
-            if self.request_workspace_switch(roots[index].clone()) {
+            if self.request_selected_workspace_switch(selections[index].clone()) {
                 self.workspace_switch.as_mut().unwrap().running_only = true;
             }
         }
@@ -1850,21 +1879,21 @@ impl App {
             .session_strip_snapshot()
             .filter(|_| geometry.editor.height > 0)
             .map(|snapshot| {
-                #[cfg(unix)]
                 let targets = {
                     let mut targets = self
                         .workspace_rows
                         .iter()
                         .filter(|row| row.running)
-                        .map(|row| row.project_root.clone())
+                        .map(crate::workspace::WorkspaceRow::selection)
                         .collect::<Vec<_>>();
-                    if !targets.contains(&self.project_root) {
-                        targets.push(self.project_root.clone());
+                    if !targets
+                        .iter()
+                        .any(|selection| selection.project_root() == self.project_root)
+                    {
+                        targets.push(WorkspaceSelection::project_only(self.project_root.clone()));
                     }
                     targets
                 };
-                #[cfg(not(unix))]
-                let targets = Vec::new();
                 crate::session_strip::PreparedSessionStrip { snapshot, targets }
             });
         if strip.is_some() {
@@ -2067,12 +2096,11 @@ impl App {
                 if let (Some(entry), Some(incarnation)) = (selected, inventory.incarnation.clone())
                 {
                     let selection = inventory.selection.clone();
-                    if selection.publication_key().is_some()
-                        || self
-                            .workspace_row_index(&selection)
-                            .ok()
-                            .flatten()
-                            .is_none()
+                    if self
+                        .workspace_row_index(&selection)
+                        .ok()
+                        .flatten()
+                        .is_none()
                     {
                         self.action_failed("selected session changed; choose it again");
                         return Ok(());
@@ -2092,8 +2120,7 @@ impl App {
                             super::OpenDestination::Terminal(super::TerminalId::from_raw(id))
                         }
                     };
-                    let path = selection.project_root().to_path_buf();
-                    if self.request_workspace_switch(path) {
+                    if self.request_selected_workspace_switch(selection) {
                         let request = self.workspace_switch.as_mut().unwrap();
                         request.running_only = true;
                         request.visit = Some(super::DestinationVisit {

@@ -35,10 +35,9 @@ fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     assert_eq!(
         app.take_workspace_switch(),
         Some(WorkspaceSwitchRequest {
-            selector: PathBuf::from("../project"),
+            target: WorkspaceSwitchTarget::UserSelector(PathBuf::from("../project")),
             working_directory: editor_directory,
             running_only: false,
-            previous_session: false,
             visit: None,
         })
     );
@@ -1713,7 +1712,8 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     assert_eq!(app.list.as_ref().unwrap().filter, "archive");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(stopped.clone())
     );
 
@@ -2430,7 +2430,8 @@ fn a_digit_attaches_to_a_numbered_session_from_the_manager() {
 
     press(&mut app, '2');
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(roots[1].clone()),
         "the digit reaches the session holding that number, not the second row"
     );
@@ -2454,7 +2455,7 @@ fn leader_digits_jump_without_opening_the_manager_in_both_modal_modes() {
             assert!(app.list.is_none());
             press(&mut app, char::from(b'0' + number));
             let request = app.take_workspace_switch().unwrap();
-            assert_eq!(request.selector, roots[1]);
+            assert_eq!(switch_target_path(&request), roots[1]);
             assert!(request.running_only);
             assert!(app.list.is_none());
         }
@@ -2463,7 +2464,10 @@ fn leader_digits_jump_without_opening_the_manager_in_both_modal_modes() {
     app.workspace_rows[0].number = Some(1);
     press(&mut app, ' ');
     press(&mut app, '1');
-    assert_eq!(app.take_workspace_switch().unwrap().selector, roots[0]);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        roots[0]
+    );
     press(&mut app, ' ');
     press(&mut app, '2');
     assert!(app.take_workspace_switch().is_none());
@@ -2551,7 +2555,8 @@ fn clearing_the_filter_arms_the_digit_shortcut_again() {
     assert!(app.list.as_ref().unwrap().filter.is_empty());
     press(&mut app, '1');
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(roots[0].clone()),
         "an emptied filter is the state the shortcut is armed in"
     );
@@ -3014,7 +3019,8 @@ fn workspace_switch_requests_are_platform_guarded_persistent_and_preserve_dirty_
     app.enable_persistent_session();
     assert!(app.request_workspace_switch_for_platform(destination.clone(), true));
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(destination)
     );
     fs::remove_dir_all(root).unwrap();
@@ -3363,6 +3369,26 @@ fn distinct_publication_row(path: PathBuf, name: &str, tag: &[u8]) -> WorkspaceR
 
 #[cfg(unix)]
 #[test]
+fn session_manager_switch_keeps_the_selected_key_for_same_project_rows() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("typed-switch-same-project");
+    let first = distinct_publication_row(project.clone(), "first", b"switch-first");
+    let second = distinct_publication_row(project, "second", b"switch-second");
+    let expected = second.selection();
+    app.workspace_rows = vec![first, second];
+    open_session_manager_for_refresh(&mut app);
+    app.rebuild_workspace_picker();
+    app.list.as_mut().unwrap().selected = 1;
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    let request = app.take_workspace_switch().unwrap();
+    assert_eq!(request.target, WorkspaceSwitchTarget::Selected(expected));
+}
+
+#[cfg(unix)]
+#[test]
 fn same_project_rows_keep_distinct_poll_selection_and_preview_completions() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.enable_persistent_session();
@@ -3607,16 +3633,20 @@ fn session_navigation_cycles_running_catalog_order_and_never_starts_history() {
     ];
     app.cycle_persistent_session(true);
     let request = app.take_workspace_switch().unwrap();
-    assert_eq!(request.selector, unnumbered);
+    assert_eq!(switch_target_path(&request), unnumbered);
     assert!(request.running_only);
     app.cycle_persistent_session(false);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, unnumbered);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        unnumbered
+    );
     app.workspace_rows.truncate(1);
     app.cycle_persistent_session(true);
     assert!(app.take_workspace_switch().is_none());
     app.previous_persistent_session();
     let request = app.take_workspace_switch().unwrap();
-    assert!(request.previous_session && request.running_only);
+    assert_eq!(request.target, WorkspaceSwitchTarget::Previous);
+    assert!(request.running_only);
 }
 
 #[cfg(unix)]
@@ -3677,7 +3707,10 @@ fn session_directory_chooser_opens_exact_empty_directory_and_cancel_preserves_in
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.list.as_ref().unwrap().title.contains("empty"));
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3745,7 +3778,7 @@ fn session_directory_chooser_matches_beyond_the_result_limit() {
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(
-        app.take_workspace_switch().unwrap().selector,
+        switch_target_path(&app.take_workspace_switch().unwrap()),
         root.join(name)
     );
     fs::remove_dir_all(root).unwrap();
@@ -3783,7 +3816,7 @@ fn session_inventory_ignores_late_replies_and_carries_resource_identity() {
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let request = app.take_workspace_switch().unwrap();
-    assert_eq!(request.selector, target);
+    assert_eq!(switch_target_path(&request), target);
     assert!(request.running_only);
     assert_eq!(
         request.visit.unwrap().destination,
@@ -3847,7 +3880,10 @@ fn session_directory_background_roots_preserve_selected_path() {
         "child/"
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3876,7 +3912,10 @@ fn session_directory_paste_uses_path_completion_state() {
             .contains(&child.display().to_string())
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3951,6 +3990,10 @@ fn clickable_session_strip() -> (App, FrameGeometry, PointerEvent) {
 fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
     let (mut app, geometry, click) = clickable_session_strip();
     let target = app.workspace_rows[2].project_root.clone();
+    app.workspace_rows[2].publication_key = Some(crate::workspace::PublicationKey::for_test(
+        b"strip-original",
+    ));
+    let target_selection = app.workspace_rows[2].selection();
     let view = app.prepare_view(geometry);
     let selection = app.active().selection.clone();
     // " 1 home · " takes 10 cells. Every cell of " 界é · ",
@@ -3961,7 +4004,11 @@ fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
             app.handle_pointer(PointerEvent { column, ..click }, &view)
                 .unwrap();
             let request = app.take_workspace_switch().unwrap();
-            assert_eq!(request.selector, target);
+            assert_eq!(switch_target_path(&request), target);
+            assert_eq!(
+                request.target,
+                WorkspaceSwitchTarget::Selected(target_selection.clone())
+            );
             assert!(request.running_only);
             assert_eq!(app.mode, mode);
             assert_eq!(app.active().selection, selection);
@@ -3969,9 +4016,13 @@ fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
         }
     }
     // A catalog refresh after preparation must not retarget the visible label.
-    app.workspace_rows[2] = navigation_row(temporary("replacement-host"), true, None);
+    app.workspace_rows[2] =
+        distinct_publication_row(target.clone(), "replacement", b"strip-replacement");
     app.handle_pointer(click, &view).unwrap();
-    assert_eq!(app.take_workspace_switch().unwrap().selector, target);
+    assert_eq!(
+        app.take_workspace_switch().unwrap().target,
+        WorkspaceSwitchTarget::Selected(target_selection)
+    );
     assert_eq!(
         app.snapshot(&view).session_strip.unwrap().entries[1].name,
         "界e\u{301}"
@@ -4025,7 +4076,7 @@ fn session_strip_overflow_clicks_only_displayed_entries() {
     // " 1 home ·  界é ·  …1": the leading catalog entry was omitted.
     app.handle_pointer(click, &view).unwrap();
     assert_eq!(
-        app.take_workspace_switch().unwrap().selector,
+        switch_target_path(&app.take_workspace_switch().unwrap()),
         app.workspace_rows[3].project_root
     );
     for column in 20..23 {
@@ -4082,6 +4133,6 @@ fn session_strip_host_rejects_clicks_from_frames_with_replaced_identities() {
         HostInputOutcome::Applied
     );
     let request = host.app_mut().take_workspace_switch().unwrap();
-    assert_eq!(request.selector, target);
+    assert_eq!(switch_target_path(&request), target);
     assert!(request.running_only);
 }

@@ -3940,11 +3940,11 @@ impl App {
             }
             #[cfg(unix)]
             Some(ListAction::Workspace(row)) => {
-                if let Some(path) = self
+                if let Some(selection) = self
                     .workspace_rows
                     .get(row)
-                    .map(|workspace| workspace.project_root.clone())
-                    && self.request_workspace_switch(path)
+                    .map(crate::workspace::WorkspaceRow::selection)
+                    && self.request_selected_workspace_switch(selection)
                 {
                     self.should_quit = true;
                 }

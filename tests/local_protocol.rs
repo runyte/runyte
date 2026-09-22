@@ -2738,11 +2738,16 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         .await
         {
             HostResponse::SwitchWorkspace {
-                selector_bytes,
+                target,
                 working_directory_bytes,
                 ..
             } => {
                 assert_eq!(decode_path(working_directory_bytes).unwrap(), root);
+                let runyte::protocol::WorkspaceSwitchTarget::UserSelector { selector_bytes } =
+                    *target
+                else {
+                    panic!("expected a user-selector workspace switch")
+                };
                 break decode_path(selector_bytes).unwrap();
             }
             HostResponse::Frame { .. } => {}
