@@ -1,9 +1,8 @@
 # Native stopped rename: one authoritative stored name
 
-Reviewed design for package 4e.3f. Its implementation has passed independent
-source review but is not applied or natively validated at the
-[continuation checkpoint](../../reviews/windows_phase2_handoff.md). This record
-defines one authoritative name store; history remains a cache.
+Reviewed design for package 4e.3f, implemented in `8d5c009` and natively
+validated at the [continuation checkpoint](../../reviews/windows_phase2_handoff.md).
+This record defines one authoritative name store; history remains a cache.
 
 ## Authority
 

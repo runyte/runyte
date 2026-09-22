@@ -1,9 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-21, branch `feat/windows-support`, package 4e.3e discovery
-scope accepted for its own commit after documentation checkpoint `d22897b`.
-The preceding implementation commit is `221a48d`
-(`Add exact native session discovery and guarded history updates`).
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.3f stopped
+names accepted in `8d5c009` (`Make native stopped session names authoritative`).
+The preceding discovery-scope implementation is `ab4a0a3`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -61,9 +60,8 @@ reviewed snapshots before acceptance and still match. Fifteen location tests and
 34 catalog tests pass, including eight new scope regressions. Final formatting,
 all-target Clippy and the complete native workspace suite pass: 3,262 tests,
 zero failures and 58 ignored entries across 45 libtest/doc-test groups, plus
-six native LSP transport cases. This package is delivered in its own commit;
-the naming package below remains unapplied. Remote acceptance of this new
-checkpoint is pending; the all-green CI result above belongs to `221a48d`.
+six native LSP transport cases. This package is delivered in `ab4a0a3`; the
+all-green CI result above belongs to `221a48d`.
 
 Local diagnostic logs are `target/windows-discovery-scope-location-tests.log`,
 `target/windows-discovery-scope-catalog-tests.log`,
@@ -71,15 +69,14 @@ Local diagnostic logs are `target/windows-discovery-scope-location-tests.log`,
 `target/windows-scope-checkpoint-tests.log`. They are disposable evidence, not
 required development records.
 
-## Next package: 4e.3f authoritative stopped names
+## Accepted package: 4e.3f authoritative stopped names
 
 The [reviewed stopped-name design](../plans/active/WINDOWS_STOPPED_NAMES.md)
 contains the authority, ordered locks, bounded recovery and acceptance contract.
-Its implementation is staged locally under
-`target/windows-stopped-names-package/`, with a mapping in its README. It is
-**not applied to source, compiled, or natively tested** at this checkpoint.
-Final independent review by `review_shell_recovery` has zero remaining findings.
-The author was `review_ci_limits`; a new session can use new reviewers.
+Its implementation is committed in `8d5c009`. All four source replacements
+matched their `.before` baselines, allowing only line-ending differences, and
+all eight applied destination files matched the reviewed staging bytes.
+Independent source review found no actionable findings.
 
 The package has four replacements, each with a `.before` comparison baseline:
 
@@ -97,13 +94,9 @@ Four new files live under the staged `src/` tree, with identical source paths:
 - `workspace/windows_catalog/history/stopped_names.rs`;
 - `workspace/windows_catalog/history/stopped_names/tests.rs`.
 
-Before applying, compare every destination with its `.before` baseline, allowing
-only CRLF/LF differences. Preserve unrelated changes and the existing history
-transaction module. Write fresh destination bytes: a previous Copy-Item preserved
-an old modification time and Cargo reused stale output. Do not regenerate older
-staging scripts over reviewed snapshots. If the ignored staging directory has
-been removed, implement from the retained design and repeat independent review;
-the durable contract does not depend on that directory surviving.
+The existing history transaction module was left unchanged. The ignored
+staging directory is disposable; the retained design and committed source
+define this package now.
 
 The sixteen staged fixtures cover noncreating stored-name reads; stored/live/cache
 precedence and default reservation; exact live and hidden metadata; stale intent,
@@ -114,13 +107,26 @@ Review corrections preserve the original native error source, reject a changed
 cache fallback when no stored authority exists, gate the now-unused shared helper
 to Unix/tests, and actually persist fixture names before testing authority.
 
-After applying, run the two focused filters
-`workspace::windows_endpoint::names::stopped::tests` and
-`workspace::windows_catalog::history::stopped_names::tests`, then existing endpoint
-and catalog tests. Complete formatting, Clippy and the full workspace suite,
-review any corrections, update acceptance evidence, then commit and push the
-accepted naming package. Keep the Windows support issue open until the entire scope is
-resolved; issue resolution requires the repository's separate follow-up commit.
+The two focused filters passed 11 and five tests. Existing endpoint and catalog
+filters passed 15 and 13 tests, with one compiled endpoint fixture ignored.
+Formatting, all-target Clippy with warnings denied, and the complete native
+workspace suite passed: 3,288 tests, zero failures, 58 ignored across 46
+libtest/doc-test groups, plus six native LSP transport cases. The sandbox token
+denied private-storage fixture setup; the normal-token run passed. Native CI
+acceptance for this commit is pending. Keep the Windows support issue open until
+the entire scope is resolved; issue resolution requires a separate follow-up
+commit.
+
+## Next package: native control orchestration and CLI
+
+Implement the first remaining 2.5 item below. The projectless CLI uses
+`DiscoveryScope` and one complete `HistorySnapshot`, resolves each selector once,
+and retains the exact selected entry and candidate proof across the action.
+Compatible stops must await process exit. Explicit incompatible force uses the
+retained candidate and actual pipe-peer authentication. Read-only ready
+observations do not authorize cleanup. Retain a stopped-name edit through any
+pending recovery; a failed history cache refresh does not undo its verified
+authoritative rename. Keep restart and public attachment gated.
 
 ## Remaining 2.5 implementation order
 
