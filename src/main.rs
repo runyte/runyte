@@ -2725,6 +2725,14 @@ async fn run_host_server(
                                 host.report_host_error(message);
                                 changed = true;
                             }
+                            request @ (ClientRequest::NativeSwitchCommit { .. }
+                            | ClientRequest::NativeSwitchAbort { .. }) => {
+                                send_active_response(
+                                    &mut active,
+                                    unix_native_switch_refusal(&request)
+                                        .expect("provisional switch request was matched"),
+                                );
+                            }
                             ClientRequest::Hello { .. } => {}
                             ClientRequest::Invoke { .. }
                             | ClientRequest::Health
@@ -3372,6 +3380,17 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn unix_native_switch_refusal(request: &ClientRequest) -> Option<HostResponse> {
+    matches!(
+        request,
+        ClientRequest::NativeSwitchCommit { .. } | ClientRequest::NativeSwitchAbort { .. }
+    )
+    .then(|| HostResponse::Refused {
+        message: "provisional native session switching is unavailable on this host".to_owned(),
+    })
 }
 
 #[cfg(unix)]
@@ -6410,7 +6429,8 @@ mod tests {
     use super::{
         AttachedClient, AttachedWorkspaceActivity, PointerBatcher, apply_prepared_switch,
         atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
-        send_active_response, start_workspace_switch_host, unix_switch_selector,
+        send_active_response, start_workspace_switch_host, unix_native_switch_refusal,
+        unix_switch_selector,
     };
     use super::{
         KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
@@ -6452,6 +6472,22 @@ mod tests {
             !frame_pending,
             "a refill with no frame request must not invent one"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_refuses_provisional_native_switch_receipts() {
+        for request in [
+            runyte::protocol::ClientRequest::NativeSwitchCommit { receipt: 7 },
+            runyte::protocol::ClientRequest::NativeSwitchAbort { receipt: 7 },
+        ] {
+            assert!(matches!(
+                unix_native_switch_refusal(&request),
+                Some(runyte::protocol::HostResponse::Refused { message })
+                    if message.contains("provisional native session switching")
+            ));
+        }
+        assert!(unix_native_switch_refusal(&runyte::protocol::ClientRequest::Detach).is_none());
     }
 
     #[test]
