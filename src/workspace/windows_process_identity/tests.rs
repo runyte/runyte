@@ -14,6 +14,21 @@ use windows_sys::Win32::{
 };
 
 #[test]
+fn actual_peer_pin_captures_one_live_process_identity_without_termination_authority() {
+    let peer = PinnedProcess::open_peer(std::process::id()).unwrap();
+    assert_eq!(peer.identity(), ProcessIdentity::current().unwrap());
+    assert!(peer.is_alive().unwrap());
+    assert_eq!(
+        identity_for_handle(peer.as_handle().as_raw_handle(), std::process::id()).unwrap(),
+        peer.identity()
+    );
+    assert_eq!(
+        PinnedProcess::open_peer(0).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
+#[test]
 fn current_identity_round_trips_and_pins_the_same_process() {
     let identity = ProcessIdentity::current().unwrap();
     let encoded = serde_json::to_vec(&identity).unwrap();
@@ -175,6 +190,7 @@ fn pinned_child_handle_observes_exit_without_reopening_its_pid() {
     assert!(child.0.try_wait().unwrap().unwrap().success());
     drop(child);
     assert!(!process.is_alive().unwrap());
+    assert!(PinnedProcess::open_peer(identity.pid).is_err());
     assert_eq!(process.identity(), identity);
     assert!(matches!(
         PinnedProcess::open(identity).unwrap(),

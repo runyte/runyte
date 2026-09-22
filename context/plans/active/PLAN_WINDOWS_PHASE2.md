@@ -759,7 +759,9 @@ The shared boundary now also compiles on Windows and runs its portable proof
 lifetime regression locally; a temporary Windows dead-code allowance covers
 adapter calls not yet wired, without enabling persistent-session commands.
 The correction has no independent-review findings; its native duplex test,
-formatting and all-target Clippy pass.
+formatting and all-target Clippy pass. Cross-platform acceptance at `a793ed9`
+passes every job in [run 35627647293](https://github.com/runyte/runyte/actions/runs/35627647293),
+including Windows, Unix lifecycle/plugin tests and both unchanged coverage gates.
 
 The transport will share bounded framing, role validation and response queues
 with Unix, while retaining separate native connection ownership. Windows
@@ -791,6 +793,65 @@ the reader and queued responses for bounded caller recovery. Windows pipes
 must not be assumed to support Unix half-close. Whole-worker cancellation on
 Drop, startup abandonment or reader failure interrupts all I/O/backpressure;
 the owned thread is joined rather than left detached indefinitely.
+
+The native server adapter will own connection futures directly in one task's
+`FuturesUnordered`, not detached per-connection tasks. An intact RAII owner
+declares those futures before its listener/publication, so task cancellation or
+unwind drops every stream before retiring ready records. Accepted streams
+enter that set before another await; queued events may retain process proofs
+but never stream handles. The loop polls shutdown, nonempty connection progress
+and acceptance in that order, with refusal backoff represented by a selectable
+timer so existing peers continue progressing. Listener failure is distinct from
+peer refusal. Task abort is asynchronous; explicit async shutdown must await
+completion when the caller requires cleanup before return. Graceful shutdown
+retains the bounded final-response drain, while cancellation makes no promise
+to deliver final replies or disconnected events.
+
+Native shutdown confirms application teardown and attempts owned publication
+cleanup; it does not certify that every kernel handle has already closed.
+Mio retains internal references until IOCP dispatches native completions. The
+connection wrapper requests cancellation before dropping the stream, including
+writes that Mio otherwise deliberately leaves pending. Incarnations use fresh
+pipe addresses, so a retired instance never becomes the next host's endpoint.
+Graceful response draining has a fixed deadline; neither abort nor Drop waits
+indefinitely for a peer or inserts a sleep as a substitute for completion.
+Native client send failures must not use the shared Unix helper's unbounded
+shutdown call: disable outgoing requests and return the original failure while
+retaining the reader for bounded wait-completion recovery.
+
+Package 3b implements the private named-pipe foundation. Admission reserves a
+slot before connecting; at capacity one waiting client remains untouched.
+Replacement keeps a pending instance alive while bounding native instances to
+17 and admitted connections to 16. Actual peer PID, creation time and current
+account are checked through one retained process handle on each side.
+
+Native validation and independent review exposed two async-library boundaries:
+Mio keeps prefetched read state across `DisconnectNamedPipe`, and deliberately
+leaves queued writes running when its Rust stream drops. Refused streams now
+always receive fresh instances. Recorded refusal survives cancellation or a
+deadline while replacement waits for native capacity; only `ERROR_PIPE_BUSY`
+is retried within the caller's budget. Permanent replacement errors poison the
+listener. Writes accept at most 16 KiB at a time, flush observes the preceding
+write's completion, and connection drop requests cancellation of all pending
+I/O. Both handles retain `PIPE_WAIT`; successful completion covers the queued
+write rather than the partial-success behavior of `PIPE_NOWAIT`.
+See [native wait modes](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-type-read-and-wait-modes)
+and [cancellation completion](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-cancelioex).
+
+The corrected package has zero independent-review findings. Its regressions
+exercise retained peer proof, saturation, cancelled and expired replacement,
+rejected-client payload isolation, bounded bidirectional writes, flush errors,
+and handle release while the peer remains unread. The handle-release witness
+runs in an isolated compiled child so parallel tests cannot reuse its numeric
+handle. Public persistent-session commands remain disabled pending adapters
+and lifecycle acceptance.
+
+Package 3b passes native formatting, all-target Clippy with warnings denied,
+and the complete serialized workspace suite: 3,071 passed, zero failures and
+54 ignored fixture/performance entries across 44 libtest/doc-test groups, plus
+the six native transport acceptance cases. The 15 pipe regressions and five
+process-identity tests also pass independently; ignored compiled child entries
+are exercised by their parent tests. Server/client adapters proceed next.
 
 ### Current implementation evidence
 

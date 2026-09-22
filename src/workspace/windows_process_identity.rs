@@ -67,6 +67,40 @@ pub struct PinnedProcess {
 }
 
 impl PinnedProcess {
+    /// Pins a live same-account peer identified by the actual connected pipe.
+    /// Creation time and owner are read from this one retained process handle;
+    /// this does not grant authority to terminate it or reopen a later PID.
+    pub fn open_peer(pid: u32) -> io::Result<Self> {
+        if pid == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid native pipe peer PID",
+            ));
+        }
+        let raw = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            )
+        };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let identity = identity_for_handle(process.as_raw_handle(), pid)?;
+        let current_user = User::for_process(unsafe { GetCurrentProcess() })?;
+        let candidate_user = User::for_process(process.as_raw_handle())?;
+        require_same_sid(current_user.sid(), candidate_user.sid())?;
+        if !process_is_alive(process.as_raw_handle())? {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "native pipe peer has exited",
+            ));
+        }
+        Ok(Self { identity, process })
+    }
+
     pub fn open(identity: ProcessIdentity) -> io::Result<PinResult> {
         identity.validate()?;
         let raw = unsafe {
