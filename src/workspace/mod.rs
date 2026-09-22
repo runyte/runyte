@@ -41,6 +41,8 @@ pub mod windows_lifecycle;
 #[cfg(windows)]
 pub mod windows_location;
 #[cfg(windows)]
+pub mod windows_parent_identity;
+#[cfg(windows)]
 pub mod windows_pipe;
 #[cfg(windows)]
 mod windows_process_exit;

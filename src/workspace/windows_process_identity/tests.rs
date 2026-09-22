@@ -112,6 +112,31 @@ fn invalid_identity_and_ambiguous_native_errors_never_report_gone() {
 }
 
 #[test]
+fn parent_candidate_only_classifies_missing_during_open_as_gone() {
+    let gone = candidate_from_open(
+        Err(io::Error::from_raw_os_error(ERROR_INVALID_PARAMETER as i32)),
+        |_| panic!("no process handle was opened"),
+    )
+    .unwrap();
+    assert!(gone.is_none());
+
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            std::process::id(),
+        )
+    };
+    assert!(!raw.is_null());
+    let opened = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let error = candidate_from_open(Ok(opened), |_| {
+        Err(io::Error::from_raw_os_error(ERROR_INVALID_PARAMETER as i32))
+    })
+    .unwrap_err();
+    assert_eq!(error.raw_os_error(), Some(ERROR_INVALID_PARAMETER as i32));
+}
+
+#[test]
 fn owner_comparison_accepts_current_user_and_refuses_a_foreign_sid() {
     let current = User::for_process(unsafe { GetCurrentProcess() }).unwrap();
     require_same_sid(current.sid(), current.sid()).unwrap();

@@ -88,17 +88,36 @@ impl PinnedProcess {
             return Err(io::Error::last_os_error());
         }
         let process = unsafe { OwnedHandle::from_raw_handle(raw) };
-        let identity = identity_for_handle(process.as_raw_handle(), pid)?;
-        let current_user = User::for_process(unsafe { GetCurrentProcess() })?;
-        let candidate_user = User::for_process(process.as_raw_handle())?;
-        require_same_sid(current_user.sid(), candidate_user.sid())?;
-        if !process_is_alive(process.as_raw_handle())? {
-            return Err(io::Error::new(
+        checked_peer(pid, process)?.ok_or_else(|| {
+            io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 "native pipe peer has exited",
+            )
+        })
+    }
+
+    /// Pins a candidate natural parent. Only a missing PID at OpenProcess is
+    /// absence; errors while reading identity, owner or liveness stay errors.
+    pub(crate) fn open_parent_candidate(pid: u32) -> io::Result<Option<Self>> {
+        if pid == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid native parent candidate PID",
             ));
         }
-        Ok(Self { identity, process })
+        let raw = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            )
+        };
+        let opened = if raw.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
+        };
+        candidate_from_open(opened, |process| checked_peer(pid, process))
     }
 
     pub fn open(identity: ProcessIdentity) -> io::Result<PinResult> {
@@ -134,6 +153,28 @@ impl PinnedProcess {
 
     pub fn is_alive(&self) -> io::Result<bool> {
         process_is_alive(self.process.as_raw_handle())
+    }
+}
+
+fn checked_peer(pid: u32, process: OwnedHandle) -> io::Result<Option<PinnedProcess>> {
+    let identity = identity_for_handle(process.as_raw_handle(), pid)?;
+    let current_user = User::for_process(unsafe { GetCurrentProcess() })?;
+    let candidate_user = User::for_process(process.as_raw_handle())?;
+    require_same_sid(current_user.sid(), candidate_user.sid())?;
+    if !process_is_alive(process.as_raw_handle())? {
+        return Ok(None);
+    }
+    Ok(Some(PinnedProcess { identity, process }))
+}
+
+fn candidate_from_open(
+    opened: io::Result<OwnedHandle>,
+    inspect: impl FnOnce(OwnedHandle) -> io::Result<Option<PinnedProcess>>,
+) -> io::Result<Option<PinnedProcess>> {
+    match opened {
+        Ok(process) => inspect(process),
+        Err(error) if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
