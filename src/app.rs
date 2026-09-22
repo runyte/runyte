@@ -2897,6 +2897,10 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
+    /// Resolved once from the configured OS-known-folder policy. Plugin state
+    /// workers receive this captured boundary rather than re-reading ambient
+    /// paths after the workspace owner starts.
+    pub(crate) plugin_state_anchor: Option<PathBuf>,
     /// What Git says about the project and about each open file. Marks are
     /// derived here rather than asked for again on every edit.
     git: GitTracker,
@@ -3265,6 +3269,8 @@ impl App {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
         let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
+        let plugin_state_anchor =
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?;
         let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
             .into_iter()
             .flatten()
@@ -3425,6 +3431,7 @@ impl App {
             prompt_revision: 0,
             project_root,
             state_root,
+            plugin_state_anchor,
             git: GitTracker::new(),
             git_state: GitWorkflowState::default(),
             git_branch_deletion: None,

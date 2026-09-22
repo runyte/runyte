@@ -1952,6 +1952,17 @@ fixed temporary leaf bounds interrupted-write leftovers and is recovered only
 on an explicit state operation. Corrupt or unsafe existing storage is refused,
 with static diagnostics, rather than silently overwritten.
 
+On Windows, durable plugin state can use the optional
+`workspace.state_anchor: profile` or `workspace.state_anchor: local-app-data`
+policy. The anchor is resolved from the current account's OS known-folder
+record, and `workspace.state` must be a proper descendant of it. Existing
+ordinary parents are traversed without changing their permissions; Runyte
+creates or admits only the final state directory as private storage. It does
+not accept an arbitrary anchor, choose another ancestor after a refusal, or
+move existing state. Omitting the setting retains the full-ancestry durability
+checks. Unix reads the setting for portable configurations and retains its
+existing storage behavior.
+
 Only one state operation per configured owner may run, including unfinished
 workers from a stopped generation. Work runs off the editor loop, reserving a
 shared local-worker slot and 16 MiB of the existing payload budget until actual

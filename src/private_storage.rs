@@ -368,6 +368,9 @@ mod platform;
 #[cfg(windows)]
 mod windows_security;
 
+#[cfg(all(test, windows))]
+pub(crate) use windows_security::test_set_acl;
+
 #[cfg(not(any(unix, windows)))]
 mod platform {
     use super::*;

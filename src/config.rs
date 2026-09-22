@@ -227,11 +227,21 @@ pub struct WorkspaceConfig {
     /// directory nested inside it.
     #[serde(alias = "root")]
     pub state: PathBuf,
+    /// On Windows, the OS-known-folder boundary beneath which durable plugin
+    /// state may be created. Omission keeps the full-ancestry durability path.
+    pub state_anchor: Option<WorkspaceStateAnchor>,
     pub mode: WorkspaceMode,
     pub session_strip: SessionStripVisibility,
     /// Minutes a clean host with no client or wait request remains alive.
     /// Zero disables automatic retirement.
     pub idle_retirement_minutes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkspaceStateAnchor {
+    Profile,
+    LocalAppData,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -846,6 +856,7 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             state: PathBuf::from(".runyte"),
+            state_anchor: None,
             mode: WorkspaceMode::Standalone,
             session_strip: SessionStripVisibility::Auto,
             idle_retirement_minutes: 1440,
@@ -1554,6 +1565,7 @@ mod tests {
     #[test]
     fn workspace_state_defaults_and_accepts_the_original_root_spelling() {
         assert_eq!(Config::default().workspace.state, PathBuf::from(".runyte"));
+        assert_eq!(Config::default().workspace.state_anchor, None);
         assert_eq!(Config::default().workspace.mode, WorkspaceMode::Standalone);
         assert_eq!(Config::default().workspace.idle_retirement_minutes, 1440);
 
@@ -1570,6 +1582,19 @@ mod tests {
                 .unwrap();
         assert_eq!(persistent.workspace.mode, WorkspaceMode::Persistent);
         assert_eq!(persistent.workspace.idle_retirement_minutes, 30);
+
+        let anchored: Config = serde_yaml::from_str(
+            "workspace:\n  state: C:/Users/example/project/.runyte\n  state_anchor: local-app-data\n",
+        )
+        .unwrap();
+        assert_eq!(
+            anchored.workspace.state_anchor,
+            Some(WorkspaceStateAnchor::LocalAppData)
+        );
+        assert!(
+            serde_yaml::from_str::<Config>("workspace:\n  state_anchor: arbitrary-directory\n")
+                .is_err()
+        );
     }
 
     #[test]

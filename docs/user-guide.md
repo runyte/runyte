@@ -4040,7 +4040,8 @@ file says so without treating it as a deletion, so creating the file and
 reloading again is the way to start using one mid-session.
 
 Settings that were read before the editor existed are reported rather than
-adopted. `editor.mouse`, `lsp.enable`, `workspace.mode`, and `workspace.state`
+adopted. `editor.mouse`, `lsp.enable`, `workspace.mode`, `workspace.state`, and
+`workspace.state_anchor`
 keep the value this process started with, and the status line names them as
 requiring a restart. The `[config]` page then shows the file's value as saved
 while the effective value stays what the editor is actually doing. Everything
@@ -4100,6 +4101,8 @@ editor:
 
 workspace:
   state: .runyte # `root` is accepted as a compatibility alias
+  # Windows plugin-state durability boundary: profile or local-app-data.
+  # state_anchor: profile
   mode: standalone # `persistent` changes future bare launches; restart required
 
 notifications:
@@ -4145,6 +4148,16 @@ walks upward, confirming your home directory makes every directory below it
 with no Git repository and no state directory of its own part of that one
 workspace; the prompt says so before asking to confirm that particular
 location. `workspace.root` is accepted as an alias for `workspace.state`.
+
+On Windows, `workspace.state_anchor` can be `profile` or `local-app-data` for
+durable plugin state. Runyte resolves that boundary from the current account's
+OS known-folder record. The configured `workspace.state` must be a proper
+descendant of the selected boundary. Runyte traverses existing ordinary parent
+directories without changing them and creates or admits only the final state
+directory as private storage. It does not accept a custom anchor, relocate
+existing state, or fall back to another ancestor. Omitting the setting retains
+the existing full-ancestry behavior. Unix accepts the setting so one
+configuration can be shared, but keeps its existing state storage behavior.
 
 ### Key remapping
 

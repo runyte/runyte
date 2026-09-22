@@ -208,6 +208,65 @@ pub(super) fn admit(file: &File, harden: bool) -> io::Result<()> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_set_acl(file: &File, text: &str) -> io::Result<()> {
+    let text: Vec<_> = text.encode_utf16().chain(Some(0)).collect();
+    let mut raw = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text.as_ptr(),
+            SDDL_REVISION_1,
+            &mut raw,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let descriptor = Descriptor(raw);
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = ptr::null_mut();
+    if unsafe { GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted) }
+        == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    win32(unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            acl,
+            ptr::null_mut(),
+        )
+    })
+}
+
+#[cfg(test)]
+pub(super) fn test_security_text(file: &File) -> io::Result<String> {
+    let (descriptor, _, _) = inspect(file)?;
+    let mut text = ptr::null_mut();
+    let mut length = 0;
+    if unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor.0,
+            SDDL_REVISION_1,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut text,
+            &mut length,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let _text = Descriptor(text.cast());
+    String::from_utf16(unsafe { std::slice::from_raw_parts(text, length as usize) })
+        .map_err(|_| io::Error::other("native security descriptor is not UTF-16"))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::TestRuntimeRoot;

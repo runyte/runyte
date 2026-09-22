@@ -355,6 +355,62 @@ impl Directory {
         Ok(directory)
     }
 
+    /// Traverses existing ordinary parents below an OS-known-folder anchor,
+    /// then creates or admits only the final state directory as private.
+    pub(crate) fn open_durable_state_root(anchor: &Path, destination: &Path) -> io::Result<Self> {
+        let anchor_components: Vec<_> = anchor.components().collect();
+        let destination_components: Vec<_> = destination.components().collect();
+        if destination_components.len() <= anchor_components.len()
+            || !anchor_components
+                .iter()
+                .zip(&destination_components)
+                .all(|(left, right)| match (left, right) {
+                    (Component::Prefix(left), Component::Prefix(right)) => {
+                        match (left.kind(), right.kind()) {
+                            (
+                                Prefix::Disk(left) | Prefix::VerbatimDisk(left),
+                                Prefix::Disk(right) | Prefix::VerbatimDisk(right),
+                            ) => left.eq_ignore_ascii_case(&right),
+                            _ => false,
+                        }
+                    }
+                    (Component::RootDir, Component::RootDir) => true,
+                    (Component::Normal(left), Component::Normal(right)) => {
+                        crate::windows_fs::compare_names(
+                            &left.encode_wide().collect::<Vec<_>>(),
+                            &right.encode_wide().collect::<Vec<_>>(),
+                        )
+                        .is_eq()
+                    }
+                    _ => false,
+                })
+        {
+            return Err(invalid(
+                "workspace.state must be a proper descendant of workspace.state_anchor",
+            ));
+        }
+        let relative_components = &destination_components[anchor_components.len()..];
+        let Some((leaf_component, parents)) = relative_components.split_last() else {
+            return Err(invalid("workspace state root cannot replace its anchor"));
+        };
+        let mut directory = Self::open_existing(anchor, false)?;
+        directory.sync()?;
+        for component in parents {
+            let Component::Normal(name) = component else {
+                return Err(invalid("workspace state path has unsupported components"));
+            };
+            let next = relative(&directory.0, name, FILE_GENERIC_READ, false, true)?;
+            flush_directory(&next)?;
+            directory = Self(reopen(&next, FILE_GENERIC_READ)?);
+        }
+        let Component::Normal(name) = leaf_component else {
+            return Err(invalid(
+                "workspace state root must have an ordinary final name",
+            ));
+        };
+        directory.child(name)
+    }
+
     fn open_inner(path: &Path, private: bool, durable: bool, create: bool) -> io::Result<Self> {
         Self::open_with_flush(path, private, durable, create, flush_directory)
     }
@@ -779,7 +835,7 @@ fn delete(file: &File) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::test_support::TestRuntimeRoot;
-    use std::{fs, sync::Barrier};
+    use std::{fs, os::windows::fs::OpenOptionsExt, sync::Barrier};
 
     #[test]
     fn exclusive_append_and_bounded_read_keep_every_writer() {
@@ -1125,6 +1181,42 @@ mod tests {
             Directory::open_durable_beneath(root.path(), Path::new("uncreated/../escape")).is_err()
         );
         assert!(!root.join("uncreated").exists());
+    }
+
+    #[test]
+    fn durable_state_root_traverses_existing_parents_and_creates_only_the_leaf() {
+        let anchor = TestRuntimeRoot::new("native-storage-state-anchor").unwrap();
+        let parent = anchor.join("ordinary/parent");
+        fs::create_dir_all(&parent).unwrap();
+        let state = parent.join("state");
+        let directory = Directory::open_durable_state_root(anchor.path(), &state).unwrap();
+        directory
+            .atomic_write(OsStr::new("record"), b"kept")
+            .unwrap();
+        assert_eq!(fs::read(state.join("record")).unwrap(), b"kept");
+
+        let missing = anchor.join("absent/parent/state");
+        assert!(Directory::open_durable_state_root(anchor.path(), &missing).is_err());
+        assert!(!anchor.join("absent").exists());
+        assert!(Directory::open_durable_state_root(anchor.path(), anchor.path()).is_err());
+    }
+
+    #[test]
+    fn durable_state_root_does_not_harden_existing_ordinary_ancestors() {
+        let anchor = TestRuntimeRoot::new("native-storage-state-acl").unwrap();
+        let ancestor = anchor.join("ordinary");
+        fs::create_dir(&ancestor).unwrap();
+        let ancestor_handle = OpenOptions::new()
+            .access_mode(FILE_ALL_ACCESS)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&ancestor)
+            .unwrap();
+        windows_security::test_set_acl(&ancestor_handle, "D:P(A;;GA;;;OW)(A;;GR;;;WD)").unwrap();
+        let before = windows_security::test_security_text(&ancestor_handle).unwrap();
+        Directory::open_durable_state_root(anchor.path(), &ancestor.join("state")).unwrap();
+        let after = windows_security::test_security_text(&ancestor_handle).unwrap();
+        assert_eq!(after, before, "ordinary ancestor ACL changed");
+        Directory::open_existing(&ancestor.join("state"), true).unwrap();
     }
     #[test]
     fn directory_enumeration_retains_its_pinned_root_after_path_replacement() {
