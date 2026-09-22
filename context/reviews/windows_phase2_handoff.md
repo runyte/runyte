@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.4a native
-control actions accepted in `443eb7b` (`Add exact native session control actions`).
-The preceding stopped-name implementation is `8d5c009`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.4b native
+selector-only CLI accepted in `a24b943` (`Enable native session control CLI on
+Windows`). The preceding control-action implementation is `443eb7b`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -136,23 +136,46 @@ all-target Clippy with warnings denied and the full native workspace suite pass:
 3,293 tests, zero failures, 58 ignored across 46 libtest/doc-test groups, plus
 six native LSP transport cases. Native CI acceptance remains pending.
 
-## Next package: native selector-only CLI
+## Accepted package: 4e.4b native selector-only CLI
 
-Dispatch list/rename/stop/stop-all/clean through the accepted action layer
-before resolving a current project. Capture roots once, use `DiscoveryScope`
-with no invented cwd project, and resolve selected rows once against the
-complete snapshot. Extract pure table presentation from `main.rs` while
-preserving Unix output. Keep restart and public attachment gated. Add real-host
-acceptance for compatible stop exit, protected refusal and force, same-project
-isolated publications, incomplete discovery, and stop-all continuation.
+`a24b943` dispatches list/rename/explicit selected stop/stop-all/clean before
+resolving a current project. It captures roots once, uses `DiscoveryScope`
+without an invented cwd project, and resolves selected rows once against a
+complete snapshot. Shared pure table presentation preserves the Unix columns
+and order. Windows stop without an explicit selector and restart remain
+unavailable; public attachment remains gated. README, user guide and CLI help
+describe the accepted native controls and their limits.
 
-## Remaining 2.5 implementation order
+Six real-host CLI acceptance tests pass: nonproject cwd, live and stopped
+rename/clean, normal and forced exit, protected stop-all refusal with another
+host exiting, incomplete exact ready observation refusing list/clean without
+history mutation, and same-project publications in isolated namespaces.
+Independent review found no remaining findings. Formatting, all-target Clippy
+with warnings denied and the complete native workspace suite pass: 3,299
+tests, zero failures, 58 ignored across 47 libtest/doc-test groups, plus six
+native LSP transport cases. Native CI acceptance remains pending.
+
+## Next package: shared row selection identity
+
+Add a typed `WorkspaceSelection` that distinguishes exact native live
+publications sharing a project while preserving Unix and stopped project
+identity. Carry it through manager refresh, preview cache/request/completion,
+action menus and delayed prompts before enabling native manager actions.
+`SessionActionMenu` currently keeps a row index, so a refresh can redirect a
+confirmation to a different row; capture the original selection and refuse a
+stale replacement. Keep colon user selectors separate from selected-row
+intents. Do not open native attachment, switching, current-session markers or
+destination navigation until frontend ownership supplies actual current
+publication identity. The owned native catalog service follows this package.
+
+## Phase 2.5 implementation order
 
 The [catalog/service design](../plans/active/WINDOWS_CATALOG_SERVICE.md) records
 the reviewed integration map and acceptance requirements. DiscoveryScope, which
 that design calls a prerequisite, is already applied as described above.
 
-1. Native control orchestration and CLI: complete list/rename/stop/stop-all/clean
+1. Completed in 4e.4a and 4e.4b: native control orchestration and CLI for
+   list/rename/stop/stop-all/clean
    against exact retained publications. Stop success requires actual process
    exit, not an acknowledgment or missing ready file. Aggregate stop-all failures
    while attempting other distinct hosts. Keep restart separately gated until
