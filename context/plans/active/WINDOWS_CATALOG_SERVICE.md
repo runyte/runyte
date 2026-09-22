@@ -1,11 +1,12 @@
 # Native control CLI and workspace service integration
 
-Design only, following accepted native history/catalog behavior. No implementation,
-build, test, or native probe accompanies this record. Public attachment, foreground
-host supervision and parent-terminal authorization remain later WP5 work.
-The DiscoveryScope prerequisite below is now applied and independently reviewed;
-see the [continuation checkpoint](../../reviews/windows_phase2_handoff.md) for its
-validation and the next package. Remaining control/service sections are future work.
+The native control CLI, typed row identity and owned catalog service are now
+implemented and independently reviewed; see the
+[continuation checkpoint](../../reviews/windows_phase2_handoff.md) for the
+accepted commits and validation. This record retains the design decisions and
+acceptance boundaries. Public attachment, foreground host supervision and
+parent-terminal authorization remain later work. Native manager controls are
+the next integration package.
 
 ## Recommended implementation order
 

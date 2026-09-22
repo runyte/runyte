@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5b manager
-selection propagation accepted in `6befd91` (`Carry native row identity through
-workspace manager`). The preceding typed row identity is `b5c47ce`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5c owned
+native catalog service accepted in `92e44dc` (`Own native catalog service and
+retained controls`). The preceding manager selection package is `6befd91`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -18,11 +18,11 @@ native persistent-session coordinator; separate guarded operations work.
 Continue sequential work packages with an independent subagent review after
 each package. Incorporate findings and repeat review until none remain before
 advancing. Commit and push accepted checkpoints to `feat/windows-support`.
-Local commits from `8d5c009` onward are awaiting a push: automatic approval
-review rejected the push to `git@github.com:runyte/runyte.git` as unverified
-sensitive source export. Do not retry it without explicit user authorization.
+The user authorized the specific push through `5947fbb` to
+`git@github.com:runyte/runyte.git`, and that push succeeded. Subsequent local
+checkpoints are not included in that authorization; ask before pushing them.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. There is no current decision blocker. Do not enable public persistent
+decision. Do not enable public persistent
 attachment, plugins, or context access merely because their foundations exist.
 
 ## Accepted implementation and validation
@@ -186,15 +186,38 @@ the full native workspace suite: 3,301 tests, zero failures, 58 ignored across
 47 libtest/doc-test groups, plus six native LSP transport cases. Unix-only
 regressions still need CI after the push; no native CI claim is made.
 
-## Next package: owned native catalog service
+## Accepted package: 4e.5c owned native catalog service
 
-Implement the reviewed service ownership contract: frozen discovery scope,
-bounded requests and events, exact proof retention for selected rows, and a
-joined worker shutdown. Keep user selectors separate from selected-row intents
-and retain pending stopped-name recovery in the service. Missing Git must leave
-worktree discovery available. Do not open native attachment, switching, current
-markers or destination navigation until frontend ownership supplies actual
-current publication identity.
+`92e44dc` adds one native catalog worker thread with a current-thread Tokio
+runtime, bounded request/event queues, a latest-preview slot, and joined
+shutdown. Standalone startup captures a discovery scope after resolving its
+actual project; the native host reuses its verified layout and current ready
+location. The worker retains exact selected publication proof and the pending
+stopped-name recovery ledger across refresh failure and shutdown. User-authored
+selectors use a fresh complete observation. Read-only discovery and preview
+cancel on shutdown; begun mutations stay worker-owned. Missing Git returns an
+empty worktree result without a failed spawn loop. The service handle and events
+are retained by `HostServices` while the native manager gate remains closed.
+
+Independent Astra review found no remaining findings after the stop and event
+backpressure, admission, and cleanup corrections. Nine focused native service
+tests pass, including a real peer preview, publication replacement, held-peer
+shutdown cancellation, pending stopped-name recovery, and full event queue
+shutdown. Formatting, all-target Clippy with warnings denied and the complete
+native workspace suite pass: 3,310 tests, zero failures, 58 ignored across 47
+libtest/doc-test groups, plus six native LSP transport cases. Native CI and Unix
+coverage acceptance remain pending a later authorized push.
+
+## Next package: supported native manager controls
+
+Connect the accepted native service handle and semantic events to the existing
+session manager for supported list, preview, rename, selected stop and clean
+actions. Keep unsupported attachment, switching, current-session markers,
+number shortcuts and destination navigation gated until frontend ownership
+supplies actual current publication identity. Preserve exact selected-row
+identity through actions and complete events, and keep colon user selectors
+separate. Test duplicate same-project live rows and stale publication refusal
+with real native hosts before exposing the manager control actions.
 
 ## Phase 2.5 implementation order
 
