@@ -1,11 +1,11 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, durable Windows plugin
-state is accepted in `140347e` and private native parent waits are accepted in
-`fa18a52`. Private exact native switching is `11963b1` and the native plugin
-worker foundation is `ce888ee`. Typed switch intent and exact native target
-preparation are `8657281` and `ec33c26`. Private native frontend attachment is
-`180175d`.
+Checkpoint: 2026-09-23, branch `feat/windows-support`, private native
+ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
+in `140347e`, and private native parent waits are accepted in `fa18a52`. Private
+exact native switching is `11963b1` and the native plugin worker foundation is
+`ce888ee`. Typed switch intent and exact native target preparation are
+`8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
@@ -16,11 +16,11 @@ before the older chronological progress entries. No previous chat is required.
 ## Scope and delivery
 
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
-correction are complete. Phase 2.5 has an accepted private ParentWait path;
-ParentAttach and public availability remain gated. Phase 2.6 has accepted native
-worker and durable-state foundations, with handoffs, approval ownership, context
-access and the bridge still pending. Integrated Git is optional: missing Git
-must leave the integration disabled without failed spawn loops or runtime
+correction are complete. Phase 2.5 has accepted private ParentWait and
+ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
+native worker and durable-state foundations, with handoffs, approval ownership,
+context access and the bridge still pending. Integrated Git is optional: missing
+Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
 persistent-session coordinator; separate guarded operations work.
 
@@ -557,20 +557,67 @@ Final direct validation for the combined accepted checkpoint is green:
 the seven custom native plugin-worker cases, the established total is 3,389
 passed and 85 ignored across 47 groups, plus six native LSP transport cases.
 
-## Next packages: ParentAttach and remaining 2.6
+The Unix import correction in `c4f8d18` is fully accepted by CI run
+[35786843607](https://github.com/runyte/runyte/actions/runs/35786843607), including
+Windows, Linux and macOS jobs and both coverage gates.
 
-Implement ParentAttach and open public attachment or wait routes only at the
-specific gates authorized by the active plan. Keep manager visits, numbered
-sessions, restart and directory handoff closed until their own acceptance
-requirements are met. Parent-terminal authorization continues to require actual
-retained pipe-peer membership in the exact ConPTY job, a terminal capability
-and current attachment ownership; marker text, metadata PID or ancestry alone
-is insufficient.
+## Accepted package: 4e.5j5 private native ParentAttach
 
-Then continue the remaining Phase 2.6 plugin handoffs and physical-frontend
-approval ownership, context transport and grants, and the Windows Python MCP
-bridge. Context identity and grant storage uses its separate LocalAppData policy
-and must not inherit the plugin state anchor.
+`42f2c9c` adds private Windows ParentAttach without opening public attachment,
+`--wait`, manager visits, numbered navigation, restart or directory handoff.
+Admission reuses the ParentWait authority: the retained requesting pipe peer
+must belong to the exact ConPTY job, its terminal capability must match, and the
+current ready attachment generation must still be owned by the retained source
+frontend. An active origin terminal and parent-request readiness are required;
+marker text, metadata PID and ancestry do not authorize the request.
+
+The parent host's worker owns destination preparation. It uses frozen discovery,
+configuration, state and executable inputs, observes a fresh complete catalog,
+and either retains the exact live destination proof or initializes and starts
+the exact directory destination outside the requesting terminal's job. Caller
+cancellation does not abandon admitted work: the worker retains provisional
+startup cleanup through settlement and resolves the start-versus-existing-host
+winner before returning one atomic commit disposition.
+
+Commit remains provisional until the original retained source frontend receives
+and confirms the source host's nonfinal commit acknowledgement. The service
+supplies a still-armed destination decision. The source host revalidates the
+retained child and frontend proofs, captured attachment generation, terminal
+capability and deadline before committing, then retains the result receiver
+through worker settlement. Successful settlement sends `ParentAttached` to the
+child and releases the source reservation with the frontend’s final committed
+receipt. Expected source-connection closure after confirmation is permitted; it
+is not a prerequisite for child success. The same exact source is a no-op, and
+ordinary native switching keeps its existing acknowledgement behavior.
+
+Independent Astra review accepted the authority, fresh resolution, startup and
+cleanup ownership, source-frontend confirmation, settlement revalidation,
+same-source handling, private routing and real ConPTY acceptance. Focused
+validation passes six service lifecycle tests, two host-client tests and the
+real ConPTY acceptance. Final validation is green: `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast` all exit zero. Core summaries
+report 2,755 lib tests passed with 24 ignored and 66 bin tests passed with 29
+ignored; every integration target is green, along with seven custom native
+plugin-worker cases and six native LSP transport cases.
+
+## Next packages: private Windows plugin handoffs and remaining 2.6
+
+Implement private Windows `terminal.open` and `external.open` plugin handoffs
+with native physical-frontend approval regression coverage. Keep at most eight
+unpublished terminal admissions and retain each one's four MiB accounting until
+actual ConPTY, job and output cleanup completes; installing a terminal transfers
+that ownership to the editor. After external-open admission crosses an
+irreversible operating-system boundary, cancellation or a lost result is
+`outcome_unknown` rather than a safe refusal or replay opportunity. Approval
+must come from physical input on the current native frontend; no protocol flag
+or plugin assertion may stand in for it. Public plugin startup remains gated.
+
+Then continue context transport and grants and the Windows Python MCP bridge.
+Context identity and grant storage uses its separate LocalAppData policy and
+must not inherit the plugin state anchor. Public persistent attachment and wait
+routes, manager visits, numbered sessions, restart, directory handoff and
+combined Git removal remain closed until their own acceptance gates pass.
 
 ## Phase 2.5 implementation order
 
@@ -592,23 +639,22 @@ that design calls a prerequisite, is already applied as described above.
    runtime/thread, bounded admission/events and joined shutdown; App holds only
    a sending handle. Missing Git remains supported during worktree discovery.
 3. Accepted foundations: process-exit supervision, private native frontend
-   attachment, exact switching and ParentWait. Preserve common editor semantics,
-   protected shutdown and connection-owned waits while opening only the public
-   availability gates authorized by the plan.
-4. Complete ParentAttach authorization and routing using the
-   [reviewed parent design](../plans/active/WINDOWS_PARENT_ROUTING.md). Actual
-   retained pipe-peer membership in the exact ConPTY job, a terminal capability,
-   and current attachment ownership must agree. Metadata PID, inherited marker
-   text or ancestry alone is insufficient. Prepare destinations from the parent
-   host's owned worker outside the requesting terminal job. Do not relax ConPTY
-   job limits to enable detached startup.
+   attachment, exact switching, ParentWait and ParentAttach. Preserve common
+   editor semantics, protected shutdown and connection-owned waits while opening
+   only the public availability gates authorized by the plan.
+4. Completed in 4e.5j5: ParentAttach authorization and routing using the
+   [reviewed parent design](../plans/active/WINDOWS_PARENT_ROUTING.md). The
+   retained pipe peer's exact ConPTY job membership, terminal capability and
+   current attachment ownership agree through settlement. Destination startup
+   remains outside the requesting terminal job, and ConPTY job limits are not
+   relaxed for detached startup.
 5. Acceptance and documentation, including combined Git branch/worktree removal
    through the now-native persistent coordinator.
 
 Detached and foreground native hosts now have real process tests. The host owns
-one internal physical-input attachment and private ParentWait is accepted, but
-public attachment and ParentAttach remain gated pending their authorized
-acceptance paths.
+one internal physical-input attachment and private ParentWait and ParentAttach
+are accepted, while public attachment and wait routes remain gated pending their
+authorized acceptance paths.
 
 ### Reviewed process-exit watcher contract
 
@@ -648,12 +694,18 @@ wait without killing an unrelated shared host.
 ## Remaining 2.6
 
 Native plugin worker/process ownership and framing is accepted in `ce888ee`, and
-durable plugin state is accepted in `140347e`. Implement plugin handoffs and
-physical-frontend approval ownership next, followed by context transport/grants
-and the Windows Python MCP bridge. Preserve existing protocol bounds and
-physical-frontend-only approval. Keep context identity and grants on their
-separate LocalAppData policy. Validate immutable and current Node/plugin
-conformance plus real Windows context clients.
+durable plugin state is accepted in `140347e`. Implement private Windows
+`terminal.open` and `external.open` plugin handoffs and physical-frontend
+approval regression coverage next. Unpublished terminal work has eight slots
+and four MiB of accounting per admission, retained until actual ConPTY, job and
+output cleanup; editor installation transfers that ownership. External launch
+results become uncertain after irreversible admission. Preserve existing
+protocol bounds and require physical input from the current native frontend for
+approval. Public plugin startup remains gated.
+
+Follow with context transport/grants and the Windows Python MCP bridge. Keep
+context identity and grants on their separate LocalAppData policy. Validate
+immutable and current Node/plugin conformance plus real Windows context clients.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
