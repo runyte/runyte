@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5a typed
-row identity accepted in `b5c47ce` (`Track exact native publication selection
-identity`). The preceding native CLI implementation is `a24b943`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5b manager
+selection propagation accepted in `6befd91` (`Carry native row identity through
+workspace manager`). The preceding typed row identity is `b5c47ce`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -18,6 +18,9 @@ native persistent-session coordinator; separate guarded operations work.
 Continue sequential work packages with an independent subagent review after
 each package. Incorporate findings and repeat review until none remain before
 advancing. Commit and push accepted checkpoints to `feat/windows-support`.
+Local commits from `8d5c009` onward are awaiting a push: automatic approval
+review rejected the push to `git@github.com:runyte/runyte.git` as unverified
+sensitive source export. Do not retry it without explicit user authorization.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
 decision. There is no current decision blocker. Do not enable public persistent
 attachment, plugins, or context access merely because their foundations exist.
@@ -169,17 +172,29 @@ warnings denied and the full native workspace suite pass: 3,301 tests, zero
 failures, 58 ignored across 47 libtest/doc-test groups, plus six native LSP
 transport cases. Native CI acceptance remains pending.
 
-## Next package: carry selection identity through the manager
+## Accepted package: 4e.5b manager selection propagation
 
-Carry `WorkspaceSelection` through manager refresh, preview cache/request and
-completion, action menus and delayed prompts before enabling native manager
-actions. `SessionActionMenu` currently keeps a row index, so a refresh can
-redirect a confirmation to a different row; capture the original selection
-and refuse a stale replacement. Keep colon user selectors separate from
-selected-row intents. Preserve Unix project-only behavior. Do not open native
-attachment, switching, current-session markers or destination navigation
-until frontend ownership supplies actual current publication identity. The
-owned native catalog service follows this package.
+`6befd91` carries `WorkspaceSelection` through manager refresh, preview and
+inventory requests, cache and completion, action menus, force confirmation,
+delayed prompts and selected action completions. A refresh cannot redirect a
+captured action to another same-project publication. Unix service requests
+reject native-key selections before path resolution; colon and worktree path
+APIs remain separate. Native manager availability and attachment remain gated.
+Independent review found no remaining findings. Focused manager and worker
+regressions pass, as do formatting, all-target Clippy with warnings denied and
+the full native workspace suite: 3,301 tests, zero failures, 58 ignored across
+47 libtest/doc-test groups, plus six native LSP transport cases. Unix-only
+regressions still need CI after the push; no native CI claim is made.
+
+## Next package: owned native catalog service
+
+Implement the reviewed service ownership contract: frozen discovery scope,
+bounded requests and events, exact proof retention for selected rows, and a
+joined worker shutdown. Keep user selectors separate from selected-row intents
+and retain pending stopped-name recovery in the service. Missing Git must leave
+worktree discovery available. Do not open native attachment, switching, current
+markers or destination navigation until frontend ownership supplies actual
+current publication identity.
 
 ## Phase 2.5 implementation order
 
