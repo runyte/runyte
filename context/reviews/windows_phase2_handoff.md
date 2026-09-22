@@ -1,8 +1,8 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5c owned
-native catalog service accepted in `92e44dc` (`Own native catalog service and
-retained controls`). The preceding manager selection package is `6befd91`.
+Checkpoint: 2026-09-22, branch `feat/windows-support`, package 4e.5d native
+manager controls accepted in `5b86575` (`Enable exact native session manager
+controls`). The preceding owned catalog service is `92e44dc`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
@@ -208,16 +208,38 @@ native workspace suite pass: 3,310 tests, zero failures, 58 ignored across 47
 libtest/doc-test groups, plus six native LSP transport cases. Native CI and Unix
 coverage acceptance remain pending a later authorized push.
 
-## Next package: supported native manager controls
+## Accepted package: 4e.5d native manager controls
 
-Connect the accepted native service handle and semantic events to the existing
-session manager for supported list, preview, rename, selected stop and clean
-actions. Keep unsupported attachment, switching, current-session markers,
-number shortcuts and destination navigation gated until frontend ownership
-supplies actual current publication identity. Preserve exact selected-row
-identity through actions and complete events, and keep colon user selectors
-separate. Test duplicate same-project live rows and stale publication refusal
-with real native hosts before exposing the manager control actions.
+`5b86575` gives Windows standalone editors a separate `SessionControls`
+capability while attachment still requires the unavailable persistent frontend.
+The existing manager lists and previews native rows, captures exact selected
+publication keys for rename, normal stop and force stop, and handles service
+events directly. `:session-clean` performs global verified stopped-history
+cleanup; colon stop/rename use explicit user selectors and do not borrow a
+highlighted row. The manager does not claim a current Windows publication,
+assign digits or offer attachment, inventory, cycling or destination visits.
+It requires explicit reselection after a highlighted publication disappears.
+README, user guide, keymap register, UI vocabulary, command availability, help
+and hints state those limits.
+
+Independent Astra review found no remaining findings after availability,
+preview, menu, completion and stale-selection corrections. Five focused native
+UI tests and two real-host manager acceptance tests pass. The latter exercise
+two publications of one project, exact preview and rename, protected stop
+refusal, confirmed force exit with the unrelated host alive, and a captured
+rename prompt refusing a new publication at the same location. Formatting,
+all-target Clippy with warnings denied and the complete native workspace suite
+pass: 3,318 tests, zero failures, 58 ignored across 47 libtest/doc-test groups,
+plus six native LSP transport cases. Native CI and Unix coverage acceptance
+remain pending a later authorized push.
+
+## Next package: native process-exit supervision
+
+Implement the retained-handle one-shot watcher contract below, including
+cancellation, unregister/drop races and reentrant-waker fixture coverage.
+Then integrate it into frontend attachment/switching and wait ownership; keep
+public attachment and parent-terminal routing gated until their own real-host
+acceptance. Do not treat metadata PID or a missing ready file as process exit.
 
 ## Phase 2.5 implementation order
 

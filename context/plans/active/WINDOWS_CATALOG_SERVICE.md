@@ -4,9 +4,8 @@ The native control CLI, typed row identity and owned catalog service are now
 implemented and independently reviewed; see the
 [continuation checkpoint](../../reviews/windows_phase2_handoff.md) for the
 accepted commits and validation. This record retains the design decisions and
-acceptance boundaries. Public attachment, foreground host supervision and
-parent-terminal authorization remain later work. Native manager controls are
-the next integration package.
+acceptance boundaries. Native manager controls are accepted; public attachment,
+foreground host supervision and parent-terminal authorization remain later work.
 
 ## Recommended implementation order
 
