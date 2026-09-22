@@ -29,7 +29,8 @@ pub use discovery::{
 pub use metadata::{
     EndpointMetadata, MAX_METADATA_BYTES, MAX_PERSISTED_PATH_BYTES, PipeAddress, RegistryRecord,
 };
-pub use names::NameStore;
+pub(crate) use names::StoppedNameSelection;
+pub use names::{NameStore, StoppedNameCommit, StoppedNameEdit};
 pub use view::RegistryView;
 
 const REGISTRY_LOCK: &str = ".registry.lock";

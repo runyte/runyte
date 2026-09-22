@@ -10,6 +10,10 @@ use std::{ffi::OsString, io::Write};
 const STORE_LOCK: &str = ".host-names.lock";
 const MAX_STORED_NAME_BYTES: usize = 1024;
 
+mod stopped;
+pub(crate) use stopped::StoppedNameSelection;
+pub use stopped::{StoppedNameCommit, StoppedNameEdit};
+
 fn validate_name(name: &str) -> io::Result<()> {
     crate::workspace::session_name::validate_host_name(name)
         .map_err(|error| invalid(&error.to_string()))
@@ -24,6 +28,52 @@ pub struct NameStore {
 }
 
 impl NameStore {
+    /// Reads configured authority without preparing a directory or lock. A
+    /// present stable lock also protects an absent leaf during a rename gap.
+    pub fn read_existing(state_root: &Path, id: &str) -> io::Result<Option<String>> {
+        Self::read_existing_with(state_root, id, |_| Ok(()))
+    }
+
+    fn read_existing_with(
+        state_root: &Path,
+        id: &str,
+        checkpoint: impl FnOnce(&Self) -> io::Result<()>,
+    ) -> io::Result<Option<String>> {
+        metadata::validate_id(id)?;
+        let path = state_root.join("host-names");
+        metadata::persisted_path(&encode_path(&path))?;
+        let directory = match Directory::open_existing(&path, true) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            result => Arc::new(result?),
+        };
+        let store = Self { directory, path };
+        let lock = match store.directory.open_read(OsStr::new(STORE_LOCK)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if store.read_unlocked(id)?.is_none() {
+                    return Ok(None);
+                }
+                return Err(invalid("stored session name has no verifiable stable lock"));
+            }
+            result => result?,
+        };
+        let key = locking::file_key(&lock)?;
+        let _lock = locking::Lock::acquire(lock)?;
+        checkpoint(&store)?;
+        store.verify_lock(key)?;
+        let value = store.read_unlocked(id)?.map(|(_, _, name)| name);
+        store.verify_lock(key)?;
+        Ok(value)
+    }
+
+    fn verify_lock(&self, expected: locking::FileKey) -> io::Result<()> {
+        let current =
+            Directory::open_existing(&self.path, true)?.open_read(OsStr::new(STORE_LOCK))?;
+        if locking::file_key(&current)? != expected {
+            return Err(invalid("stored-name lock or directory changed identity"));
+        }
+        Ok(())
+    }
+
     pub fn open(state_root: &Path) -> io::Result<Self> {
         let path = state_root.join("host-names");
         metadata::persisted_path(&encode_path(&path))?;
@@ -37,11 +87,7 @@ impl NameStore {
         let file = self.directory.append(OsStr::new(STORE_LOCK))?;
         let key = locking::file_key(&file)?;
         let lock = locking::Lock::acquire(file)?;
-        let current =
-            Directory::open_existing(&self.path, true)?.open_read(OsStr::new(STORE_LOCK))?;
-        if locking::file_key(&current)? != key {
-            return Err(invalid("stored-name lock or directory changed identity"));
-        }
+        self.verify_lock(key)?;
         Ok(lock)
     }
 

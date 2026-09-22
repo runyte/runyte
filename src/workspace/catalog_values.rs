@@ -193,6 +193,7 @@ pub struct DestinationInventory {
 /// Supplies catalog names to running hosts which have never been explicitly
 /// renamed. An explicit host name remains authoritative and is merged back
 /// into recents after inspection.
+#[cfg(any(unix, test))]
 pub(super) fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
     for row in rows.iter_mut().filter(|row| row.name.is_none()) {
         row.name = recent_entries

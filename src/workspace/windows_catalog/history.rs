@@ -5,8 +5,8 @@
 
 use super::{CatalogEntry, CatalogSnapshot, WorkspaceRow, select_indices, snapshot_locations};
 use crate::workspace::{
-    catalog_values::{apply_recent_activity, apply_recent_names, assign_running_workspace_numbers},
-    recent_history::{RecentEntry, assign_missing_default_workspace_names, read_recents},
+    catalog_values::{apply_recent_activity, assign_running_workspace_numbers},
+    recent_history::{RecentEntry, read_recents},
     windows_endpoint::CandidateOrigin,
     windows_location::{DiscoveryScope, KnownReadLocation, ResolvedLayout},
 };
@@ -18,6 +18,7 @@ use std::{
 
 mod transactions;
 pub use transactions::{ensure_recorded, record_activity, remember};
+mod stopped_names;
 
 #[derive(Debug)]
 pub struct HistoryEntry {
@@ -50,6 +51,7 @@ pub struct HistorySnapshot {
     entries: Vec<HistoryEntry>,
     remembered: Vec<RecentEntry>,
     history_path: Option<PathBuf>,
+    names: stopped_names::StoppedNames,
 }
 
 impl HistorySnapshot {
@@ -146,7 +148,8 @@ pub async fn snapshot_with_history_in_scope(
     }
     // No partial result or write survives a failed exact ready/peer observation.
     let live = snapshot_locations(scope, current, &known, include_hidden, false).await?;
-    merge(live, remembered, present, history_path)
+    let names = stopped_names::observe(scope, configured_state, &remembered, &live)?;
+    merge(live, remembered, present, history_path, names)
 }
 
 fn merge(
@@ -154,9 +157,10 @@ fn merge(
     remembered: Vec<RecentEntry>,
     present: BTreeMap<PathBuf, bool>,
     history_path: Option<PathBuf>,
+    stored: stopped_names::StoppedNames,
 ) -> Result<HistorySnapshot> {
     let mut names = remembered.clone();
-    assign_missing_default_workspace_names(&mut names);
+    stopped_names::decorate(&mut names, &live, &stored);
     let mut publications = BTreeMap::<&Path, usize>::new();
     for entry in live.entries() {
         *publications.entry(&entry.row().project_root).or_default() += 1;
@@ -215,7 +219,6 @@ fn merge(
         .iter()
         .map(|index| entries[*index].row.clone())
         .collect::<Vec<_>>();
-    apply_recent_names(&mut rows, &names);
     apply_recent_activity(&mut rows, &names);
     assign_running_workspace_numbers(&mut rows, &names);
     for (index, row) in eligible.into_iter().zip(rows) {
@@ -237,6 +240,7 @@ fn merge(
         entries,
         remembered,
         history_path,
+        names: stored,
     })
 }
 
