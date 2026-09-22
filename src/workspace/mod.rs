@@ -43,6 +43,8 @@ pub mod windows_location;
 #[cfg(windows)]
 pub mod windows_pipe;
 #[cfg(windows)]
+mod windows_process_exit;
+#[cfg(windows)]
 pub mod windows_process_identity;
 #[cfg(windows)]
 pub mod windows_service;

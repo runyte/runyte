@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use tokio::time::{Instant, sleep_until, timeout_at};
+use tokio::time::{Instant, timeout_at};
 use windows_sys::Win32::{
     Foundation::CompareObjectHandles,
     System::Threading::{
@@ -23,6 +23,7 @@ use windows_sys::Win32::{
 use super::{
     session_name::validate_host_name,
     windows_endpoint::{AuthenticatedHost, Candidate, EndpointMetadata, Inspection, Removal},
+    windows_process_exit::ProcessExitWatcher,
     windows_process_identity::{PinnedProcess, ProcessIdentity},
     windows_transport::LocalClient,
 };
@@ -33,7 +34,6 @@ use crate::{
 
 const CONTROL_BUDGET: Duration = Duration::from_secs(2);
 const STOP_BUDGET: Duration = Duration::from_secs(5);
-const STOP_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 /// A stop targets one authenticated native process and one publication. The
 /// retained handle cannot become a replacement process when its PID is reused.
@@ -144,21 +144,25 @@ async fn shutdown_request(
 
 /// Waits only for the original process. Ready-record disappearance can occur
 /// during live name publication and is not proof of process termination. This
-/// finite active-operation poll introduces no timer into an idle editor.
+/// one-shot native wait introduces no timer into an idle editor.
 pub async fn await_host_stopped(receipt: &StopReceipt) -> Result<()> {
     await_host_stopped_until(receipt, Instant::now() + STOP_BUDGET).await
 }
 
 async fn await_host_stopped_until(receipt: &StopReceipt, deadline: Instant) -> Result<()> {
-    loop {
-        if !receipt.peer.is_alive()? {
-            return Ok(());
+    if !receipt.peer.is_alive()? {
+        return Ok(());
+    }
+    let watcher = ProcessExitWatcher::new(Arc::clone(&receipt.peer))?;
+    match timeout_at(deadline, watcher.wait()).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if receipt.peer.is_alive()? {
+                Err(error).context("workspace host did not finish shutting down")
+            } else {
+                Ok(())
+            }
         }
-        ensure!(
-            Instant::now() < deadline,
-            "workspace host did not finish shutting down"
-        );
-        sleep_until(deadline.min(Instant::now() + STOP_POLL_INTERVAL)).await;
     }
 }
 
