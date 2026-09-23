@@ -6,8 +6,9 @@ in `140347e`, private native parent waits are accepted in `fa18a52`, and private
 Windows plugin handoffs are accepted in `8148437`. Native Windows context
 identity/grant storage and repeat-safe context approval are accepted in
 `61acb18`, and private Windows context transport and discovery are accepted in
-`439f4da`. Private Windows context host grants are accepted in `bbdb12a`. Private
-exact native switching is `11963b1` and the native plugin worker foundation is
+`439f4da`. Private Windows context host grants are accepted in `bbdb12a`, and
+the private Windows Python MCP bridge is accepted in `34f53b6`. Private exact
+native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
@@ -23,8 +24,8 @@ Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
 native worker, durable-state, private handoff, context-grant storage, private
-context transport/discovery foundations and host grants, with the bridge still
-pending.
+context transport/discovery foundations, host grants and the private Python MCP
+bridge. Public Windows context enablement and acceptance remain pending.
 Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
@@ -718,19 +719,69 @@ report 2,821 core tests passed with 26 ignored and 66 bin tests passed with 29
 ignored; every integration target is green, including seven plugin-worker and
 six native LSP cases. Native CI acceptance remains pending.
 
-## Next package: Windows bridge and external client conformance
+## Accepted package: 5f private Windows context bridge
 
-Context identity/grant storage and repeat-safe physical approval are accepted in
-`61acb18`. Authenticated private context transport and metadata-only discovery
-are accepted in `439f4da`, and private host grants with real native clients are
-accepted in `bbdb12a`. Continue with the Windows Python MCP bridge and native
-external client conformance.
-Context identity and grant storage uses its separate LocalAppData policy and
-must not inherit the plugin state anchor. Normal Windows context startup,
-`:context-access` and `--context-list` remain unavailable. Public persistent
-attachment and wait routes, manager visits, numbered sessions, restart,
-directory handoff and combined Git removal remain closed until their own
-acceptance gates pass.
+`34f53b6` adds the Windows adapter for the separately versioned Python MCP
+bridge without changing its MCP or context tool schemas. The adapter resolves
+the default context store from the OS LocalAppData known folder and keeps it
+separate from plugin state. It opens existing local NTFS storage component by
+component, rejects reparse points and linked identity files, and requires an
+explicit current-user owner with a protected owner-only full-access ACL before
+reading a credential. Windows discovery output is bounded through an owned
+overlapped pipe and a hidden child process, including cancellation when a
+descendant retains stdout.
+
+Named-pipe connection admission validates the strict endpoint family, the
+complete numeric registration, the actual pipe server PID, its exact nonzero
+creation time and the retained server process's account SID before sending a
+credential. Reads and writes use duplicated handles and bounded overlapped
+owners. Each owner alone submits, cancels, drains and releases its operation;
+interruption is deferred until owner completion. Unconfirmed cancellation
+retains a bounded owner and disables later native I/O. One absolute exchange
+deadline covers partial writes, and a mutation is known not sent only when no
+frame byte was transmitted. Process liveness and connection reuse rely on the
+retained process handle rather than the process exit-code sentinel.
+
+Windows acceptance adds adapter cases for bounded and oversized discovery,
+timeouts and descendant-held stdout. The ignored real-host case
+`workspace::host::context::transport_tests::python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation`
+launches the Python MCP client against the private Rust named-pipe host. It
+checks pre-authentication rejection, private credential admission, exact MCP
+routing, Unicode reads and revision-checked edits, reconnect isolation and
+native revocation. The Windows CI job now requires both the Python adapter
+suite and that exact ignored real-host case to run and pass; it supplies the
+Python executable explicitly and rejects a skipped acceptance test.
+
+Independent Astra review accepted the storage, process proof, overlapped I/O,
+cancellation, deadline and mutation-outcome ownership. Local validation passed
+`cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`.
+The full workspace suite had one unrelated `git_provider` blame test failure;
+that exact test passed immediately in an isolated rerun. This machine had no
+usable Python, uv or WSL runtime, so neither the Python suite nor the ignored
+native Python acceptance is claimed locally. The required Windows CI gate is
+the acceptance authority for those cases and remains pending.
+The immutable/frozen and current Node/plugin conformance suites remain separate
+required CI lanes; neither was run or claimed by `34f53b6`. The existing Node
+readiness issue remains open in `context/issues/node_conformance_readiness.md`.
+
+## Next package: public Windows context enablement and acceptance
+
+Open normal Windows context host startup, `:context-access` and
+`--context-list --json` only with their public end-to-end acceptance. Preserve
+the accepted LocalAppData identity boundary, physical grant and terminal-text
+approval rules, exact discovery and process proof, and the private bridge's
+bounded cancellation semantics. Until that package is accepted, all three
+public routes remain gated. Public persistent attachment and wait routes,
+manager visits, numbered sessions, restart, directory handoff and combined Git
+removal remain closed until their own acceptance gates pass.
+
+Opening remembered grants also opens context service startup earlier in the
+standalone path. Any later second-draw or input-construction failure must run
+the same joined context-host cleanup as an ordinary exit. Public acceptance
+must exercise the complete executable -> `--context-list --json` -> Python
+bridge round trip. Every Windows editor or host subprocess fixture in that
+package must set its own absolute `RUNYTE_CONTEXT_HOME`; `XDG_CONFIG_HOME` does
+not isolate the separate LocalAppData identity and grant store.
 
 ## Phase 2.5 implementation order
 
@@ -817,13 +868,19 @@ the editor thread bounded. Repeated Enter cannot approve context grants or
 terminal proposals; repeated overlay navigation remains live. Private Windows
 context registration, exact publication ownership, named-pipe transport and
 metadata-only discovery are accepted in `439f4da`. Private shared context host
-grants and real native clients are accepted in `bbdb12a`; normal Windows context
-startup, `:context-access` and `--context-list` remain gated. Public plugin
-startup remains gated.
+grants and real native clients are accepted in `bbdb12a`, and the private
+Windows Python MCP bridge and native external client conformance are accepted
+in `34f53b6`. Normal Windows context startup, `:context-access` and
+`--context-list --json` remain gated. Public plugin startup remains gated.
 
-Implement the Windows Python MCP bridge and native external client conformance.
-Keep context identity and grants on their separate LocalAppData policy. Validate
-immutable and current Node/plugin conformance alongside the native clients.
+Implement public Windows context enablement with real end-to-end acceptance for
+normal startup, native grant/revoke and bounded discovery. Include the complete
+executable -> `--context-list --json` -> Python bridge route, joined context
+cleanup after post-service standalone construction failures, and an absolute
+fixture-owned `RUNYTE_CONTEXT_HOME` on every Windows editor or host subprocess.
+Keep context identity and grants on their separate LocalAppData policy, and
+preserve the bridge's exact process, cancellation and mutation-outcome
+boundaries.
 
 Independent Astra review closed repeat-approval, registration-publication scope
 and durable-anchor retry findings, then reported no remaining findings. Final
@@ -863,7 +920,10 @@ with `gh api repos/runyte/runyte/actions/jobs/JOB/logs --allow-escape-sequences`
 while the overall run is still active. Do not claim a queued/running job passed.
 
 Every editor/host fixture must own temporary XDG_CONFIG_HOME and relevant
-configuration/cache/state. Use compiled or checked-in executable fixtures;
+configuration/cache/state. Windows fixtures must additionally set an absolute,
+fixture-owned `RUNYTE_CONTEXT_HOME`; XDG configuration does not isolate the
+separate LocalAppData context store. Use compiled or checked-in executable
+fixtures;
 never execute a program written by a test. Retain process/job ownership through
 cleanup before deleting fixture storage. Native process checks may require the
 normal token outside the sandbox, as in preceding acceptance runs.
