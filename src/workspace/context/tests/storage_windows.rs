@@ -108,7 +108,7 @@ fn durable_storage_creation_reopens_the_established_hierarchy() {
     let location = StorageLocation::anchored(path.clone(), root.path().to_owned()).unwrap();
     // Model a child left by an interrupted first attempt. The captured anchor
     // remains the fixture root rather than being rediscovered as `parent`.
-    std::fs::create_dir(root.join("parent")).unwrap();
+    root.create_private_dir("parent").unwrap();
     let first = Storage::open_location(location.clone()).unwrap();
     first.identity("agent").unwrap();
     drop(first);

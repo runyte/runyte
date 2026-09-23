@@ -94,6 +94,27 @@ class WindowsDiscoveryAdapterTests(unittest.TestCase):
     def command(self, *arguments):
         return [sys.executable, str(Path(__file__).resolve()), '--discovery-fixture', *arguments]
 
+    def test_registration_validation_matches_host_workspace_identity_width(self):
+        from runyte_context import windows as windows_native
+
+        incarnation = 'a' * 64
+        record = {
+            'workspace_id': 'b' * 32,
+            'root': r'C:\workspace',
+            'mode': 'standalone',
+            'environment': 'c' * 64,
+            'endpoint': rf'\\.\pipe\runyte-context-v1-{incarnation}',
+            'host_incarnation': incarnation,
+            'pid': os.getpid(),
+            'creation_time': 1,
+        }
+        windows_native.validate_record(record)
+        for width in (31, 33, 64):
+            with self.subTest(width=width):
+                record['workspace_id'] = 'b' * width
+                with self.assertRaises(OSError):
+                    windows_native.validate_record(record)
+
     def test_bounded_success_returns_exact_bytes_and_status(self):
         from runyte_context import windows as windows_native
 
@@ -144,6 +165,8 @@ class NativeWindowsBridgeTests(unittest.TestCase):
 
         from runyte_context import windows as windows_native
 
+        windows_native.validate_record(record)
+
         malformed = []
         for field, value in (
                 ('pid', True), ('pid', 0), ('pid', 1.5),
@@ -162,12 +185,15 @@ class NativeWindowsBridgeTests(unittest.TestCase):
                 windows_native.validate_record(candidate)
 
         mismatched = dict(record)
-        mismatched['creation_time'] += 1
+        creation_time = record['creation_time']
+        mismatched['creation_time'] = creation_time - 1 if creation_time > 1 else 2
+        windows_native.validate_record(mismatched)
         mismatched_inventory = {**inventory, 'workspaces': [mismatched]}
         process_bridge = Bridge(name='agent', root=root, timeout=2,
                                 discovery=lambda hidden: mismatched_inventory)
         self.addCleanup(process_bridge.close)
         process_denied = tool(started(process_bridge), 2, 'list_workspaces')['structuredContent']
+        self.assertEqual(len(process_denied['workspaces']), 1, mismatched)
         self.assertFalse(process_denied['workspaces'][0]['readable'])
         self.assertEqual(process_denied['workspaces'][0]['unavailable_reason'], 'unavailable')
 

@@ -397,11 +397,10 @@ where
     };
     if let Err(message) = hello.validate() {
         let mut writer = writer;
-        write_message(
+        write_refusal(
             &mut writer,
-            &HostResponse::Refused {
-                message: format!("invalid client handshake: {message}"),
-            },
+            &mut reader,
+            format!("invalid client handshake: {message}"),
         )
         .await?;
         return Ok(());
@@ -422,24 +421,22 @@ where
     let (responses, mut response_rx) = response_channel();
     if protocol != PROTOCOL_VERSION {
         let mut writer = writer;
-        write_message(
+        write_refusal(
             &mut writer,
-            &HostResponse::Refused {
-                message: format!(
-                    "client protocol {protocol} is incompatible with host protocol {PROTOCOL_VERSION}"
-                ),
-            },
+            &mut reader,
+            format!(
+                "client protocol {protocol} is incompatible with host protocol {PROTOCOL_VERSION}"
+            ),
         )
         .await?;
         return Ok(());
     }
     if project_root_bytes != expected_project_root {
         let mut writer = writer;
-        write_message(
+        write_refusal(
             &mut writer,
-            &HostResponse::Refused {
-                message: "client requested a different workspace".to_owned(),
-            },
+            &mut reader,
+            "client requested a different workspace".to_owned(),
         )
         .await?;
         return Ok(());
@@ -476,11 +473,10 @@ where
         || !features_cover_role
     {
         let mut writer = writer;
-        write_message(
+        write_refusal(
             &mut writer,
-            &HostResponse::Refused {
-                message: "client handshake identity or feature set is invalid".to_owned(),
-            },
+            &mut reader,
+            "client handshake identity or feature set is invalid".to_owned(),
         )
         .await?;
         return Ok(());
@@ -503,6 +499,11 @@ where
             .await
             .context("workspace host stopped before answering the client handshake")?;
         write_message(&mut writer, &response).await?;
+        #[cfg(windows)]
+        if matches!(response, HostResponse::Refused { .. }) {
+            retain_refused_peer(&mut reader).await;
+            return Ok(());
+        }
         loop {
             tokio::select! {
                 // Semantic replies are bounded and must drain before another
@@ -569,6 +570,28 @@ where
     // Retain the OS peer proof even if the host discards its Connected event.
     drop(peer_process);
     result
+}
+
+async fn write_refusal<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
+    writer: &mut W,
+    reader: &mut MessageReader<R>,
+    message: String,
+) -> Result<()> {
+    write_message(writer, &HostResponse::Refused { message }).await?;
+    #[cfg(windows)]
+    retain_refused_peer(reader).await;
+    #[cfg(not(windows))]
+    let _ = reader;
+    Ok(())
+}
+
+/// Keep a native pipe alive while its client reads a terminal refusal. The
+/// first byte, EOF, or read error ends the wait; no later request is decoded or
+/// dispatched. One absolute deadline bounds a client that leaves the pipe open.
+#[cfg(windows)]
+async fn retain_refused_peer<R: AsyncRead + Unpin>(reader: &mut MessageReader<R>) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let _ = tokio::time::timeout_at(deadline, reader.reader.fill_buf()).await;
 }
 
 /// Whether a connection ended because the peer closed it rather than because
@@ -808,6 +831,182 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn control_hello(project: Vec<u8>, protocol: u32) -> ClientRequest {
+        ClientRequest::Hello {
+            protocol,
+            features: vec![
+                FeatureGroup::Control,
+                FeatureGroup::Buffers,
+                FeatureGroup::Wait,
+            ],
+            project_root_bytes: project,
+            client_kind: ClientKind::Control,
+            client_version: crate::protocol::CLIENT_VERSION.to_owned(),
+            role: ClientRole::Control,
+            geometry: FrameGeometry::default().into(),
+            directory_handoff: false,
+        }
+    }
+
+    #[cfg(windows)]
+    async fn refused_host_connection() -> (
+        tokio::task::JoinHandle<Result<()>>,
+        MessageReader<tokio::io::DuplexStream>,
+        mpsc::Receiver<ServerEvent<Arc<()>>>,
+        std::sync::Weak<()>,
+    ) {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (events, mut received) = mpsc::channel(4);
+        let proof = Arc::new(());
+        let retained = Arc::downgrade(&proof);
+        let project = crate::protocol::encode_path(std::path::Path::new("/refused-peer"));
+        let task = tokio::spawn(serve_connection_with_peer(
+            1,
+            server,
+            events,
+            project.clone(),
+            proof,
+        ));
+        write_message(&mut client, &control_hello(project, PROTOCOL_VERSION))
+            .await
+            .unwrap();
+        let ServerEvent::Connected { responses, .. } =
+            tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected admitted connection")
+        };
+        responses
+            .try_send(HostResponse::Refused {
+                message: "busy".to_owned(),
+            })
+            .unwrap();
+        drop(responses);
+        let mut client = MessageReader::new(client);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), client.read::<HostResponse>())
+                .await
+                .unwrap()
+                .unwrap(),
+            Some(HostResponse::Refused { message }) if message == "busy"
+        ));
+        (task, client, received, retained)
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_refusal_is_delivered_before_peer_close_and_releases_on_eof() {
+        let (task, mut client, mut events, retained) = refused_host_connection().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client.read::<HostResponse>())
+                .await
+                .is_err(),
+            "server closed the refusal pipe before its reader released it"
+        );
+        assert!(!task.is_finished());
+        drop(client);
+        tokio::time::timeout(Duration::from_millis(1500), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(retained.upgrade().is_none());
+        assert!(matches!(
+            events.recv().await,
+            Some(ServerEvent::Disconnected { id: 1 })
+        ));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_refusal_ignores_followup_request_and_releases_the_peer() {
+        let (task, mut client, mut events, retained) = refused_host_connection().await;
+        write_message(client.reader.get_mut(), &ClientRequest::Health)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(1500), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(retained.upgrade().is_none());
+        assert!(matches!(
+            events.recv().await,
+            Some(ServerEvent::Disconnected { id: 1 })
+        ));
+        assert!(
+            events.recv().await.is_none(),
+            "request escaped a terminal refusal"
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn host_refusal_has_one_deadline_for_a_stalled_peer() {
+        let (task, mut client, mut events, retained) = refused_host_connection().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client.read::<HostResponse>())
+                .await
+                .is_err(),
+            "stalled peer was released before the refusal deadline"
+        );
+        assert!(!task.is_finished());
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(retained.upgrade().is_none());
+        assert!(matches!(
+            events.recv().await,
+            Some(ServerEvent::Disconnected { id: 1 })
+        ));
+        drop(client);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn early_handshake_refusal_is_delivered_before_peer_close() {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (events, mut received) = mpsc::channel(1);
+        let project = crate::protocol::encode_path(std::path::Path::new("/early-refusal"));
+        let task = tokio::spawn(serve_connection_with_peer(
+            1,
+            server,
+            events,
+            project.clone(),
+            Arc::new(()),
+        ));
+        write_message(&mut client, &control_hello(project, PROTOCOL_VERSION + 1))
+            .await
+            .unwrap();
+        let mut client = MessageReader::new(client);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), client.read::<HostResponse>())
+                .await
+                .unwrap()
+                .unwrap(),
+            Some(HostResponse::Refused { message }) if message.contains("incompatible")
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), client.read::<HostResponse>())
+                .await
+                .is_err(),
+            "early refusal closed its pipe before the reader released it"
+        );
+        assert!(!task.is_finished());
+        drop(client);
+        tokio::time::timeout(Duration::from_millis(1500), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(received.recv().await.is_none());
+    }
 
     #[tokio::test]
     async fn semantic_reply_queued_during_final_selection_precedes_shutdown() {

@@ -57,10 +57,10 @@ fn native_console_fixture() {
                 let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
                 assert!(!raw.is_null(), "{}", io::Error::last_os_error());
                 let job = unsafe { OwnedHandle::from_raw_handle(raw) };
-                let child = std::process::Command::new(system_cmd())
-                    .args(["/d", "/q"])
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
                     .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
                 assert_ne!(
@@ -69,6 +69,18 @@ fn native_console_fixture() {
                     "{}",
                     io::Error::last_os_error()
                 );
+                let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(
+                        output.read_line(&mut line).unwrap(),
+                        0,
+                        "nested fixture exited"
+                    );
+                    if line.trim() == "READY" {
+                        break;
+                    }
+                }
                 println!("NESTED {}", child.id());
                 nested_jobs.push(job);
                 descendants.push(child);

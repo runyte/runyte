@@ -50,36 +50,50 @@ jobs:
       - name: Accept the private Windows context bridge
         if: ${{ !cancelled() }}
         run: |
+          $failures = [System.Collections.Generic.List[string]]::new()
           $python = (Get-Command python -ErrorAction Stop).Source
           Push-Location bridges/runyte-context
           & $python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-python.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pythonExit = $LASTEXITCODE
           Pop-Location
+          if ($pythonExit -ne 0) {
+            $failures.Add("Windows context Python acceptance exited with $pythonExit")
+          }
           $pythonAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-python.log"
           foreach ($case in @(
             'test_bounded_success_returns_exact_bytes_and_status',
             'test_oversized_output_stops_at_one_byte_past_the_bound',
             'test_timeout_terminates_the_owned_child_within_the_deadline',
-            'test_descendant_held_stdout_is_cancelled_at_the_same_deadline'
+            'test_descendant_held_stdout_is_cancelled_at_the_same_deadline',
+            'test_registration_validation_matches_host_workspace_identity_width'
           )) {
             if ($pythonAcceptance -notmatch ('(?m)^' + [regex]::Escape($case) + ' \(.+\) \.\.\. ok\r?$')) {
-              throw "Required Windows context adapter acceptance did not run: $case"
+              $failures.Add("Required Windows context adapter acceptance did not run: $case")
             }
           }
           $env:RUNYTE_CONTEXT_TEST_PYTHON = $python
           $case = 'workspace::host::context::transport_tests::python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation'
           cargo test --locked --lib $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-native.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nativeExit = $LASTEXITCODE
+          if ($nativeExit -ne 0) {
+            $failures.Add("Native Windows context bridge acceptance exited with $nativeExit")
+          }
           $nativeAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-native.log"
           if ($nativeAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
-            throw "Required native Windows context bridge acceptance did not run: $case"
+            $failures.Add("Required native Windows context bridge acceptance did not run: $case")
           }
           $case = 'public_windows_context_round_trip'
           cargo test --locked --test windows_context_acceptance $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-public.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $publicExit = $LASTEXITCODE
+          if ($publicExit -ne 0) {
+            $failures.Add("Public Windows context acceptance exited with $publicExit")
+          }
           $publicAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-public.log"
           if ($publicAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
-            throw "Required public Windows context acceptance did not run: $case"
+            $failures.Add("Required public Windows context acceptance did not run: $case")
+          }
+          if ($failures.Count -ne 0) {
+            throw ($failures -join [Environment]::NewLine)
           }
       - name: Accept isolated native clipboard operations
         if: ${{ !cancelled() }}

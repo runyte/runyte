@@ -500,7 +500,7 @@ def validate_record(record):
             or not isinstance(incarnation, str) or not re.fullmatch(r"[0-9a-f]{64}", incarnation)
             or endpoint.rsplit("-", 1)[-1] != incarnation
             or not isinstance(record.get("workspace_id"), str)
-            or not re.fullmatch(r"[0-9a-f]{64}", record["workspace_id"])
+            or not re.fullmatch(r"[0-9a-f]{32}", record["workspace_id"])
             or not isinstance(record.get("root"), str) or not record["root"]
             or record.get("mode") not in ("persistent", "standalone")
             or not isinstance(record.get("environment"), str)
