@@ -16,6 +16,9 @@ commit `9743bd9`. Explicit public Windows persistent attachment is accepted in
 source commit `2563fba`; configured bare Windows attachment is accepted in
 source commit `378a22b`. Guarded CLI-only Windows session restart is implemented
 in source commit `8a8987c`, with detached-capable replacement acceptance pending.
+Native Windows `Ctrl-\` decoding and review acceptance are `eff117c` and
+`1159418`, with resolved issue record `e34d04c`. Public integrated-parent
+Windows `--wait` is accepted locally in `fee4819`.
 Public Windows context access is accepted in source
 commit `a79e765`; Windows CI acceptance regressions are repaired in source commit
 `05935a6` and remotely accepted through handoff commit `d693832`.
@@ -32,8 +35,10 @@ Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths, explicit public `-a`/`--persistent` attachment and configured
 bare attachment. Guarded CLI restart has local refusal acceptance; successful
-stop-to-start acceptance, persistent wait, manager visits and in-editor
-switching remain gated.
+stop-to-start acceptance remains gated. Public `--wait` from an authenticated
+persistent integrated terminal is accepted; persistent wait from an ordinary
+shell, manager visits and in-editor navigation/switching
+remain gated.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
 bridge, public Windows context access and the public plugin lifecycle. The
@@ -45,27 +50,28 @@ persistent-session coordinator; separate guarded operations work.
 
 Continue sequential work packages with an independent subagent review after
 each package. Incorporate findings and repeat review until none remain before
-advancing. Commit and push accepted checkpoints to `feat/windows-support`.
-The user authorized pushing accepted checkpoints to `feat/windows-support`,
-but not to other branches. The exact push through `d9361e6` to
+advancing. Commit accepted checkpoints locally. Earlier authorization covered
+pushes to `feat/windows-support`, but automatic approval review denied the
+latest push; do not retry it without explicit approval. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
 `777dbf3` succeeded. The exact pushes through public-context handoff commit
 `46311e7` and remediation handoff commit `d693832` also succeeded. The remote
-branch therefore includes `a79e765`, `05935a6`, `d693832`, `9743bd9` and
-`2563fba` and `378a22b`. The plugin source checkpoint passed every job in
+branch therefore includes `a79e765`, `05935a6`, `d693832`, `9743bd9`,
+`2563fba`, `378a22b` and `8a8987c`. The plugin source checkpoint passed every job in
 [CI run 35875460337](https://github.com/runyte/runyte/actions/runs/35875460337).
 Direct attachment source commit `2563fba` has local acceptance; its
 [CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
 was cancelled by the next push. Configured bare attachment source commit
 `378a22b` passed all jobs in
 [CI run 35883007224](https://github.com/runyte/runyte/actions/runs/35883007224).
-Restart source commit `8a8987c` awaits push, remote CI and successful
-stop-to-start acceptance on a detached-capable Windows runner.
-Accepted checkpoints may be pushed to that branch after review and local
-validation.
+Restart source commit `8a8987c` passed every job in
+[CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832),
+while successful stop-to-start acceptance still needs a detached-capable
+Windows runner. The `Ctrl-\` and public ParentWait commits remain local;
+automatic approval review denied their push, and they have no remote CI yet.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. Keep persistent wait, manager visits and switching behind their own
-acceptance gates.
+decision. Keep ordinary-shell persistent wait, manager visits and in-editor
+switching behind their own acceptance gates.
 
 ## Accepted implementation and validation
 
@@ -965,14 +971,34 @@ ambiguity refusal without stopping either host. The test's successful restart,
 protected-state refusal and force-replacement branch is conditional on a
 runner that permits detached creation and was not exercised locally. That
 stop-to-start acceptance remains an explicit gate. Independent Astra source
-review is clear. `8a8987c` awaits push and remote CI.
+review is clear. All jobs passed in
+[CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832).
+
+## Accepted locally: native Ctrl-backslash and public integrated-parent wait
+
+`eff117c` normalizes the native ConPTY `0x1c` Control key record to `Ctrl-\`;
+`1159418` verifies a second press enters review and `i` returns to terminal
+input in a real editor. The issue was moved to resolved in `e34d04c`.
+Physical keyboard and layout behavior remain unverified.
+
+`fee4819` routes Windows `--wait FILE...` from an authenticated persistent
+integrated terminal through the existing private ParentWait authority. Files
+resolve from the invoking terminal's directory, and the caller waits until all
+requested buffers complete. Copied, stale, malformed and standalone parent
+markers refuse; an ordinary shell with no parent context retains standalone
+`--wait`. Real ConPTY acceptance covers two-file completion and restoration of
+the origin terminal after client exit. Native formatting, all-target Clippy,
+focused Windows tests and the full workspace suite passed; independent source
+review is clear. These commits are local: automatic approval review blocked
+push, so remote CI acceptance is pending.
 
 ## Next Phase 2.5 gates
 
 Successful CLI restart stop-to-start, protected-state refusal and forced
 replacement still need a detached-capable Windows acceptance run. Persistent
-wait and external editor routing, manager visits, in-editor switching,
-numbered persistent sessions, directory handoff and combined Git
+wait into a host from an ordinary shell, in-editor navigation and switching,
+manager visits, numbered persistent sessions,
+directory handoff and combined Git
 branch/worktree removal remain closed until their own acceptance gates pass.
 Keep the native ConPTY job limits and exact publication authority in those
 packages.
@@ -999,9 +1025,10 @@ that design calls a prerequisite, is already applied as described above.
    a sending handle. Missing Git remains supported during worktree discovery.
 3. Accepted foundations: process-exit supervision, private native frontend
    attachment, exact switching, ParentWait and ParentAttach. Explicit public
-   `-a`/`--persistent` attachment is accepted in `2563fba`, and configured bare
-   attachment is accepted in `378a22b`. The CLI restart implementation is
-   committed in `8a8987c` with successful replacement acceptance outstanding.
+   `-a`/`--persistent` attachment is accepted in `2563fba`, configured bare
+   attachment in `378a22b`, and integrated-parent public wait in `fee4819`.
+   The CLI restart implementation is committed in `8a8987c` with successful
+   replacement acceptance outstanding.
    Preserve common editor semantics, protected shutdown and connection-owned
    waits while opening the remaining public gates.
 4. Completed in 4e.5j5: ParentAttach authorization and routing using the
@@ -1017,8 +1044,8 @@ Detached and foreground native hosts have real process tests. The host owns one
 internal physical-input attachment; private ParentWait and ParentAttach and the
 explicit and configured bare public attachment routes are accepted. Guarded
 CLI restart has local refusal evidence but awaits detached-capable stop-to-start
-acceptance. Public persistent wait and in-editor navigation await their
-separate acceptance paths.
+acceptance. Integrated-parent public wait has local real-process acceptance;
+ordinary-shell persistent wait and in-editor navigation remain gated.
 
 ### Reviewed process-exit watcher contract
 
@@ -1123,7 +1150,10 @@ attachment source commit `378a22b` passed local validation and every job in CI
 run 35883007224. Guarded CLI restart source commit `8a8987c` passed local
 format, Clippy, focused CLI and release packaging tests, and the full native
 suite, but successful replacement acceptance remains pending on a runner that
-permits detached creation. Restart source push and remote CI are pending; this
-handoff update remains uncommitted. Accepted checkpoints may be pushed only to
-`feat/windows-support`.
+permits detached creation; CI run 35888094832 passed every job. Native
+Ctrl-backslash source `eff117c` and acceptance `1159418`, resolved issue record
+`e34d04c`, and public integrated-parent wait source `fee4819` passed local
+validation and remain unpushed after automatic approval review blocked the push.
+No remote CI result exists for those commits. Do not retry the denied push
+without explicit approval.
 Inspect Git status and preserve unrelated working-tree edits before committing.

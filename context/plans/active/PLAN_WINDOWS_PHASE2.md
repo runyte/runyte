@@ -49,9 +49,23 @@ packaging cases passed; independent source review is clear. On this runner,
 the inherited job denies detached creation. Acceptance proves that refusal
 leaves the selected real host and publication unchanged, but the successful
 stop-to-start, protected refusal and forced replacement branches still require
-a detached-capable Windows runner. Source push and remote CI are pending; this
-restart gate is not yet fully accepted. Persistent wait, manager visits,
-in-editor switching, numbered sessions, directory handoff and combined Git
+a detached-capable Windows runner. All jobs passed in
+[CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832),
+but the detached-capable restart gate remains open.
+
+Commits `eff117c` and `1159418` normalize native Windows `Ctrl-\` input and
+cover both live terminal Normal and review transitions through a real ConPTY
+editor; resolved issue record `e34d04c` retains the physical-keyboard
+limitation. Source checkpoint `fee4819` opens public `--wait FILE...` inside an
+authenticated persistent integrated terminal. Real ConPTY acceptance covers
+two requested buffers, exact parent authority, copied and stale marker
+refusal, wait completion and terminal restoration; standalone `--wait` from an
+ordinary shell remains supported. Native format, all-target Clippy, the full
+workspace suite and focused Windows acceptance passed, with independent source
+review clear. These commits remain local: push is blocked by automatic approval
+review, and no remote CI result exists for them. Persistent wait into a host
+from an ordinary shell, in-editor navigation and switching, manager visits,
+numbered sessions, directory handoff and combined Git
 branch/worktree removal remain gated.
 
 ## Checkpoint and next work package

@@ -1,15 +1,17 @@
 # WP5: native parent-terminal authorization and routing
 
-Retained architecture for native parent authority and routing. ParentWait and
-the private ParentAttach handoff are implemented behind closed public launch
-gates; the remaining work is the separately reviewed public routing package.
+Retained architecture for native parent authority and routing. Private
+ParentWait and ParentAttach are accepted. Public parent attachment through
+`-a`/`--persistent` opened in `2563fba`, configured bare attachment in
+`378a22b`, and integrated-parent `--wait` in `fee4819`. In-editor navigation
+and switching remain gated.
 
 ## Existing seams
 
 - `src/workspace/parent.rs` now owns the platform-specific parent marker and the
   private Windows `run_wait` and `run_attach` clients. Both authenticate one
-  captured endpoint and retain natural-parent supervision; public launch routing
-  remains separate.
+  captured endpoint and retain natural-parent supervision; public launch
+  dispatch remains separate from these clients.
 - `src/terminal/mod.rs`, `pty_windows.rs` and `windows_command.rs` install the
   explicit marker, retain the terminal job and validate the requesting process
   by handle and exact job membership. Inherited markers are still removed
@@ -148,10 +150,10 @@ observable native startup errors. Keep destination startup work off the host
 event loop, admission bounded, and retain the routing owner until cancellation
 and child cleanup finish. This design does not add a new process-watch mechanism.
 
-The private native host/frontend pair now supplies attachment-generation and
-drawn-frame readiness for ParentWait and ParentAttach. Public persistent-session,
-`--wait` and parent-attach launch routing remains gated until its own acceptance
-package opens those routes.
+The private native host/frontend pair supplies attachment-generation and
+drawn-frame readiness for ParentWait and ParentAttach. Public persistent
+attachment and authenticated integrated-parent `--wait` now use those routes;
+in-editor navigation and ordinary-shell persistent wait remain gated.
 
 ## Bounded implementation and acceptance sequence
 
