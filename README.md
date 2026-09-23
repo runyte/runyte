@@ -46,14 +46,10 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. Windows support in this source
-tree includes standalone editing, `--wait`, file management,
-integrated terminals, clipboard, language services, Git when installed, and the
-optional context bridge, configured plugins and direct persistent attachment.
-Configured bare launches attach when a project is discoverable. Native session
-controls and foreground hosts are available. See the
-[Windows scope and requirements](docs/user-guide.md#windows-support).
-The released 0.3.1 packages predate this Windows work.
+Linux and macOS provide the full feature set. The Windows version is still
+missing some persistent-mode features; see the
+[Windows scope and requirements](docs/user-guide.md#windows-support). The
+released 0.3.1 packages predate this Windows work.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·
