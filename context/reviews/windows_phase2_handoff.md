@@ -13,7 +13,8 @@ native switching is `11963b1` and the native plugin worker foundation is
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
 Public Windows plugin discovery, startup, stop and restart are accepted in source
 commit `9743bd9`. Explicit public Windows persistent attachment is accepted in
-source commit `2563fba`. Public Windows context access is accepted in source
+source commit `2563fba`; configured bare Windows attachment is accepted in
+source commit `378a22b`. Public Windows context access is accepted in source
 commit `a79e765`; Windows CI acceptance regressions are repaired in source commit
 `05935a6` and remotely accepted through handoff commit `d693832`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
@@ -27,8 +28,9 @@ before the older chronological progress entries. No previous chat is required.
 
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
-ParentAttach paths and explicit public `-a`/`--persistent` attachment. Persistent
-wait, manager visits and in-editor switching remain gated.
+ParentAttach paths, explicit public `-a`/`--persistent` attachment and configured
+bare attachment. Persistent wait, manager visits and in-editor switching remain
+gated.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
 bridge, public Windows context access and the public plugin lifecycle. The
@@ -46,11 +48,13 @@ but not to other branches. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
 `777dbf3` succeeded. The exact pushes through public-context handoff commit
 `46311e7` and remediation handoff commit `d693832` also succeeded. The remote
-branch therefore includes `a79e765`, `05935a6`, `d693832` and `9743bd9`. The
-plugin source checkpoint passed every job in
+branch therefore includes `a79e765`, `05935a6`, `d693832`, `9743bd9` and
+`2563fba`. The plugin source checkpoint passed every job in
 [CI run 35875460337](https://github.com/runyte/runyte/actions/runs/35875460337).
-Direct attachment source commit `2563fba` has local acceptance and awaits push
-and remote CI.
+Direct attachment source commit `2563fba` has local acceptance; its
+[CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
+is in progress with no failed job observed. Automatic attachment source commit
+`378a22b` has local acceptance and awaits push and remote CI.
 Accepted checkpoints may be pushed to that branch after review and local
 validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
@@ -891,8 +895,8 @@ discovers the current project or initializes the exact current directory.
 uses its authenticated ParentAttach route instead of attempting detached
 startup inside its ConPTY job. Occupied attachments refuse takeover, and
 verbosity or log options on an existing host report that its logger is retained.
-Public persistent wait, manager visits, in-editor switching and automatic
-`workspace.mode: persistent` startup remain gated.
+At this source checkpoint, public persistent wait, manager visits, in-editor
+switching and automatic `workspace.mode: persistent` startup remained gated.
 
 Local acceptance passed `cargo fmt --check`,
 `cargo clippy --all-targets --locked -- -D warnings`, the focused
@@ -902,16 +906,38 @@ development host denies detached CreateProcessW startup. The test verifies that
 exact policy refusal and absence of a new publication, then uses a fixture-owned
 foreground host to check real interactive attachment, retained unsaved edits,
 single-TUI ownership, nested `--project-root` and the retained-logging notice.
-Successful detached creation remains unproven locally; remote CI for `2563fba`
-is pending. Independent Astra review found no remaining implementation findings.
+Successful detached creation remains unproven locally. Its
+[CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
+is in progress with no failed job observed. Independent Astra review found no
+remaining implementation findings.
+
+## Accepted Phase 2.5 configured bare attachment
+
+Source commit `378a22b` routes an implicit, targetless Windows launch with
+`workspace.mode: persistent` through the accepted exact native attachment or
+authenticated ParentAttach path. It requires a discoverable current project or
+explicit `--project-root`; if neither exists, it reports the missing project
+without creating a workspace. Explicit `-a` retains its exact-directory
+initialization behavior. `--standalone`, `--wait`, `--init` and file or directory
+targets retain standalone semantics. Configuration is loaded once for the
+implicit mode choice.
+
+Local `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+focused real-process `windows_public_attachment` acceptance and
+`cargo test --locked --workspace --no-fail-fast` passed. The fixture verifies
+configured bare attachment to retained edits, standalone override and
+target-bearing launches while a persistent TUI is occupied, and noncreating
+refusal outside a project. The local inherited job still prevents a successful
+detached startup, as recorded above. Independent Astra source review found no
+remaining findings. Push and remote CI for `378a22b` are pending.
 
 ## Next Phase 2.5 gates
 
 Persistent wait and external editor routing, manager visits, in-editor
-switching, numbered persistent sessions, session restart, directory handoff,
-automatic persistent startup and combined Git branch/worktree removal remain
-closed until their own acceptance gates pass. Keep the native ConPTY job limits
-and exact publication authority in those packages.
+switching, numbered persistent sessions, session restart, directory handoff and
+combined Git branch/worktree removal remain closed until their own acceptance
+gates pass. Keep the native ConPTY job limits and exact publication authority in
+those packages.
 
 ## Phase 2.5 implementation order
 
@@ -934,9 +960,10 @@ that design calls a prerequisite, is already applied as described above.
    a sending handle. Missing Git remains supported during worktree discovery.
 3. Accepted foundations: process-exit supervision, private native frontend
    attachment, exact switching, ParentWait and ParentAttach. Explicit public
-   `-a`/`--persistent` attachment is accepted in `2563fba`; preserve common
-   editor semantics, protected shutdown and connection-owned waits while opening
-   the remaining public gates.
+   `-a`/`--persistent` attachment is accepted in `2563fba`, and configured bare
+   attachment is accepted in `378a22b`. Preserve common editor semantics,
+   protected shutdown and connection-owned waits while opening the remaining
+   public gates.
 4. Completed in 4e.5j5: ParentAttach authorization and routing using the
    [reviewed parent design](../plans/active/WINDOWS_PARENT_ROUTING.md). The
    retained pipe peer's exact ConPTY job membership, terminal capability and
@@ -948,8 +975,8 @@ that design calls a prerequisite, is already applied as described above.
 
 Detached and foreground native hosts have real process tests. The host owns one
 internal physical-input attachment; private ParentWait and ParentAttach and the
-explicit public attachment route are accepted. Public persistent wait and
-in-editor navigation await their separate acceptance paths.
+explicit and configured bare public attachment routes are accepted. Public
+persistent wait and in-editor navigation await their separate acceptance paths.
 
 ### Reviewed process-exit watcher contract
 
@@ -1049,6 +1076,8 @@ The coordinating agent has no pending local validation command. Public context
 source, remediation and handoff commits through `d693832` are pushed and
 accepted by CI run 35837383495. Plugin lifecycle source commit `9743bd9` passed
 CI run 35875460337. Direct attachment source commit `2563fba` passed local
+validation; CI run 35881502895 is still in progress, with no failed job
+observed. Configured bare attachment source commit `378a22b` passed local
 validation and awaits push and remote CI; this handoff update remains
 uncommitted. Accepted checkpoints may be pushed only to `feat/windows-support`.
 Inspect Git status and preserve unrelated working-tree edits before committing.

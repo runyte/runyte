@@ -22,10 +22,21 @@ all-target Clippy, the full workspace suite and real-process attachment
 acceptance passed. The local inherited job denies detached creation; acceptance
 verified that specific refusal leaves no publication, then used a foreground
 host to verify interactive attach, occupied refusal, retained edits, explicit
-project-root selection and retained logging notice. Remote CI and push for this
-checkpoint remain pending. Persistent wait, manager visits, numbered sessions,
-session restart, directory handoff, automatic persistent startup and combined
-Git branch/worktree removal remain gated.
+project-root selection and retained logging notice. This checkpoint is pushed;
+[CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
+is still in progress with no failed job observed. Do not claim remote acceptance
+until it completes.
+
+Phase 2.5 source checkpoint `378a22b` enables `workspace.mode: persistent` for
+a bare Windows launch with a discoverable project or explicit `--project-root`.
+It reuses the exact native attachment and authenticated parent routing. With no
+discoverable project, it refuses without initializing the current directory;
+explicit `-a` retains that initialization behavior. `--standalone`, `--wait`,
+`--init` and target-bearing launches retain standalone semantics. Native format,
+all-target Clippy, focused real-process acceptance and the full workspace suite
+passed; source review is clear. Push and remote CI remain pending. Persistent
+wait, manager visits, in-editor switching, numbered sessions, session restart,
+directory handoff and combined Git branch/worktree removal remain gated.
 
 ## Checkpoint and next work package
 
