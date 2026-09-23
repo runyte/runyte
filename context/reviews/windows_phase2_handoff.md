@@ -14,7 +14,9 @@ native switching is `11963b1` and the native plugin worker foundation is
 Public Windows plugin discovery, startup, stop and restart are accepted in source
 commit `9743bd9`. Explicit public Windows persistent attachment is accepted in
 source commit `2563fba`; configured bare Windows attachment is accepted in
-source commit `378a22b`. Public Windows context access is accepted in source
+source commit `378a22b`. Guarded CLI-only Windows session restart is implemented
+in source commit `8a8987c`, with detached-capable replacement acceptance pending.
+Public Windows context access is accepted in source
 commit `a79e765`; Windows CI acceptance regressions are repaired in source commit
 `05935a6` and remotely accepted through handoff commit `d693832`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
@@ -29,8 +31,9 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths, explicit public `-a`/`--persistent` attachment and configured
-bare attachment. Persistent wait, manager visits and in-editor switching remain
-gated.
+bare attachment. Guarded CLI restart has local refusal acceptance; successful
+stop-to-start acceptance, persistent wait, manager visits and in-editor
+switching remain gated.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
 bridge, public Windows context access and the public plugin lifecycle. The
@@ -49,12 +52,15 @@ but not to other branches. The exact push through `d9361e6` to
 `777dbf3` succeeded. The exact pushes through public-context handoff commit
 `46311e7` and remediation handoff commit `d693832` also succeeded. The remote
 branch therefore includes `a79e765`, `05935a6`, `d693832`, `9743bd9` and
-`2563fba`. The plugin source checkpoint passed every job in
+`2563fba` and `378a22b`. The plugin source checkpoint passed every job in
 [CI run 35875460337](https://github.com/runyte/runyte/actions/runs/35875460337).
 Direct attachment source commit `2563fba` has local acceptance; its
 [CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
-is in progress with no failed job observed. Automatic attachment source commit
-`378a22b` has local acceptance and awaits push and remote CI.
+was cancelled by the next push. Configured bare attachment source commit
+`378a22b` passed all jobs in
+[CI run 35883007224](https://github.com/runyte/runyte/actions/runs/35883007224).
+Restart source commit `8a8987c` awaits push, remote CI and successful
+stop-to-start acceptance on a detached-capable Windows runner.
 Accepted checkpoints may be pushed to that branch after review and local
 validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
@@ -908,8 +914,9 @@ foreground host to check real interactive attachment, retained unsaved edits,
 single-TUI ownership, nested `--project-root` and the retained-logging notice.
 Successful detached creation remains unproven locally. Its
 [CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
-is in progress with no failed job observed. Independent Astra review found no
-remaining implementation findings.
+was cancelled by the next push; the later configured-mode run includes this
+ancestor source. Independent Astra review found no remaining implementation
+findings.
 
 ## Accepted Phase 2.5 configured bare attachment
 
@@ -929,15 +936,46 @@ configured bare attachment to retained edits, standalone override and
 target-bearing launches while a persistent TUI is occupied, and noncreating
 refusal outside a project. The local inherited job still prevents a successful
 detached startup, as recorded above. Independent Astra source review found no
-remaining findings. Push and remote CI for `378a22b` are pending.
+remaining findings. All jobs passed in
+[CI run 35883007224](https://github.com/runyte/runyte/actions/runs/35883007224).
+
+## Implemented Phase 2.5 guarded CLI restart; acceptance pending
+
+Source commit `8a8987c` opens Windows `--session-restart [WORKSPACE]` on the
+native CLI. It selects one exact live publication from the complete catalog;
+an omitted selector uses a discoverable current project without initializing
+one. An ambiguous selector, stopped session, stale selected publication or
+different configured namespace is refused without path, name or PID fallback.
+Before stopping, a bounded `--version` child exercises the same detached
+process/job launcher, then its process and job are reaped. A confirmed stop
+precedes replacement startup. Normal stop preserves protected state; `--force`
+requests its loss. Startup cancellation retains provisional cleanup ownership,
+and an unsuccessful replacement after confirmed stop is reported without
+claiming a running replacement. This package does not add a restart action to
+the standalone session manager.
+
+Local `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`,
+the focused real-host `windows_session_cli` target (10/10), the
+`release_packaging` target (7/7), and
+`cargo test --locked --workspace --no-fail-fast` passed. The real-host test
+proves that this runner's inherited job rejects the detached preflight with
+CreateProcessW access denial before the selected host is stopped; its exact
+ready publication remains unchanged. A two-host ID-prefix case proves CLI
+ambiguity refusal without stopping either host. The test's successful restart,
+protected-state refusal and force-replacement branch is conditional on a
+runner that permits detached creation and was not exercised locally. That
+stop-to-start acceptance remains an explicit gate. Independent Astra source
+review is clear. `8a8987c` awaits push and remote CI.
 
 ## Next Phase 2.5 gates
 
-Persistent wait and external editor routing, manager visits, in-editor
-switching, numbered persistent sessions, session restart, directory handoff and
-combined Git branch/worktree removal remain closed until their own acceptance
-gates pass. Keep the native ConPTY job limits and exact publication authority in
-those packages.
+Successful CLI restart stop-to-start, protected-state refusal and forced
+replacement still need a detached-capable Windows acceptance run. Persistent
+wait and external editor routing, manager visits, in-editor switching,
+numbered persistent sessions, directory handoff and combined Git
+branch/worktree removal remain closed until their own acceptance gates pass.
+Keep the native ConPTY job limits and exact publication authority in those
+packages.
 
 ## Phase 2.5 implementation order
 
@@ -949,8 +987,9 @@ that design calls a prerequisite, is already applied as described above.
    list/rename/stop/stop-all/clean
    against exact retained publications. Stop success requires actual process
    exit, not an acknowledgment or missing ready file. Aggregate stop-all failures
-   while attempting other distinct hosts. Keep restart separately gated until
-   real-host stop-to-start acceptance. Extract pure CLI table presentation while
+   while attempting other distinct hosts. The guarded CLI restart route is now
+   implemented in `8a8987c`; its detached-capable real-host stop-to-start
+   acceptance remains pending. Extract pure CLI table presentation while
    preserving Unix behavior; selector-only commands must not invent a project.
 2. Shared typed row selection and an owned native catalog service. Duplicate
    same-project publications require separate selection, preview, prompt and
@@ -961,9 +1000,10 @@ that design calls a prerequisite, is already applied as described above.
 3. Accepted foundations: process-exit supervision, private native frontend
    attachment, exact switching, ParentWait and ParentAttach. Explicit public
    `-a`/`--persistent` attachment is accepted in `2563fba`, and configured bare
-   attachment is accepted in `378a22b`. Preserve common editor semantics,
-   protected shutdown and connection-owned waits while opening the remaining
-   public gates.
+   attachment is accepted in `378a22b`. The CLI restart implementation is
+   committed in `8a8987c` with successful replacement acceptance outstanding.
+   Preserve common editor semantics, protected shutdown and connection-owned
+   waits while opening the remaining public gates.
 4. Completed in 4e.5j5: ParentAttach authorization and routing using the
    [reviewed parent design](../plans/active/WINDOWS_PARENT_ROUTING.md). The
    retained pipe peer's exact ConPTY job membership, terminal capability and
@@ -975,8 +1015,10 @@ that design calls a prerequisite, is already applied as described above.
 
 Detached and foreground native hosts have real process tests. The host owns one
 internal physical-input attachment; private ParentWait and ParentAttach and the
-explicit and configured bare public attachment routes are accepted. Public
-persistent wait and in-editor navigation await their separate acceptance paths.
+explicit and configured bare public attachment routes are accepted. Guarded
+CLI restart has local refusal evidence but awaits detached-capable stop-to-start
+acceptance. Public persistent wait and in-editor navigation await their
+separate acceptance paths.
 
 ### Reviewed process-exit watcher contract
 
@@ -1076,8 +1118,12 @@ The coordinating agent has no pending local validation command. Public context
 source, remediation and handoff commits through `d693832` are pushed and
 accepted by CI run 35837383495. Plugin lifecycle source commit `9743bd9` passed
 CI run 35875460337. Direct attachment source commit `2563fba` passed local
-validation; CI run 35881502895 is still in progress, with no failed job
-observed. Configured bare attachment source commit `378a22b` passed local
-validation and awaits push and remote CI; this handoff update remains
-uncommitted. Accepted checkpoints may be pushed only to `feat/windows-support`.
+validation; CI run 35881502895 was cancelled by the next push. Configured bare
+attachment source commit `378a22b` passed local validation and every job in CI
+run 35883007224. Guarded CLI restart source commit `8a8987c` passed local
+format, Clippy, focused CLI and release packaging tests, and the full native
+suite, but successful replacement acceptance remains pending on a runner that
+permits detached creation. Restart source push and remote CI are pending; this
+handoff update remains uncommitted. Accepted checkpoints may be pushed only to
+`feat/windows-support`.
 Inspect Git status and preserve unrelated working-tree edits before committing.

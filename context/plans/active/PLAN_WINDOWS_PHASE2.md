@@ -24,8 +24,8 @@ verified that specific refusal leaves no publication, then used a foreground
 host to verify interactive attach, occupied refusal, retained edits, explicit
 project-root selection and retained logging notice. This checkpoint is pushed;
 [CI run 35881502895](https://github.com/runyte/runyte/actions/runs/35881502895)
-is still in progress with no failed job observed. Do not claim remote acceptance
-until it completes.
+was cancelled by the next push. The later configured-mode run includes this
+ancestor source.
 
 Phase 2.5 source checkpoint `378a22b` enables `workspace.mode: persistent` for
 a bare Windows launch with a discoverable project or explicit `--project-root`.
@@ -34,9 +34,25 @@ discoverable project, it refuses without initializing the current directory;
 explicit `-a` retains that initialization behavior. `--standalone`, `--wait`,
 `--init` and target-bearing launches retain standalone semantics. Native format,
 all-target Clippy, focused real-process acceptance and the full workspace suite
-passed; source review is clear. Push and remote CI remain pending. Persistent
-wait, manager visits, in-editor switching, numbered sessions, session restart,
-directory handoff and combined Git branch/worktree removal remain gated.
+passed; source review is clear. All jobs passed in
+[CI run 35883007224](https://github.com/runyte/runyte/actions/runs/35883007224).
+
+Phase 2.5 source checkpoint `8a8987c` opens CLI-only Windows
+`--session-restart [WORKSPACE]`. It retains the selected publication, checks
+detached-launch capability with a bounded, reaped `--version` probe before
+stopping it, confirms process exit, then starts a replacement through the
+provisional native job. Normal restart respects protected state; `--force`
+requests its loss. A stale or differently configured publication is refused
+without selector re-resolution. Native format, all-target Clippy, the full
+workspace suite, all ten real-host session CLI cases and all seven release
+packaging cases passed; independent source review is clear. On this runner,
+the inherited job denies detached creation. Acceptance proves that refusal
+leaves the selected real host and publication unchanged, but the successful
+stop-to-start, protected refusal and forced replacement branches still require
+a detached-capable Windows runner. Source push and remote CI are pending; this
+restart gate is not yet fully accepted. Persistent wait, manager visits,
+in-editor switching, numbered sessions, directory handoff and combined Git
+branch/worktree removal remain gated.
 
 ## Checkpoint and next work package
 
