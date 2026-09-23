@@ -11,9 +11,10 @@ the private Windows Python MCP bridge is accepted in `34f53b6`. Private exact
 native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
-Public Windows context access is accepted in source commit `a79e765`; Windows
-CI acceptance regressions are repaired in source commit `05935a6` and remotely
-accepted through handoff commit `d693832`.
+Public Windows plugin discovery, startup, stop and restart are accepted in source
+commit `9743bd9`. Public Windows context access is accepted in source commit
+`a79e765`; Windows CI acceptance regressions are repaired in source commit
+`05935a6` and remotely accepted through handoff commit `d693832`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
@@ -28,8 +29,8 @@ correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; interactive public attachment and wait routes remain gated.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
-bridge and public Windows context access. Public Windows plugin startup remains
-pending.
+bridge, public Windows context access and the public plugin lifecycle. The
+managed plugin helper-process capability remains unavailable on Windows.
 Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
@@ -43,12 +44,13 @@ but not to other branches. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
 `777dbf3` succeeded. The exact pushes through public-context handoff commit
 `46311e7` and remediation handoff commit `d693832` also succeeded. The remote
-branch therefore includes `a79e765`, `05935a6` and `d693832`. This final handoff
-update is the only local checkpoint work still to commit and push. Accepted
-checkpoints may be pushed to that branch after review and local validation.
+branch therefore includes `a79e765`, `05935a6` and `d693832`. Plugin source
+commit `9743bd9` has local acceptance; remote CI has not yet been verified.
+Accepted checkpoints may be pushed to that branch after review and local
+validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. Do not enable public persistent attachment or plugins merely because
-their foundations exist.
+decision. Do not enable public persistent attachment merely because its
+foundation exists.
 
 ## Accepted implementation and validation
 
@@ -851,17 +853,28 @@ Replacement CI run
 `d693832` completed successfully with all 18 jobs green. Native Windows passed,
 including the repaired Python adapter, private real-host bridge and public
 real-executable context acceptance. The public Windows context checkpoint and
-its remediation are pushed and remotely accepted through `d693832`. This final
-handoff update alone remains local pending its record commit and push to
-`feat/windows-support`.
+its remediation are pushed and remotely accepted through `d693832`.
 
-## Next package: public Windows plugin startup and acceptance
+## Accepted public Windows plugin lifecycle
 
-Public plugin discovery, startup, stop and restart remain gated. Continue from
-the accepted native worker, durable-state and private handoff packages without
-changing the retained plugin protocol or approval boundaries. Opening that gate
-requires its own reviewed public lifecycle and real-process acceptance; this
-handoff does not claim that work is designed or complete.
+Commit `9743bd9` opens configured plugin discovery, startup, stop, restart and
+configuration reconciliation in standalone and host-owned Windows workspaces.
+The existing worker, durable state and private handoff implementations retain
+their protocol, approval and uncertain-outcome contracts. Windows hello omits
+the unsupported `processes` capability: a plugin requiring it fails
+registration, while one declaring it optional runs without that grant. Native
+managed helper processes remain a separate implementation package.
+
+Local acceptance passed `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast`. The real-process
+`plugin_windows_worker` acceptance ran all eight cases, including public
+registration, required-capability refusal, manager discovery, stop/reap,
+restart with a new process and shutdown cleanup. The Windows Phase 1 command
+availability tests were updated. Independent Astra review found no remaining
+implementation findings. Remote CI for `9743bd9` remains pending.
+
+## Next Phase 2.5 gates
 
 Interactive Windows persistent attachment and wait routes, manager visits,
 numbered persistent sessions, session restart, directory handoff and combined
@@ -940,7 +953,7 @@ console-close cleanup as limited by the operating system deadline. Detached host
 survive authenticated launcher handoff; losing a wait client's parent cancels its
 wait without killing an unrelated shared host.
 
-## Remaining 2.6
+## Phase 2.6 status
 
 Native plugin worker/process ownership and framing is accepted in `ce888ee`, and
 durable plugin state is accepted in `140347e`. Private Windows `terminal.open`
@@ -954,11 +967,12 @@ grants in `bbdb12a`, and the Python MCP bridge in `34f53b6`. Source commit
 35832182423, and green replacement CI run 35837383495 remotely accepts the
 context sequence through `d693832`.
 
-Public plugin discovery, startup, stop and restart are the remaining 2.6 gate.
-They must preserve the existing worker/process ownership, durable-state,
-physical approval and uncertain-outcome contracts. No public plugin lifecycle
-is accepted by this checkpoint. The public context sequence is remotely
-accepted; public plugin lifecycle work remains the next 2.6 gate.
+At the context checkpoint, public plugin discovery, startup, stop and restart
+were the remaining 2.6 gate. Source commit `9743bd9` has since opened that
+lifecycle with local native acceptance and independent review, preserving worker
+ownership, durable state, physical approval and uncertain-outcome contracts.
+Windows managed helper processes remain unavailable. The public context
+sequence is remotely accepted; remote CI for `9743bd9` is pending.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
@@ -997,9 +1011,10 @@ never execute a program written by a test. Retain process/job ownership through
 cleanup before deleting fixture storage. Native process checks may require the
 normal token outside the sandbox, as in preceding acceptance runs.
 
-The coordinating agent has no pending local validation command. Public source,
-remediation and handoff commits through `d693832` are pushed and accepted by CI
-run 35837383495. This final updated handoff record is the only local checkpoint
-work still to commit and push, and it may be pushed only to
+The coordinating agent has no pending local validation command. Public context
+source, remediation and handoff commits through `d693832` are pushed and
+accepted by CI run 35837383495. Plugin lifecycle source commit `9743bd9` has
+local acceptance but is pending push and remote CI; this handoff update also
+remains uncommitted. Accepted checkpoints may be pushed only to
 `feat/windows-support`. Inspect Git status and preserve unrelated working-tree
 edits before committing.

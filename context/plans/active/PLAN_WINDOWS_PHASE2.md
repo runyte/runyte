@@ -3,8 +3,19 @@
 For the current working-tree state, exact next package and reviewed remaining
 designs, start with the [continuation handoff](../../reviews/windows_phase2_handoff.md).
 Phase 2.1–2.4 are complete; 2.5 is in progress. In 2.6, public Windows
-context access is implemented while public plugin startup remains pending.
+context access and the configured plugin lifecycle are implemented. Managed
+plugin helper processes remain unavailable on Windows.
 The chronological entries below retain earlier checkpoint evidence.
+
+The public plugin lifecycle source checkpoint is `9743bd9`. Windows plugin
+configuration, discovery, startup, stop, restart and reload have passed native
+formatting, all-target Clippy, the full workspace test suite and eight real
+plugin-worker acceptance cases. Required `processes` registration is refused
+and optional `processes` remains ungranted because managed helper processes do
+not yet have a Windows runtime. Remote CI for this checkpoint is pending.
+Phase 2.5 still gates interactive attachment and wait routes, manager visits,
+numbered persistent sessions, session restart, directory handoff and combined
+Git branch/worktree removal.
 
 ## Checkpoint and next work package
 
@@ -67,13 +78,14 @@ are ephemeral discovery results rather than client configuration. The protocol,
 resource ownership, bounded I/O, connection eviction, and uncertain-mutation
 rules remain shared with Unix.
 
-This context opening does not open the other Phase-2 gates. Interactive Windows
-persistent attachment and switching, session restart, and public plugin startup
-remain unavailable. Foreground and detached native hosts may expose context
-without allowing another TUI to attach.
+At the public-context checkpoint, interactive Windows persistent attachment and
+switching, session restart, and public plugin startup remained unavailable.
+Public plugin lifecycle support followed in `9743bd9`; interactive attachment,
+switching and session restart remain gated. Foreground and detached native hosts
+may expose context without allowing another TUI to attach.
 
-Working-tree acceptance and the source checkpoint hash are still pending. The
-continuation handoff remains unchanged until those gates complete.
+This paragraph records the earlier public-context checkpoint; the current
+plugin checkpoint and remaining gates are summarized above.
 
 ## Phase-1 delivery history
 
@@ -109,9 +121,10 @@ It is pushed as `fc9c324`; remote run `35542444854` passes all jobs.
 5. **Persistent sessions.** Authenticated local transport, discovery, private
    runtime ownership, attachment and shutdown, preserving protocol bounds.
 6. **Plugins and context access.** Native context transport, discovery, storage,
-   bridge integration, and approval ownership are public. Native plugin
-   worker/process lifecycle, state, and handoffs continue toward public plugin
-   startup while the retained plugin contracts remain unchanged.
+   bridge integration, and approval ownership are public. Configured plugin
+   lifecycle, native workers, state and handoffs are public while the retained
+   plugin contracts remain unchanged. Managed helper processes remain unavailable
+   on Windows.
 
 ### Windows binary release follow-up
 
