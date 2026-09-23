@@ -3,7 +3,9 @@
 Checkpoint: 2026-09-23, branch `feat/windows-support`, private native
 ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
 in `140347e`, private native parent waits are accepted in `fa18a52`, and private
-Windows plugin handoffs are accepted in `8148437`. Private
+Windows plugin handoffs are accepted in `8148437`. Native Windows context
+identity/grant storage and repeat-safe context approval are accepted in
+`61acb18`. Private
 exact native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
@@ -19,8 +21,9 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
-native worker, durable-state and private handoff foundations, with context access
-and the bridge still pending. Integrated Git is optional: missing
+native worker, durable-state, private handoff and context-grant storage
+foundations, with context transport/discovery and the bridge still pending.
+Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
 persistent-session coordinator; separate guarded operations work.
@@ -651,7 +654,9 @@ this commit remains pending.
 
 ## Next packages: context access and the Windows bridge
 
-Continue context transport and grants and the Windows Python MCP bridge.
+Context identity/grant storage and repeat-safe physical approval are accepted in
+`61acb18`. Continue authenticated context transport/discovery, host grants with
+real native clients, and the Windows Python MCP bridge.
 Context identity and grant storage uses its separate LocalAppData policy and
 must not inherit the plugin state anchor. Public persistent attachment and wait
 routes, manager visits, numbered sessions, restart, directory handoff and
@@ -734,11 +739,31 @@ wait without killing an unrelated shared host.
 Native plugin worker/process ownership and framing is accepted in `ce888ee`, and
 durable plugin state is accepted in `140347e`. Private Windows `terminal.open`
 and `external.open` handoffs and physical-frontend approval are accepted in
-`8148437`. Public plugin startup remains gated.
+`8148437`. Native Windows context identities and remembered grants are accepted
+in `61acb18`: the default store has a fixed OS-resolved LocalAppData anchor,
+explicit overrides require an existing immediate parent, records use pinned
+private storage, native path bytes remain lossless, and fail-fast locking keeps
+the editor thread bounded. Repeated Enter cannot approve context grants or
+terminal proposals; repeated overlay navigation remains live. Windows context
+registration, endpoint publication, discovery and startup remain gated for the
+named-pipe transport package. Public plugin startup remains gated.
 
-Implement context transport/grants and the Windows Python MCP bridge next. Keep
-context identity and grants on their separate LocalAppData policy. Validate
-immutable and current Node/plugin conformance plus real Windows context clients.
+Implement authenticated context transport/discovery and host grants with real
+native clients, then the Windows Python MCP bridge. Preserve discovery v1 string
+paths and introduce only the strict native named-pipe endpoint family; reject a
+non-Unicode workspace root before publication rather than changing the wire
+shape. Keep context identity and grants on their separate LocalAppData policy.
+Validate immutable and current Node/plugin conformance plus real Windows context
+clients.
+
+Independent Astra review closed repeat-approval, registration-publication scope
+and durable-anchor retry findings, then reported no remaining findings. Final
+validation for `61acb18` passes `cargo fmt --check`, all-target Clippy with
+warnings denied, and `cargo test --locked --workspace --no-fail-fast`. Core
+summaries report 2,775 lib tests passed with 24 ignored and 66 bin tests passed
+with 29 ignored; every integration target is green, including seven native
+plugin-worker and six native LSP transport cases. Native CI acceptance for this
+checkpoint remains pending.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
