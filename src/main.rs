@@ -1897,7 +1897,6 @@ async fn run(
                             Some(&input),
                             Instant::now(),
                         );
-                        if repeated && app.context_overlay_active() { continue; }
                         if let Some(frame)=app.current_frame_id() { app.context_frame_presented(frame); }
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
@@ -1970,7 +1969,12 @@ async fn run(
                         if hint_result == HintEventResult::Forward {
                             let dispatches = motion_repeat_dispatches(&app, &input, repeated);
                             for _ in 0..dispatches {
-                                if let Err(error) = app.execute(HostCommand::Input(input.clone())) {
+                                let result = if repeated && app.context_overlay_active() {
+                                    app.execute_repeated_input(input.clone())
+                                } else {
+                                    app.execute(HostCommand::Input(input.clone()))
+                                };
+                                if let Err(error) = result {
                                     app.report_host_error(error.to_string());
                                     break;
                                 }
@@ -3214,16 +3218,18 @@ fn dispatch_host_key_or_text(
     input: InputEvent,
     repeated: bool,
 ) {
-    if repeated && host.context_overlay_active() {
-        return;
-    }
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
         return;
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, repeated);
     for _ in 0..dispatches {
-        if let Err(error) = host.execute(HostCommand::Input(input.clone())) {
+        let result = if repeated && host.context_overlay_active() {
+            host.execute_repeated_input(input.clone())
+        } else {
+            host.execute(HostCommand::Input(input.clone()))
+        };
+        if let Err(error) = result {
             host.report_host_error(error.to_string());
             break;
         }
@@ -3236,9 +3242,6 @@ fn dispatch_host_repeated_key_or_text(
     key_hints: &mut KeyHintState,
     input: InputEvent,
 ) {
-    if host.context_overlay_active() {
-        return;
-    }
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
         return;

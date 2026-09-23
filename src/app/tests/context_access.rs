@@ -59,6 +59,70 @@ fn macro_replay_paste_and_modified_keys_cannot_approve() {
 }
 
 #[test]
+fn repeated_enter_cannot_approve_proposal_but_repeat_navigation_remains_live() {
+    let mut app = ready();
+    app.context_ui.surface.as_mut().unwrap().accept_selected = false;
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Down)))
+        .unwrap();
+    assert!(app.context_ui.surface.as_ref().unwrap().accept_selected);
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Up)))
+        .unwrap();
+    assert!(!app.context_ui.surface.as_ref().unwrap().accept_selected);
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Down)))
+        .unwrap();
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(app.context_ui.decision.is_none());
+    assert!(app.context_overlay_active());
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(matches!(
+        app.context_ui.decision,
+        Some(Decision::Proposal { accepted: true, .. })
+    ));
+
+    let mut paged = proposal(&"x".repeat(64 * 14), vec![]);
+    present(&mut paged, 1);
+    paged
+        .handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('j'))))
+        .unwrap();
+    assert_eq!(paged.context_ui.surface.as_ref().unwrap().page, 1);
+    paged
+        .handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('k'))))
+        .unwrap();
+    assert_eq!(paged.context_ui.surface.as_ref().unwrap().page, 0);
+}
+
+#[test]
+fn repeated_enter_cannot_approve_context_grant() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.context_ui.surface = Some(Surface::new(
+        Kind::Grant {
+            identity: "agent".into(),
+            scopes: std::collections::BTreeSet::from([Scope::TerminalRead]),
+            remember: false,
+        },
+        "Review context access".into(),
+        vec![],
+        "",
+        app.plugins.attachment_generation,
+    ));
+    present(&mut app, 1);
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Down)))
+        .unwrap();
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(app.context_ui.decision.is_none());
+    assert!(app.context_overlay_active());
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(matches!(
+        app.context_ui.decision,
+        Some(Decision::Grant { .. })
+    ));
+}
+
+#[test]
 fn small_or_stale_frontend_cannot_approve_and_literal_spelling_is_unambiguous() {
     let mut app = ready();
     app.note_context_frame(40, 12, 2);

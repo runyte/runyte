@@ -305,7 +305,7 @@ impl App {
         self.context_ui.requested_identity = Some(identity.unwrap_or_else(|| "agent".into()));
     }
 
-    pub(super) fn handle_context_input(&mut self, input: InputEvent) {
+    pub(super) fn handle_context_input(&mut self, input: InputEvent, approval: bool) {
         let Some(mut surface) = self.context_ui.surface.take() else {
             return;
         };
@@ -370,7 +370,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Enter if approval => {
                 let accepted = surface.accept_selected
                     && enough_room
                     && surface.fully_reviewed()

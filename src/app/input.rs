@@ -576,7 +576,7 @@ impl App {
 
     fn handle_frontend_input(&mut self, input: InputEvent, approval: bool) -> Result<()> {
         if self.context_overlay_active() {
-            self.handle_context_input(input);
+            self.handle_context_input(input, approval);
             return Ok(());
         }
         self.cancel_plugin_validation_intent();

@@ -8,7 +8,7 @@ use crate::private_storage::Directory;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::BTreeSet,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fmt,
     fs::File,
     io::{self, Read, Write},
@@ -43,6 +43,7 @@ impl Identity {
     }
 }
 
+#[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostMode {
@@ -50,6 +51,7 @@ pub enum HostMode {
     Standalone,
 }
 
+#[cfg(unix)]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
@@ -77,36 +79,174 @@ pub struct Storage {
     read_only: bool,
 }
 
+#[cfg(windows)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageLocation {
+    root: PathBuf,
+    anchor: PathBuf,
+}
+
+#[cfg(windows)]
+impl StorageLocation {
+    fn anchored(root: PathBuf, anchor: PathBuf) -> Option<Self> {
+        if !root.is_absolute() || !anchor.is_absolute() || !anchor.is_dir() {
+            return None;
+        }
+        let relative = root.strip_prefix(&anchor).ok()?;
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        Some(Self { root, anchor })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+#[cfg(windows)]
+fn select_default_location(
+    configured: Option<OsString>,
+    local_app_data: Option<PathBuf>,
+) -> Option<StorageLocation> {
+    match configured {
+        Some(path) => {
+            let root = PathBuf::from(path);
+            let anchor = root.parent()?.to_owned();
+            StorageLocation::anchored(root, anchor)
+        }
+        None => {
+            let anchor = local_app_data?;
+            StorageLocation::anchored(anchor.join("runyte").join("context"), anchor)
+        }
+    }
+}
+
+#[cfg(unix)]
+struct StorageLock {
+    _file: File,
+}
+
+#[cfg(windows)]
+struct StorageLock {
+    file: File,
+}
+
+#[cfg(windows)]
+impl StorageLock {
+    fn acquire(file: File) -> io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Foundation::ERROR_LOCK_VIOLATION,
+            Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx},
+            System::IO::OVERLAPPED,
+        };
+        let mut offset: OVERLAPPED = unsafe { std::mem::zeroed() };
+        if unsafe {
+            LockFileEx(
+                file.as_raw_handle(),
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut offset,
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            return Err(
+                if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
+                    io::Error::new(io::ErrorKind::WouldBlock, "context storage is busy")
+                } else {
+                    error
+                },
+            );
+        }
+        Ok(Self { file })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Storage::FileSystem::UnlockFileEx, System::IO::OVERLAPPED};
+        let mut offset: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let _ = unsafe { UnlockFileEx(self.file.as_raw_handle(), 0, 1, 0, &mut offset) };
+    }
+}
+
 impl Storage {
+    #[cfg(unix)]
     pub fn default_root() -> Option<PathBuf> {
-        if let Some(path) = std::env::var_os("RUNYTE_CONTEXT_HOME") {
+        let configured = std::env::var_os("RUNYTE_CONTEXT_HOME");
+        if let Some(path) = configured {
             let path = PathBuf::from(path);
             return path.is_absolute().then_some(path);
         }
         if cfg!(test) {
             return None;
         }
-        #[cfg(unix)]
-        {
-            let home = crate::user_paths::system_home_directory()?;
-            #[cfg(target_os = "macos")]
-            let path = home.join("Library/Caches/runyte/context");
-            #[cfg(not(target_os = "macos"))]
-            let path = home.join(".cache/runyte/context");
-            Some(path)
+        let home = crate::user_paths::system_home_directory()?;
+        #[cfg(target_os = "macos")]
+        let path = home.join("Library/Caches/runyte/context");
+        #[cfg(not(target_os = "macos"))]
+        let path = home.join(".cache/runyte/context");
+        Some(path)
+    }
+
+    /// Resolves the Windows context root together with its stable durability
+    /// anchor. The default is anchored at OS-resolved LocalAppData. An explicit
+    /// RUNYTE_CONTEXT_HOME must be absolute and have an already-existing
+    /// immediate parent; retries never promote a descendant left by failure.
+    #[cfg(windows)]
+    pub fn default_location() -> Option<StorageLocation> {
+        let configured = std::env::var_os("RUNYTE_CONTEXT_HOME");
+        if configured.is_some() {
+            return select_default_location(configured, None);
         }
-        #[cfg(not(unix))]
-        {
-            None
+        if cfg!(test) {
+            return None;
         }
+        select_default_location(None, crate::user_paths::system_local_app_data_directory())
     }
 
     pub fn new(root: PathBuf) -> io::Result<Self> {
         if !root.is_absolute() {
             return Err(invalid("context storage requires an absolute path"));
         }
-        let directory = Directory::open(&root, true)?;
+        #[cfg(unix)]
+        let directory = Directory::open_durable(&root, true)?;
+        #[cfg(windows)]
+        let directory = Directory::open_durable_beneath(
+            root.parent()
+                .filter(|parent| parent.is_dir())
+                .ok_or_else(|| invalid("RUNYTE_CONTEXT_HOME parent must already exist"))?,
+            Path::new(
+                root.file_name()
+                    .ok_or_else(|| invalid("context storage requires a directory leaf"))?,
+            ),
+        )?;
         let root = root.canonicalize()?;
+        Ok(Self {
+            root,
+            directory,
+            read_only: false,
+        })
+    }
+
+    #[cfg(windows)]
+    pub fn open_location(location: StorageLocation) -> io::Result<Self> {
+        let relative = location
+            .root
+            .strip_prefix(&location.anchor)
+            .map_err(|_| invalid("context storage is outside its durable anchor"))?;
+        let directory = Directory::open_durable_beneath(&location.anchor, relative)?;
+        let root = location.root.canonicalize()?;
         Ok(Self {
             root,
             directory,
@@ -144,9 +284,7 @@ impl Storage {
 
     pub fn identities(&self) -> io::Result<Vec<Identity>> {
         let mut identities = Vec::new();
-        for entry in self.entries()? {
-            let entry = entry?;
-            let name = entry.file_name();
+        for name in self.entries()? {
             let Some(name) = name.to_str() else {
                 continue;
             };
@@ -235,6 +373,7 @@ impl Storage {
         Ok(root)
     }
 
+    #[cfg(unix)]
     pub fn socket_path(&self, incarnation: &str) -> io::Result<PathBuf> {
         if !valid_hex(incarnation) {
             return Err(invalid("invalid host incarnation"));
@@ -247,6 +386,7 @@ impl Storage {
         Ok(path)
     }
 
+    #[cfg(unix)]
     pub fn register(&self, registration: &Registration) -> io::Result<()> {
         self.validate_registration(registration)?;
         self.write(
@@ -254,6 +394,7 @@ impl Storage {
             registration,
         )
     }
+    #[cfg(unix)]
     pub fn unregister(&self, incarnation: &str) -> io::Result<()> {
         if !valid_hex(incarnation) {
             return Err(invalid("invalid host incarnation"));
@@ -265,6 +406,7 @@ impl Storage {
     /// enumeration contributes names only; links, replaced files, and malformed
     /// records cannot redirect an admitted endpoint outside private storage.
     /// Transport must independently authenticate the socket and host incarnation.
+    #[cfg(unix)]
     pub fn discover(
         &self,
         environment: &str,
@@ -274,9 +416,7 @@ impl Storage {
             return Err(invalid("invalid environment fingerprint"));
         }
         let mut records = Vec::new();
-        for entry in self.entries()? {
-            let entry = entry?;
-            let name = entry.file_name();
+        for name in self.entries()? {
             let Some(name) = name.to_str() else {
                 continue;
             };
@@ -299,6 +439,7 @@ impl Storage {
         Ok(records)
     }
 
+    #[cfg(unix)]
     fn validate_registration(&self, record: &Registration) -> io::Result<()> {
         if path_bytes(&record.root) != path_bytes(&self.workspace_root(&record.root)?) {
             return Err(invalid("context registration root is not canonical"));
@@ -308,6 +449,7 @@ impl Storage {
 
     // Discovery does not touch project paths: a stale root can be missing or
     // on a disconnected network mount. The bounded live probe confirms identity.
+    #[cfg(unix)]
     fn validate_registration_shape(&self, record: &Registration) -> io::Result<()> {
         if !valid_hex(&record.host_incarnation)
             || !valid_hex(&record.environment)
@@ -326,11 +468,19 @@ impl Storage {
         Ok(())
     }
 
-    fn entries(&self) -> io::Result<Vec<io::Result<std::fs::DirEntry>>> {
-        let entries: Vec<_> = std::fs::read_dir(&self.root)?
-            .take(DISCOVERY_LIMIT + 1)
-            .collect();
-        if entries.len() > DISCOVERY_LIMIT {
+    fn entries(&self) -> io::Result<Vec<OsString>> {
+        #[cfg(unix)]
+        let (entries, truncated) = {
+            let entries = std::fs::read_dir(&self.root)?
+                .take(DISCOVERY_LIMIT + 1)
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<io::Result<Vec<_>>>()?;
+            let truncated = entries.len() > DISCOVERY_LIMIT;
+            (entries, truncated)
+        };
+        #[cfg(windows)]
+        let (entries, truncated) = self.directory.entries(DISCOVERY_LIMIT)?;
+        if truncated {
             return Err(invalid("context storage inventory exceeds its limit"));
         }
         Ok(entries)
@@ -339,8 +489,10 @@ impl Storage {
     fn read<T: DeserializeOwned>(&self, name: &str) -> io::Result<Option<T>> {
         let read = if self.read_only {
             (|| {
+                #[cfg(unix)]
                 use std::os::unix::fs::MetadataExt;
                 let file = self.directory.open_read(OsStr::new(name))?;
+                #[cfg(unix)]
                 if file.metadata()?.mode() & 0o077 != 0 {
                     return Err(invalid("context storage record is not private"));
                 }
@@ -370,7 +522,10 @@ impl Storage {
         self.write_locked(name, record)
     }
     fn write_locked(&self, name: &str, record: &impl Serialize) -> io::Result<()> {
-        if self.entries()?.len() >= DISCOVERY_LIMIT && !self.root.join(name).try_exists()? {
+        let entries = self.entries()?;
+        if entries.len() >= DISCOVERY_LIMIT
+            && !entries.iter().any(|entry| entry == OsStr::new(name))
+        {
             return Err(invalid("context storage inventory exceeds its limit"));
         }
         let bytes =
@@ -382,7 +537,15 @@ impl Storage {
     }
     fn remove(&self, name: &str) -> io::Result<()> {
         self.require_writable()?;
-        match self.directory.remove(OsStr::new(name)) {
+        let _lock = self.lock()?;
+        #[cfg(unix)]
+        let removed = self.directory.remove(OsStr::new(name));
+        #[cfg(windows)]
+        let removed = (|| {
+            let file = self.directory.open_read(OsStr::new(name))?;
+            self.directory.remove_owned(OsStr::new(name), &file)
+        })();
+        match removed {
             Ok(()) => self.directory.sync(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
@@ -397,7 +560,7 @@ impl Storage {
         }
         Ok(())
     }
-    fn lock(&self) -> io::Result<File> {
+    fn lock(&self) -> io::Result<StorageLock> {
         self.require_writable()?;
         let file = self.directory.append(OsStr::new("identity.lock"))?;
         #[cfg(unix)]
@@ -411,14 +574,36 @@ impl Storage {
                     return Err(error);
                 }
             }
+            Ok(StorageLock { _file: file })
         }
-        Ok(file)
+        #[cfg(windows)]
+        {
+            StorageLock::acquire(file)
+        }
     }
 }
 
 pub fn random_token() -> io::Result<String> {
     let mut bytes = [0_u8; 32];
+    #[cfg(unix)]
     File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Security::Cryptography::{
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+        };
+        let status = unsafe {
+            BCryptGenRandom(
+                std::ptr::null_mut(),
+                bytes.as_mut_ptr(),
+                bytes.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        if status < 0 {
+            return Err(io::Error::other("system random generator failed"));
+        }
+    }
     let mut encoded = Vec::with_capacity(64);
     for byte in bytes {
         write!(&mut encoded, "{byte:02x}")?;
@@ -446,15 +631,7 @@ pub fn environment_fingerprint() -> String {
     crate::hash::sha256_hex(&bytes)
 }
 fn path_bytes(path: &Path) -> Vec<u8> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        path.as_os_str().as_bytes().to_vec()
-    }
-    #[cfg(not(unix))]
-    {
-        path.to_string_lossy().as_bytes().to_vec()
-    }
+    crate::native_path::encode_path(path)
 }
 fn identity_file(name: &str) -> io::Result<String> {
     if name.is_empty()
@@ -479,6 +656,7 @@ fn grant_file(root: &[u8], identity: &str) -> String {
     bytes.extend_from_slice(identity.as_bytes());
     format!("grant-{}.json", crate::hash::sha256_hex(&bytes))
 }
+#[cfg(unix)]
 fn registration_file(incarnation: &str) -> String {
     format!("host-{incarnation}.json")
 }
@@ -492,6 +670,10 @@ fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "tests/storage.rs"]
+mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "tests/storage_windows.rs"]
 mod tests;

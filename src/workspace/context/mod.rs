@@ -2,7 +2,7 @@
 
 //! Opt-in scoped access to live workspace context, separate from frontend control.
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod storage;
 #[cfg(unix)]
 pub mod transport;
