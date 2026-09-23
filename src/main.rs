@@ -1295,9 +1295,37 @@ async fn run(
         .await;
     }
 
-    // Windows initially supports --wait as a foreground standalone editor.
-    // Keep its exit requirement separate from launch mode: no persistent host,
-    // attachment, or per-buffer completion token is involved.
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::Wait
+        && let Some(context) = runyte::workspace::parent::ParentContext::from_environment()?
+    {
+        anyhow::ensure!(
+            arguments.project_root.is_none(),
+            "--project-root is not available for a parent editor wait"
+        );
+        let directory = std::env::current_dir()?;
+        let paths = arguments
+            .targets
+            .iter()
+            .map(|target| {
+                if target.path.is_absolute() {
+                    target.path.clone()
+                } else {
+                    directory.join(&target.path)
+                }
+            })
+            .collect();
+        let parent = ForegroundParentSupervisor::capture()?;
+        report_retained_host_logging(&arguments);
+        return tokio::select! {
+            biased;
+            event = native_termination.recv() => Err(terminated(event)),
+            result = runyte::workspace::parent::run_wait(context, paths, &parent) => result,
+        };
+    }
+
+    // Outside an authenticated integrated terminal, --wait keeps its
+    // foreground standalone editor and whole-editor exit requirement.
     #[cfg(windows)]
     let standalone_wait = arguments.mode == LaunchMode::Wait;
     #[cfg(windows)]
@@ -6514,7 +6542,9 @@ MODES:
     between TUIs. Windows supports explicit -a/--persistent attachment.
 
         --standalone     Use standalone mode, overriding configuration
-        --wait FILE...   Windows: open a standalone editor and wait until it quits
+        --wait FILE...   Windows: wait in an authenticated integrated parent;
+                         an ordinary shell without parent context uses standalone.
+                         Invalid parent context is refused
                          Unix: open through persistent mode and wait for
                          explicit buffer completion
     -a, --persistent [WORKSPACE]

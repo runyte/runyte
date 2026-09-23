@@ -404,8 +404,10 @@ runyte --persistent   # or runyte -a, for attach
 overrides that setting. Target-bearing invocations remain standalone so their
 relative paths and `+LINE[:COLUMN]` positions retain ordinary launch semantics.
 `--persistent` reads its argument as a workspace rather than a file. On Unix,
-`--wait` is how a file reaches a persistent session; on Windows it opens a
-standalone editor.
+`--wait` is how a file reaches a persistent session. On Windows, an
+authenticated integrated-terminal parent routes it to that parent persistent
+session. An ordinary shell with no parent context opens a standalone editor;
+a malformed, copied, stale, or standalone parent marker is refused.
 
 `runyte --persistent WORKSPACE` (or `runyte -a WORKSPACE`) attaches to a named
 session from any directory, using the same selector the lifecycle commands
@@ -562,13 +564,21 @@ parent already resolved.
 For tools that need an editor process to stay open, configure
 `runyte --wait`.
 
-On Windows, this opens a new standalone editor with the requested files and
-waits until that editor quits. It does not attach to an existing editor or
-complete when an individual buffer closes: `:wbc` alone leaves the process
-running. Normal save/discard protection applies, including explicit force
-quit. Startup failure, terminal loss, and termination return nonzero. This
-mode works even when `workspace.mode` is configured as persistent; it does not
-use the explicit Windows `-a` persistent attachment route.
+On Windows, a launch from an ordinary shell opens a new standalone editor with
+the requested files and waits until that editor quits. It does not complete
+when an individual buffer closes: `:wbc` alone leaves that process running.
+Normal save/discard protection applies, including explicit force quit. Startup
+failure, terminal loss, and termination return nonzero. This standalone route
+works even when `workspace.mode` is configured as persistent.
+
+Inside an integrated terminal of a persistent session, Windows `--wait` sends
+the requested files to that parent session instead. Relative files resolve
+from the invoking terminal's directory. The caller resumes only after every
+requested buffer completes; closing one of several keeps it waiting. The
+origin terminal is covered while the edit is active and restored afterward.
+The parent host authenticates the exact terminal process and attachment; a
+copied, stale or standalone parent marker cannot authorize the request.
+Completion and refusal never submit Enter or approve an editor prompt.
 
 On Unix, one invocation may name several files and returns success only
 after every requested buffer is explicitly closed or completed. `:wbc` writes
@@ -1147,9 +1157,11 @@ Primary-screen inline TUIs may keep a composer or status area fixed while
 scrolling completed output through a top-anchored region; those completed rows
 remain ordinary scrollback, including Codex output when it runs in inline mode.
 
-Known limitations. Windows Phase 1 provides standalone ConPTY terminals;
-persistent-session parent navigation and external-editor waits remain
-unavailable there. SGR mouse reporting is
+Known limitations. Windows Phase 1 provides standalone ConPTY terminals.
+Persistent-session parent navigation remains unavailable on Windows. A
+`--wait` launched inside an authenticated persistent integrated terminal waits
+on its parent session; one launched from an ordinary shell opens a standalone
+editor instead. SGR mouse reporting is
 forwarded inside terminal pane bodies when a child requests it; borders remain
 Runyte's, and the wheel scrolls review history when the child has not requested
 the pointer. A cell retains up to three combining marks without consuming
@@ -1469,14 +1481,14 @@ does not bundle that runtime.
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
-| Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
+| Editor wait | `--wait FILE...` opens a standalone editor from an ordinary shell; inside a persistent integrated terminal it waits on the parent session's requested buffers |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
 | Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
 | Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
-| Deferred | Persistent wait, workspace switching, manager visits, numbered sessions and directory handoff |
+| Deferred | Parent navigation, persistent wait from an ordinary shell, workspace switching, manager visits, numbered sessions and directory handoff |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,

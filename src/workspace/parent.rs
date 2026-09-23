@@ -170,9 +170,9 @@ impl ParentContext {
     }
 }
 
-/// Runs the private native ParentWait relay over the one exact endpoint carried
-/// by an integrated terminal marker. Public Windows `--wait` routing remains a
-/// separate standalone mode and does not call this function.
+/// Runs the native ParentWait relay over the one exact endpoint carried by an
+/// integrated terminal marker. Public `--wait` calls this only after early
+/// parent-context routing; an ordinary Windows shell retains standalone wait.
 #[cfg(windows)]
 pub async fn run_wait(
     context: ParentContext,

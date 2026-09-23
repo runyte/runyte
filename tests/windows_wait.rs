@@ -80,12 +80,13 @@ impl Console {
             "--".to_owned(),
         ];
         args.extend(targets.iter().map(|target| (*target).to_owned()));
-        let child = Pty::spawn(
+        let child = Pty::spawn_in_context(
             Path::new(env!("CARGO_BIN_EXE_runyte")).as_os_str(),
             &args,
             root,
             120,
             30,
+            Some(""), // external console, without an integrated-terminal marker
             move |event| {
                 let _ = sender.send(event);
             },
