@@ -249,7 +249,7 @@ mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
-#[cfg_attr(not(unix), path = "host/plugin_handoffs_unavailable.rs")]
+#[cfg_attr(not(any(unix, windows)), path = "host/plugin_handoffs_unavailable.rs")]
 mod plugin_handoffs;
 mod plugin_interaction;
 mod plugin_manager;
@@ -1449,6 +1449,15 @@ impl WorkspaceHost {
                 }
             }
         }
+    }
+
+    /// Applies one operating-system repeat through the ordinary input
+    /// lifecycle without granting one-shot native approval authority.
+    /// Frontends retain their repeat/coalescing policy; this boundary owns the
+    /// editor-state invalidation that every dispatched repetition requires.
+    pub fn execute_repeated_input(&mut self, input: InputEvent) -> Result<HostInputOutcome> {
+        self.app.handle_repeated_input(input)?;
+        Ok(HostInputOutcome::Applied)
     }
 
     pub fn apply_event(&mut self, event: HostEvent) {

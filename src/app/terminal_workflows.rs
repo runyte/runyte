@@ -11,7 +11,7 @@ use super::{
 };
 
 impl App {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn reserve_plugin_terminal(
         &mut self,
         request: TerminalRequest,
@@ -33,7 +33,7 @@ impl App {
             })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn install_plugin_terminal(
         &mut self,
         pending: crate::terminal::PendingTerminal,

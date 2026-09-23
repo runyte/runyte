@@ -23,13 +23,13 @@ pub mod emulator;
 pub mod grid;
 pub mod keys;
 pub mod parser;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod pending;
 pub mod proposal;
 pub mod read;
 #[cfg(all(unix, test))]
 pub(crate) use pending::pending_test_guard;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) use pending::{
     PENDING_TERMINAL_CHARGE, PendingTerminal, TerminalCancellation, TerminalPreparation,
 };
@@ -156,7 +156,7 @@ pub const OUTPUT_QUEUE: usize = 32;
 /// child occupies one slot and cannot crowd quiet sessions out of readiness.
 /// A full queue blocks that reader, then the PTY and child, instead of growing
 /// host memory without limit.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 const PER_SESSION_OUTPUT_QUEUE: usize = 8;
 
 /// A single host turn may parse at most this much terminal output in addition
@@ -165,7 +165,7 @@ const PER_SESSION_OUTPUT_QUEUE: usize = 8;
 const OUTPUT_BYTE_BUDGET: usize = 256 * 1024;
 
 #[derive(Debug, Default)]
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 struct PendingOutput {
     active: bool,
     bytes: VecDeque<Vec<u8>>,
@@ -189,7 +189,7 @@ struct OutputShared {
 #[derive(Clone, Debug)]
 struct TerminalEventSender(Arc<OutputShared>);
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 impl TerminalEventSender {
     fn wait_until_active(&self, id: TerminalId) -> bool {
         let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -2382,7 +2382,7 @@ pub fn drain(events: &mut TerminalEvents, mut apply: impl FnMut(TerminalOutput))
 #[derive(Debug)]
 pub struct TerminalSessions {
     sessions: BTreeMap<TerminalId, TerminalSession>,
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     next: u64,
     cell_budget: usize,
     external_retained_bytes: usize,

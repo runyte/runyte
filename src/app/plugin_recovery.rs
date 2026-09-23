@@ -35,6 +35,12 @@ pub(crate) struct ProviderReloadDecision {
 }
 
 impl App {
+    pub(super) fn retain_provider_reload_after_repeat(&mut self) {
+        if let Some(surface) = self.plugins.provider_reload.as_mut() {
+            surface.intent.context.foreground = self.plugins.foreground_generation;
+        }
+    }
+
     pub(crate) fn provider_reload_feedback(
         &mut self,
         action: Option<u64>,
@@ -91,6 +97,7 @@ impl App {
             expected_revision: self.buffers[buffer].revision(),
             context: CapturedContext {
                 foreground_allowed: true,
+                native_handoff_allowed: false,
                 action: self.active_action_id,
                 pane: self.active_pane,
                 buffer,

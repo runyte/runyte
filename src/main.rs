@@ -3230,6 +3230,28 @@ fn dispatch_host_key_or_text(
     }
 }
 
+#[cfg(windows)]
+fn dispatch_host_repeated_key_or_text(
+    host: &mut WorkspaceHost,
+    key_hints: &mut KeyHintState,
+    input: InputEvent,
+) {
+    if host.context_overlay_active() {
+        return;
+    }
+    let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
+    if hint_result != HintEventResult::Forward {
+        return;
+    }
+    let dispatches = motion_repeat_dispatches(host.app(), &input, true);
+    for _ in 0..dispatches {
+        if let Err(error) = host.execute_repeated_input(input.clone()) {
+            host.report_host_error(error.to_string());
+            break;
+        }
+    }
+}
+
 fn observe_key_or_text_hint(
     app: &App,
     key_hints: &mut KeyHintState,

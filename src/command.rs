@@ -1304,8 +1304,9 @@ impl CommandId {
             Self::Colon(ColonCommand::ContextAccess) => {
                 Some("External context access is unavailable in Windows Phase 1")
             }
-            Self::Plugin(_)
-            | Self::Colon(
+            // A private host may already own a registered application. Its
+            // commands stay usable while public process management is gated.
+            Self::Colon(
                 ColonCommand::Plugins | ColonCommand::PluginStop | ColonCommand::PluginRestart,
             ) => Some("Plugins are unavailable in Windows Phase 1"),
             _ => None,

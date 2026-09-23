@@ -2857,6 +2857,9 @@ pub struct App {
     /// Interactive action currently dispatching. Asynchronous requests retain
     /// this identity so their completion cannot rewrite a newer action echo.
     active_action_id: Option<u64>,
+    /// Set only while dispatching an unmodified physical Enter. Native plugin
+    /// handoffs may consume authority captured in this scope.
+    plugin_physical_input: bool,
     next_action_id: u64,
     /// When the person last acted in the editor.
     ///
@@ -3411,6 +3414,7 @@ impl App {
             notifications_refresh_pending: false,
             action_feedback: None,
             active_action_id: None,
+            plugin_physical_input: false,
             next_action_id: 1,
             last_interaction: Instant::now(),
             reported_registry_errors,

@@ -787,12 +787,23 @@ impl Clients {
                 if !repeated && let Some(frame) = presented_frame {
                     host.context_frame_presented(frame.into());
                 }
-                super::super::dispatch_host_key_or_text(
-                    host,
-                    &mut self.hints,
-                    event.into(),
-                    repeated,
-                );
+                if repeated {
+                    // Auto-repeat is useful editor input, but it is not a new
+                    // physical approval gesture. Replayed input cannot accept
+                    // a plugin confirmation or capture native handoff authority.
+                    super::super::dispatch_host_repeated_key_or_text(
+                        host,
+                        &mut self.hints,
+                        event.into(),
+                    );
+                } else {
+                    super::super::dispatch_host_key_or_text(
+                        host,
+                        &mut self.hints,
+                        event.into(),
+                        false,
+                    );
+                }
                 self.publish_requested = true;
                 false
             }

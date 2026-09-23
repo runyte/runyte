@@ -444,12 +444,91 @@ fn failed_setup_owns_and_terminates_suspended_child() {
                 );
                 Err(io::Error::other("injected setup failure"))
             },
+            None,
         );
         assert!(result.is_err());
         let process = process.into_inner().unwrap().unwrap();
         assert_eq!(
             unsafe { WaitForSingleObject(process.as_raw_handle(), 5000) },
             WAIT_OBJECT_0
+        );
+    }
+}
+
+#[test]
+fn gated_partial_setup_retains_lease_until_conpty_cleanup_finishes() {
+    struct Lease {
+        process: Arc<Mutex<Option<OwnedHandle>>>,
+        settled: mpsc::Sender<bool>,
+    }
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            let stopped = self
+                .process
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|process| unsafe {
+                    WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_OBJECT_0
+                });
+            let _ = self.settled.send(stopped);
+        }
+    }
+
+    for failed in [
+        SpawnCheckpoint::ChildOwned,
+        SpawnCheckpoint::ReaderStarted,
+        SpawnCheckpoint::WriterStarted,
+        SpawnCheckpoint::LifecycleStarted,
+    ] {
+        let process = Arc::new(Mutex::new(None));
+        let observed = process.clone();
+        let (settled, completion) = mpsc::channel();
+        let (cancelled, cancellation) = mpsc::channel();
+        let result = Pty::spawn_checked(
+            std::env::current_exe().unwrap().as_os_str(),
+            &[
+                "--exact".into(),
+                FIXTURE.into(),
+                "--ignored".into(),
+                "--nocapture".into(),
+            ],
+            &std::env::temp_dir(),
+            80,
+            24,
+            None,
+            |_| {},
+            move |checkpoint, pid| {
+                if checkpoint == SpawnCheckpoint::ChildOwned {
+                    *observed.lock().unwrap() = Some(owned(unsafe {
+                        OpenProcess(
+                            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                            0,
+                            pid,
+                        )
+                    })?);
+                }
+                if checkpoint == failed {
+                    return Err(io::Error::other("injected gated setup failure"));
+                }
+                Ok(())
+            },
+            Some(PendingActivation {
+                wait: Arc::new(|| false),
+                cancel: Arc::new(move || {
+                    let _ = cancelled.send(());
+                }),
+                lifetime: Arc::new(Lease {
+                    process: process.clone(),
+                    settled,
+                }),
+            }),
+        );
+        assert!(result.is_err(), "{failed:?}");
+        cancellation.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            completion.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "{failed:?}"
         );
     }
 }

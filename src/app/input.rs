@@ -532,6 +532,49 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        let previous = self.plugin_physical_input;
+        self.plugin_physical_input = matches!(
+            input,
+            InputEvent::Key(KeyStroke {
+                code: KeyCode::Enter,
+                modifiers: Modifiers::NONE,
+            })
+        );
+        let result = self.handle_frontend_input(input, true);
+        self.plugin_physical_input = previous;
+        result
+    }
+
+    /// Applies an operating-system key repeat through the ordinary input
+    /// lifecycle while withholding one-shot approval authority. Repeats still
+    /// invalidate captured foreground state and retain normal motion/count
+    /// behavior, but cannot accept a native confirmation or handoff.
+    pub(crate) fn handle_repeated_input(&mut self, input: InputEvent) -> Result<()> {
+        let repeated_enter = matches!(
+            input,
+            InputEvent::Key(KeyStroke {
+                code: KeyCode::Enter,
+                modifiers: Modifiers::NONE,
+            })
+        );
+        let previous = self.plugin_physical_input;
+        self.plugin_physical_input = false;
+        let result = self.handle_frontend_input(input, !repeated_enter);
+        self.plugin_physical_input = previous;
+        if repeated_enter && result.is_ok() {
+            // The repeat invalidated every earlier invocation, but this
+            // retained surface still belongs to the same visible interaction.
+            // A later fresh Enter must be able to approve it.
+            if let Some(surface) = self.plugins.input.as_mut() {
+                surface.context.foreground = self.plugins.foreground_generation;
+            }
+            self.retain_provider_reload_after_repeat();
+            self.retain_provider_overwrite_after_repeat();
+        }
+        result
+    }
+
+    fn handle_frontend_input(&mut self, input: InputEvent, approval: bool) -> Result<()> {
         if self.context_overlay_active() {
             self.handle_context_input(input);
             return Ok(());
@@ -557,12 +600,16 @@ impl App {
         }
         if reload_owned_input && self.plugins.provider_reload.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_provider_reload_input(input);
+            if approval {
+                self.handle_provider_reload_input(input);
+            }
             return Ok(());
         }
         if overwrite_owned_input && self.plugins.provider_overwrite.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_provider_overwrite_input(input);
+            if approval {
+                self.handle_provider_overwrite_input(input);
+            }
             return Ok(());
         }
         // A stale surface no longer owns ordinary editor input. Keep its
@@ -574,7 +621,9 @@ impl App {
         }
         if self.plugins.input.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_plugin_input(input);
+            if approval {
+                self.handle_plugin_input(input);
+            }
             return Ok(());
         }
         self.handle_input_inner(input, false)

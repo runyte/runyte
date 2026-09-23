@@ -3,6 +3,8 @@
 //! ConPTY ownership. Each terminal has independent reader, writer and lifecycle
 //! threads. The editor only queues bounded input and coalesced resize requests.
 //! Closing a pane kills its job; draining and ClosePseudoConsole run off-loop.
+#[cfg(test)]
+use std::sync::Condvar;
 use std::{
     collections::VecDeque,
     ffi::{OsStr, OsString},
@@ -36,6 +38,19 @@ pub enum PtyEvent {
     Exited(Option<i32>),
 }
 
+/// Used only while a plugin terminal is prepared but has not been installed.
+/// Its process stays suspended until native editor ownership is established.
+#[derive(Clone)]
+pub(super) struct PendingActivation {
+    pub(super) wait: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub(super) cancel: Arc<dyn Fn() + Send + Sync>,
+    pub(super) lifetime: Arc<dyn Send + Sync>,
+}
+
+/// Keeps unpublished accounting attached to every partial setup owner. Once
+/// all ConPTY threads exist, the activation owner alone carries that lease.
+struct SetupRetention(Mutex<Option<Arc<dyn Send + Sync>>>);
+
 struct Input {
     bytes: Vec<u8>,
     delivery: Option<super::proposal::Delivery>,
@@ -54,8 +69,9 @@ struct Control {
     resize: OwnedHandle,
     dimensions: AtomicU32,
     input: Mutex<VecDeque<Input>>,
-    #[cfg(test)]
     completed: OwnedHandle,
+    #[cfg(test)]
+    cleanup_hold: Arc<(Mutex<bool>, Condvar)>,
 }
 impl Control {
     fn stop(&self) {
@@ -155,14 +171,24 @@ impl Drop for Attributes {
 struct SpawnGuard {
     process: Arc<OwnedHandle>,
     control: Arc<Control>,
+    cancel_pending: Option<Arc<dyn Fn() + Send + Sync>>,
     armed: bool,
 }
 impl Drop for SpawnGuard {
     fn drop(&mut self) {
         if self.armed {
+            if let Some(cancel) = self.cancel_pending.take() {
+                cancel();
+            }
             self.control.stop();
             unsafe {
                 TerminateProcess(self.process.as_raw_handle(), 1);
+                // Every guarded failure precedes activation, so the child is
+                // still suspended and this wait runs on the handoff worker.
+                // Keep setup accounting alive until the exact owned process
+                // has completed termination; later checkpoints retain the
+                // same lease in their reader, writer and lifecycle owners.
+                WaitForSingleObject(self.process.as_raw_handle(), INFINITE);
             }
         }
     }
@@ -278,6 +304,15 @@ impl Pty {
             )
         })
     }
+    #[cfg(test)]
+    pub(super) fn hold_cleanup_for_test(&self) -> Box<dyn FnOnce()> {
+        let hold = self.control.cleanup_hold.clone();
+        *hold.0.lock().unwrap_or_else(|error| error.into_inner()) = true;
+        Box::new(move || {
+            *hold.0.lock().unwrap_or_else(|error| error.into_inner()) = false;
+            hold.1.notify_all();
+        })
+    }
     pub fn process_id(&self) -> u32 {
         self.pid
     }
@@ -345,6 +380,30 @@ impl Pty {
             parent_context,
             events,
             |_, _| Ok(()),
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn spawn_gated_in_context(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        parent_context: Option<&str>,
+        events: impl Fn(PtyEvent) + Send + 'static,
+        activation: PendingActivation,
+    ) -> io::Result<Self> {
+        Self::spawn_checked(
+            program,
+            arguments,
+            directory,
+            columns,
+            rows,
+            parent_context,
+            events,
+            |_, _| Ok(()),
+            Some(activation),
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -357,7 +416,13 @@ impl Pty {
         parent_context: Option<&str>,
         events: impl Fn(PtyEvent) + Send + 'static,
         mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
+        activation: Option<PendingActivation>,
     ) -> io::Result<Self> {
+        let setup_retention = activation.as_ref().map(|activation| {
+            Arc::new(SetupRetention(Mutex::new(Some(
+                activation.lifetime.clone(),
+            ))))
+        });
         let program = super::windows_command::resolve_for_terminal(
             Path::new(program),
             directory,
@@ -401,8 +466,9 @@ impl Pty {
             resize: event(false)?,
             dimensions: AtomicU32::new(columns as u32 | ((rows as u32) << 16)),
             input: Mutex::new(VecDeque::new()),
-            #[cfg(test)]
             completed: event(true)?,
+            #[cfg(test)]
+            cleanup_hold: Arc::new((Mutex::new(false), Condvar::new())),
         });
         let job = Arc::new(crate::windows_process::new_job()?);
         let (input_read, input_write) = pipe()?;
@@ -453,6 +519,9 @@ impl Pty {
         let mut guard = SpawnGuard {
             process: process.clone(),
             control: control.clone(),
+            cancel_pending: activation
+                .as_ref()
+                .map(|activation| activation.cancel.clone()),
             armed: true,
         };
         if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
@@ -461,6 +530,7 @@ impl Pty {
         checkpoint(SpawnCheckpoint::ChildOwned, info.dwProcessId)?;
         let reader_process = process.clone();
         let reader_control = control.clone();
+        let reader_retention = setup_retention.clone();
         let output_read = console
             .undrained_output
             .take()
@@ -468,6 +538,7 @@ impl Pty {
         let reader = thread::Builder::new()
             .name("runyte-conpty-read".into())
             .spawn(move || {
+                let _retention = reader_retention;
                 let mut file = File::from(output_read);
                 let mut bytes = vec![0; READ_CHUNK];
                 loop {
@@ -484,9 +555,11 @@ impl Pty {
             })?;
         checkpoint(SpawnCheckpoint::ReaderStarted, info.dwProcessId)?;
         let writer_control = control.clone();
+        let writer_retention = setup_retention.clone();
         let writer = thread::Builder::new()
             .name("runyte-conpty-write".into())
             .spawn(move || {
+                let _retention = writer_retention;
                 let mut file = File::from(input_write);
                 let handles = [
                     writer_control.stop.as_raw_handle(),
@@ -534,9 +607,11 @@ impl Pty {
         let lifecycle_process = process.clone();
         let lifecycle_job = job.clone();
         let lifecycle_pid = info.dwProcessId;
+        let lifecycle_retention = setup_retention.clone();
         thread::Builder::new()
             .name("runyte-conpty-lifecycle".into())
             .spawn(move || {
+                let _retention = lifecycle_retention;
                 let console = console;
                 let handles = [
                     lifecycle_control.stop.as_raw_handle(),
@@ -572,13 +647,51 @@ impl Pty {
                 #[cfg(debug_assertions)]
                 note_conpty_cleanup_fixture(lifecycle_pid);
                 #[cfg(test)]
+                {
+                    let mut held = lifecycle_control
+                        .cleanup_hold
+                        .0
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    while *held {
+                        held = lifecycle_control
+                            .cleanup_hold
+                            .1
+                            .wait(held)
+                            .unwrap_or_else(|error| error.into_inner());
+                    }
+                }
                 unsafe {
                     SetEvent(lifecycle_control.completed.as_raw_handle());
                 }
             })?;
         checkpoint(SpawnCheckpoint::LifecycleStarted, info.dwProcessId)?;
-        if unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX {
+        if let Some(activation) = activation {
+            let activation_control = control.clone();
+            let activation_job = job.clone();
+            thread::Builder::new()
+                .name("runyte-conpty-activate".into())
+                .spawn(move || {
+                    let active = (activation.wait)();
+                    drop(activation.lifetime);
+                    if !active
+                        || unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX
+                    {
+                        activation_control.stop();
+                        unsafe {
+                            TerminateJobObject(activation_job.as_raw_handle(), 1);
+                        }
+                    }
+                })?;
+        } else if unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX {
             return Err(io::Error::last_os_error());
+        }
+        if let Some(retention) = &setup_retention {
+            retention
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
         }
         guard.armed = false;
         Ok(Self {
@@ -640,6 +753,30 @@ impl Pty {
         self.control.stop();
         unsafe {
             TerminateJobObject(self.job.as_raw_handle(), 1);
+        }
+    }
+    pub(super) fn signal_unpublished(&self) {
+        self.control.stop();
+        unsafe {
+            TerminateJobObject(self.job.as_raw_handle(), 1);
+        }
+    }
+    pub(super) fn terminate_unpublished(&mut self) {
+        self.signal_unpublished();
+        unsafe {
+            WaitForSingleObject(self.control.completed.as_raw_handle(), INFINITE);
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn unpublished_completed(&self) -> io::Result<bool> {
+        match unsafe { WaitForSingleObject(self.control.completed.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            WAIT_FAILED => Err(io::Error::last_os_error()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected ConPTY cleanup wait result",
+            )),
         }
     }
     pub fn finished(&mut self) -> Option<Option<i32>> {

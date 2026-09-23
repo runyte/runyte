@@ -13,6 +13,7 @@ impl Drop for Settled {
 fn context(app: &App) -> CapturedContext {
     CapturedContext {
         foreground_allowed: true,
+        native_handoff_allowed: true,
         action: None,
         pane: app.active_pane,
         buffer: app.active().buffer,
