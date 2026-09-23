@@ -4,14 +4,14 @@
 
 #[cfg(any(unix, windows))]
 pub mod storage;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod transport;
 pub mod wire;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod discovery;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use transport::Event;
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub type Event = std::convert::Infallible;

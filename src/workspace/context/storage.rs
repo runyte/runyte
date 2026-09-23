@@ -43,7 +43,7 @@ impl Identity {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostMode {
@@ -51,7 +51,7 @@ pub enum HostMode {
     Standalone,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
@@ -61,7 +61,48 @@ pub struct Registration {
     pub endpoint: PathBuf,
     pub mode: HostMode,
     pub pid: u32,
+    #[cfg(windows)]
+    pub creation_time: u64,
     pub environment: String,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+pub(crate) struct Publication {
+    storage: std::sync::Arc<Storage>,
+    name: String,
+    file: Option<File>,
+}
+
+#[cfg(windows)]
+impl Publication {
+    pub(crate) fn retire(mut self) -> io::Result<()> {
+        let removed = self.storage.directory.remove_owned(
+            OsStr::new(&self.name),
+            self.file.as_ref().expect("publication owns its file"),
+        );
+        match removed {
+            Ok(()) => {
+                self.file.take();
+                self.storage.directory.sync()
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Publication {
+    fn drop(&mut self) {
+        if let Some(file) = &self.file {
+            let _ = self
+                .storage
+                .directory
+                .remove_owned(OsStr::new(&self.name), file);
+            let _ = self.storage.directory.sync();
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -386,6 +427,16 @@ impl Storage {
         Ok(path)
     }
 
+    #[cfg(windows)]
+    pub fn socket_path(&self, incarnation: &str) -> io::Result<PathBuf> {
+        if !valid_hex(incarnation) {
+            return Err(invalid("invalid host incarnation"));
+        }
+        Ok(PathBuf::from(format!(
+            r"\\.\pipe\runyte-context-v1-{incarnation}"
+        )))
+    }
+
     #[cfg(unix)]
     pub fn register(&self, registration: &Registration) -> io::Result<()> {
         self.validate_registration(registration)?;
@@ -393,6 +444,36 @@ impl Storage {
             &registration_file(&registration.host_incarnation),
             registration,
         )
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn register_owned(
+        self: &std::sync::Arc<Self>,
+        registration: &Registration,
+    ) -> io::Result<Publication> {
+        self.require_writable()?;
+        self.validate_registration(registration)?;
+        let _lock = self.lock()?;
+        let name = registration_file(&registration.host_incarnation);
+        let entries = self.entries()?;
+        if entries.len() >= DISCOVERY_LIMIT
+            && !entries.iter().any(|entry| entry == OsStr::new(&name))
+        {
+            return Err(invalid("context storage inventory exceeds its limit"));
+        }
+        let bytes = serde_json::to_vec(registration)
+            .map_err(|_| invalid("invalid context storage record"))?;
+        if bytes.len() > RECORD_LIMIT {
+            return Err(invalid("context storage record exceeds its size limit"));
+        }
+        let file = self
+            .directory
+            .atomic_write_owned(OsStr::new(&name), &bytes)?;
+        Ok(Publication {
+            storage: self.clone(),
+            name,
+            file: Some(file),
+        })
     }
     #[cfg(unix)]
     pub fn unregister(&self, incarnation: &str) -> io::Result<()> {
@@ -406,7 +487,7 @@ impl Storage {
     /// enumeration contributes names only; links, replaced files, and malformed
     /// records cannot redirect an admitted endpoint outside private storage.
     /// Transport must independently authenticate the socket and host incarnation.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn discover(
         &self,
         environment: &str,
@@ -439,7 +520,7 @@ impl Storage {
         Ok(records)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn validate_registration(&self, record: &Registration) -> io::Result<()> {
         if path_bytes(&record.root) != path_bytes(&self.workspace_root(&record.root)?) {
             return Err(invalid("context registration root is not canonical"));
@@ -449,11 +530,18 @@ impl Storage {
 
     // Discovery does not touch project paths: a stale root can be missing or
     // on a disconnected network mount. The bounded live probe confirms identity.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn validate_registration_shape(&self, record: &Registration) -> io::Result<()> {
+        #[cfg(windows)]
+        let native_identity_valid = record.creation_time != 0
+            && record.root.to_str().is_some()
+            && record.endpoint.to_str().is_some();
+        #[cfg(unix)]
+        let native_identity_valid = true;
         if !valid_hex(&record.host_incarnation)
             || !valid_hex(&record.environment)
             || record.pid == 0
+            || !native_identity_valid
             || !record.root.is_absolute()
             || record
                 .root
@@ -656,7 +744,7 @@ fn grant_file(root: &[u8], identity: &str) -> String {
     bytes.extend_from_slice(identity.as_bytes());
     format!("grant-{}.json", crate::hash::sha256_hex(&bytes))
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn registration_file(incarnation: &str) -> String {
     format!("host-{incarnation}.json")
 }

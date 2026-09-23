@@ -1716,7 +1716,7 @@ impl WorkspaceHost {
         None
     }
     pub fn handle_context_event(&mut self, event: super::context::Event) {
-        match event {}
+        drop(event);
     }
 }
 
