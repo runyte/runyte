@@ -564,11 +564,11 @@ impl WorkspaceHost {
                     // after a deferred bind failure.
                     self.context.enable_failed = false;
                 }
+                #[cfg(unix)]
+                self.context_enable()?;
+                #[cfg(windows)]
                 if let Err(error) = self.context_enable() {
-                    #[cfg(windows)]
-                    {
-                        self.context.enable_failed = true;
-                    }
+                    self.context.enable_failed = true;
                     return Err(error);
                 }
             }
