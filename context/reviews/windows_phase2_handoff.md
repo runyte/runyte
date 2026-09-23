@@ -19,6 +19,8 @@ in source commit `8a8987c`, with detached-capable replacement acceptance pending
 Native Windows `Ctrl-\` decoding and review acceptance are `eff117c` and
 `1159418`, with resolved issue record `e34d04c`. Public integrated-parent
 Windows `--wait` is accepted locally in `fee4819`.
+Selected live-row visits from the Windows persistent session manager are
+accepted locally in `92329b0`.
 Public Windows context access is accepted in source
 commit `a79e765`; Windows CI acceptance regressions are repaired in source commit
 `05935a6` and remotely accepted through handoff commit `d693832`.
@@ -37,8 +39,9 @@ ParentAttach paths, explicit public `-a`/`--persistent` attachment and configure
 bare attachment. Guarded CLI restart has local refusal acceptance; successful
 stop-to-start acceptance remains gated. Public `--wait` from an authenticated
 persistent integrated terminal is accepted; persistent wait from an ordinary
-shell, manager visits and in-editor navigation/switching
-remain gated.
+shell, numbered navigation, directory handoff and other in-editor switching
+remain gated. The persistent manager can visit a selected compatible running
+publication; the standalone manager remains control-only.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
 bridge, public Windows context access and the public plugin lifecycle. The
@@ -67,11 +70,12 @@ was cancelled by the next push. Configured bare attachment source commit
 Restart source commit `8a8987c` passed every job in
 [CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832),
 while successful stop-to-start acceptance still needs a detached-capable
-Windows runner. The `Ctrl-\` and public ParentWait commits remain local;
-automatic approval review denied their push, and they have no remote CI yet.
+Windows runner. The `Ctrl-\`, public ParentWait and manager-visit commits remain
+local; automatic approval review denied the push, and they have no remote CI
+yet.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. Keep ordinary-shell persistent wait, manager visits and in-editor
-switching behind their own acceptance gates.
+decision. Keep ordinary-shell persistent wait, numbered navigation and other
+in-editor switching behind their own acceptance gates.
 
 ## Accepted implementation and validation
 
@@ -992,13 +996,26 @@ focused Windows tests and the full workspace suite passed; independent source
 review is clear. These commits are local: automatic approval review blocked
 push, so remote CI acceptance is pending.
 
+## Accepted locally: selected Windows manager visit
+
+`92329b0` opens Enter and Tab > Open on a selected compatible running row in
+the persistent Windows session manager. The App freezes `WorkspaceSelection`;
+the native service proves that exact live publication before switching, with no
+path, name or PID fallback after replacement. Stopped and incompatible rows
+refuse, and the standalone manager stays control-only. The real two-host
+ConPTY acceptance visits a retained destination, restores the dirty source,
+then verifies a replaced selected publication is refused while both hosts and
+the source state remain intact. Focused App tests, native formatting, all-target
+Clippy and the full workspace suite passed; independent Astra source review is
+clear. The commit is local after automatic approval review denied the push; no
+remote CI result exists for it.
+
 ## Next Phase 2.5 gates
 
 Successful CLI restart stop-to-start, protected-state refusal and forced
 replacement still need a detached-capable Windows acceptance run. Persistent
-wait into a host from an ordinary shell, in-editor navigation and switching,
-manager visits, numbered persistent sessions,
-directory handoff and combined Git
+wait into a host from an ordinary shell, numbered and other in-editor
+navigation, directory handoff and combined Git
 branch/worktree removal remain closed until their own acceptance gates pass.
 Keep the native ConPTY job limits and exact publication authority in those
 packages.
@@ -1026,7 +1043,8 @@ that design calls a prerequisite, is already applied as described above.
 3. Accepted foundations: process-exit supervision, private native frontend
    attachment, exact switching, ParentWait and ParentAttach. Explicit public
    `-a`/`--persistent` attachment is accepted in `2563fba`, configured bare
-   attachment in `378a22b`, and integrated-parent public wait in `fee4819`.
+   attachment in `378a22b`, integrated-parent public wait in `fee4819`, and
+   selected persistent-manager visits in `92329b0`.
    The CLI restart implementation is committed in `8a8987c` with successful
    replacement acceptance outstanding.
    Preserve common editor semantics, protected shutdown and connection-owned
@@ -1045,7 +1063,8 @@ internal physical-input attachment; private ParentWait and ParentAttach and the
 explicit and configured bare public attachment routes are accepted. Guarded
 CLI restart has local refusal evidence but awaits detached-capable stop-to-start
 acceptance. Integrated-parent public wait has local real-process acceptance;
-ordinary-shell persistent wait and in-editor navigation remain gated.
+ordinary-shell persistent wait and in-editor navigation beyond the selected
+manager visit remain gated.
 
 ### Reviewed process-exit watcher contract
 
@@ -1152,8 +1171,9 @@ format, Clippy, focused CLI and release packaging tests, and the full native
 suite, but successful replacement acceptance remains pending on a runner that
 permits detached creation; CI run 35888094832 passed every job. Native
 Ctrl-backslash source `eff117c` and acceptance `1159418`, resolved issue record
-`e34d04c`, and public integrated-parent wait source `fee4819` passed local
-validation and remain unpushed after automatic approval review blocked the push.
-No remote CI result exists for those commits. Do not retry the denied push
+`e34d04c`, public integrated-parent wait source `fee4819`, and selected
+persistent-manager visit source `92329b0` passed local validation and remain
+unpushed after automatic approval review blocked the push. No remote CI result
+exists for those commits. Do not retry the denied push
 without explicit approval.
 Inspect Git status and preserve unrelated working-tree edits before committing.

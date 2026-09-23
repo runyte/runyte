@@ -62,11 +62,17 @@ two requested buffers, exact parent authority, copied and stale marker
 refusal, wait completion and terminal restoration; standalone `--wait` from an
 ordinary shell remains supported. Native format, all-target Clippy, the full
 workspace suite and focused Windows acceptance passed, with independent source
-review clear. These commits remain local: push is blocked by automatic approval
-review, and no remote CI result exists for them. Persistent wait into a host
-from an ordinary shell, in-editor navigation and switching, manager visits,
-numbered sessions, directory handoff and combined Git
-branch/worktree removal remain gated.
+review clear. Phase 2.5 source checkpoint `92329b0` opens a selected compatible
+running-row visit from the Windows persistent editor's session manager. It
+freezes the publication selection and refuses a replaced row without path or
+name fallback; the standalone manager remains control-only. Native format,
+all-target Clippy, the full workspace suite and real two-host visit and stale
+refusal acceptance passed, with independent source review clear. These newer
+commits remain local: automatic approval review denied the push, and no remote
+CI result exists for them. Persistent wait into a host from an ordinary shell,
+numbered and other in-editor navigation, directory handoff and combined Git
+branch/worktree removal remain gated. Detached-capable restart acceptance also
+remains open.
 
 ## Checkpoint and next work package
 
