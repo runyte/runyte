@@ -449,7 +449,8 @@ offers Rename, Close, and confirmed Force close for compatible running rows,
 only Force close for incompatible running rows, or Rename for stopped rows.
 Global `:session-clean` is distinct from selected-row
 actions. Current markers, digit shortcuts, destinations, the session strip,
-and interactive attachment remain unavailable.
+and attachment through the manager remain unavailable. Direct `-a` attachment
+uses the host's exact publication.
 
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Provisional native host ownership and authenticated detached handoff.
-//! No CLI/frontend is enabled here. Run this lifecycle on its background owner:
+//! Public attachment and private handoffs use this lifecycle off the editor loop:
 //! filesystem observations and native CreateProcess are synchronous operations.
 //! Successful release changes only the private startup job. Windows may retain
 //! restrictive outer jobs even when explicit breakaway succeeds, so this does
@@ -266,6 +266,43 @@ pub async fn start_detached_host(
     startup: HostStartup,
 ) -> Result<StartedHost> {
     prepare_detached_host(location, startup).await?.accept()
+}
+
+/// Starts a public attachment host while retaining the provisional job through
+/// launch cancellation. A cancelled launch settles only its own new process;
+/// an existing authenticated winner remains untouched.
+pub async fn start_detached_host_cancellable<C>(
+    location: &EndpointLocation,
+    startup: HostStartup,
+    cancellation: C,
+) -> Result<StartedHost>
+where
+    C: Future<Output = &'static str>,
+{
+    tokio::pin!(cancellation);
+    let prepared = prepare_detached_host_cancellable(location, startup, &mut cancellation).await?;
+    tokio::select! {
+        biased;
+        reason = &mut cancellation => {
+            prepared.settle().await?;
+            anyhow::bail!(reason);
+        }
+        _ = std::future::ready(()) => {}
+    }
+    let metadata = prepared.metadata().clone();
+    let peer = Arc::clone(prepared.peer());
+    let disposition = prepared.disposition();
+    match prepared.accept_or_settle().await {
+        PreparedAcceptance::Accepted => Ok(StartedHost {
+            metadata,
+            peer,
+            disposition,
+        }),
+        PreparedAcceptance::Refused { error, cleanup } => {
+            cleanup.context("native host startup cleanup failed")?;
+            Err(error)
+        }
+    }
 }
 
 /// Authenticates readiness without releasing a newly-created host from its

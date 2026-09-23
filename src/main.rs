@@ -179,6 +179,7 @@ use runyte::workspace::{
     windows_control::{ControlSnapshot, StopAllReport, UserSelector},
     windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
     windows_parent_identity::ForegroundParentSupervisor,
+    windows_startup::{self, HostStartup as NativeHostStartup},
 };
 
 fn main() -> Result<()> {
@@ -1231,6 +1232,29 @@ async fn run(
             Some(ForegroundParentSupervisor::capture()?)
         };
         return windows_host::run(arguments, startup, native_termination, supervisor).await;
+    }
+
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::Persistent {
+        if let Some(context) = runyte::workspace::parent::ParentContext::from_environment()? {
+            let directory = std::env::current_dir()?;
+            let selector = match (
+                arguments.workspace_selector.as_deref(),
+                arguments.project_root.as_deref(),
+            ) {
+                (Some(selector), _) => selector.to_path_buf(),
+                (None, Some(root)) => resolve_requested_project_root(&directory, root)?,
+                (None, None) => directory.clone(),
+            };
+            let parent = ForegroundParentSupervisor::capture()?;
+            report_retained_host_logging(&arguments);
+            return tokio::select! {
+                biased;
+                event = native_termination.recv() => Err(terminated(event)),
+                result = runyte::workspace::parent::run_attach(context, selector, directory, &parent) => result,
+            };
+        }
+        return run_native_persistent(&arguments, startup, native_termination).await;
     }
 
     // Windows initially supports --wait as a foreground standalone editor.
@@ -4779,6 +4803,105 @@ async fn run_wait(
 }
 
 #[cfg(windows)]
+async fn run_native_persistent(
+    arguments: &LaunchArguments,
+    startup_trace: &mut StartupTrace,
+    termination: &mut TerminationSignals,
+) -> Result<()> {
+    anyhow::ensure!(
+        arguments.targets.is_empty() && arguments.init.is_none(),
+        "persistent attachment does not accept file targets or --init"
+    );
+    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    startup_trace.mark(StartupPhase::ConfigLoaded);
+    let directory = std::env::current_dir()?;
+    let roots = CapturedRoots::capture();
+    let mut reserved_user_roots = config_path
+        .as_deref()
+        .map(|path| config::config_root_for(path, &directory))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(cache) = external_open::cache_root() {
+        reserved_user_roots.push(cache);
+    }
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots,
+        roots,
+    })?;
+    let current = if arguments.workspace_selector.is_none() {
+        Some(match arguments.project_root.as_deref() {
+            Some(root) => resolve_requested_project_root(&directory, root)?,
+            None => project_root::discover(&directory, &config.workspace.state)?
+                .unwrap_or(directory.clone()),
+        })
+    } else {
+        None
+    };
+    let selector = arguments
+        .workspace_selector
+        .as_deref()
+        .or(current.as_deref())
+        .expect("persistent attachment has a selector or current directory");
+    let controls = tokio::select! {
+        biased;
+        event = termination.recv() => return Err(terminated(event)),
+        result = ControlSnapshot::observe(&scope, &config.workspace.state, false) => result?,
+    };
+    let selected = controls.history().select(selector, Some(&directory))?;
+    if let Some(event) = termination.pending_event().await {
+        return Err(terminated(event));
+    }
+    let metadata = match selected {
+        Some(HistoryTarget::Live { publication, .. }) => {
+            anyhow::ensure!(
+                publication.metadata().protocol == runyte::protocol::VERSION,
+                "incompatible persistent session cannot be attached"
+            );
+            report_retained_host_logging(arguments);
+            publication.metadata().clone()
+        }
+        target => {
+            let requested = match target {
+                Some(HistoryTarget::Stopped { row }) => row.project_root.clone(),
+                None => workspace_selector_path(selector, &directory),
+                Some(HistoryTarget::Live { .. }) => unreachable!(),
+            };
+            let layout = scope.initialize_layout(&requested, &config.workspace.state)?;
+            let location = layout.publication_location()?;
+            let mut startup = NativeHostStartup::new(std::env::current_exe()?);
+            startup.working_directory = Some(layout.project_root().to_owned());
+            startup.config = config_path;
+            startup.verbosity = arguments.verbosity;
+            startup.log = arguments.log.clone();
+            const CANCELLATION: &str = "persistent attachment cancelled during native host startup";
+            let mut cancelled = None;
+            let started =
+                windows_startup::start_detached_host_cancellable(&location, startup, async {
+                    cancelled = Some(termination.recv().await);
+                    CANCELLATION
+                })
+                .await;
+            if let Some(event) = cancelled {
+                let cancellation = terminated(event);
+                return match started {
+                    Err(error) if error.to_string() != CANCELLATION => {
+                        Err(cancellation.context(error))
+                    }
+                    _ => Err(cancellation),
+                };
+            }
+            let started = started?;
+            if started.disposition() == windows_startup::StartDisposition::ExistingWinner {
+                report_retained_host_logging(arguments);
+            }
+            started.metadata().clone()
+        }
+    };
+    startup_trace.mark(StartupPhase::ProjectResolvedAutomatically);
+    windows_frontend::attach_exact(&metadata, termination, config.editor.mouse).await
+}
+
+#[cfg(windows)]
 async fn run_native_control_cli(
     arguments: &LaunchArguments,
     startup: &mut StartupTrace,
@@ -6146,6 +6269,12 @@ fn report_retained_logging(verbosity: u8, log: Option<&Path>) {
     if verbosity == 0 && log.is_none() {
         return;
     }
+    #[cfg(windows)]
+    eprintln!(
+        "runyte: the running session kept its own log level and destination; \
+stop it with --session-stop and launch -a again to change them"
+    );
+    #[cfg(not(windows))]
     eprintln!(
         "runyte: the running session kept its own log level and destination; \
 restart it with --session-restart to change them"
@@ -6239,7 +6368,7 @@ OPTIONS:
 MODES:
     A workspace is one project directory plus its live editor state. Standalone
     mode keeps that state in the TUI process. Persistent mode keeps it alive
-    between TUIs and is currently available only on Unix.
+    between TUIs. Windows supports explicit -a/--persistent attachment.
 
         --standalone     Use standalone mode, overriding configuration
         --wait FILE...   Windows: open a standalone editor and wait until it quits
@@ -6264,7 +6393,7 @@ PERSISTENT SESSIONS:
     Windows supports list, rename, selected stop, stop-all and clean for native
     persistent sessions, including through the standalone session manager.
     Stop requires WORKSPACE there. Foreground --serve follows its launching
-    process; attachment and restart remain unavailable.
+    process; direct attachment is available, while restart remains unavailable.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
     or directory, so a session is reachable from anywhere.

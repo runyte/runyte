@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Private native attachment to one already-ready, exact host publication.
-//! Public launch routing, switching, waits and parent handoff stay gated.
+//! Native attachment to one already-ready, exact host publication. Direct CLI
+//! attachment is public; in-editor switching and persistent waits stay gated.
 
 use super::{
     KeyRepeatDetector, TerminalGuard, TerminationSignals, is_passive_pointer, is_wheel_event,

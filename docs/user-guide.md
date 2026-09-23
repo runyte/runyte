@@ -566,8 +566,8 @@ waits until that editor quits. It does not attach to an existing editor or
 complete when an individual buffer closes: `:wbc` alone leaves the process
 running. Normal save/discard protection applies, including explicit force
 quit. Startup failure, terminal loss, and termination return nonzero. This
-mode works even when `workspace.mode` is configured as persistent; Windows
-persistent hosting remains unavailable.
+mode works even when `workspace.mode` is configured as persistent; it does not
+use the explicit Windows `-a` persistent attachment route.
 
 On Unix, one invocation may name several files and returns success only
 after every requested buffer is explicitly closed or completed. `:wbc` writes
@@ -1472,9 +1472,10 @@ does not bundle that runtime.
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
 | Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
+| Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
 | Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
-| Deferred | Interactive persistent attachment and switching, and session restart |
+| Deferred | Persistent wait, workspace switching, manager visits, numbered sessions, session restart and directory handoff |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1483,7 +1484,9 @@ cannot be promised on console close. These console events are separate from
 keys delivered to an integrated ConPTY terminal session.
 
 Deferred commands remain discoverable and report why they are unavailable.
-Existing configuration cannot enable persistent attachment or session restart.
+Existing configuration cannot enable automatic persistent startup through
+`workspace.mode: persistent` or session restart. Use explicit `-a` or
+`--persistent` for Windows attachment.
 Plugins with a required `processes` capability are refused at registration on
 Windows; an optional `processes` capability is left ungranted.
 Use `:notifications`
@@ -1508,8 +1511,17 @@ project workspace or accepts an explicit `--project-root`; if neither is
 available it refuses startup without prompting. It retires the host when its
 original launching process exits. A detached host is independent of its
 short-lived launcher.
-Public `--persistent` attachment, session restart, and editor session navigation
-remain unavailable.
+Explicit `--persistent` attachment uses the complete native catalog. An ID,
+name or path must resolve unambiguously; a live selection retains its exact
+publication, while a stopped or new workspace starts a host before attaching.
+Omitting `WORKSPACE` discovers the current project or initializes the current
+directory as one. A second TUI cannot take over an occupied attachment.
+`:detach` leaves the host and its editor state running. Session restart and
+editor session navigation remain unavailable.
+Starting a missing host requires Windows to permit a detached process outside
+the launcher's inherited job. If that process policy denies the launch, `-a`
+reports the refusal and leaves no new host running. Attaching to an already
+published host remains available under that policy.
 
 In a standalone Windows editor, `Space Space` and `:session-list` show the
 native catalog. Distinct live publications for one project remain separate
@@ -3726,9 +3738,9 @@ local bridge installations separate grants and revocation controls.
 Context services start with normal Runyte workspace startup on Linux, macOS,
 and Windows. On Windows the bridge discovers live workspaces with
 `runyte.exe --context-list --json` and authenticates over private local named
-pipes; it does not open a TCP listener. Interactive persistent attachment and
-switching remain unavailable. A foreground or detached Windows host can expose its workspace to
-the bridge even though attaching another Windows TUI remains unavailable.
+pipes; it does not open a TCP listener. Direct `-a` attachment is available;
+workspace switching remains unavailable. A foreground or detached Windows host
+can expose its workspace to the bridge while no TUI is attached.
 
 The native **Agent context access** overlay starts on **Reject**. Use `1` for
 terminal reads, `2` for editor context reads, `3` for buffer edits and `4` for
@@ -3927,14 +3939,18 @@ retained in `:notifications` as well as the standing failure in
 `:service-health`.
 
 In persistent mode, verbosity and destination are properties of host startup.
-`--serve`, `--session-restart`, and the launch that creates a missing host pass
-them to that host. Attaching to an already-running host
-does not change its logger; supplying `-v` or `--log` there reports that the
-session kept its own configuration and that a restart is required:
+`--serve`, `--session-restart` on Unix, and the launch that creates a missing
+host pass them to that host. Attaching to an already-running host does not
+change its logger; supplying `-v` or `--log` there reports that the session
+kept its own configuration. On Unix, restart it to change logging:
 
 ```sh
 runyte --session-restart -vv     # the only way to change a running host's logging
 ```
+
+On Windows, stop the persistent session, then relaunch it with explicit `-a`
+and the new logging options. Normal stop refuses unsaved work; save it first or
+decide explicitly whether to use `--force`.
 
 There is no runtime log-level command and no protocol message for logging.
 

@@ -46,12 +46,11 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. Windows is supported in standalone
-mode in this source tree, including editing, `--wait`, file management,
+Linux and macOS provide the full feature set. Windows support in this source
+tree includes standalone editing, `--wait`, file management,
 integrated terminals, clipboard, language services, Git when installed, and the
-optional context bridge and configured plugins. Interactive persistent mode is not yet
-supported on Windows. Native session controls and foreground hosts are available,
-but a TUI cannot attach to a Windows host. See the
+optional context bridge, configured plugins and direct persistent attachment.
+Native session controls and foreground hosts are available. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
@@ -134,9 +133,9 @@ On Linux and macOS, add `-a` when starting Runyte to run in persistent mode:
 runyte -a  # attach to a session or start a new one
 ```
 
-Press `Space Space` to open the session manager in Runyte. On Windows, its
-standalone editor can list, preview, rename, and stop native detached sessions;
-attachment and switching remain unavailable.
+Press `Space Space` to open the session manager in Runyte. On Windows, use
+`runyte -a` for direct attachment; the manager can list, preview, rename and
+stop native sessions, but cannot attach or switch between them.
 On Unix, press `Shift Left` and `Shift Right` to quickly switch between sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)

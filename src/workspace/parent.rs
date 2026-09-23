@@ -246,8 +246,8 @@ pub async fn run_wait(
     }
 }
 
-/// Runs the private native ParentAttach relay over the exact source endpoint
-/// and retained terminal authority. No public launch route calls this yet.
+/// Runs a native ParentAttach relay over the exact source endpoint and retained
+/// terminal authority, including an explicit `-a` from an integrated terminal.
 #[cfg(windows)]
 pub async fn run_attach(
     context: ParentContext,

@@ -212,11 +212,15 @@ pub(super) fn environment(parent_context: Option<&str>) -> Vec<u16> {
     values.extend([
         (OsString::from("TERM"), OsString::from("xterm-256color")),
         (OsString::from("COLORTERM"), OsString::from("truecolor")),
-        (
+    ]);
+    // An empty value requests an external-console fixture with no integrated
+    // terminal marker. Editor-owned terminals always pass None or a context.
+    if parent_context != Some("") {
+        values.push((
             OsString::from(crate::workspace::parent::ENVIRONMENT),
             OsString::from(parent_context.unwrap_or("standalone")),
-        ),
-    ]);
+        ));
+    }
     values.sort_by(|a, b| {
         crate::windows_fs::compare_names(
             &a.0.encode_wide().collect::<Vec<_>>(),
@@ -258,6 +262,13 @@ mod tests {
         assert_eq!(
             environment_value(&environment(None), crate::workspace::parent::ENVIRONMENT),
             ["standalone"]
+        );
+        assert!(
+            environment_value(
+                &environment(Some("")),
+                crate::workspace::parent::ENVIRONMENT
+            )
+            .is_empty()
         );
         assert_eq!(
             environment_value(

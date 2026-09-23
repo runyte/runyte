@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Native persistent host. Foreground and detached lifetimes share one cleanup
-//! owner; the internal interactive wire is owned here while public frontend
-//! attachment and parent-terminal authorization remain gated.
+//! owner; the internal interactive wire serves direct CLI attachment while
+//! in-editor switching and persistent waits remain gated.
 
 mod clients;
 

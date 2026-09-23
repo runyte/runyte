@@ -11,8 +11,9 @@ Status meanings:
 
 The Windows port retains this command inventory. Configured plugins, their
 commands and their lifecycle controls are available on Windows; the managed
-helper-process capability remains unavailable. Interactive persistent-session
-attachment reports its platform limitation through execution and discovery.
+helper-process capability remains unavailable. Direct `-a` attachment is
+available; in-editor persistent-session switching and manager attachment report
+their platform limitation through execution and discovery.
 `:context-access` is available on Windows. Syntax
 commands remain independent of LSP. Integrated Git is available when native
 Git is installed;
