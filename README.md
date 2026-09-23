@@ -135,8 +135,9 @@ runyte -a  # attach to a session or start a new one
 ```
 
 Press `Space Space` to open the session manager in Runyte. On Windows, use
-`runyte -a` for direct attachment; the manager can list, preview, rename and
-stop native sessions, but cannot attach or switch between them.
+`runyte -a` for direct attachment; a persistent editor can visit a selected
+running session through its manager. A standalone editor's manager can list,
+preview, rename and stop native sessions without attaching.
 On Unix, press `Shift Left` and `Shift Right` to quickly switch between sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)

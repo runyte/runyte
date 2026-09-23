@@ -1483,12 +1483,12 @@ does not bundle that runtime.
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
 | Editor wait | `--wait FILE...` opens a standalone editor from an ordinary shell; inside a persistent integrated terminal it waits on the parent session's requested buffers |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
-| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
+| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens a control manager in standalone mode and visits a selected running session in persistent mode |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
 | Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
-| Deferred | Parent navigation, persistent wait from an ordinary shell, workspace switching, manager visits, numbered sessions and directory handoff |
+| Deferred | Parent navigation, persistent wait from an ordinary shell, other in-editor session navigation, numbered sessions and directory handoff |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1538,8 +1538,9 @@ name or path must resolve unambiguously; a live selection retains its exact
 publication, while a stopped or new workspace starts a host before attaching.
 Omitting `WORKSPACE` discovers the current project or initializes the current
 directory as one. A second TUI cannot take over an occupied attachment.
-`:detach` leaves the host and its editor state running. Editor session
-navigation remains unavailable.
+`:detach` leaves the host and its editor state running. The persistent editor
+can visit a selected running session through the session manager; other
+in-editor navigation remains unavailable.
 The configured bare launch also attaches to a discoverable project; without
 one it reports the missing project and creates no workspace. Explicit `-a`
 retains its exact-current-directory initialization behavior.
@@ -1548,19 +1549,24 @@ the launcher's inherited job. If that process policy denies the launch, `-a`
 reports the refusal and leaves no new host running. Attaching to an already
 published host remains available under that policy.
 
-In a standalone Windows editor, `Space Space` and `:session-list` show the
-native catalog. Distinct live publications for one project remain separate
-rows. Tab opens exact-row Rename, Close, and Force close actions for a
-compatible running session, only Force close for an incompatible running
-publication, or Rename for a stopped record; Force close requires a second
-Enter.
-Enter does not attach, and the manager shows no current marker, session number,
-or digit shortcuts. Preview reads only the selected compatible publication.
+On Windows, `Space Space` and `:session-list` show the native catalog. Distinct
+live publications for one project remain separate rows. In a persistent
+editor, Enter visits the selected compatible running publication; Tab also
+offers Open for that row. The visit uses the exact selected publication and
+refuses if it was replaced. In a standalone editor, the manager provides
+controls without attaching. Tab offers exact-row Rename, Close, and Force
+close for a compatible running session, only Force close for an incompatible
+running publication, or Rename for a stopped record; Force close requires a
+second Enter. Stopped and incompatible rows cannot be visited. The manager
+shows no current marker, session number, or digit shortcuts. Preview reads
+only the selected compatible publication.
+
 `:session-stop WORKSPACE` and `:session-rename WORKSPACE NAME` use a fresh
 complete catalog and require an unambiguous selector; `:session-stop` without
 one refuses on Windows. `:session-clean` cleans only verified stopped history
-and applies to the whole catalog. Attachment, destination navigation, and the
-session strip remain unavailable.
+and applies to the whole catalog. Starting a stopped session from the manager,
+destination navigation outside that visit, and the session strip remain
+unavailable.
 
 Language servers also use native `.exe` or `.com` executables, specified by an
 absolute path or discovered through absolute `PATH` entries. To run a script,
@@ -3763,9 +3769,10 @@ local bridge installations separate grants and revocation controls.
 Context services start with normal Runyte workspace startup on Linux, macOS,
 and Windows. On Windows the bridge discovers live workspaces with
 `runyte.exe --context-list --json` and authenticates over private local named
-pipes; it does not open a TCP listener. Direct `-a` attachment is available;
-workspace switching remains unavailable. A foreground or detached Windows host
-can expose its workspace to the bridge while no TUI is attached.
+pipes; it does not open a TCP listener. Direct `-a` attachment and selected
+running-session visits through the persistent manager are available; other
+in-editor session navigation remains unavailable. A foreground or detached
+Windows host can expose its workspace to the bridge while no TUI is attached.
 
 The native **Agent context access** overlay starts on **Reject**. Use `1` for
 terminal reads, `2` for editor context reads, `3` for buffer edits and `4` for

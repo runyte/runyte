@@ -49,6 +49,88 @@ fn manager(rows: Vec<WorkspaceRow>) -> App {
     app
 }
 
+fn persistent_manager(rows: Vec<WorkspaceRow>) -> App {
+    let mut app = manager(rows);
+    app.enable_persistent_session();
+    app.rebuild_workspace_picker();
+    app
+}
+
+#[test]
+fn native_persistent_manager_visits_only_exact_running_selection() {
+    let project = temporary("native-manager-visit");
+    let first = row(&project, b"first", "first");
+    let second = row(&project, b"second", "second");
+    let expected = second.selection();
+    let mut app = persistent_manager(vec![first, second]);
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .title
+            .contains("Enter visit running")
+    );
+    assert_eq!(
+        app.list.as_ref().unwrap().primary_action.as_deref(),
+        Some("visit")
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let request = app.take_workspace_switch().unwrap();
+    assert_eq!(request.target, WorkspaceSwitchTarget::Selected(expected));
+    assert!(request.running_only);
+    assert!(request.visit.is_none());
+    assert!(app.list.is_none());
+
+    let mut app = persistent_manager(vec![row(&project, b"first", "first")]);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.session_action_menu.as_ref().unwrap().selected_action(),
+        Some(SessionAction::Open)
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_some());
+}
+
+#[test]
+fn native_manager_visit_refuses_stale_stopped_and_incompatible_rows() {
+    let project = temporary("native-manager-visit-refusal");
+    let old = row(&project, b"old", "old");
+    let mut app = persistent_manager(vec![old]);
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![row(&project, b"replacement", "replacement")]),
+    });
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.status.contains("selected session changed"));
+    let replacement = app.workspace_rows[0].selection();
+    app.visit_selected_native_session(replacement);
+    assert!(app.take_workspace_switch().is_none());
+
+    let mut stopped = row(&project, b"stopped", "stopped");
+    stopped.running = false;
+    stopped.publication_key = None;
+    let mut app = persistent_manager(vec![stopped]);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.status.contains("stopped sessions"));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(
+        !app.session_action_menu
+            .as_ref()
+            .unwrap()
+            .actions
+            .contains(&SessionAction::Open)
+    );
+
+    let mut incompatible = row(&project, b"incompatible", "incompatible");
+    incompatible.incompatible_protocol = Some(999);
+    let mut app = persistent_manager(vec![incompatible]);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_none());
+    assert!(app.status.contains("unsupported protocol"));
+}
+
 #[test]
 fn native_manager_keeps_two_publications_and_captures_exact_menu_subject() {
     let project = temporary("native-manager-shared-project");

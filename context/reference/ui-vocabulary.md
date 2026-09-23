@@ -442,15 +442,17 @@ publications for one project remain separate rows even when their visible path
 and workspace ID match. A pending menu confirmation or prompt for a replaced
 publication refuses and asks the user to choose again; its path or name cannot
 redirect the action. Unix and stopped rows retain project identity. The Windows
-manager presents control-only rows from its owned native service.
-If refresh loses the selected publication key, the manager requires explicit
-row movement before another action. Native Enter does not attach; its menu
-offers Rename, Close, and confirmed Force close for compatible running rows,
-only Force close for incompatible running rows, or Rename for stopped rows.
+manager reads rows from its owned native service. In a persistent editor, Enter
+or Tab > Open visits a selected compatible running publication through its exact
+identity. A standalone editor retains a control-only manager. If refresh loses
+the selected publication key, the manager requires explicit row movement before
+another action. The menu also offers Rename, Close, and confirmed Force close
+for compatible running rows, only Force close for incompatible running rows, or
+Rename for stopped rows.
 Global `:session-clean` is distinct from selected-row
-actions. Current markers, digit shortcuts, destinations, the session strip,
-and attachment through the manager remain unavailable. Direct `-a` attachment
-uses the host's exact publication.
+actions. Current markers, digit shortcuts, other destinations, the session
+strip, and starting stopped rows through the manager remain unavailable. Direct
+`-a` attachment uses the host's exact publication.
 
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines

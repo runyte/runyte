@@ -2832,11 +2832,16 @@ impl App {
             if entry.running && entry.incompatible_protocol.is_some() {
                 vec![SessionAction::ForceClose]
             } else if entry.running {
-                vec![
+                let mut actions = Vec::new();
+                if self.persistent_session {
+                    actions.push(SessionAction::Open);
+                }
+                actions.extend([
                     SessionAction::Rename,
                     SessionAction::Close,
                     SessionAction::ForceClose,
-                ]
+                ]);
+                actions
             } else {
                 vec![SessionAction::Rename]
             }
@@ -2918,8 +2923,7 @@ impl App {
                     (_, SessionAction::Open) => {
                         #[cfg(windows)]
                         {
-                            self.action_failed("attaching sessions is unavailable on Windows");
-                            return Ok(());
+                            self.visit_selected_native_session(selection);
                         }
                         #[cfg(unix)]
                         {
@@ -3880,10 +3884,12 @@ impl App {
             return Ok(());
         }
         #[cfg(windows)]
-        if matches!(chosen, Some(ListAction::Workspace(_))) {
-            self.action_failed(
-                "use Tab for session controls; attachment is unavailable on Windows",
-            );
+        if let Some(ListAction::Workspace(index)) = &chosen {
+            let Some(selection) = self.workspace_rows.get(*index).map(|row| row.selection()) else {
+                self.action_failed("selected session changed; choose it again");
+                return Ok(());
+            };
+            self.visit_selected_native_session(selection);
             return Ok(());
         }
         #[cfg(unix)]

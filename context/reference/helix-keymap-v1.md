@@ -11,9 +11,9 @@ Status meanings:
 
 The Windows port retains this command inventory. Configured plugins, their
 commands and their lifecycle controls are available on Windows; the managed
-helper-process capability remains unavailable. Direct `-a` attachment is
-available; in-editor persistent-session switching and manager attachment report
-their platform limitation through execution and discovery.
+helper-process capability remains unavailable. Direct `-a` attachment and
+selected running-session visits from the persistent manager are available;
+other in-editor session navigation retains its platform limitation.
 `:context-access` is available on Windows. Syntax
 commands remain independent of LSP. Integrated Git is available when native
 Git is installed;
@@ -439,17 +439,19 @@ projection; keyboard overlays retain input ownership while open.
 | Completion `Ctrl-n`/`Ctrl-p`, arrows, Tab, Escape | navigate/accept/dismiss | direct popup action | Implemented · Deviation | Overlay handler, like the file picker and text prompts. Only Tab accepts, for every source: a completion popup can open on its own (Language after `.`/`:`, Path after `/`, Word for any three-character prefix), so Enter is kept a plain newline everywhere rather than risk swallowing one. Escape dismisses an automatic Word popup and returns to Normal mode in the same press; Language and Path popups retain dismiss-only behavior outside the explorer. The popup titles itself "LSP Complete" for a language-server response and "Complete" otherwise. |
 
 The Unix manager behavior in the table above requires persistent mode. On
-Windows, `Space Space` and `:session-list` open the standalone editor's native
-control manager when its owned catalog service is available. Rows for
-different live publications of one project remain distinct. Tab offers
-Rename, Close, and confirmed Force close for a compatible running row, only
-Force close for an incompatible running row, or Rename for a stopped row.
-Enter cannot attach; neither numbers, current markers,
-destination visits, nor the session strip are available. `:session-stop`
-requires an explicit unambiguous selector on Windows, and `:session-clean`
-cleans verified stopped history globally. The control commands use the
-`SessionControls` capability; attachment and switching retain the separate
-`PersistentSession` gate.
+Windows, `Space Space` and `:session-list` open the native catalog manager
+when its owned service is available. Rows for different live publications of
+one project remain distinct. In a persistent editor, Enter or Tab > Open
+visits the selected compatible running publication through its exact identity;
+a replaced row is refused. A standalone editor keeps a control-only manager.
+Tab offers Rename, Close, and confirmed Force close for a compatible running
+row, only Force close for an incompatible running row, or Rename for a stopped
+row. Starting stopped rows, numbers, current markers, other destination
+navigation, and the session strip remain unavailable. `:session-stop` requires
+an explicit unambiguous selector on Windows, and `:session-clean` cleans
+verified stopped history globally. The control commands use the
+`SessionControls` capability; visiting a selected live session requires
+`PersistentSession`.
 
 The session manager is reached by `Space Space` and by `:session-list`
 (`:sl`); see its row above. Runyte also adds `Space 1` through `Space 9` to

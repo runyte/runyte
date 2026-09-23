@@ -889,6 +889,42 @@ impl App {
         true
     }
 
+    /// Visits only one compatible live publication chosen in the native
+    /// session manager. The selected key stays frozen for host-side proof;
+    /// it is never re-resolved through a path or display name.
+    #[cfg(windows)]
+    pub(super) fn visit_selected_native_session(&mut self, selection: WorkspaceSelection) {
+        if self.session_manager_selection_lost {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
+        if !self.persistent_session {
+            self.action_failed("visiting sessions needs a persistent editor");
+            return;
+        }
+        let Ok(Some(index)) = self.workspace_row_index(&selection) else {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        };
+        let row = &self.workspace_rows[index];
+        if !row.running || selection.publication_key().is_none() {
+            self.action_failed("stopped sessions cannot be visited here");
+            return;
+        }
+        if row.incompatible_protocol.is_some() {
+            self.action_failed("this session uses an unsupported protocol");
+            return;
+        }
+        self.workspace_switch = Some(WorkspaceSwitchRequest {
+            target: WorkspaceSwitchTarget::Selected(selection),
+            working_directory: self.working_directory.clone(),
+            running_only: true,
+            visit: None,
+        });
+        self.list = None;
+        self.session_action_menu = None;
+    }
+
     #[cfg(unix)]
     pub(super) fn request_workspace_refresh(&mut self) {
         self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
@@ -1051,6 +1087,8 @@ impl App {
             .collect();
         let title = if cfg!(unix) {
             "Sessions · 1-9 attach · Tab actions"
+        } else if self.persistent_session {
+            "Sessions · Enter visit running · Tab actions"
         } else {
             "Sessions · Tab actions"
         };
@@ -1066,6 +1104,8 @@ impl App {
             .with_preview("Session");
         if cfg!(unix) {
             picker.primary_action = Some("attach".to_owned());
+        } else if self.persistent_session {
+            picker.primary_action = Some("visit".to_owned());
         } else {
             picker.primary_action = None;
         }

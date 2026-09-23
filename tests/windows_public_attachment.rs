@@ -21,6 +21,7 @@ const FIXTURE: &str = "public_persistent_attachment_fixture";
 const WAIT_FIXTURE: &str = "public_parent_wait_fixture";
 const MARKER_HELPER: &str = "public_parent_wait_marker_helper";
 const WAIT_HELPER: &str = "public_parent_wait_launch_helper";
+const VISIT_FIXTURE: &str = "public_manager_visit_fixture";
 
 fn running_in_job() -> bool {
     let mut member = 0;
@@ -150,6 +151,75 @@ fn integrated_terminal_wait_uses_exact_parent_and_completes_each_file() {
     );
 }
 
+#[test]
+fn native_manager_visits_selected_live_publication_and_refuses_stale_row() {
+    let root = TestRuntimeRoot::new("public-native-manager-visit").unwrap();
+    let source = root.create_private_dir("visit-source").unwrap();
+    let destination = root.create_private_dir("visit-destination").unwrap();
+    let config_dir = root.create_private_dir("config").unwrap();
+    let runtime = root.create_private_dir("runtime").unwrap();
+    let cache = root.create_private_dir("cache").unwrap();
+    let context = root.create_private_dir("context").unwrap();
+    let config = config_dir.join("config.yaml");
+    fs::write(
+        &config,
+        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n",
+    )
+    .unwrap();
+    fs::write(source.join("source.txt"), "SOURCE_VISIT_MARKER\n").unwrap();
+    fs::write(
+        destination.join("destination.txt"),
+        "DESTINATION_VISIT_MARKER\n",
+    )
+    .unwrap();
+    let _source_cleanup = HostCleanup {
+        root: root.path().to_path_buf(),
+        project: source,
+        config: config.clone(),
+    };
+    let _destination_cleanup = HostCleanup {
+        root: root.path().to_path_buf(),
+        project: destination,
+        config,
+    };
+    let output = fs::File::create(root.join("manager-visit-output")).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", VISIT_FIXTURE, "--ignored", "--nocapture"])
+        .env("RUNYTE_PUBLIC_ATTACH_ROOT", root.path())
+        .env("XDG_CONFIG_HOME", config_dir)
+        .env("XDG_CACHE_HOME", cache)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .env("RUNYTE_CONTEXT_HOME", context)
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env_remove("RUNYTE_PARENT_CONTEXT")
+        .env("PATH", "")
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!(
+                "manager visit timed out: {}",
+                fs::read_to_string(root.join("manager-visit-output")).unwrap()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        status.success(),
+        "{}",
+        fs::read_to_string(root.join("manager-visit-output")).unwrap()
+    );
+}
+
 struct Console {
     child: Pty,
     events: mpsc::Receiver<PtyEvent>,
@@ -271,6 +341,21 @@ impl Console {
                     self.screen_text(),
                     self.output_tail()
                 );
+            }
+        }
+    }
+    fn until_screen_after(&mut self, stage: &str, matches: impl Fn(&str) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(code) = self.event(deadline, stage) {
+                panic!(
+                    "editor exited before {stage} with code {code}; screen: {}; output: {}",
+                    self.screen_text(),
+                    self.output_tail()
+                );
+            }
+            if matches(&self.screen_text()) {
+                return;
             }
         }
     }
@@ -655,4 +740,131 @@ fn public_parent_wait_launch_helper() {
         "{}",
         fs::read_to_string(root.join("wait-client-error")).unwrap()
     );
+}
+
+fn start_visit_host(root: &Path, project: &Path, config: &Path, label: &str) -> ForegroundHost {
+    let output = fs::File::create(root.join(format!("{label}-host-output"))).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
+        .args(["--serve", "--project-root"])
+        .arg(project)
+        .arg("--config")
+        .arg(config)
+        .current_dir(project)
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output);
+    fixture_environment(&mut command, root);
+    let mut host = ForegroundHost(command.spawn().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+        command
+            .args(["--session-list", "--config"])
+            .arg(config)
+            .current_dir(project);
+        fixture_environment(&mut command, root);
+        let listing = command.output().unwrap();
+        if listing.status.success()
+            && String::from_utf8_lossy(&listing.stdout).contains("running")
+            && String::from_utf8_lossy(&listing.stdout).contains(&*project.to_string_lossy())
+        {
+            return host;
+        }
+        assert!(
+            host.0.try_wait().unwrap().is_none() && Instant::now() < deadline,
+            "{label} host failed: {}; listing: {}",
+            fs::read_to_string(root.join(format!("{label}-host-output"))).unwrap(),
+            String::from_utf8_lossy(&listing.stderr)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn stop_visit_host(root: &Path, project: &Path, config: &Path, host: &mut ForegroundHost) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
+    command
+        .args(["--session-stop", "--force"])
+        .arg(project)
+        .arg("--config")
+        .arg(config)
+        .current_dir(project);
+    fixture_environment(&mut command, root);
+    let result = command.output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while host.0.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "stopped visit host did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+#[ignore = "reexecuted with fixture-owned hosts and a real native frontend"]
+fn public_manager_visit_fixture() {
+    let root = PathBuf::from(std::env::var_os("RUNYTE_PUBLIC_ATTACH_ROOT").unwrap());
+    let source = root.join("visit-source");
+    let destination = root.join("visit-destination");
+    let config = root.join("config/config.yaml");
+    let mut source_host = start_visit_host(&root, &source, &config, "source");
+    let mut destination_host = start_visit_host(&root, &destination, &config, "destination");
+    let args = vec!["-a".into(), "--config".into(), config.display().to_string()];
+
+    let mut destination_editor = Console::spawn(&args, &destination);
+    destination_editor.until("NOR");
+    destination_editor.send(":open destination.txt\r");
+    destination_editor.until("DESTINATION_VISIT_MARKER");
+    destination_editor.send(":detach\r");
+    destination_editor.exit(0);
+
+    let mut source_editor = Console::spawn(&args, &source);
+    source_editor.until("NOR");
+    source_editor.send(":open source.txt\r");
+    source_editor.until("SOURCE_VISIT_MARKER");
+    source_editor.send("i");
+    source_editor.until("INS");
+    source_editor.send("\x1b[200~dirty \x1b[201~");
+    source_editor.until("dirty SOURCE_VISIT_MARKER");
+    source_editor.send("\x1b");
+    source_editor.until("NOR");
+    source_editor.send(":session-list\r");
+    source_editor.until("Enter visit running");
+    source_editor.send("visit-destination\r");
+    source_editor.until("DESTINATION_VISIT_MARKER");
+    assert!(source_host.0.try_wait().unwrap().is_none());
+    assert!(destination_host.0.try_wait().unwrap().is_none());
+    source_editor.send(":detach\r");
+    source_editor.exit(0);
+
+    let mut source_editor = Console::spawn(&args, &source);
+    source_editor.until("dirty SOURCE_VISIT_MARKER");
+    source_editor.send(":session-list\r");
+    source_editor.until("Enter visit running");
+    source_editor.send("visit-destination");
+    stop_visit_host(&root, &destination, &config, &mut destination_host);
+    let mut replacement = start_visit_host(&root, &destination, &config, "replacement");
+    // A catalog poll may already have marked the row lost. In that case
+    // Enter refuses locally and leaves the manager open; Escape dismisses it.
+    // If Enter reached the host, its exact-publication refusal already closes
+    // the manager and Escape is harmless in the source editor's Normal mode.
+    source_editor.send("\r\x1b");
+    source_editor.until_screen_after("manager closes after stale visit", |screen| {
+        screen.contains("dirty SOURCE_VISIT_MARKER")
+            && screen.contains("NOR")
+            && !screen.contains("Enter visit running")
+    });
+    // The interaction line can be replaced by a catalog refresh. The host
+    // retains the exact-publication rejection in the notification buffer.
+    source_editor.send(":notifications\r");
+    source_editor.until("selected session changed");
+    assert!(source_host.0.try_wait().unwrap().is_none());
+    assert!(replacement.0.try_wait().unwrap().is_none());
+    source_editor.send(":open source.txt\r");
+    source_editor.until("dirty SOURCE_VISIT_MARKER");
+    source_editor.send(":detach\r");
+    source_editor.exit(0);
 }
