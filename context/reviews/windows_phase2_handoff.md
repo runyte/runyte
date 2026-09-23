@@ -6,7 +6,7 @@ in `140347e`, private native parent waits are accepted in `fa18a52`, and private
 Windows plugin handoffs are accepted in `8148437`. Native Windows context
 identity/grant storage and repeat-safe context approval are accepted in
 `61acb18`, and private Windows context transport and discovery are accepted in
-`439f4da`. Private
+`439f4da`. Private Windows context host grants are accepted in `bbdb12a`. Private
 exact native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
@@ -22,8 +22,8 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
-native worker, durable-state, private handoff, context-grant storage and private
-context transport/discovery foundations, with host grants and the bridge still
+native worker, durable-state, private handoff, context-grant storage, private
+context transport/discovery foundations and host grants, with the bridge still
 pending.
 Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
@@ -683,16 +683,54 @@ report 2,788 lib tests passed with 24 ignored and 66 bin tests passed with 29
 ignored; every integration target is green, including seven native plugin-worker
 and six native LSP transport cases. Native CI acceptance remains pending.
 
-## Next packages: context access and the Windows bridge
+## Accepted package: 5e private Windows context host grants
+
+`bbdb12a` privately enables the shared context host semantics, reads and frame
+capture on Windows while normal context startup, `:context-access` and public
+`--context-list` dispatch remain gated. Startup captures one `StorageLocation`
+and environment fingerprint. Remembered grants are staged atomically through a
+read-only existing store before that location is reopened for writes. Native
+registration binds the current process PID and creation time, and the transport
+owns the exact registration publication through retirement.
+
+The host retains at most one active or retiring server. Its 33-slot event
+channel permanently reserves one lifecycle permit, preserving the existing 32
+ordinary event slots. Last revoke immediately cancels semantic authority and
+starts joined retirement. The completion-driven `Event::Retired` path performs
+at most one deferred re-enable after successful retirement. A retirement or
+bind failure latches the listener closed until a fresh physical Grant decision
+explicitly retries it. Frame admission rechecks active authority after UI grant
+or revoke synchronization, and cancellation-safe context shutdown is aggregated
+before plugin teardown in standalone and native-host cleanup.
+
+Real acceptance covers native Reject, session grants, remembered grants and
+revoke; repeat, paste, modified and stale physical approval; exact ConPTY text
+insertion without Enter; real named pipes and a compiled child client;
+malformed registration and scope denial; two-host and connection isolation;
+Unicode revision edits and undo; and shutdown with queued transport work.
+Independent Astra review has no findings.
+
+Final validation is green: `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast` all exit zero. Focused context
+validation passes 14 cases with two ignored. Full summaries
+report 2,821 core tests passed with 26 ignored and 66 bin tests passed with 29
+ignored; every integration target is green, including seven plugin-worker and
+six native LSP cases. Native CI acceptance remains pending.
+
+## Next package: Windows bridge and external client conformance
 
 Context identity/grant storage and repeat-safe physical approval are accepted in
 `61acb18`. Authenticated private context transport and metadata-only discovery
-are accepted in `439f4da`. Continue host grants with real native clients, then
-the Windows Python MCP bridge.
+are accepted in `439f4da`, and private host grants with real native clients are
+accepted in `bbdb12a`. Continue with the Windows Python MCP bridge and native
+external client conformance.
 Context identity and grant storage uses its separate LocalAppData policy and
-must not inherit the plugin state anchor. Public persistent attachment and wait
-routes, manager visits, numbered sessions, restart, directory handoff and
-combined Git removal remain closed until their own acceptance gates pass.
+must not inherit the plugin state anchor. Normal Windows context startup,
+`:context-access` and `--context-list` remain unavailable. Public persistent
+attachment and wait routes, manager visits, numbered sessions, restart,
+directory handoff and combined Git removal remain closed until their own
+acceptance gates pass.
 
 ## Phase 2.5 implementation order
 
@@ -778,13 +816,14 @@ private storage, native path bytes remain lossless, and fail-fast locking keeps
 the editor thread bounded. Repeated Enter cannot approve context grants or
 terminal proposals; repeated overlay navigation remains live. Private Windows
 context registration, exact publication ownership, named-pipe transport and
-metadata-only discovery are accepted in `439f4da`. Context host grants and
-startup remain gated for the next package. Public plugin startup remains gated.
+metadata-only discovery are accepted in `439f4da`. Private shared context host
+grants and real native clients are accepted in `bbdb12a`; normal Windows context
+startup, `:context-access` and `--context-list` remain gated. Public plugin
+startup remains gated.
 
-Implement context host grants with real native clients, then the Windows Python
-MCP bridge. Keep context identity and grants on their separate LocalAppData
-policy. Validate immutable and current Node/plugin conformance plus real Windows
-context clients.
+Implement the Windows Python MCP bridge and native external client conformance.
+Keep context identity and grants on their separate LocalAppData policy. Validate
+immutable and current Node/plugin conformance alongside the native clients.
 
 Independent Astra review closed repeat-approval, registration-publication scope
 and durable-anchor retry findings, then reported no remaining findings. Final
