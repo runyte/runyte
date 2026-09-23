@@ -92,7 +92,7 @@ fn terminal_mode_fixture() {
     .unwrap();
     let mut screen = Emulator::new(120, 30);
     let mut output = Vec::new();
-    let mut until = |needle: &str| {
+    let mut until = |needle: &str, absent: Option<&str>| {
         let deadline = Instant::now() + Duration::from_secs(15);
         // A previous frame can still contain the requested mode. Require new
         // PTY output after each input before accepting the next transition.
@@ -108,7 +108,10 @@ fn terminal_mode_fixture() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            if consumed_output && current.contains(needle) {
+            if consumed_output
+                && current.contains(needle)
+                && absent.is_none_or(|excluded| !current.contains(excluded))
+            {
                 return;
             }
             match events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -124,15 +127,17 @@ fn terminal_mode_fixture() {
             }
         }
     };
-    until("NOR");
+    until("NOR", None);
     assert!(editor.write(b":terminal cmd.exe /d /q\r".to_vec()));
-    until("INS");
+    until("INS", None);
     assert!(editor.write(vec![0x1c]));
-    until("NOR");
+    until("NOR", Some("[review]"));
+    assert!(editor.write(vec![0x1c]));
+    until("[review]", None);
     assert!(editor.write(b"i".to_vec()));
-    until("INS");
+    until("INS", Some("[review]"));
     assert!(editor.write(b"exit\r".to_vec()));
-    until("NOR");
+    until("NOR", None);
     assert!(editor.write(b":quit\r".to_vec()));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
