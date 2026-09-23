@@ -97,6 +97,7 @@ fn powershell_wrapper_keeps_literal_paths_and_returns_to_its_caller() {
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
             .env("XDG_CONFIG_HOME", root_path.join("config"))
             .env("XDG_CACHE_HOME", root_path.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root_path.join("context"))
             .env("RUNYTE_HANDOFF_ROOT", &root_path)
             .env(
                 "RUNYTE_HANDOFF_WRAPPER",
@@ -281,6 +282,10 @@ fn native_powershell_handoff_fixture() {
         std::env::var_os("XDG_CACHE_HOME").unwrap(),
         root.join("cache")
     );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
+    );
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "lsp:\n  enable: false\n").unwrap();
@@ -293,6 +298,7 @@ fn native_powershell_handoff_fixture() {
             .args(script_arguments(mode))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root.join("context"))
             .env("RUNYTE_HANDOFF_CONFIG", &config)
             .env("RUNYTE_HANDOFF_TARGET", &target)
             .stdin(Stdio::null())
@@ -347,6 +353,7 @@ fn native_powershell_handoff_fixture() {
             ])
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root.join("context"))
             .env("RUNYTE_HANDOFF_CONFIG", &config)
             .env("RUNYTE_HANDOFF_TARGET", &target)
             .env("RUNYTE_HANDOFF_OPERATION", operation)

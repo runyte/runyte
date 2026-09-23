@@ -20,6 +20,7 @@ fn missing_git_disables_integration_at_host_startup() {
         .env("PATH", root.path())
         .env("PATHEXT", ".EXE")
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_GIT_TEST_ROOT", root.path())
         .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
@@ -53,6 +54,10 @@ fn missing_git_fixture() {
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     assert!(GitCliProvider::from_environment().is_none());
     let runtime = tokio::runtime::Builder::new_current_thread()

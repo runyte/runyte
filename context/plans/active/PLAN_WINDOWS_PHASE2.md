@@ -2,7 +2,8 @@
 
 For the current working-tree state, exact next package and reviewed remaining
 designs, start with the [continuation handoff](../../reviews/windows_phase2_handoff.md).
-Phase 2.1–2.4 are complete; 2.5 is in progress and 2.6 remains pending.
+Phase 2.1–2.4 are complete; 2.5 is in progress. In 2.6, public Windows
+context access is implemented while public plugin startup remains pending.
 The chronological entries below retain earlier checkpoint evidence.
 
 ## Checkpoint and next work package
@@ -43,6 +44,37 @@ The Linux allocation race and Windows process inheritance failure have separate
 regressions and fixes. The remaining macOS allocation window is recorded in
 [`macos_pty_descriptor_inheritance.md`](../../issues/macos_pty_descriptor_inheritance.md).
 
+### Public Windows context boundary
+
+Normal Windows workspace startup now owns the context service.
+`:context-access [identity]` opens the same native scope review used on Unix,
+and `--context-list --json` provides bounded local discovery. Grant, scope
+change, terminal proposal approval, and revocation remain native decisions:
+only physical frontend input can approve them, and revocation disconnects the
+identity and removes its remembered grant.
+
+The Windows store defaults to `runyte\context` below the account's LocalAppData
+known folder, resolved through the operating system rather than an inherited
+environment alias. An absolute `RUNYTE_CONTEXT_HOME` overrides it for Runyte
+and the Python bridge. Its immediate parent must already exist; private Windows
+storage stays on local NTFS with the existing owner, ACL, reparse, hardlink,
+and exact-file identity checks.
+
+The separately versioned Python bridge uses `--context-list --json` for
+discovery and authenticates the selected host over its private named pipe.
+Windows virtual-environment installations use `.venv\Scripts`; pipe addresses
+are ephemeral discovery results rather than client configuration. The protocol,
+resource ownership, bounded I/O, connection eviction, and uncertain-mutation
+rules remain shared with Unix.
+
+This context opening does not open the other Phase-2 gates. Interactive Windows
+persistent attachment and switching, session restart, and public plugin startup
+remain unavailable. Foreground and detached native hosts may expose context
+without allowing another TUI to attach.
+
+Working-tree acceptance and the source checkpoint hash are still pending. The
+continuation handoff remains unchanged until those gates complete.
+
 ## Phase-1 delivery history
 
 Phase 1 was committed and pushed to `feat/windows-support` as `3203878`
@@ -76,9 +108,10 @@ It is pushed as `fc9c324`; remote run `35542444854` passes all jobs.
    an explicit native shell contract.
 5. **Persistent sessions.** Authenticated local transport, discovery, private
    runtime ownership, attachment and shutdown, preserving protocol bounds.
-6. **Plugins and context access.** Native worker/process lifecycle, state,
-   handoffs and context transport, preserving native approval ownership and
-   validating the retained plugin contracts.
+6. **Plugins and context access.** Native context transport, discovery, storage,
+   bridge integration, and approval ownership are public. Native plugin
+   worker/process lifecycle, state, and handoffs continue toward public plugin
+   startup while the retained plugin contracts remain unchanged.
 
 Each sub-phase is divided into reviewed work packages. Implement a package,
 request an independent subagent review, incorporate actionable findings, then

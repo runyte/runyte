@@ -22,6 +22,7 @@ fn native_logging_startup_and_readonly_page() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "logging_fixture", "--ignored", "--nocapture"])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_LOG_FIXTURE", root.path())
         .stdin(Stdio::null())
         .stdout(output.try_clone().unwrap())
@@ -136,6 +137,10 @@ fn logging_fixture() {
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     fs::create_dir(root.join("config")).unwrap();
     let config = root.join("config/config.yaml");

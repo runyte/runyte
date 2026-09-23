@@ -7,8 +7,9 @@ It also exposes revision-checked buffer edits, atomic appends and proposals for 
 when the corresponding native grants exist. Runyte owns every authorization
 decision and terminal approval.
 
-Requires Python 3.11 or later, Linux or macOS, and a Runyte host supporting
-`runyte.context.v1`. There are no runtime dependencies or account connections.
+Requires Python 3.11 or later and a Runyte host supporting
+`runyte.context.v1`. Linux, macOS, and x86-64 Windows 11 are supported. There
+are no runtime dependencies or account connections.
 The Rust editor has no dependency on this package or an MCP runtime. Its
 package version and release lifecycle are independent of the editor.
 
@@ -40,17 +41,39 @@ Alternatively, run `python3 -m runyte_context` directly from this directory
 without installing anything. Use an absolute executable path in MCP client
 configuration so it works from every workspace.
 
+On Windows, create the virtual environment and install the bridge from
+PowerShell with:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+```
+
+The executable is `.venv\Scripts\runyte-context.exe`. You can also run
+`.\.venv\Scripts\python.exe -m runyte_context` from this directory. Use the
+absolute path to the executable or Python interpreter in MCP client
+configuration.
+
 In each Runyte workspace you want to expose, open `:context-access codex` or
-`:context-access claude`, review the requested scopes, and approve natively.
+`:context-access claude`, review the requested scopes, and approve in Runyte.
+The confirmation requires physical frontend input. An agent or bridge request
+cannot approve itself. Reopen `:context-access` and press `x` to revoke an
+identity immediately; revocation disconnects its readers and removes any
+remembered grant.
 Use a separate identity name for each agent when their grants should differ.
 The bridge only reads the resulting private credential file; it never creates
 credentials or grants. Credentials are not command-line arguments and must not
 be copied into client configuration.
 
 The default private store is the account home’s `.cache/runyte/context` on
-Linux or `Library/Caches/runyte/context` on macOS. An absolute
-`RUNYTE_CONTEXT_HOME` overrides it for both Runyte and the bridge. When using
-isolated environments, configure the same value in each participating process.
+Linux, `Library/Caches/runyte/context` on macOS, and `runyte\context` below the
+account's LocalAppData known folder on Windows. Windows resolves that folder
+through the operating system rather than trusting `%LOCALAPPDATA%`. An absolute
+`RUNYTE_CONTEXT_HOME` overrides the default for both Runyte and the bridge. On
+Windows its immediate parent must already exist and the store must be on local
+NTFS; Runyte protects it with an owner-only ACL and refuses reparse or hardlink
+traversal. When using isolated environments, configure the same value in each
+participating process.
 Ordinary discovery respects Runyte’s environment boundary;
 `list_workspaces(include_hidden=true)` is an explicit opt-in to broader
 inventory discovery, with independent authentication at each host.
@@ -97,6 +120,12 @@ Other MCP stdio clients can use this server entry:
 `--timeout 2` sets the per-host deadline in seconds, between 0.1 and 10.
 Each client launches its own bridge process. Installation and configuration
 are local; the examples do not publish a package or contact an agent account.
+
+On Windows, pass the absolute path to `runyte.exe` when it is not on `PATH`,
+for example `--runyte C:\Tools\Runyte\runyte.exe`. Discovery invokes
+`runyte.exe --context-list --json`; the bridge then authenticates each selected
+workspace over its private local named pipe. Pipe addresses are discovered,
+not copied into MCP configuration, and no TCP listener is opened.
 
 ## Use
 
@@ -205,12 +234,13 @@ Run the independent, network-free suite from this directory:
 python3 -m unittest discover -s tests -v
 ```
 
-Fixtures run two real MCP stdio clients against two independent Unix hosts,
-including a detached host, without invoking agent accounts. They cover explicit
+Fixtures run real MCP stdio clients against independent local hosts, including
+a detached host, without invoking agent accounts. They cover explicit
 routing, connection ownership, grant revocation, immutable paging, multiline
 buffer edits, pending proposals, control rejection, lost acknowledgments,
 bounded discovery, private storage and connection eviction. Native physical
-approval and real PTY delivery are covered by Runyte’s Rust tests.
+approval and real PTY delivery are covered by Runyte’s Rust tests. Windows
+acceptance uses native named pipes; Unix acceptance uses local sockets.
 
 To include the real editor integration test, first build Runyte and supply its
 absolute binary path (from this directory):

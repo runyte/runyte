@@ -785,7 +785,7 @@ async fn run_loop(
             }
             event = services.context_events.recv(), if !ended.contains("context") => {
                 if let Some(event) = event { host.handle_context_event(event); changed = true; }
-                else { ended.insert("context"); } // Unavailable on Windows; closed intentionally.
+                else { ended.insert("context"); }
             }
             _ = context_timeout(context_delay) => { host.sync_context(); changed = host.plugin_presentation_pending(); }
             _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }

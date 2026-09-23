@@ -66,6 +66,7 @@ fn real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup() {
             .env("RUNYTE_NATIVE_LSP_SERVER", analyzer)
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root.join("context"))
             .env("CARGO_HOME", root.join("cargo-home"))
             .env("CARGO_TARGET_DIR", root.join("cargo-target"))
             .env("CARGO_NET_OFFLINE", "true")
@@ -402,6 +403,10 @@ fn native_lsp_fixture() {
     assert_eq!(
         std::env::var_os("XDG_CACHE_HOME").unwrap(),
         root.join("cache")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     fs::create_dir(root.join("config")).unwrap();
     let project = root.join("project café");

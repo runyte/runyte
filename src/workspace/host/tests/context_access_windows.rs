@@ -97,7 +97,7 @@ fn compiled_context_terminal_child() {
 }
 
 #[test]
-fn normal_windows_host_keeps_context_access_inert_until_private_start() {
+fn unstarted_windows_host_keeps_context_access_inert_until_service_start() {
     let root = TestRuntimeRoot::new("context-host-gated").unwrap();
     let mut host = host(root.path());
     host.app.context_ui.requested_identity = Some("agent".into());

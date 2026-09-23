@@ -57,6 +57,7 @@ fn private_environment(command: &mut Command, root: &TestRuntimeRoot) {
     command
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
         .env_remove("XDG_RUNTIME_DIR")
         .env_remove("RUNYTE_INTERNAL_WINDOWS_LAYOUT");

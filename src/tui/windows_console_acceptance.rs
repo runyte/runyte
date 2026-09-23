@@ -52,6 +52,7 @@ fn run_isolated_console_event(mode: &str) {
         .env(NATIVE_EVENT_MODE, mode)
         .env(NATIVE_EVENT_ROOT, root.path())
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .creation_flags(CREATE_NEW_CONSOLE)
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
@@ -192,6 +193,7 @@ fn console_guard_runs_in_conpty() {
             "--nocapture",
         ])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_CONSOLE_TEST_ROOT", root.path())
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
@@ -224,6 +226,10 @@ fn console_fixture() {
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     let (sender, events) = mpsc::channel();
     let _child = Pty::spawn(
@@ -269,6 +275,7 @@ fn console_control_key_transport() {
             "--nocapture",
         ])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_CONSOLE_TEST_ROOT", root.path())
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
@@ -301,6 +308,10 @@ fn transport_parent() {
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     let (sender, events) = mpsc::channel();
     let child = Pty::spawn(

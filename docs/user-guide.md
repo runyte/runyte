@@ -1470,7 +1470,8 @@ does not bundle that runtime.
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
 | Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
-| Deferred | Interactive persistent attachment and switching, session restart, plugins and context bridge |
+| Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
+| Deferred | Interactive persistent attachment and switching, session restart, and plugins |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1479,7 +1480,8 @@ cannot be promised on console close. These console events are separate from
 keys delivered to an integrated ConPTY terminal session.
 
 Deferred commands remain discoverable and report why they are unavailable.
-Existing configuration cannot enable deferred services. Use `:notifications`
+Existing configuration cannot enable persistent attachment, restart, or plugins.
+Use `:notifications`
 and `:service-health` for diagnostics. Git integration is enabled when a native
 `git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
 Git is optional: if it is absent, Git commands are disabled with a clear reason,
@@ -3591,6 +3593,8 @@ are enabled.
                         (alias: document-outline)
 :config                 open the settings menu (alias: settings)
 :config-reload          re-read the loaded configuration file into this session
+:context-access [identity]
+                        review, grant, inspect, or revoke agent context access
 :terminal [command]     run a program in this pane, or $SHELL (aliases: t, term)
 :terminal-file-directory [command]
                         run from the active file's parent
@@ -3712,6 +3716,14 @@ bridge's instructions, then run `:context-access` inside each target workspace.
 An optional identity name, such as `:context-access codex`, gives separate
 local bridge installations separate grants and revocation controls.
 
+Context services start with normal Runyte workspace startup on Linux, macOS,
+and Windows. On Windows the bridge discovers live workspaces with
+`runyte.exe --context-list --json` and authenticates over private local named
+pipes; it does not open a TCP listener. This availability does not enable the
+separate Windows plugin system or interactive persistent attachment and
+switching. A foreground or detached Windows host can expose its workspace to
+the bridge even though attaching another Windows TUI remains unavailable.
+
 The native **Agent context access** overlay starts on **Reject**. Use `1` for
 terminal reads, `2` for editor context reads, `3` for buffer edits and `4` for
 terminal proposals. Editing requires editor reads; proposing requires terminal
@@ -3723,14 +3735,23 @@ scopes and recent request metadata; `x` revokes access immediately. Revocation
 also removes its remembered grant, disconnects readers, releases snapshots and
 cancels terminal text that has not started writing.
 
+Granting, changing, and revoking access require physical input from the active
+Runyte frontend. Repeated input, pasted text, protocol clients, and the bridge
+cannot approve their own request.
+
 Grants cover unsaved content and potentially sensitive terminal output. They
 belong to the canonical project root and bridge identity, so a clone, nested
 workspace or different identity needs its own grant. Private credential and
 remembered-grant files live outside the project under the account's Runyte
 cache (`~/.cache/runyte/context` on Linux and
-`~/Library/Caches/runyte/context` on macOS). `RUNYTE_CONTEXT_HOME` can select an
-absolute, owner-private directory outside the workspace, for example when the
-platform's Unix socket path limit requires a shorter path. No credentials or
+`~/Library/Caches/runyte/context` on macOS). Windows uses `runyte\context`
+below the account's LocalAppData known folder, resolved through the operating
+system instead of the inherited `%LOCALAPPDATA%` value. `RUNYTE_CONTEXT_HOME`
+can select an absolute, owner-private directory outside the workspace. On
+Windows its immediate parent must already exist and the storage must be on
+local NTFS; Runyte applies a protected owner-only ACL and refuses reparse or
+hardlink traversal. On Unix the override can also shorten a path to fit the
+local socket limit. No credentials or
 terminal content are written into tracked project context. This is permission
 for Runyte's API, not an operating-system sandbox against other processes
 already running as your user.
@@ -3754,6 +3775,11 @@ listing does not itself grant content access. The bridge authenticates each
 target separately. Restarting a host or reconnecting a bridge invalidates its
 old resource handles. A slow or unavailable host does not prevent other hosts
 from being discovered.
+
+On Windows, the discovery output contains the local named-pipe address and
+exact host process identity needed for authentication. Treat it as ephemeral:
+configure the bridge with the absolute `runyte.exe` path when necessary and let
+the bridge perform discovery instead of copying a pipe name into client setup.
 
 Terminal reads return decoded physical rows, with blank rows, Unicode,
 revision and truncation information. They do not reconstruct conversations or

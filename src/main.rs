@@ -1244,24 +1244,25 @@ async fn run(
     }
 
     if arguments.mode == LaunchMode::ListContext {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use runyte::workspace::context::{
                 discovery,
                 storage::{Storage, environment_fingerprint},
             };
-            let result = discovery::discover(
-                Storage::default_root(),
-                &environment_fingerprint(),
-                arguments.include_hidden,
-            )
-            .await?;
+            #[cfg(unix)]
+            let root = Storage::default_root();
+            #[cfg(windows)]
+            let root = Storage::default_location().map(|location| location.root().to_owned());
+            let result =
+                discovery::discover(root, &environment_fingerprint(), arguments.include_hidden)
+                    .await?;
             serde_json::to_writer(stdout().lock(), &result)?;
             println!();
             return Ok(());
         }
-        #[cfg(not(unix))]
-        anyhow::bail!("context discovery is supported only on Unix");
+        #[cfg(all(not(unix), not(windows)))]
+        anyhow::bail!("context discovery is not supported on this platform");
     }
 
     #[cfg(unix)]
@@ -1818,9 +1819,13 @@ async fn run(
     if let Err(error) = startup.write_requested() {
         app.report_host_error(format!("failed to write startup timing report: {error}"));
     }
+    let interactive_outcome: Result<()> = async {
+    #[cfg(all(windows, debug_assertions))]
+    wait_at_post_service_failure_barrier().await?;
     // Service discovery can add a useful failure/status message. Present it
     // before waiting for input so a quiet terminal never leaves the initial
-    // pre-service frame stale.
+    // pre-service frame stale. From this point onward every fallible frontend
+    // setup step is captured so the services below are joined during cleanup.
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
@@ -1849,7 +1854,6 @@ async fn run(
     // editor keeps working without it, so nothing else reports the loss.
     let mut ended_services: std::collections::HashSet<&'static str> =
         std::collections::HashSet::new();
-    let interactive_outcome: Result<()> = async {
     loop {
         key_hints.expire_at(Instant::now());
         if app.should_quit {
@@ -5383,6 +5387,50 @@ async fn context_timeout(delay: Option<Duration>) {
     }
 }
 
+/// Lets a native process fixture stop after service ownership is complete and
+/// then inject a frontend setup failure. The error remains inside the ordinary
+/// standalone outcome so context, catalog and plugin cleanup are all joined.
+#[cfg(all(windows, debug_assertions))]
+async fn wait_at_post_service_failure_barrier() -> Result<()> {
+    let Some(base) = std::env::var_os("RUNYTE_TEST_POST_SERVICE_FAILURE_BARRIER") else {
+        return Ok(());
+    };
+    let base = PathBuf::from(base);
+    anyhow::ensure!(
+        base.is_absolute(),
+        "RUNYTE_TEST_POST_SERVICE_FAILURE_BARRIER must name an absolute path"
+    );
+    let (ready, release) = runyte::test_support::wait_status_barrier_paths(base);
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&ready)
+        .with_context(|| {
+            format!(
+                "cannot publish post-service failure barrier {}",
+                ready.display()
+            )
+        })?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if release.try_exists().with_context(|| {
+            format!(
+                "cannot inspect post-service failure barrier {}",
+                release.display()
+            )
+        })? {
+            anyhow::bail!("injected post-service frontend failure after service startup");
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "post-service failure barrier timed out waiting for {}",
+                release.display()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 struct HostServices {
     #[cfg(windows)]
     native_catalog: Option<runyte::workspace::WorkspaceServiceHandle>,
@@ -5467,6 +5515,23 @@ fn start_host_services(
     persistent: bool,
     #[cfg(windows)] native_catalog: Option<NativeCatalogConfig>,
 ) -> Result<HostServices> {
+    // Windows context initialization is the only fallible service setup below.
+    // Complete it before spawning or transferring ownership of any other
+    // service so an initialization error has no background owners to abandon.
+    #[cfg(unix)]
+    let context_events = app.start_context(if persistent {
+        runyte::workspace::context::storage::HostMode::Persistent
+    } else {
+        runyte::workspace::context::storage::HostMode::Standalone
+    });
+    #[cfg(windows)]
+    let context_events = app.start_context(if persistent {
+        runyte::workspace::context::storage::HostMode::Persistent
+    } else {
+        runyte::workspace::context::storage::HostMode::Standalone
+    })?;
+    #[cfg(all(not(unix), not(windows)))]
+    let context_events = tokio::sync::mpsc::channel(1).1;
     #[cfg(windows)]
     let (native_catalog_handle, native_catalog_owner, native_catalog_events) = if let Some(config) =
         native_catalog
@@ -5554,15 +5619,9 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = app.start_plugins();
     let pipe_events = app.start_pipe_service();
-    #[cfg(unix)]
-    let context_events = app.start_context(if persistent {
-        runyte::workspace::context::storage::HostMode::Persistent
-    } else {
-        runyte::workspace::context::storage::HostMode::Standalone
-    });
-    #[cfg(not(unix))]
-    let context_events = tokio::sync::mpsc::channel(1).1;
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let _ = config_path;
+    #[cfg(all(not(unix), not(windows)))]
     let _ = (config_path, persistent);
     Ok(HostServices {
         #[cfg(windows)]
@@ -6494,7 +6553,7 @@ mod tests {
         uses_automatic_persistent_mode, write_startup_screen,
     };
     #[cfg(windows)]
-    use super::{convert_windows_event, is_empty_windows_image_paste};
+    use super::{convert_windows_event, is_empty_windows_image_paste, start_host_services};
     #[cfg(windows)]
     use crossterm::event::Event as CrosstermEvent;
     use runyte::launch::LaunchArguments;
@@ -6505,6 +6564,31 @@ mod tests {
         key_hints::KeyHintState,
         tui::input::convert_event,
     };
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn context_start_failure_precedes_other_service_ownership() {
+        let root = runyte::test_support::TestRuntimeRoot::new("context-service-order").unwrap();
+        let app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+        let mut host = runyte::workspace::WorkspaceHost::new(app);
+        host.shutdown_context().await.unwrap();
+
+        let error = start_host_services(
+            &mut host,
+            &mut runyte::startup::StartupTrace::new(),
+            None,
+            false,
+            None,
+        )
+        .err()
+        .expect("repeated context startup must fail");
+
+        assert!(error.to_string().contains("shut down"));
+        assert!(
+            host.take_terminal_events().is_some(),
+            "later service startup must not claim the terminal event owner"
+        );
+    }
 
     #[test]
     fn finder_refill_defers_unrelated_frame_requests_until_it_is_whole() {

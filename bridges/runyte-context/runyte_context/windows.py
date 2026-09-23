@@ -672,6 +672,10 @@ class _Operation:
                         self.handle.value, ctypes.byref(self.overlapped),
                         ctypes.byref(self.count), False):
                     error = ctypes.get_last_error()
+                    if error == ERROR_BROKEN_PIPE and not self.write:
+                        self.settled = True
+                        self.result = b""
+                        return
                     if _terminal_completion(error):
                         self.settled = True
                     raise ctypes.WinError(error)

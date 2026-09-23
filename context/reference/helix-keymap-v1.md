@@ -9,10 +9,11 @@ verified 2026-07-27.
 
 Status meanings:
 
-The Windows port retains this command inventory. Plugins,
-persistent sessions and context access report their
-platform limitation through execution and discovery. Syntax commands remain
-independent of LSP. Integrated Git is available when native Git is installed;
+The Windows port retains this command inventory. Plugins and interactive
+persistent-session attachment report their platform limitation through
+execution and discovery. `:context-access` is available on Windows. Syntax
+commands remain independent of LSP. Integrated Git is available when native
+Git is installed;
 missing Git disables its capabilities without starting a worker. Worktree
 switching still requires persistent sessions, and combined branch/worktree
 deletion is refused on Windows; remove the worktree and branch separately.

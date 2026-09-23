@@ -1301,9 +1301,6 @@ impl CommandId {
             return Some("persistent mode is not supported on this platform");
         }
         match self {
-            Self::Colon(ColonCommand::ContextAccess) => {
-                Some("External context access is unavailable in Windows Phase 1")
-            }
             // A private host may already own a registered application. Its
             // commands stay usable while public process management is gated.
             Self::Colon(

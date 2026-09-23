@@ -78,10 +78,10 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
 }
 
 #[test]
-fn deferred_commands_agree_with_palette_availability() {
+fn public_and_deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in ["plugins", "context-access", "session-attach workspace"] {
+    for spelling in ["plugins", "session-attach workspace"] {
         let name = spelling.split_whitespace().next().unwrap();
         let spec = resolve_command(name).unwrap();
         let availability = app.command_capabilities().command_availability(spec);
@@ -94,6 +94,19 @@ fn deferred_commands_agree_with_palette_availability() {
             "{spelling}: {result:?}"
         );
     }
+    let context = resolve_command("context-access").unwrap();
+    assert!(context.id.platform_unavailable().is_none());
+    assert!(
+        app.command_capabilities()
+            .command_availability(context)
+            .reason()
+            .is_none()
+    );
+    assert_eq!(
+        app.execute(parse_colon_command("context-access codex").unwrap())
+            .unwrap(),
+        CommandOutcome::Completed
+    );
     let manager = resolve_command("session-list").unwrap();
     assert!(manager.id.platform_unavailable().is_none());
     let reason = app
@@ -127,6 +140,29 @@ fn deferred_commands_agree_with_palette_availability() {
             .platform_unavailable()
             .is_none()
     );
+}
+
+#[test]
+fn context_inventory_is_public_and_missing_storage_stays_noncreating() {
+    let root = TestRuntimeRoot::new("windows-context-list").unwrap();
+    let context = root.path().join("context");
+    let config = root.create_private_dir("config").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .args(["--context-list", "--json"])
+        .env("RUNYTE_CONTEXT_HOME", &context)
+        .env("XDG_CONFIG_HOME", config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "context inventory failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inventory: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(inventory["schema"], "runyte.context.discovery.v1");
+    assert_eq!(inventory["truncated"], false);
+    assert_eq!(inventory["workspaces"], serde_json::json!([]));
+    assert!(!context.exists());
 }
 
 #[test]

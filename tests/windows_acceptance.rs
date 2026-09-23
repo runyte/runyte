@@ -22,6 +22,7 @@ fn real_editor_paste_and_save() {
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_ACCEPTANCE_ROOT", root.path())
         .stdin(Stdio::null())
         .stdout(output.try_clone().unwrap())
@@ -148,6 +149,10 @@ fn native_editor_console_fixture() {
     assert_eq!(
         std::env::var_os("XDG_CACHE_HOME").unwrap(),
         root.join("cache")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
     );
     let project = root.join("project");
     // Force the setup confirmation marker to span two rows, as happened with

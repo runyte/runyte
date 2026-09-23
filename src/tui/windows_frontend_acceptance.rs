@@ -188,6 +188,7 @@ fn native_frontend_edits_resizes_reattaches_and_reports_host_loss() {
         .args(["--exact", PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
         .env_remove("XDG_RUNTIME_DIR")
@@ -237,6 +238,7 @@ fn native_frontend_switches_between_exact_running_hosts() {
         .args(["--exact", SWITCH_PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", runtime)
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
@@ -285,6 +287,7 @@ fn native_parent_wait_requires_live_terminal_authority_and_survives_parent_loss(
         .args(["--exact", PARENT_WAIT_PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
         .env_remove("XDG_RUNTIME_DIR")
@@ -326,6 +329,10 @@ fn parent_wait_parent_fixture() {
         std::env::var_os("XDG_CONFIG_HOME"),
         Some(root.join("config").into())
     );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME"),
+        Some(root.join("context").into())
+    );
     fs::create_dir_all(root.join("config")).unwrap();
     fs::write(root.join("config/config.yaml"), "lsp:\n  enable: false\n").unwrap();
     let project = root.join("project");
@@ -344,6 +351,7 @@ fn parent_wait_parent_fixture() {
     let host = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", HOST, "--ignored", "--nocapture"])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
         .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &source_inbox)
@@ -402,6 +410,7 @@ fn parent_wait_parent_fixture() {
         .env("RUNYTE_PARENT_WAIT_PATH", project.join("wait.txt"))
         .env("RUNYTE_PARENT_CONTEXT", marker)
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("XDG_RUNTIME_DIR")
         .creation_flags(CREATE_NO_WINDOW)
@@ -565,6 +574,7 @@ fn spawn_parent_wait_client(case: &str, path: &Path) -> Child {
         .env("RUNYTE_PARENT_WAIT_CASE", case)
         .env("RUNYTE_PARENT_WAIT_PATH", path)
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("XDG_RUNTIME_DIR")
         .spawn()
@@ -618,6 +628,7 @@ fn parent_loss_launcher_fixture() {
         ])
         .env(ROOT_ENV, &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("XDG_RUNTIME_DIR")
         .spawn()
@@ -707,6 +718,7 @@ fn parent_attach_launcher_fixture() {
         .env(ROOT_ENV, &root)
         .env("RUNYTE_PARENT_ATTACH_CASE", "startup-failure")
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("XDG_RUNTIME_DIR")
         .spawn()
@@ -716,6 +728,7 @@ fn parent_attach_launcher_fixture() {
         .args(["--exact", PARENT_ATTACH_CLIENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env_remove("XDG_RUNTIME_DIR")
         .spawn()
@@ -831,6 +844,10 @@ fn switch_parent_fixture() {
         std::env::var_os("XDG_CONFIG_HOME"),
         Some(root.join("config").into())
     );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME"),
+        Some(root.join("context").into())
+    );
     fs::create_dir_all(root.join("config")).unwrap();
     fs::write(root.join("config/config.yaml"), "lsp:\n  enable: false\n").unwrap();
     let a = root.join("project-a");
@@ -853,6 +870,7 @@ fn switch_parent_fixture() {
                 .env("RUNYTE_SWITCH_PROJECT", project)
                 .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &inbox)
                 .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("RUNYTE_CONTEXT_HOME", root.join("context"))
                 .current_dir(project)
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::null())
@@ -1090,6 +1108,10 @@ fn fixture_parent() {
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME"),
         Some(root.join("config").into())
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME"),
+        Some(root.join("context").into())
     );
     assert_eq!(
         std::env::var_os("XDG_CACHE_HOME"),

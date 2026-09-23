@@ -74,6 +74,13 @@ jobs:
           if ($nativeAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
             throw "Required native Windows context bridge acceptance did not run: $case"
           }
+          $case = 'public_windows_context_round_trip'
+          cargo test --locked --test windows_context_acceptance $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-public.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $publicAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-public.log"
+          if ($publicAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
+            throw "Required public Windows context acceptance did not run: $case"
+          }
       - name: Accept isolated native clipboard operations
         if: ${{ !cancelled() }}
         # Named private window stations require administrator privileges;

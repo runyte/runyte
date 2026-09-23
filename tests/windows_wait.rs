@@ -34,6 +34,7 @@ fn windows_wait_owns_a_standalone_editor_until_explicit_quit() {
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root.join("context"))
             .env("RUNYTE_WAIT_ROOT", root.path())
             .stdin(Stdio::null())
             .stdout(output.try_clone().unwrap())
@@ -165,6 +166,10 @@ fn native_standalone_wait_fixture() {
         std::env::var_os("XDG_CACHE_HOME").unwrap(),
         root.join("cache")
     );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
+    );
     let project = root.join("project");
     let config = root.join("config/config.yaml");
     std::fs::create_dir_all(&project).unwrap();
@@ -238,6 +243,7 @@ fn native_standalone_wait_fixture() {
             .current_dir(&project)
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("RUNYTE_CONTEXT_HOME", root.join("context"))
             .stdin(Stdio::null())
             .output()
             .unwrap();
