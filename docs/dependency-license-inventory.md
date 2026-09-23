@@ -11,6 +11,25 @@ carry the license and notice material required by each distributed dependency.
 
 ## Baseline
 
+### Windows clipboard encoder, 2026-09-21
+
+Native Windows bitmap clipboard conversion adds the target-specific `png`
+dependency, resolved to 0.18.1. It encodes validated bitmap rows into PNG without
+introducing a general image decoder into the editor. Its package declares
+MIT OR Apache-2.0 licensing and Rust 1.73; the project MSRV remains 1.88.
+
+The added encoder/compression packages declare compatible licenses in their
+published manifests: `crc32fast` 1.5.2, `fdeflate` 0.3.7 and `flate2` 1.1.10
+(MIT OR Apache-2.0); `miniz_oxide` 0.8.9 and 0.9.1
+(MIT OR Zlib OR Apache-2.0); `adler2` 2.0.1
+(0BSD OR MIT OR Apache-2.0); and `simd-adler32` 0.3.10 (MIT).
+The lock also records optional `zlib-rs` 0.6.8 (Zlib), which is not selected by
+the Windows encoder dependency tree. The declared Rust floors are no higher
+than the project's 1.88 requirement. Sources and exact checksums are recorded
+in `Cargo.lock`; the older baseline below remains historical.
+
+### Original syntax baseline
+
 - Review date: 2026-08-08.
 - Runyte commit before this inventory was added:
   `fc68a437cc2a1c5d63ad1f63e9401730848c7a29`.

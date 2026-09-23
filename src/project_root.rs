@@ -13,6 +13,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+use std::path::Component;
+
 use anyhow::{Context, Result, bail};
 
 /// Finds the workspace directory that owns runtime state.
@@ -239,11 +242,105 @@ fn is_usable_relative_marker(path: &Path) -> bool {
 }
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
-    let left = comparable_path(left);
-    let right = comparable_path(right);
-    left.starts_with(&right) || right.starts_with(&left)
+    #[cfg(windows)]
+    {
+        use std::{os::windows::ffi::OsStrExt, path::Prefix};
+
+        let comparable = |path: &Path| {
+            let mut ancestor = path;
+            let mut suffix = Vec::new();
+            loop {
+                match ancestor.canonicalize() {
+                    Ok(mut resolved) => {
+                        for component in suffix.iter().rev() {
+                            resolved.push(component);
+                        }
+                        break resolved;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        let Some(name) = ancestor.file_name() else {
+                            break path.to_path_buf();
+                        };
+                        suffix.push(name.to_owned());
+                        let Some(parent) = ancestor.parent() else {
+                            break path.to_path_buf();
+                        };
+                        ancestor = parent;
+                    }
+                    Err(_) => break path.to_path_buf(),
+                }
+            }
+        };
+        let left = comparable(left);
+        let right = comparable(right);
+        let left: Vec<_> = left.components().collect();
+        let right: Vec<_> = right.components().collect();
+        let component_eq = |left: &Component<'_>, right: &Component<'_>| match (left, right) {
+            (Component::Prefix(left), Component::Prefix(right)) => {
+                match (left.kind(), right.kind()) {
+                    (
+                        Prefix::Disk(left) | Prefix::VerbatimDisk(left),
+                        Prefix::Disk(right) | Prefix::VerbatimDisk(right),
+                    ) => left.eq_ignore_ascii_case(&right),
+                    (
+                        Prefix::UNC(left_server, left_share),
+                        Prefix::UNC(right_server, right_share),
+                    )
+                    | (
+                        Prefix::VerbatimUNC(left_server, left_share),
+                        Prefix::VerbatimUNC(right_server, right_share),
+                    )
+                    | (
+                        Prefix::UNC(left_server, left_share),
+                        Prefix::VerbatimUNC(right_server, right_share),
+                    )
+                    | (
+                        Prefix::VerbatimUNC(left_server, left_share),
+                        Prefix::UNC(right_server, right_share),
+                    ) => {
+                        crate::windows_fs::compare_names(
+                            &left_server.encode_wide().collect::<Vec<_>>(),
+                            &right_server.encode_wide().collect::<Vec<_>>(),
+                        )
+                        .is_eq()
+                            && crate::windows_fs::compare_names(
+                                &left_share.encode_wide().collect::<Vec<_>>(),
+                                &right_share.encode_wide().collect::<Vec<_>>(),
+                            )
+                            .is_eq()
+                    }
+                    _ => false,
+                }
+            }
+            (Component::RootDir, Component::RootDir) => true,
+            (Component::Normal(left), Component::Normal(right)) => {
+                crate::windows_fs::compare_names(
+                    &left.encode_wide().collect::<Vec<_>>(),
+                    &right.encode_wide().collect::<Vec<_>>(),
+                )
+                .is_eq()
+            }
+            _ => false,
+        };
+        let starts_with = |path: &[Component<'_>], root: &[Component<'_>]| {
+            path.len() >= root.len()
+                && root
+                    .iter()
+                    .zip(path)
+                    .all(|(root, path)| component_eq(root, path))
+        };
+        starts_with(&left, &right) || starts_with(&right, &left)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let left = comparable_path(left);
+        let right = comparable_path(right);
+        left.starts_with(&right) || right.starts_with(&left)
+    }
 }
 
+#[cfg(not(windows))]
 fn comparable_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| {
         path.parent()
@@ -290,6 +387,8 @@ fn read_answer(input: &mut impl BufRead) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use std::{fs, io::Cursor};
+    #[cfg(windows)]
+    use std::{io, path::PathBuf};
 
     use super::{discover, discover_candidates, initialize, prompt, validate_state_root};
 
@@ -656,6 +755,102 @@ mod tests {
         assert!(validate_state_root(&home.join(".runyte"), &[config]).is_ok());
 
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_state_root_overlap_uses_case_prefix_and_missing_descendant_rules() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let root = tempfile();
+        let missing_state = root.join("Runyte");
+        let missing_reserved = root.join("runyte/cache");
+        assert!(validate_state_root(&missing_state, &[missing_reserved]).is_err());
+
+        let state_case = root.join("PROJECT/STATE");
+        let reserved_case = root.join("project/state/config");
+        assert!(validate_state_root(&state_case, &[reserved_case]).is_err());
+
+        let units: Vec<_> = root.as_os_str().encode_wide().collect();
+        let ordinary =
+            if units.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
+                PathBuf::from(std::ffi::OsString::from_wide(&units[4..]))
+            } else {
+                root.clone()
+            };
+        let ordinary_state = ordinary.join("verbatim-overlap");
+        let verbatim_reserved = root.join("verbatim-overlap/cache");
+        assert!(validate_state_root(&ordinary_state, &[verbatim_reserved]).is_err());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_state_root_overlap_follows_a_reserved_junction_alias() {
+        use std::{
+            fs::OpenOptions,
+            os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+            ptr,
+        };
+        use windows_sys::Win32::{
+            Foundation::{GENERIC_READ, GENERIC_WRITE},
+            Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+                FILE_SHARE_READ, FILE_SHARE_WRITE,
+            },
+        };
+
+        let root = tempfile();
+        let state = root.join("ordinary-state");
+        let alias = root.join("reserved-alias");
+        fs::create_dir(&state).unwrap();
+        fs::create_dir(&alias).unwrap();
+        let junction = OpenOptions::new()
+            .access_mode(GENERIC_READ | GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&alias)
+            .unwrap();
+        let target = crate::windows_fs::ordinary_working_directory(&state).unwrap();
+        let substitute: Vec<_> = std::ffi::OsString::from(format!("\\??\\{}", target.display()))
+            .encode_wide()
+            .collect();
+        let mut data = Vec::new();
+        data.extend_from_slice(&0xA0000003u32.to_le_bytes());
+        data.extend_from_slice(&((8 + (substitute.len() + 2) * 2) as u16).to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.extend_from_slice(&((substitute.len() * 2) as u16).to_le_bytes());
+        data.extend_from_slice(&(((substitute.len() + 1) * 2) as u16).to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        for unit in substitute {
+            data.extend_from_slice(&unit.to_le_bytes());
+        }
+        data.extend_from_slice(&[0; 4]);
+        let mut returned = 0;
+        assert_ne!(
+            unsafe {
+                windows_sys::Win32::System::IO::DeviceIoControl(
+                    junction.as_raw_handle(),
+                    0x000900A4,
+                    data.as_ptr().cast(),
+                    data.len() as u32,
+                    ptr::null_mut(),
+                    0,
+                    &mut returned,
+                    ptr::null_mut(),
+                )
+            },
+            0,
+            "{}",
+            io::Error::last_os_error()
+        );
+        drop(junction);
+
+        assert!(validate_state_root(&state, std::slice::from_ref(&alias)).is_err());
+        fs::remove_dir(&alias).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn tempfile() -> std::path::PathBuf {

@@ -23,6 +23,7 @@ fn fixture(fields: Vec<Field>) -> App {
         handle: "u:test".into(),
         context: CapturedContext {
             foreground_allowed: true,
+            native_handoff_allowed: true,
             action: None,
             pane: app.active_pane,
             buffer: app.active().buffer,
@@ -371,6 +372,7 @@ fn validation_requires_declarative_validity_and_physical_unmodified_enter() {
     assert!(app.peek_plugin_validation().is_none());
     assert_eq!(app.buffers[0].to_string(), "");
     let intent = pending(&mut app);
+    assert!(intent.native_handoff_allowed);
     assert!(respond(&mut app, &intent, ValidationStatus::Valid));
     assert!(app.plugins.input.is_none());
     assert_eq!(app.plugins.input_finished.len(), 1);
@@ -378,7 +380,49 @@ fn validation_requires_declarative_validity_and_physical_unmodified_enter() {
     assert!(submission.accepted);
     assert_eq!(context.foreground, intent.foreground);
     assert!(context.foreground_allowed);
+    assert!(context.native_handoff_allowed);
     assert!(!respond(&mut app, &intent, ValidationStatus::Valid));
+}
+
+#[test]
+fn repeated_form_editing_works_but_repeated_enter_waits_for_fresh_approval() {
+    let mut app = fixture(vec![
+        field("first", Kind::Text, false),
+        field("second", Kind::Text, false),
+    ]);
+    type_text(&mut app, "abc");
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::new(
+        KeyCode::Backspace,
+        Modifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("ab".into())
+    );
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::new(
+        KeyCode::Down,
+        Modifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(app.plugins.input.as_ref().unwrap().selected, 1);
+    type_text(&mut app, "z");
+
+    let before = app.plugins.foreground_generation;
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::new(
+        KeyCode::Enter,
+        Modifiers::NONE,
+    )))
+    .unwrap();
+    assert!(app.plugins.foreground_generation > before);
+    assert!(app.plugins.input.is_some());
+    assert!(app.plugins.input_finished.is_empty());
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let (_, context, submission) = app.plugins.input_finished.pop().unwrap();
+    assert!(submission.accepted);
+    assert!(context.foreground_allowed);
+    assert!(context.native_handoff_allowed);
 }
 
 #[test]

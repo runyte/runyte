@@ -38,6 +38,12 @@ pub(crate) struct ProviderOverwriteDecision {
 }
 
 impl App {
+    pub(super) fn retain_provider_overwrite_after_repeat(&mut self) {
+        if let Some(surface) = self.plugins.provider_overwrite.as_mut() {
+            surface.context.foreground = self.plugins.foreground_generation;
+        }
+    }
+
     pub(crate) fn show_provider_overwrite(
         &mut self,
         job: String,

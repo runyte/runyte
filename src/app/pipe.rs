@@ -24,7 +24,10 @@ pub(crate) struct Request {
 
 impl App {
     pub(super) fn request_pipe(&mut self, command: String) -> Result<()> {
-        ensure!(cfg!(unix), "shell pipes require Unix");
+        ensure!(
+            cfg!(any(unix, windows)),
+            "shell pipes are unsupported on this platform"
+        );
         ensure!(
             self.pipe.cancellation.is_none(),
             "a pipe is already running; use :pipe-cancel"

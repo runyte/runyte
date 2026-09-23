@@ -265,6 +265,7 @@ fn synchronous_test_provider_can_recover_failed_discovery() {
 }
 
 #[test]
+#[cfg(unix)]
 fn persistent_frontend_reattachment_retains_failed_and_pending_discovery() {
     let (mut app, operations) = discovery_app();
     app.persistent_session = true;

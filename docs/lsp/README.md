@@ -6,8 +6,9 @@ server:
 1. Install the server executable and make sure it is on `PATH` (or put its
    absolute path in `command`).
 2. Copy the matching snippet below into
-   `$XDG_CONFIG_HOME/runyte/config.yaml`, or `~/.config/runyte/config.yaml`
-   when `XDG_CONFIG_HOME` is unset. When combining snippets, keep one `lsp:`
+   `$XDG_CONFIG_HOME/runyte/config.yaml`. When `XDG_CONFIG_HOME` is unset, use
+   `~/.config/runyte/config.yaml` on Unix or `%APPDATA%\runyte\config.yaml` on
+   Windows. When combining snippets, keep one `lsp:`
    heading and place every language entry below it.
 3. Exit and reopen standalone Runyte. For a persistent session, use
    `runyte --session-restart [WORKSPACE]` and repeat any non-default
@@ -29,6 +30,14 @@ These command lines are exercised by `tests/lsp_real_servers.rs`:
 - [JavaScript / typescript-language-server](typescript-language-server.yaml)
 - [Go / gopls](gopls.yaml)
 - [Markdown / Marksman](marksman.yaml)
+
+On Windows, executable discovery accepts native `.exe` and `.com` files;
+it does not launch `.cmd`, `.bat` or `.ps1` wrappers. For a server installed
+as a script (including npm wrappers), set `command` to its native interpreter,
+such as an absolute path to `node.exe`, and put the installed server script
+path followed by its arguments in `args`. Native Windows CI exercises
+rust-analyzer in `tests/lsp_windows_acceptance.rs`; the other listed servers
+have not yet received native Windows acceptance.
 
 The key immediately below `lsp` must be one of Runyte's built-in language
 names. `command` names the executable to launch, `args` is its argument list,

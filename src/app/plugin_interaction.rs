@@ -68,14 +68,15 @@ pub(crate) struct ValidationIntent {
     pub fields: Vec<String>,
     pub values: std::collections::BTreeMap<String, Value>,
     pub foreground: u64,
+    pub native_handoff_allowed: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct ValidationState {
     revision: u64,
     queued: Option<ValidationIntent>,
-    in_flight: Option<(String, u64)>,
-    submit: Option<(u64, u64)>,
+    in_flight: Option<(String, u64, bool)>,
+    submit: Option<(u64, u64, bool)>,
     results: Vec<FieldValidation>,
     unavailable: bool,
 }
@@ -90,7 +91,9 @@ impl Surface {
                 .validation
                 .in_flight
                 .as_ref()
-                .is_some_and(|(revision, _)| revision == &format!("i:{}", self.validation.revision))
+                .is_some_and(|(revision, _, _)| {
+                    revision == &format!("i:{}", self.validation.revision)
+                })
         {
             return Some("Checking fields…".into());
         }
@@ -158,8 +161,19 @@ impl App {
         let Some(surface) = self.plugins.input.take() else {
             return;
         };
+        let validated_native_handoff =
+            surface
+                .validation
+                .submit
+                .is_some_and(|(revision, foreground, allowed)| {
+                    revision == surface.validation.revision
+                        && foreground == self.plugins.foreground_generation
+                        && allowed
+                });
         let mut context = surface.context;
         context.foreground_allowed = accepted;
+        context.native_handoff_allowed =
+            accepted && (!cfg!(windows) || self.plugin_physical_input || validated_native_handoff);
         context.foreground = self.plugins.foreground_generation;
         context.action = self.active_action_id;
         let sensitive = accepted
@@ -195,7 +209,7 @@ impl App {
             .input
             .as_ref()
             .and_then(|surface| surface.validation.submit)
-            .is_some_and(|(_, foreground)| foreground != self.plugins.foreground_generation)
+            .is_some_and(|(_, foreground, _)| foreground != self.plugins.foreground_generation)
         {
             self.cancel_plugin_validation_intent();
         }
@@ -339,9 +353,14 @@ impl App {
                         _ => 0,
                     };
                 } else if surface.fields.iter().any(|field| field.validate) {
+                    let native_handoff_allowed = !cfg!(windows) || self.plugin_physical_input;
                     surface.validation.results.clear();
                     surface.validation.unavailable = false;
-                    surface.validation.submit = Some((surface.validation.revision, foreground));
+                    surface.validation.submit = Some((
+                        surface.validation.revision,
+                        foreground,
+                        native_handoff_allowed,
+                    ));
                     surface.validation.queued = Some(ValidationIntent {
                         owner: surface.owner,
                         surface: surface.handle.clone(),
@@ -360,6 +379,7 @@ impl App {
                             .map(|(field, value)| (field.id.clone(), value.clone()))
                             .collect(),
                         foreground,
+                        native_handoff_allowed,
                     });
                 } else {
                     self.finish_plugin_input(true);
@@ -519,7 +539,9 @@ impl App {
             || surface.validation.in_flight.is_some()
             || intent.foreground != self.plugins.foreground_generation
             || !surface.validation.queued.as_ref().is_some_and(|queued| {
-                queued.revision == intent.revision && queued.foreground == intent.foreground
+                queued.revision == intent.revision
+                    && queued.foreground == intent.foreground
+                    && queued.native_handoff_allowed == intent.native_handoff_allowed
             })
         {
             return false;
@@ -527,7 +549,11 @@ impl App {
         surface.validation.queued = None;
         surface.validation.unavailable = false;
         surface.validation.results.clear();
-        surface.validation.in_flight = Some((intent.revision.clone(), intent.foreground));
+        surface.validation.in_flight = Some((
+            intent.revision.clone(),
+            intent.foreground,
+            intent.native_handoff_allowed,
+        ));
         self.plugins.presentation_dirty = true;
         true
     }
@@ -544,12 +570,19 @@ impl App {
         let Some(surface) = &mut self.plugins.input else {
             return false;
         };
+        let Some((pending_revision, pending_foreground, native_handoff_allowed)) =
+            surface.validation.in_flight.as_ref()
+        else {
+            return false;
+        };
         if surface.owner != owner
             || surface.handle != handle
-            || surface.validation.in_flight.as_ref() != Some(&(revision.to_owned(), foreground))
+            || pending_revision != revision
+            || *pending_foreground != foreground
         {
             return false;
         }
+        let native_handoff_allowed = *native_handoff_allowed;
         surface.validation.in_flight = None;
         if revision != format!("i:{}", surface.validation.revision) {
             self.plugins.presentation_dirty = true;
@@ -567,7 +600,13 @@ impl App {
             .collect::<std::collections::BTreeSet<_>>();
         if expected != received || received.len() != fields.len() {
             surface.validation.unavailable = true;
-            if surface.validation.submit == Some((surface.validation.revision, foreground)) {
+            if surface.validation.submit
+                == Some((
+                    surface.validation.revision,
+                    foreground,
+                    native_handoff_allowed,
+                ))
+            {
                 surface.validation.submit = None;
             }
             self.plugins.presentation_dirty = true;
@@ -581,7 +620,11 @@ impl App {
             .iter()
             .all(|field| field.status == ValidationStatus::Valid);
         let current_intent = surface.validation.submit
-            == Some((surface.validation.revision, foreground))
+            == Some((
+                surface.validation.revision,
+                foreground,
+                native_handoff_allowed,
+            ))
             && self.plugins.foreground_generation == foreground;
         if current_intent
             && let Some(invalid) = fields
@@ -599,11 +642,22 @@ impl App {
             };
         }
         let submit = valid
-            && surface.validation.submit == Some((surface.validation.revision, foreground))
+            && surface.validation.submit
+                == Some((
+                    surface.validation.revision,
+                    foreground,
+                    native_handoff_allowed,
+                ))
             && self.plugins.foreground_generation == foreground;
         if submit {
             self.finish_plugin_input(true);
-        } else if surface.validation.submit == Some((surface.validation.revision, foreground)) {
+        } else if surface.validation.submit
+            == Some((
+                surface.validation.revision,
+                foreground,
+                native_handoff_allowed,
+            ))
+        {
             surface.validation.submit = None;
         }
         self.plugins.presentation_dirty = true;
@@ -621,16 +675,29 @@ impl App {
         let Some(surface) = &mut self.plugins.input else {
             return false;
         };
+        let Some((pending_revision, pending_foreground, native_handoff_allowed)) =
+            surface.validation.in_flight.as_ref()
+        else {
+            return false;
+        };
         if surface.owner != owner
             || surface.handle != handle
-            || surface.validation.in_flight.as_ref() != Some(&(revision.to_owned(), foreground))
+            || pending_revision != revision
+            || *pending_foreground != foreground
         {
             return false;
         }
+        let native_handoff_allowed = *native_handoff_allowed;
         surface.validation.in_flight = None;
         if revision == format!("i:{}", surface.validation.revision) {
             surface.validation.unavailable = true;
-            if surface.validation.submit == Some((surface.validation.revision, foreground)) {
+            if surface.validation.submit
+                == Some((
+                    surface.validation.revision,
+                    foreground,
+                    native_handoff_allowed,
+                ))
+            {
                 surface.validation.submit = None;
             }
         }

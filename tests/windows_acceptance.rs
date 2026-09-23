@@ -21,6 +21,8 @@ fn real_editor_paste_and_save() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_ACCEPTANCE_ROOT", root.path())
         .stdin(Stdio::null())
         .stdout(output.try_clone().unwrap())
@@ -57,9 +59,9 @@ struct Console {
     screen: runyte::terminal::emulator::Emulator,
 }
 impl Console {
-    fn spawn(program: &Path, args: &[String], root: &Path) -> Self {
+    fn spawn(program: &Path, args: &[String], root: &Path, columns: u16) -> Self {
         let (sender, events) = mpsc::channel();
-        let child = Pty::spawn(program.as_os_str(), args, root, 120, 30, move |event| {
+        let child = Pty::spawn(program.as_os_str(), args, root, columns, 30, move |event| {
             let _ = sender.send(event);
         })
         .unwrap();
@@ -68,10 +70,18 @@ impl Console {
             events,
             output: Vec::new(),
             transcript: Vec::new(),
-            screen: runyte::terminal::emulator::Emulator::new(120, 30),
+            screen: runyte::terminal::emulator::Emulator::new(usize::from(columns), 30),
         }
     }
     fn until(&mut self, needle: &str) {
+        self.until_with_row_separator(needle, "\n");
+    }
+    fn until_prompt(&mut self, needle: &str) {
+        // Setup prompts precede the editor's framed screen and may wrap in
+        // the middle of their marker when the temporary path is long.
+        self.until_with_row_separator(needle, "");
+    }
+    fn until_with_row_separator(&mut self, needle: &str, separator: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !(0..self.screen.rows())
             .filter_map(|row| self.screen.grid().line(row))
@@ -82,7 +92,7 @@ impl Console {
                     .collect::<String>()
             })
             .collect::<Vec<_>>()
-            .join("\n")
+            .join(separator)
             .contains(needle)
         {
             match self
@@ -136,16 +146,43 @@ fn native_editor_console_fixture() {
         std::env::var_os("XDG_CONFIG_HOME").unwrap(),
         root.join("config")
     );
-    let file = root.join("unicode note.txt");
+    assert_eq!(
+        std::env::var_os("XDG_CACHE_HOME").unwrap(),
+        root.join("cache")
+    );
+    assert_eq!(
+        std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap(),
+        root.join("context")
+    );
+    let project = root.join("project");
+    // Force the setup confirmation marker to span two rows, as happened with
+    // the longer temp path on CI. Adjust geometry rather than lengthening cwd.
+    let prompt_prefix = format!(
+        "Save Runyte project data in {}? ",
+        project.join(".runyte").display()
+    );
+    let columns =
+        u16::try_from(unicode_width::UnicodeWidthStr::width(prompt_prefix.as_str()) + 2).unwrap();
+    let config = root.join("config/config.yaml");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, "lsp:\n  enable: false\n").unwrap();
+    let file = project.join("unicode note.txt");
     std::fs::write(&file, "original\r\n").unwrap();
     let mut editor = Console::spawn(
         Path::new(env!("CARGO_BIN_EXE_runyte")),
-        &["--standalone".into(), file.display().to_string()],
-        &root,
+        &[
+            "--standalone".into(),
+            "--config".into(),
+            config.display().to_string(),
+            file.display().to_string(),
+        ],
+        &project,
+        columns,
     );
-    editor.until("Project directory [");
+    editor.until_prompt("Project directory [");
     editor.send("\r");
-    editor.until("[y/N]:");
+    editor.until_prompt("[y/N]:");
     editor.send("y\r");
     editor.until("original");
     editor.until("NOR");
@@ -159,18 +196,24 @@ fn native_editor_console_fixture() {
     editor.send("\x1b");
     editor.until("NOR");
     editor.send(":write\r");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let saved = std::fs::read_to_string(&file).unwrap();
-        if saved.contains("café 😀") {
-            // Paste preserves its LF bytes; the existing file's CRLF remains
-            // intact instead of normalizing the entire buffer during save.
-            assert_eq!(saved, "café 😀\nsecond-lineoriginal\r\n");
-            break;
-        }
-        assert!(Instant::now() < deadline, "file was not saved: {saved:?}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    editor.until("wrote");
+    // Inspect the completed save, after the editor acknowledges it. Paste
+    // preserves LF bytes alongside the existing CRLF without normalization.
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "café 😀\nsecond-lineoriginal\r\n"
+    );
+    editor.send("%:pipe [Console]::Write([Console]::In.ReadToEnd().ToUpperInvariant())\r");
+    editor.until("CAFÉ");
+    editor.until("SECOND-LINEORIGINAL");
+    // The whole filter is one undo transaction; its unsaved result must not
+    // change the previously saved bytes on disk.
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "café 😀\nsecond-lineoriginal\r\n"
+    );
+    editor.send("u");
+    editor.until("café");
     editor.send(":quit\r");
     editor.exit();
     assert!(

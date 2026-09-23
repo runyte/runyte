@@ -75,7 +75,6 @@ fn multiple_binary_launch_targets_fail_before_one_can_be_silently_dropped() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_late_binary_startup_target_reaches_the_external_program_prompt() {
     let directory = temporary("launch-late-binary");
     fs::create_dir_all(&directory).unwrap();
@@ -1393,7 +1392,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 366, "current binding inventory changed");
+    assert_eq!(bindings.len(), 368, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1415,7 +1414,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 732, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 736, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()
@@ -2215,6 +2214,7 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         "session-list",
         "session-stop",
         "session-rename",
+        "session-clean",
     ] {
         let matched = matches
             .iter()
@@ -2223,7 +2223,13 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         assert_eq!(
             matched.availability.reason(),
             Some(if cfg!(windows) {
-                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+                if name == "session-attach" {
+                    crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+                } else {
+                    "session service is unavailable"
+                }
+            } else if name == "session-clean" {
+                "native session history cleaning is available on Windows"
             } else {
                 crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
             })
@@ -2290,7 +2296,11 @@ fn session_execution_reports_the_shared_unsupported_platform_reason_first() {
             .unwrap();
         assert_eq!(
             app.status,
-            crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            if cfg!(windows) && command != ColonCommand::SessionAttach {
+                "session service is unavailable"
+            } else {
+                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+            }
         );
         assert!(app.status_error);
         assert!(app.workspace_switch.is_none());
@@ -2609,7 +2619,6 @@ fn the_last_selected_theme_is_written_to_the_configuration() {
 /// Opening a binary file must not produce a buffer: a screenful of
 /// replacement characters cannot be saved back without destroying it.
 #[test]
-#[cfg(not(windows))]
 fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
     let directory = temporary("binary-open");
     fs::create_dir_all(&directory).unwrap();
@@ -2659,7 +2668,6 @@ fn opening_a_binary_file_asks_for_a_program_instead_of_a_buffer() {
 /// The bounded probe is only an optimization. The bytes accepted by the
 /// final read still decide whether the file can safely become editable text.
 #[test]
-#[cfg(not(windows))]
 fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
     let directory = temporary("binary-beyond-probe");
     fs::create_dir_all(&directory).unwrap();
@@ -2682,18 +2690,19 @@ fn binary_bytes_beyond_the_probe_still_use_the_external_program_prompt() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
     let directory = temporary("binary-program-cache");
     fs::create_dir_all(&directory).unwrap();
     let binary = directory.join("image.png");
     fs::write(&binary, [0x00, 0x01, 0x02, 0x03]).unwrap();
-    // A program that exists everywhere and does nothing, so the test
-    // spawns something real without depending on a viewer being installed.
-    let program = "true";
+    let program = "test-viewer";
 
     let mut app = App::new(Config::default(), None).unwrap();
     app.programs = ProgramCache::load(Some(directory.join("cache")));
+    app.ports.program_opener = Box::new(|program, _| {
+        assert_eq!(program, "test-viewer");
+        Ok(external_open::Dispatch::Accepted)
+    });
 
     app.open_file(binary.clone()).unwrap();
     assert!(app.matching_programs().is_empty(), "nothing remembered yet");
@@ -2756,7 +2765,6 @@ fn a_chosen_program_is_remembered_and_offered_back_as_a_hint() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn a_program_that_cannot_run_is_reported_and_not_remembered() {
     let directory = temporary("binary-bad-program");
     fs::create_dir_all(&directory).unwrap();
@@ -2765,6 +2773,7 @@ fn a_program_that_cannot_run_is_reported_and_not_remembered() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     app.programs = ProgramCache::load(Some(directory.join("cache")));
+    app.ports.program_opener = Box::new(|program, _| bail!("{program} cannot run"));
 
     app.open_file(binary).unwrap();
     app.command.clear();
@@ -3111,7 +3120,6 @@ fn control_q_does_nothing_inside_the_command_prompt() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
     let root = temporary("quit-here-file");
     let file_directory = root.join("files");
@@ -3143,7 +3151,6 @@ fn quit_here_uses_the_active_file_directory_and_preserves_quit_safety() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
     let root = temporary("quit-here-explorer");
     let visited = root.join("visited");
@@ -3165,7 +3172,6 @@ fn quit_here_uses_the_last_directory_shown_by_the_active_explorer() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
     let mut app = App::new(Config::default(), None).unwrap();
 
@@ -3180,7 +3186,6 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 }
 
 #[test]
-#[cfg(not(windows))]
 fn quit_here_refuses_to_exit_when_the_destination_no_longer_exists() {
     let root = temporary("quit-here-missing");
     let file = root.join("note.txt");
@@ -3196,6 +3201,25 @@ fn quit_here_refuses_to_exit_when_the_destination_no_longer_exists() {
     assert!(app.quit_directory().is_none());
     assert!(app.status_error);
     assert!(app.status.contains("cannot quit here"));
+}
+
+#[test]
+#[cfg(windows)]
+fn quit_here_refuses_shell_unsupported_paths_before_quitting() {
+    use std::os::windows::ffi::OsStrExt;
+    let root = crate::test_support::TestRuntimeRoot::new("qh-long").unwrap();
+    let mut directory = root.path().to_path_buf();
+    while directory.as_os_str().encode_wide().count() < 275 {
+        directory.push("long-directory-segment");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    app.enable_quit_directory_handoff();
+    app.working_directory = directory;
+    type_command(&mut app, "qh!");
+    assert!(!app.should_quit);
+    assert!(app.quit_directory().is_none());
+    assert!(app.status.contains("shorter than 260"), "{}", app.status);
 }
 
 #[test]
@@ -3589,7 +3613,9 @@ fn showing_a_terminal_that_has_already_gone_is_refused() {
     app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let id = app.active_terminal().expect("a terminal opened");
     app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, id);
     app.terminals.close(id);
+    cleanup();
 
     app.show_terminal(id);
     assert!(app.status_error && app.status.contains("that terminal is gone"));
@@ -3749,7 +3775,9 @@ fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
     );
 
     app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, id);
     app.terminals.close(id);
+    cleanup();
     app.rename_terminal_id(id, "gone");
     assert!(app.status_error && app.status.contains("that terminal is gone"));
     app.open_listed_terminal_rename_prompt(id);

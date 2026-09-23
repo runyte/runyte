@@ -156,43 +156,7 @@ pub(super) fn resolve_for_terminal(
 /// only after proving it names the same directory; never reinterpret an entry
 /// that depends on verbatim name semantics.
 pub(super) fn working_directory(path: &Path) -> io::Result<PathBuf> {
-    use std::path::{Component, Prefix};
-    let canonical = path.canonicalize()?;
-    let unsupported = || {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            "terminal directory requires an extended Windows path; use a directory with an ordinary path shorter than 260 UTF-16 units",
-        )
-    };
-    let mut components = canonical.components();
-    let mut ordinary = match components.next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:", drive as char)),
-            Prefix::VerbatimUNC(server, share) => {
-                let mut path = OsString::from(r"\\");
-                path.push(server);
-                path.push(r"\");
-                path.push(share);
-                PathBuf::from(path)
-            }
-            _ => return Err(unsupported()),
-        },
-        _ => return Err(unsupported()),
-    };
-    for component in components {
-        if let Component::Normal(name) = component {
-            crate::windows_fs::validate_relative(Path::new(name)).map_err(|_| unsupported())?;
-        }
-        ordinary.push(component.as_os_str());
-    }
-    if ordinary.as_os_str().encode_wide().count() >= 260
-        || !ordinary.is_dir()
-        || crate::windows_fs::Identity::read(&ordinary)?
-            != crate::windows_fs::Identity::read(&canonical)?
-    {
-        return Err(unsupported());
-    }
-    Ok(ordinary)
+    crate::windows_fs::ordinary_working_directory(path)
 }
 
 pub(crate) fn resolve(
@@ -231,7 +195,7 @@ pub(crate) fn resolve(
         .find_map(|directory| inspect(directory.join(command)))
 }
 
-pub(super) fn environment() -> Vec<u16> {
+pub(super) fn environment(parent_context: Option<&str>) -> Vec<u16> {
     let mut values: Vec<_> = std::env::vars_os()
         .filter(|(name, _)| {
             ![
@@ -245,14 +209,14 @@ pub(super) fn environment() -> Vec<u16> {
             .any(|blocked| name.to_string_lossy().eq_ignore_ascii_case(blocked))
         })
         .collect();
-    values.extend(
-        [
-            ("TERM", "xterm-256color"),
-            ("COLORTERM", "truecolor"),
-            ("RUNYTE_PARENT_CONTEXT", "standalone"),
-        ]
-        .map(|(key, value)| (OsString::from(key), OsString::from(value))),
-    );
+    values.extend([
+        (OsString::from("TERM"), OsString::from("xterm-256color")),
+        (OsString::from("COLORTERM"), OsString::from("truecolor")),
+        (
+            OsString::from(crate::workspace::parent::ENVIRONMENT),
+            OsString::from(parent_context.unwrap_or("standalone")),
+        ),
+    ]);
     values.sort_by(|a, b| {
         crate::windows_fs::compare_names(
             &a.0.encode_wide().collect::<Vec<_>>(),
@@ -274,6 +238,36 @@ pub(super) fn environment() -> Vec<u16> {
 mod tests {
     use super::*;
     use std::os::windows::ffi::OsStringExt;
+
+    fn environment_value(block: &[u16], expected: &str) -> Vec<String> {
+        block
+            .split(|unit| *unit == 0)
+            .filter(|value| !value.is_empty())
+            .map(OsString::from_wide)
+            .filter_map(|entry| {
+                let entry = entry.to_string_lossy();
+                let (name, value) = entry.split_once('=')?;
+                name.eq_ignore_ascii_case(expected)
+                    .then(|| value.to_owned())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn native_environment_installs_only_the_explicit_parent_marker() {
+        assert_eq!(
+            environment_value(&environment(None), crate::workspace::parent::ENVIRONMENT),
+            ["standalone"]
+        );
+        assert_eq!(
+            environment_value(
+                &environment(Some("exact-native-parent")),
+                crate::workspace::parent::ENVIRONMENT
+            ),
+            ["exact-native-parent"]
+        );
+    }
+
     #[test]
     fn native_quoted_arguments_round_trip() {
         let args: Vec<_> = [

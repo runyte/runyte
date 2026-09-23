@@ -57,6 +57,7 @@ impl App {
         );
         let context = CapturedContext {
             foreground_allowed: true,
+            native_handoff_allowed: false,
             action: self.active_action_id,
             pane: self.active_pane,
             buffer,
@@ -250,6 +251,7 @@ impl App {
         });
         let context = CapturedContext {
             foreground_allowed: self.recording_macro.is_none() && self.macro_replay.is_none(),
+            native_handoff_allowed: false,
             action: self.active_action_id,
             pane: self.active_pane,
             buffer,

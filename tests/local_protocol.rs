@@ -1269,9 +1269,14 @@ async fn wait_for_requested_buffer(
     loop {
         client.send(&ClientRequest::ListBuffers).await.unwrap();
         if let HostResponse::Buffers { buffers } = semantic_response(client).await
-            && let Some(buffer) = buffers
-                .into_iter()
-                .find(|buffer| buffer.path_bytes.clone().map(decode_path).as_deref() == Some(path))
+            && let Some(buffer) = buffers.into_iter().find(|buffer| {
+                buffer
+                    .path_bytes
+                    .clone()
+                    .map(|path| decode_path(path).unwrap())
+                    .as_deref()
+                    == Some(path)
+            })
         {
             return buffer;
         }
@@ -1641,7 +1646,11 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
     let other = buffers
         .iter()
         .find(|buffer| {
-            buffer.path_bytes.clone().map(decode_path).as_deref()
+            buffer
+                .path_bytes
+                .clone()
+                .map(|path| decode_path(path).unwrap())
+                .as_deref()
                 == Some(root.join("other.txt").as_path())
         })
         .unwrap();
@@ -2125,7 +2134,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
         HostResponse::Buffers { buffers }
             if buffers.iter().any(|buffer| {
                 !buffer.closed
-                    && buffer.path_bytes.clone().map(decode_path).as_deref()
+                    && buffer.path_bytes.clone().map(|path| decode_path(path).unwrap()).as_deref()
                         == Some(root.join("other.txt").as_path())
             })
     ));
@@ -2176,7 +2185,11 @@ async fn killing_the_host_fails_an_outstanding_wait_process() {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
         if let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await {
             opened = buffers.iter().any(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
+                buffer
+                    .path_bytes
+                    .clone()
+                    .map(|path| decode_path(path).unwrap())
+                    .as_deref()
                     == Some(root.join("note.txt").as_path())
             });
         }
@@ -2279,7 +2292,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
                 buffer
                     .path_bytes
                     .clone()
-                    .map(decode_path)
+                    .map(|path| decode_path(path).unwrap())
                     .is_some_and(|path| path.ends_with("COMMIT_EDITMSG"))
             });
         }
@@ -2400,7 +2413,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
                 buffer
                     .path_bytes
                     .clone()
-                    .map(decode_path)
+                    .map(|path| decode_path(path).unwrap())
                     .is_some_and(|path| path.ends_with("COMMIT_EDITMSG"))
             });
         }
@@ -2564,7 +2577,7 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
                     buffer
                         .path_bytes
                         .clone()
-                        .map(decode_path)
+                        .map(|path| decode_path(path).unwrap())
                         .is_some_and(|path| expected_paths.contains(&path))
                 })
                 .collect();
@@ -2628,7 +2641,11 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
             let buffer = buffers
                 .into_iter()
                 .find(|buffer| {
-                    buffer.path_bytes.clone().map(decode_path).as_deref()
+                    buffer
+                        .path_bytes
+                        .clone()
+                        .map(|path| decode_path(path).unwrap())
+                        .as_deref()
                         == Some(root.join("other.txt").as_path())
                 })
                 .expect("startup buffer was not hosted");
@@ -2721,12 +2738,17 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         .await
         {
             HostResponse::SwitchWorkspace {
-                selector_bytes,
+                target,
                 working_directory_bytes,
                 ..
             } => {
-                assert_eq!(decode_path(working_directory_bytes), root);
-                break decode_path(selector_bytes);
+                assert_eq!(decode_path(working_directory_bytes).unwrap(), root);
+                let runyte::protocol::WorkspaceSwitchTarget::UserSelector { selector_bytes } =
+                    *target
+                else {
+                    panic!("expected a user-selector workspace switch")
+                };
+                break decode_path(selector_bytes).unwrap();
             }
             HostResponse::Frame { .. } => {}
             response => panic!("expected workspace switch, got {response:?}"),
@@ -2748,7 +2770,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         HostResponse::Buffers { buffers }
             if buffers.iter().any(|buffer| {
                 !buffer.closed
-                    && buffer.path_bytes.clone().map(decode_path).as_deref()
+                    && buffer.path_bytes.clone().map(|path| decode_path(path).unwrap()).as_deref()
                         == Some(root.join("other.txt").as_path())
             })
     ));
@@ -3223,7 +3245,11 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
         HostResponse::Buffers { buffers } => buffers
             .into_iter()
             .find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref()
+                buffer
+                    .path_bytes
+                    .clone()
+                    .map(|path| decode_path(path).unwrap())
+                    .as_deref()
                     == Some(root.join("note.txt").as_path())
             })
             .expect("requested buffer is not reachable through the host"),
@@ -4343,7 +4369,11 @@ async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
     let large = buffers
         .iter()
         .find(|buffer| {
-            buffer.path_bytes.clone().map(decode_path).as_deref()
+            buffer
+                .path_bytes
+                .clone()
+                .map(|path| decode_path(path).unwrap())
+                .as_deref()
                 == Some(root.join("large.txt").as_path())
         })
         .expect("host did not open the large file")
@@ -4869,7 +4899,12 @@ async fn integrated_parent_wait_save_routes_return_to_same_live_terminal() {
         let buffer = buffers
             .into_iter()
             .find(|buffer| {
-                buffer.path_bytes.clone().map(decode_path).as_deref() == Some(prompt.as_path())
+                buffer
+                    .path_bytes
+                    .clone()
+                    .map(|path| decode_path(path).unwrap())
+                    .as_deref()
+                    == Some(prompt.as_path())
             })
             .unwrap();
         wait_for_frame(
@@ -5009,8 +5044,8 @@ async fn integrated_parent_attach_reports_completion_only_after_outer_acknowledg
     else {
         panic!("integrated command did not request an outer attachment")
     };
-    assert_eq!(decode_path(selector), destination);
-    assert_eq!(decode_path(directory), destination);
+    assert_eq!(decode_path(selector).unwrap(), destination);
+    assert_eq!(decode_path(directory).unwrap(), destination);
     assert!(
         !result_path.exists(),
         "queued handoff claimed completed attachment"

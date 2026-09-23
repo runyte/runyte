@@ -8,12 +8,40 @@ use super::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
     },
 };
+
+/// Resolves the optional Windows durability boundary once when the workspace
+/// owner is constructed. Unix accepts the setting for portable configuration
+/// files while retaining its existing state storage behavior.
+pub(crate) fn resolve_anchor(
+    configured: Option<crate::config::WorkspaceStateAnchor>,
+) -> anyhow::Result<Option<PathBuf>> {
+    #[cfg(windows)]
+    {
+        use crate::config::WorkspaceStateAnchor;
+        let resolved = match configured {
+            None => None,
+            Some(WorkspaceStateAnchor::Profile) => crate::user_paths::system_home_directory(),
+            Some(WorkspaceStateAnchor::LocalAppData) => {
+                crate::user_paths::system_local_app_data_directory()
+            }
+        };
+        if configured.is_some() && resolved.is_none() {
+            anyhow::bail!("workspace.state_anchor known folder is unavailable");
+        }
+        Ok(resolved)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = configured;
+        Ok(None)
+    }
+}
 
 pub(crate) mod wire;
 
@@ -194,6 +222,16 @@ pub(crate) fn run(
     task: Task,
     control: &Control,
 ) -> Result<Info, Error> {
+    run_with_anchor(root, None, identity, task, control)
+}
+
+pub(crate) fn run_with_anchor(
+    root: &Path,
+    anchor: Option<&Path>,
+    identity: &str,
+    task: Task,
+    control: &Control,
+) -> Result<Info, Error> {
     control.check()?;
     if !super::valid_name(identity) {
         return Err(invalid());
@@ -212,7 +250,7 @@ pub(crate) fn run(
             (Some(expected_revision), Some(Info::missing()))
         }
     };
-    storage::run(root, identity, revision, next, control)
+    storage::run(root, anchor, identity, revision, next, control)
 }
 
 #[cfg(unix)]
@@ -284,6 +322,7 @@ mod storage {
     }
     pub(super) fn run(
         root: &Path,
+        _anchor: Option<&Path>,
         identity: &str,
         revision: Option<String>,
         next: Option<Info>,
@@ -358,11 +397,175 @@ mod storage {
         result
     }
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+mod storage {
+    use super::*;
+    use crate::private_storage::Directory;
+    use std::{
+        ffi::OsStr,
+        fs::File,
+        io::{Read, Write},
+        os::windows::io::AsRawHandle,
+    };
+    use windows_sys::Win32::{
+        Foundation::ERROR_LOCK_VIOLATION,
+        Storage::FileSystem::{
+            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx, UnlockFileEx,
+        },
+        System::IO::OVERLAPPED,
+    };
+
+    pub(super) struct StateLock(File);
+    impl StateLock {
+        pub(super) fn acquire(file: File) -> Result<Self, Error> {
+            let mut offset: OVERLAPPED = unsafe { std::mem::zeroed() };
+            if unsafe {
+                LockFileEx(
+                    file.as_raw_handle(),
+                    LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                    0,
+                    1,
+                    0,
+                    &mut offset,
+                )
+            } == 0
+            {
+                let error = std::io::Error::last_os_error();
+                return Err(
+                    if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
+                        Error::new(Code::Busy, "Plugin state storage is locked")
+                    } else {
+                        unavailable()
+                    },
+                );
+            }
+            Ok(Self(file))
+        }
+    }
+    impl Drop for StateLock {
+        fn drop(&mut self) {
+            let mut offset: OVERLAPPED = unsafe { std::mem::zeroed() };
+            let _ = unsafe { UnlockFileEx(self.0.as_raw_handle(), 0, 1, 0, &mut offset) };
+        }
+    }
+
+    const FILE: &str = "state.json";
+    const PENDING: &str = "state.pending";
+
+    fn read(directory: &Directory) -> Result<Info, Error> {
+        let mut file = match directory.open_read(OsStr::new(FILE)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Info::missing());
+            }
+            Err(_) => return Err(unavailable()),
+        };
+        if file.metadata().map_err(|_| unavailable())?.len() > MAX_DOCUMENT_BYTES as u64 {
+            return Err(Error::new(
+                Code::LimitExceeded,
+                "Stored state document exceeds its limit",
+            ));
+        }
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_DOCUMENT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| unavailable())?;
+        if bytes.len() > MAX_DOCUMENT_BYTES {
+            return Err(Error::new(
+                Code::LimitExceeded,
+                "Stored state document exceeds its limit",
+            ));
+        }
+        decode(&bytes)
+    }
+
+    pub(super) fn run(
+        root: &Path,
+        anchor: Option<&Path>,
+        identity: &str,
+        revision: Option<String>,
+        next: Option<Info>,
+        control: &Control,
+    ) -> Result<Info, Error> {
+        let directory = match anchor {
+            Some(anchor) => Directory::open_durable_state_root(anchor, root),
+            None => Directory::open_durable(root, true),
+        }
+        .and_then(|root| root.child(OsStr::new("plugins")))
+        .and_then(|plugins| plugins.child(OsStr::new(identity)))
+        .map_err(|_| unavailable())?;
+        let lock = directory
+            .append(OsStr::new(".lock"))
+            .map_err(|_| unavailable())?;
+        let _lock = StateLock::acquire(lock)?;
+        control.check()?;
+        match directory.open_read(OsStr::new(PENDING)) {
+            Ok(file) => directory
+                .remove_owned(OsStr::new(PENDING), &file)
+                .map_err(|_| unavailable())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(unavailable()),
+        }
+        let current = read(&directory)?;
+        let Some(revision) = revision else {
+            return Ok(current);
+        };
+        if current.revision != revision {
+            return Err(stale());
+        }
+        let next = next.unwrap();
+        if current.revision == next.revision {
+            control.check()?;
+            return Ok(next);
+        }
+        drop(current);
+        let pending = if let Some(document) = &next.document {
+            let mut file = directory
+                .create_new(OsStr::new(PENDING))
+                .map_err(|_| unavailable())?;
+            if file
+                .write_all(document.get().as_bytes())
+                .and_then(|()| file.sync_all())
+                .is_err()
+            {
+                let _ = directory.remove_owned(OsStr::new(PENDING), &file);
+                return Err(unavailable());
+            }
+            Some(file)
+        } else {
+            None
+        };
+        let result = (|| {
+            if read(&directory)?.revision != revision {
+                return Err(stale());
+            }
+            control.begin_mutation()?;
+            let mutation = if pending.is_some() {
+                directory.rename(OsStr::new(PENDING), OsStr::new(FILE))
+            } else {
+                directory.remove(OsStr::new(FILE))
+            };
+            mutation.map_err(|_| unknown())?;
+            control
+                .checkpoint(Checkpoint::AfterMutation)
+                .map_err(|_| unknown())?;
+            directory.sync().map_err(|_| unknown())?;
+            Ok(next)
+        })();
+        if let Some(pending) = pending {
+            let _ = directory.remove_owned(OsStr::new(PENDING), &pending);
+        }
+        result
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 mod storage {
     use super::*;
     pub(super) fn run(
         _: &Path,
+        _: Option<&Path>,
         _: &str,
         _: Option<String>,
         _: Option<Info>,
@@ -386,3 +589,6 @@ pub struct Event {
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, windows))]
+#[path = "state/windows_tests.rs"]
+mod windows_tests;

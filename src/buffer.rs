@@ -42,6 +42,55 @@ pub use crate::text::Position;
 
 static NEXT_SAVE_TEMPORARY: AtomicU64 = AtomicU64::new(1);
 
+/// Render a path for the pane border without changing its stored identity.
+#[cfg(not(windows))]
+fn pane_title_path(path: &Path) -> String {
+    path.display().to_string()
+}
+
+#[cfg(windows)]
+fn pane_title_path(path: &Path) -> String {
+    use std::{
+        ffi::OsString,
+        path::{Component, Prefix},
+    };
+
+    let original = || path.display().to_string();
+    let mut components = path.components();
+    let mut ordinary = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(drive) if drive.is_ascii_alphabetic() => {
+                PathBuf::from(format!("{}:\\", drive as char))
+            }
+            Prefix::VerbatimUNC(server, share) => {
+                let mut value = OsString::from(r"\\");
+                value.push(server);
+                value.push(r"\");
+                value.push(share);
+                PathBuf::from(value)
+            }
+            _ => return original(),
+        },
+        _ => return original(),
+    };
+    if components.next() != Some(Component::RootDir) {
+        return original();
+    }
+    for component in components {
+        let Component::Normal(name) = component else {
+            return original();
+        };
+        if matches!(name.to_str(), Some("." | ".."))
+            || crate::windows_fs::validate_relative(Path::new(name)).is_err()
+        {
+            // An ordinary spelling can name a different entry for these.
+            return original();
+        }
+        ordinary.push(name);
+    }
+    ordinary.display().to_string()
+}
+
 /// A file whose complete bytes cannot be represented safely by a text buffer.
 ///
 /// Kept typed so the application can route a file that changed after its
@@ -2704,11 +2753,11 @@ impl Buffer {
         match &self.kind {
             BufferKind::File => self.path.as_ref().map_or_else(
                 || "[file]".to_owned(),
-                |path| format!("[file] {}", path.display()),
+                |path| format!("[file] {}", pane_title_path(path)),
             ),
             BufferKind::Directory => self.path.as_ref().map_or_else(
                 || "[explorer]".to_owned(),
-                |path| format!("[explorer] {}", path.display()),
+                |path| format!("[explorer] {}", pane_title_path(path)),
             ),
             _ => self.display_name(),
         }
@@ -3583,6 +3632,42 @@ mod tests {
         assert_eq!(Buffer::git_blame("").pane_title(), "[git blame]");
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pane_titles_show_ordinary_windows_paths_when_the_spelling_is_safe() {
+        let mut buffer = Buffer::scratch();
+        let drive = PathBuf::from(r"\\?\C:\workspace\notes.txt");
+        buffer.kind = BufferKind::File;
+        buffer.path = Some(drive.clone());
+        assert_eq!(buffer.pane_title(), r"[file] C:\workspace\notes.txt");
+        assert_eq!(buffer.path.as_ref(), Some(&drive));
+
+        let unc = PathBuf::from(r"\\?\UNC\server\share\project");
+        buffer.kind = BufferKind::Directory;
+        buffer.path = Some(unc.clone());
+        assert_eq!(buffer.pane_title(), r"[explorer] \\server\share\project");
+        assert_eq!(buffer.path.as_ref(), Some(&unc));
+
+        let long = PathBuf::from(format!(r"\\?\C:\{}", "directory\\".repeat(35)));
+        buffer.path = Some(long);
+        assert!(buffer.pane_title().starts_with(r"[explorer] C:\directory\"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pane_titles_keep_verbatim_spelling_when_ordinary_names_can_differ() {
+        let mut buffer = Buffer::scratch();
+        buffer.kind = BufferKind::Directory;
+        for path in [
+            r"\\?\C:\workspace\trailing.",
+            r"\\?\C:\workspace\NUL",
+            r"\\?\Volume{00000000-0000-0000-0000-000000000000}\project",
+        ] {
+            buffer.path = Some(PathBuf::from(path));
+            assert_eq!(buffer.pane_title(), format!("[explorer] {path}"));
+        }
     }
 
     /// Every refusal names the view the reader is looking at. Reporting the

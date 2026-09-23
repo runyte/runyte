@@ -4,6 +4,26 @@ use super::*;
 use crate::app::git_workflows::RequestedGitViews;
 use crate::git::BaseContent;
 
+fn idle_git_test_terminal() -> String {
+    if cfg!(windows) {
+        "cmd.exe /d /q"
+    } else {
+        "/bin/cat"
+    }
+    .to_owned()
+}
+
+fn git_fixture_directory(root: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        crate::windows_fs::ordinary_working_directory(root).unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        root.to_path_buf()
+    }
+}
+
 fn select_remote_branch(app: &mut App, name: &str) {
     let row = app
         .git_state
@@ -466,27 +486,36 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
     app.buffers[file_buffer].apply(&Transaction::insert(0, "unsaved"));
     app.open_selected_worktree();
     assert!(app.take_workspace_switch().is_none());
-    assert!(app.status.contains("workspace.mode: persistent"));
+    assert!(app.status.contains(if cfg!(windows) {
+        "not supported on this platform"
+    } else {
+        "workspace.mode: persistent"
+    }));
 
-    app.enable_persistent_session();
-    app.execute(
-        crate::command::parse_named_command(
-            "session-attach",
-            Some(linked.to_string_lossy().as_ref()),
+    #[cfg(unix)]
+    {
+        app.enable_persistent_session();
+        app.execute(
+            crate::command::parse_named_command(
+                "session-attach",
+                Some(linked.to_string_lossy().as_ref()),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
-        Some(linked.clone()),
-        "the command and worktree picker share the switch request"
-    );
-    app.open_selected_worktree();
-    assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
-        Some(linked.clone())
-    );
+        .unwrap();
+        assert_eq!(
+            app.take_workspace_switch()
+                .map(|request| switch_target_path(&request).to_path_buf()),
+            Some(linked.clone()),
+            "the command and worktree picker share the switch request"
+        );
+        app.open_selected_worktree();
+        assert_eq!(
+            app.take_workspace_switch()
+                .map(|request| switch_target_path(&request).to_path_buf()),
+            Some(linked.clone())
+        );
+    }
     app.open_git_worktrees_result(
         vec![
             worktree(linked.clone(), "feature"),
@@ -499,10 +528,14 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
         Some(linked.as_path())
     );
     app.open_selected_worktree();
+    #[cfg(unix)]
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(linked.clone())
     );
+    #[cfg(windows)]
+    assert!(app.take_workspace_switch().is_none());
 
     app.open_scratch_buffer();
     app.open_selected_worktree();
@@ -2395,7 +2428,7 @@ fn complete_git_diff_app(name: &str, with_terminal: bool) -> (PathBuf, App, usiz
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_file(path).unwrap();
     if with_terminal {
-        app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+        app.open_terminal_at(Some(idle_git_test_terminal()), root.clone());
         app.split(Axis::Horizontal, None).unwrap();
         app.enter_normal_mode();
     }
@@ -2506,6 +2539,7 @@ fn closing_a_complete_git_diff_does_not_inherit_an_unrelated_terminals_insert_mo
             .keys()
             .any(|pane| app.terminal_of_pane(*pane).is_some())
     );
+    close_test_terminals(&mut app);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2964,7 +2998,7 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
     app.execute_command("git-branches").unwrap();
     press(&mut app, 'k');
 
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(idle_git_test_terminal()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.leave_terminal();
     assert!(app.terminals.get(terminal).unwrap().live());
@@ -3054,7 +3088,7 @@ fn a_typed_branch_confirmation_edits_its_line_before_it_matches() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-branches").unwrap();
     press(&mut app, 'k');
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(idle_git_test_terminal()), root.clone());
     app.leave_terminal();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
@@ -3110,7 +3144,7 @@ fn confirmed_terminal_branch_checkout_is_submitted_to_the_git_service() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-branches").unwrap();
     press(&mut app, 'k');
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(idle_git_test_terminal()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.leave_terminal();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -3222,7 +3256,7 @@ fn creating_a_branch_with_a_live_terminal_requires_exact_name_confirmation() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-branches").unwrap();
     press(&mut app, 'k');
-    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    app.open_terminal_at(Some(idle_git_test_terminal()), root.clone());
     let terminal = app.active_terminal().unwrap();
     app.leave_terminal();
 
@@ -3567,17 +3601,29 @@ fn branch_deletion_cascades_through_its_checkout_and_asks_for_the_branch_name() 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     // Bottom up: the checkout goes before the branch that is checked out in it.
-    assert_eq!(provider.removed_worktrees(), vec![linked.clone()]);
-    assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
-    assert!(
-        app.status.contains("deleted branch feature")
-            && app
-                .status
-                .contains(&format!("removed worktree {}", linked.display())),
-        "{}",
-        app.status
-    );
-
+    #[cfg(windows)]
+    {
+        assert!(app.status_error);
+        assert!(
+            app.status
+                .contains("remove the worktree with :git-worktrees first")
+        );
+        assert!(provider.removed_worktrees().is_empty());
+        assert!(provider.deletions().is_empty());
+    }
+    #[cfg(not(windows))]
+    {
+        assert_eq!(provider.removed_worktrees(), vec![linked.clone()]);
+        assert_eq!(provider.deletions(), vec![("feature".to_owned(), true)]);
+        assert!(
+            app.status.contains("deleted branch feature")
+                && app
+                    .status
+                    .contains(&format!("removed worktree {}", linked.display())),
+            "{}",
+            app.status
+        );
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -5735,7 +5781,7 @@ fn an_empty_scratch_behind_a_terminal_retires_when_a_file_can_replace_it() {
     app.open_file(path).unwrap();
     let file = app.active().buffer;
     app.switch_buffer(scratch);
-    app.open_terminal_at(Some("/bin/cat".to_owned()), directory.clone());
+    app.open_terminal_at(Some(idle_git_test_terminal()), directory.clone());
     let terminal = app.active_terminal().unwrap();
 
     app.retire_detached_ephemeral_buffers();
@@ -5981,8 +6027,9 @@ fn synchronous_discard_closes_a_removed_staged_addition_buffer() {
     fs::create_dir_all(&root).unwrap();
     let run = |arguments: &[&str]| {
         let output = std::process::Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
             .args(arguments)
-            .current_dir(&root)
+            .current_dir(git_fixture_directory(&root))
             .output()
             .unwrap();
         assert!(
@@ -6004,7 +6051,9 @@ fn synchronous_discard_closes_a_removed_staged_addition_buffer() {
     let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
         String::new(),
     )))));
-    ports.replace_git(Box::new(crate::git::GitCliProvider::new("git")));
+    ports.replace_git(Box::new(
+        crate::git::GitCliProvider::from_environment().expect("Git test fixture"),
+    ));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     assert!(
         app.git.repository().is_some(),
@@ -6247,8 +6296,9 @@ fn a_copy_row_does_not_unstage_its_independently_changed_source() {
     fs::create_dir_all(&root).unwrap();
     let git = |arguments: &[&str]| {
         let output = std::process::Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
             .args(arguments)
-            .current_dir(&root)
+            .current_dir(git_fixture_directory(&root))
             .output()
             .unwrap();
         assert!(
@@ -6273,7 +6323,9 @@ fn a_copy_row_does_not_unstage_its_independently_changed_source() {
     let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
         String::new(),
     )))));
-    ports.replace_git(Box::new(crate::git::GitCliProvider::new("git")));
+    ports.replace_git(Box::new(
+        crate::git::GitCliProvider::from_environment().expect("Git test fixture"),
+    ));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.execute_command("git-status").unwrap();
     let buffer = app.active().buffer;
@@ -6908,7 +6960,7 @@ fn background_stash_refresh_preserves_terminal_insert_mode() {
         subject: format!("stash {byte}"),
     };
     app.open_git_stashes_result(vec![entry('a', "stash@{0}")], true);
-    app.open_terminal(Some("/bin/cat".to_owned()));
+    app.open_terminal(Some(idle_git_test_terminal()));
     assert!(app.active_terminal().is_some());
     assert_eq!(app.mode, Mode::Insert);
 
@@ -6924,6 +6976,7 @@ fn background_stash_refresh_preserves_terminal_insert_mode() {
 
     assert_eq!(app.mode, Mode::Insert);
     assert!(app.active_terminal().is_some());
+    close_test_terminals(&mut app);
 }
 
 #[test]
@@ -6940,7 +6993,9 @@ fn selected_line_staging_refuses_a_dirty_live_buffer_before_submission() {
     )
     .unwrap();
     app.git.attach(Some(Repository::new(&root)));
-    let (service, _events) = crate::git::GitService::spawn(crate::git::GitCliProvider::new("git"));
+    let (service, _events) = crate::git::GitService::spawn(
+        crate::git::GitCliProvider::from_environment().expect("Git test fixture"),
+    );
     app.attach_git_service(service);
     app.open_file(path).unwrap();
     let buffer = app.active().buffer;
@@ -7249,7 +7304,9 @@ fn hunk_staging_refuses_when_the_source_buffer_has_unsaved_text() {
     )
     .unwrap();
     app.git.attach(Some(Repository::new(&root)));
-    let (service, _events) = crate::git::GitService::spawn(crate::git::GitCliProvider::new("git"));
+    let (service, _events) = crate::git::GitService::spawn(
+        crate::git::GitCliProvider::from_environment().expect("Git test fixture"),
+    );
     app.attach_git_service(service);
     app.open_file(path.clone()).unwrap();
     let source = app.active().buffer;
@@ -7287,7 +7344,9 @@ fn hunk_staging_surfaces_unsupported_patch_metadata() {
     )
     .unwrap();
     app.git.attach(Some(Repository::new(&root)));
-    let (service, _events) = crate::git::GitService::spawn(crate::git::GitCliProvider::new("git"));
+    let (service, _events) = crate::git::GitService::spawn(
+        crate::git::GitCliProvider::from_environment().expect("Git test fixture"),
+    );
     app.attach_git_service(service);
     app.open_git_diff_result(
             DiffScope::Unstaged,

@@ -13,8 +13,11 @@ use std::{
 };
 
 pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const STDERR_BYTES: usize = 16 * 1024;
+
+#[cfg(windows)]
+mod windows;
 
 /// An opaque result delivered only to the workspace that started the job.
 #[derive(Debug)]
@@ -39,28 +42,33 @@ fn run_inner(
     cancel: &AtomicBool,
     timeout: Duration,
 ) -> Result<Vec<String>> {
-    let deadline = Instant::now() + timeout;
-    let mut remaining = MAX_BYTES;
-    let mut outputs = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        ensure!(!cancel.load(Ordering::Acquire), "pipe cancelled");
-        ensure!(Instant::now() < deadline, "pipe timed out");
-        let output = invoke(
-            Path::new("/bin/sh"),
-            command,
-            directory,
-            input.as_bytes(),
-            cancel,
-            deadline,
-            remaining,
-        )?;
-        remaining -= output.len();
-        outputs.push(
-            String::from_utf8(output)
-                .map_err(|_| anyhow::anyhow!("pipe stdout is not valid UTF-8"))?,
-        );
+    #[cfg(windows)]
+    return windows::run(command, directory, inputs, cancel, timeout);
+    #[cfg(not(windows))]
+    {
+        let deadline = Instant::now() + timeout;
+        let mut remaining = MAX_BYTES;
+        let mut outputs = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            ensure!(!cancel.load(Ordering::Acquire), "pipe cancelled");
+            ensure!(Instant::now() < deadline, "pipe timed out");
+            let output = invoke(
+                Path::new("/bin/sh"),
+                command,
+                directory,
+                input.as_bytes(),
+                cancel,
+                deadline,
+                remaining,
+            )?;
+            remaining -= output.len();
+            outputs.push(
+                String::from_utf8(output)
+                    .map_err(|_| anyhow::anyhow!("pipe stdout is not valid UTF-8"))?,
+            );
+        }
+        Ok(outputs)
     }
-    Ok(outputs)
 }
 
 #[cfg(unix)]
@@ -209,7 +217,7 @@ fn invoke(
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn invoke(
     _: &Path,
     _: &str,

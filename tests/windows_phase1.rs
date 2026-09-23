@@ -12,7 +12,7 @@ use runyte::{
 };
 
 #[test]
-fn direct_keys_hints_and_help_report_platform_refusals() {
+fn native_explorer_opening_agrees_with_keys_hints_and_help() {
     use runyte::{
         command::{EditorCommand, GrammarKind, Mode},
         help::{self, HelpTopic},
@@ -22,11 +22,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     };
     let root = TestRuntimeRoot::new("windows-keys").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    let commands = [
-        EditorCommand::ShellPipe,
-        EditorCommand::OpenExplorerSystem,
-        EditorCommand::Diagnostics,
-    ];
+    let commands = [EditorCommand::OpenExplorerSystem];
     let bindings = commands
         .iter()
         .enumerate()
@@ -46,20 +42,22 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
     for row in &mut rows {
         row.apply_capabilities(&app.command_capabilities());
     }
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), commands.len());
     for (index, command) in commands.iter().enumerate() {
-        let reason = runyte::command::CommandId::Editor(*command)
-            .platform_unavailable()
-            .unwrap();
+        assert!(
+            runyte::command::CommandId::Editor(*command)
+                .platform_unavailable()
+                .is_none()
+        );
         let row = rows
             .iter()
             .find(|row| row.target == Some((*command).into()))
             .unwrap();
-        assert_eq!(row.unavailable_reason.as_deref(), Some(reason));
+        assert!(row.unavailable_reason.is_none());
         app.handle_input(InputEvent::Key(Key::char('z'))).unwrap();
         app.handle_input(InputEvent::Key(Key::char((b'a' + index as u8) as char)))
             .unwrap();
-        assert_eq!(app.status, reason);
+        assert!(app.status.contains("not a directory buffer"));
     }
     let explorer = help::render(
         HelpTopic::Explorer,
@@ -68,7 +66,7 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
         default_keymap(),
         false,
     );
-    assert!(explorer.contains("External file opening is unavailable in Windows Phase 1"));
+    assert!(!explorer.contains("External file opening is unavailable in Windows Phase 1"));
     let text = help::render(
         HelpTopic::Text,
         GrammarKind::Runyte,
@@ -76,24 +74,14 @@ fn direct_keys_hints_and_help_report_platform_refusals() {
         default_keymap(),
         false,
     );
-    assert!(text.contains("Shell filters are unavailable in Windows Phase 1"));
+    assert!(!text.contains("Shell filters are unavailable in Windows Phase 1"));
 }
 
 #[test]
-fn deferred_commands_agree_with_palette_availability() {
+fn public_and_deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in [
-        "lsp-trust",
-        "lsp-status",
-        "plugins",
-        "context-access",
-        "git-status",
-        "pipe echo text",
-        "quit-here",
-        "log-open",
-        "session-list",
-    ] {
+    for spelling in ["plugins", "session-attach workspace"] {
         let name = spelling.split_whitespace().next().unwrap();
         let spec = resolve_command(name).unwrap();
         let availability = app.command_capabilities().command_availability(spec);
@@ -106,6 +94,32 @@ fn deferred_commands_agree_with_palette_availability() {
             "{spelling}: {result:?}"
         );
     }
+    let context = resolve_command("context-access").unwrap();
+    assert!(context.id.platform_unavailable().is_none());
+    assert!(
+        app.command_capabilities()
+            .command_availability(context)
+            .reason()
+            .is_none()
+    );
+    assert_eq!(
+        app.execute(parse_colon_command("context-access codex").unwrap())
+            .unwrap(),
+        CommandOutcome::Completed
+    );
+    let manager = resolve_command("session-list").unwrap();
+    assert!(manager.id.platform_unavailable().is_none());
+    let reason = app
+        .command_capabilities()
+        .command_availability(manager)
+        .reason()
+        .unwrap()
+        .to_owned();
+    assert_eq!(reason, "session service is unavailable");
+    let result = app
+        .execute(parse_colon_command("session-list").unwrap())
+        .unwrap();
+    assert!(matches!(result, CommandOutcome::UserError(message) if message == reason));
     assert!(!app.should_quit);
     assert!(
         runyte::command::CommandId::Editor(runyte::command::EditorCommand::MatchBracket)
@@ -117,6 +131,38 @@ fn deferred_commands_agree_with_palette_availability() {
             .platform_unavailable()
             .is_none()
     );
+    for spelling in ["lsp-trust", "lsp-status", "lsp-restart"] {
+        let spec = resolve_command(spelling).unwrap();
+        assert!(spec.id.platform_unavailable().is_none());
+    }
+    assert!(
+        runyte::command::CommandId::Editor(runyte::command::EditorCommand::Diagnostics)
+            .platform_unavailable()
+            .is_none()
+    );
+}
+
+#[test]
+fn context_inventory_is_public_and_missing_storage_stays_noncreating() {
+    let root = TestRuntimeRoot::new("windows-context-list").unwrap();
+    let context = root.path().join("context");
+    let config = root.create_private_dir("config").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .args(["--context-list", "--json"])
+        .env("RUNYTE_CONTEXT_HOME", &context)
+        .env("XDG_CONFIG_HOME", config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "context inventory failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inventory: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(inventory["schema"], "runyte.context.discovery.v1");
+    assert_eq!(inventory["truncated"], false);
+    assert_eq!(inventory["workspaces"], serde_json::json!([]));
+    assert!(!context.exists());
 }
 
 #[test]
@@ -130,11 +176,10 @@ fn enabled_plugins_cannot_start_even_without_a_runtime() {
     let mut host = WorkspaceHost::new(app);
     assert!(host.start_plugins().is_none());
     assert!(host.start_plugins().is_none());
-    assert!(runyte::git::GitCliProvider::from_environment().is_none());
 }
 
 #[test]
-fn binary_open_refuses_without_offering_an_unusable_program_prompt() {
+fn binary_open_offers_a_program_prompt_without_loading_binary_text() {
     let root = TestRuntimeRoot::new("windows-binary").unwrap();
     let path = root.path().join("image.bin");
     std::fs::write(&path, [0, 1, 2, 3]).unwrap();
@@ -149,53 +194,83 @@ fn binary_open_refuses_without_offering_an_unusable_program_prompt() {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(app.mode, runyte::command::Mode::Normal);
+    assert_eq!(app.mode, runyte::command::Mode::Command);
+    assert_eq!(app.prompt_kind, runyte::app::PromptKind::ExternalProgram);
     assert_eq!(app.active_buffer().to_string(), before);
-    assert!(app.status.contains("External file opening is unavailable"));
+    assert!(app.status.contains("not a text file"));
 }
 
 #[tokio::test]
-async fn enabled_lsp_configuration_stays_disabled_after_permission_and_restart() {
+async fn native_lsp_requires_permission_and_missing_servers_fail_nonfatally_after_restart() {
+    use runyte::input::{InputEvent, KeyCode, KeyStroke};
     let root = TestRuntimeRoot::new("windows-lsp").unwrap();
-    let marker = root.path().join("unexpected-server-start");
-    let mut config = Config::default().lsp;
-    config.enable = true;
-    config.servers.insert(
+    let project = root.create_private_dir("project").unwrap();
+    let file = project.join("main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let mut config = Config::default();
+    config.lsp.enable = true;
+    config.lsp.servers.insert(
         "rust".into(),
         LanguageServerConfig {
-            command: "cmd.exe".into(),
-            args: vec![
-                "/d".into(),
-                "/c".into(),
-                "echo started>unexpected-server-start".into(),
-            ],
+            command: root.join("missing-native-language-server.exe"),
             ..Default::default()
         },
     );
-    let (handle, mut events) = lsp::spawn(config, root.path().to_owned());
-    handle.set_allowed(true);
-    assert!(handle.send(LspCommand::Ensure {
-        language: "rust".into()
-    }));
-    assert!(handle.send(LspCommand::Restart(Some("rust".into()))));
-    assert!(handle.send(LspCommand::Status));
-    // Status is processed after the ensure/restart requests, providing a barrier.
-    loop {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        if let LspEvent::Status { message, .. } = event {
-            if message.contains("no language servers running") {
-                break;
-            }
-        } else {
-            assert!(
-                !matches!(event, LspEvent::Ready { .. } | LspEvent::Stopped { .. }),
-                "{event:?}"
-            );
+    let (handle, mut events) = lsp::spawn(config.lsp.clone(), project.clone());
+    let mut app = App::new_in_project(config, Some(file), &project).unwrap();
+    app.configure_lsp_trust(Some(root.join("cache/lsp-trust")));
+    app.attach_lsp(handle.clone());
+    assert_eq!(
+        app.command_capabilities().lsp_manager.reason(),
+        Some("LSP is disabled for this workspace; use :lsp-trust")
+    );
+    assert!(
+        app.command_capabilities()
+            .command_availability(resolve_command("lsp-trust").unwrap())
+            .is_available()
+    );
+    assert!(matches!(
+        app.execute(parse_colon_command("lsp-status").unwrap())
+            .unwrap(),
+        CommandOutcome::Unavailable(_)
+    ));
+    // Physical choice input grants this run; attaching the manager and asking
+    // for status above cannot grant permission or queue a server start.
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Down)))
+        .unwrap();
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(app.command_capabilities().lsp_manager.is_available());
+    for attempt in 0..2 {
+        if attempt != 0 {
+            app.execute(parse_colon_command("lsp-restart").unwrap())
+                .unwrap();
+            assert!(handle.send(LspCommand::Ensure {
+                language: "rust".into()
+            }));
         }
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let event = events.recv().await.expect("manager remains alive");
+                assert!(!matches!(event, LspEvent::Ready { .. }), "{event:?}");
+                if matches!(event, LspEvent::Stopped { .. }) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(&event, LspEvent::Stopped { language, message }
+            if language == "rust" && message.contains("cannot start missing-native-language-server.exe")));
+        app.apply_lsp_event(event);
+        assert!(!app.should_quit);
+        assert!(app.command_capabilities().lsp_manager.is_available());
+        assert_eq!(app.active_buffer().to_string(), "fn main() {}\n");
     }
-    assert!(!marker.exists());
+    app.handle_input(InputEvent::Key(KeyStroke::char('i')))
+        .unwrap();
+    app.handle_input(InputEvent::Text("// still editing\n".into()))
+        .unwrap();
+    assert!(app.active_buffer().to_string().contains("// still editing"));
     assert!(handle.send(LspCommand::Shutdown));
 }

@@ -11,6 +11,7 @@ import time
 import unittest
 
 from jsonschema import Draft202012Validator
+from node_reader import ResponseReader, stderr_snapshot
 
 DIRECTORY = Path(__file__).resolve().parent
 SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
@@ -30,8 +31,12 @@ class NodeTasksTests(unittest.TestCase):
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.child.stdout, selectors.EVENT_READ)
         self.addCleanup(self.selector.close)
-        self.buffer = bytearray()
-        self.messages = []
+        os.set_blocking(self.child.stderr.fileno(), False)
+        self.reader = ResponseReader(self.selector.select,
+            lambda maximum: os.read(self.child.stdout.fileno(), maximum),
+            VALIDATOR.validate,
+            lambda: (self.child.poll(), stderr_snapshot(
+                lambda maximum: os.read(self.child.stderr.fileno(), maximum))), LIMIT)
         self.last_request = 0
 
     def close(self):
@@ -51,22 +56,8 @@ class NodeTasksTests(unittest.TestCase):
         self.child.stdin.write((json.dumps(message, ensure_ascii=False) + '\n').encode())
         self.child.stdin.flush()
 
-    def read(self):
-        deadline = time.monotonic() + 3
-        while not self.messages:
-            self.assertTrue(self.selector.select(max(0, deadline - time.monotonic())), 'Node response timed out')
-            data = os.read(self.child.stdout.fileno(), LIMIT + 1)
-            self.assertTrue(data, 'Node exited before a response')
-            self.buffer.extend(data)
-            self.assertLessEqual(len(self.buffer), 2 * LIMIT)
-            while b'\n' in self.buffer:
-                line, _, remaining = self.buffer.partition(b'\n')
-                self.buffer = bytearray(remaining)
-                self.assertLessEqual(len(line) + 1, LIMIT)
-                value = json.loads(line)
-                VALIDATOR.validate(value)
-                self.messages.append(value)
-        result = self.messages.pop(0)
+    def read(self, *, deadline=None, phase='response'):
+        result = self.reader.read(time.monotonic() + 3 if deadline is None else deadline, phase)
         if result['type'] == 'request':
             serial = int(result['id'].split(':')[1])
             self.assertGreater(serial, self.last_request)
@@ -132,7 +123,7 @@ class NodeTasksTests(unittest.TestCase):
 
     def handshake(self):
         self.send(HOST[0])
-        registered = self.read()
+        registered = self.read(phase='registration')
         self.assertEqual(registered['type'], 'register')
         self.assertEqual(registered['required_capabilities'], ['views'])
         self.assertEqual([command['name'] for command in registered['commands']], ['open', 'toggle'])
@@ -281,8 +272,8 @@ class NodeTasksTests(unittest.TestCase):
         self.toggle(2)
         publish = self.read()
         started = time.monotonic()
-        self.assertTrue(self.selector.select(9), 'Callback did not honor its bounded deadline')
-        self.assertEqual(self.read()['error']['code'], 'timeout')
+        self.assertEqual(self.read(deadline=started + 9,
+            phase='publication deadline')['error']['code'], 'timeout')
         self.assertLess(time.monotonic() - started, 9)
         self.reply(publish, {'view': 'v:g:1', 'revision': 'm:2', 'model': publish['params']['model']})
         self.toggle(3)

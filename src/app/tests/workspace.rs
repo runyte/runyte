@@ -35,10 +35,9 @@ fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     assert_eq!(
         app.take_workspace_switch(),
         Some(WorkspaceSwitchRequest {
-            selector: PathBuf::from("../project"),
+            target: WorkspaceSwitchTarget::UserSelector(PathBuf::from("../project")),
             working_directory: editor_directory,
             running_only: false,
-            previous_session: false,
             visit: None,
         })
     );
@@ -70,6 +69,7 @@ fn worktree_removal_refuses_unsaved_or_uninspectable_persistent_sessions() {
         required_authorization: DeletionAuthorization::Enter,
     };
     let row = |unsaved_buffers| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "linked".to_owned(),
@@ -177,6 +177,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
         1,
         target.clone(),
         Ok(Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "linked".to_owned(),
@@ -284,6 +285,7 @@ fn a_confirmed_worktree_removal_waits_for_its_session_to_stop_before_removing_it
     app.apply_workspace_event(WorkspaceEvent::Stopped {
         generation,
         selector: target.clone(),
+        selection: None,
         result: Ok(()),
     });
 
@@ -354,6 +356,7 @@ fn a_session_that_will_not_stop_leaves_its_worktree_alone() {
     app.apply_workspace_event(WorkspaceEvent::Stopped {
         generation,
         selector: target.clone(),
+        selection: None,
         result: Err("a live terminal child is running".to_owned()),
     });
 
@@ -431,6 +434,7 @@ fn an_asynchronous_removal_takes_nothing_further_down_until_git_reports_success(
         app.apply_workspace_event(WorkspaceEvent::Stopped {
             generation,
             selector: target.clone(),
+            selection: None,
             result: Ok(()),
         });
 
@@ -1450,6 +1454,7 @@ fn session_terminal_output_status_requires_every_live_terminal_to_be_quiet() {
                live_terminals,
                terminal_sessions,
                terminal_line_activity_unix_seconds| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1516,6 +1521,7 @@ fn an_open_session_manager_transitions_into_and_out_of_quiet() {
         .unwrap()
         .as_secs();
     let row = |line_activity| WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1597,6 +1603,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
         .as_secs();
     let rows = vec![
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1620,6 +1627,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             missing_directory: false,
         },
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -1704,7 +1712,8 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     assert_eq!(app.list.as_ref().unwrap().filter, "archive");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(stopped.clone())
     );
 
@@ -1713,6 +1722,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 5,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1779,6 +1789,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
             .as_secs();
         let rows = vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1802,6 +1813,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -1825,6 +1837,7 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "cccccccccccccccc".to_owned(),
@@ -1868,13 +1881,15 @@ fn session_picker_keeps_preview_visibility_through_every_row_rebuild() {
         // Model the queued form of the request and its later response. Both
         // the loading and completed preview rebuilds retain the one preference
         // owned by this open manager.
-        app.workspace_previews.remove(&live);
+        let selection = crate::workspace::WorkspaceSelection::project_only(live.clone());
+        app.workspace_previews.remove(&selection);
         app.workspace_preview_generation = 7;
-        app.workspace_preview_target = Some(live.clone());
+        app.workspace_preview_target = Some(selection.clone());
         app.rebuild_workspace_picker();
         assert_eq!(app.list.as_ref().unwrap().show_preview, show_preview);
         app.apply_workspace_event(WorkspaceEvent::Previewed {
             generation: 7,
+            selection,
             path: live,
             result: Ok(SessionPreview {
                 layout_panes: 2,
@@ -1927,6 +1942,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
         generation: 6,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -1950,6 +1966,7 @@ fn session_picker_omits_counts_a_running_host_answers_with_zero() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2019,6 +2036,7 @@ fn session_picker_marks_a_running_hosts_unanswered_health_as_unavailable() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 7,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2084,6 +2102,7 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 3,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2139,9 +2158,11 @@ fn session_picker_states_the_session_as_fields_rather_than_pane_contents() {
     // count without bringing any pane text back into the preview.
     app.workspace_previews.clear();
     app.workspace_preview_generation = 7;
-    app.workspace_preview_target = Some(root.clone());
+    let selection = crate::workspace::WorkspaceSelection::project_only(root.clone());
+    app.workspace_preview_target = Some(selection.clone());
     app.apply_workspace_event(WorkspaceEvent::Previewed {
         generation: 7,
+        selection,
         path: root.clone(),
         result: Ok(SessionPreview {
             layout_panes: 2,
@@ -2205,6 +2226,7 @@ fn session_directory_paths_cannot_manufacture_manager_rows() {
     app.apply_workspace_event(WorkspaceEvent::Refreshed {
         generation: 1,
         result: Ok(vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2275,6 +2297,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
         generation: 2,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2298,6 +2321,7 @@ fn the_session_list_marks_stopped_rows_dormant_without_hiding_or_reordering_them
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2371,6 +2395,7 @@ fn numbered_sessions(label: &str) -> (App, PathBuf, Vec<PathBuf>) {
             .zip(numbers)
             .zip(names)
             .map(|((project_root, number), name)| WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: format!("{name}00000000000000"),
@@ -2405,7 +2430,8 @@ fn a_digit_attaches_to_a_numbered_session_from_the_manager() {
 
     press(&mut app, '2');
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(roots[1].clone()),
         "the digit reaches the session holding that number, not the second row"
     );
@@ -2429,7 +2455,7 @@ fn leader_digits_jump_without_opening_the_manager_in_both_modal_modes() {
             assert!(app.list.is_none());
             press(&mut app, char::from(b'0' + number));
             let request = app.take_workspace_switch().unwrap();
-            assert_eq!(request.selector, roots[1]);
+            assert_eq!(switch_target_path(&request), roots[1]);
             assert!(request.running_only);
             assert!(app.list.is_none());
         }
@@ -2438,7 +2464,10 @@ fn leader_digits_jump_without_opening_the_manager_in_both_modal_modes() {
     app.workspace_rows[0].number = Some(1);
     press(&mut app, ' ');
     press(&mut app, '1');
-    assert_eq!(app.take_workspace_switch().unwrap().selector, roots[0]);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        roots[0]
+    );
     press(&mut app, ' ');
     press(&mut app, '2');
     assert!(app.take_workspace_switch().is_none());
@@ -2526,7 +2555,8 @@ fn clearing_the_filter_arms_the_digit_shortcut_again() {
     assert!(app.list.as_ref().unwrap().filter.is_empty());
     press(&mut app, '1');
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(roots[0].clone()),
         "an emptied filter is the state the shortcut is armed in"
     );
@@ -2565,7 +2595,9 @@ fn the_manager_renumber_action_opens_an_empty_prompt() {
         "renumber starts ready for one digit"
     );
     assert_eq!(
-        app.session_number_target.as_deref(),
+        app.session_number_target
+            .as_ref()
+            .map(|target| target.project_root()),
         Some(roots[1].as_path())
     );
     assert!(app.list.is_none(), "the scalar prompt owns its input");
@@ -2653,6 +2685,7 @@ fn workspace_actions_match_the_selected_session_state() {
         generation: 9,
         result: Ok(vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2676,6 +2709,7 @@ fn workspace_actions_match_the_selected_session_state() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2763,7 +2797,9 @@ fn workspace_actions_match_the_selected_session_state() {
     assert_eq!(app.prompt_kind, PromptKind::SessionRename);
     assert_eq!(app.command, "archive");
     assert_eq!(
-        app.session_rename_target.as_deref(),
+        app.session_rename_target
+            .as_ref()
+            .map(|target| target.project_root()),
         Some(stopped.as_path())
     );
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
@@ -2800,6 +2836,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
     let rows = |running: bool| {
         vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -2823,6 +2860,7 @@ fn session_actions_confirm_force_close_and_recheck_state_at_enter() {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "bbbbbbbbbbbbbbbb".to_owned(),
@@ -2981,7 +3019,8 @@ fn workspace_switch_requests_are_platform_guarded_persistent_and_preserve_dirty_
     app.enable_persistent_session();
     assert!(app.request_workspace_switch_for_platform(destination.clone(), true));
     assert_eq!(
-        app.take_workspace_switch().map(|request| request.selector),
+        app.take_workspace_switch()
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(destination)
     );
     fs::remove_dir_all(root).unwrap();
@@ -2998,6 +3037,7 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
     app.apply_workspace_event(WorkspaceEvent::Stopped {
         generation: 6,
         selector: path.clone(),
+        selection: None,
         result: Err("stale stop".to_owned()),
     });
     assert_eq!((app.status.clone(), app.status_error), status_before_stale);
@@ -3007,6 +3047,7 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
             WorkspaceEvent::Stopped {
                 generation: 7,
                 selector: path.clone(),
+                selection: None,
                 result: Err("stop refused".to_owned()),
             },
             "stop refused",
@@ -3023,6 +3064,7 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
             WorkspaceEvent::Renamed {
                 generation: 7,
                 path: path.clone(),
+                selection: None,
                 name: "topic".to_owned(),
                 result: Err("rename refused".to_owned()),
             },
@@ -3032,6 +3074,7 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
             WorkspaceEvent::Numbered {
                 generation: 7,
                 path: path.clone(),
+                selection: None,
                 number: Some(2),
                 result: Err("number refused".to_owned()),
             },
@@ -3052,14 +3095,16 @@ fn workspace_lifecycle_events_keep_generation_gates_and_distinct_failures() {
     assert!(app.status.contains("was not in the recent list"));
 
     app.workspace_preview_generation = 9;
-    app.workspace_preview_target = Some(path.clone());
+    let selection = crate::workspace::WorkspaceSelection::project_only(path.clone());
+    app.workspace_preview_target = Some(selection.clone());
     let status_before_preview = (app.status.clone(), app.status_error);
     app.apply_workspace_event(WorkspaceEvent::Previewed {
         generation: 8,
+        selection: selection.clone(),
         path: path.clone(),
         result: Err("stale preview".to_owned()),
     });
-    assert_eq!(app.workspace_preview_target.as_ref(), Some(&path));
+    assert_eq!(app.workspace_preview_target.as_ref(), Some(&selection));
     assert_eq!(
         (app.status.clone(), app.status_error),
         status_before_preview
@@ -3289,6 +3334,7 @@ fn worktree_removal_refuses_current_locked_bare_and_unavailable_rows_before_conf
 #[cfg(unix)]
 fn navigation_row(path: PathBuf, running: bool, number: Option<u8>) -> WorkspaceRow {
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: crate::workspace::workspace_id(&path),
@@ -3314,6 +3360,262 @@ fn navigation_row(path: PathBuf, running: bool, number: Option<u8>) -> Workspace
 }
 
 #[cfg(unix)]
+fn distinct_publication_row(path: PathBuf, name: &str, tag: &[u8]) -> WorkspaceRow {
+    let mut row = navigation_row(path, true, None);
+    row.name = Some(name.to_owned());
+    row.publication_key = Some(crate::workspace::PublicationKey::for_test(tag));
+    row
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_switch_request_keeps_the_key_for_same_project_rows() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("typed-switch-same-project");
+    let first = distinct_publication_row(project.clone(), "first", b"switch-first");
+    let second = distinct_publication_row(project, "second", b"switch-second");
+    let expected = second.selection();
+    app.workspace_rows = vec![first, second];
+    assert!(app.request_selected_workspace_switch(expected.clone()));
+
+    let request = app.take_workspace_switch().unwrap();
+    assert_eq!(request.target, WorkspaceSwitchTarget::Selected(expected));
+}
+
+#[cfg(unix)]
+#[test]
+fn same_project_rows_keep_distinct_poll_selection_and_preview_completions() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("distinct-session-rows");
+    let first = distinct_publication_row(project.clone(), "first", b"first");
+    let second = distinct_publication_row(project.clone(), "second", b"second");
+    let first_selection = first.selection();
+    let second_selection = second.selection();
+    open_session_manager_for_refresh(&mut app);
+    app.workspace_generation = 1;
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![first.clone(), second.clone()]),
+    });
+    app.list.as_mut().unwrap().selected = 1;
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![second, first]),
+    });
+    assert_eq!(
+        app.selected_workspace_selection(),
+        Some(second_selection.clone())
+    );
+    assert_eq!(app.list.as_ref().unwrap().selected, 0);
+
+    app.workspace_previews.clear();
+    app.workspace_preview_generation = 7;
+    app.workspace_preview_target = Some(first_selection.clone());
+    app.apply_workspace_event(WorkspaceEvent::Previewed {
+        generation: 7,
+        path: project.clone(),
+        selection: second_selection.clone(),
+        result: Err("wrong publication".to_owned()),
+    });
+    assert_eq!(app.workspace_preview_target, Some(first_selection.clone()));
+    assert!(!app.workspace_previews.contains_key(&second_selection));
+    app.apply_workspace_event(WorkspaceEvent::Previewed {
+        generation: 7,
+        path: project,
+        selection: first_selection.clone(),
+        result: Err("first publication".to_owned()),
+    });
+    assert_eq!(app.workspace_preview_target, None);
+    assert_eq!(
+        app.workspace_previews.get(&first_selection),
+        Some(&Err("first publication".to_owned()))
+    );
+    assert!(!app.workspace_previews.contains_key(&second_selection));
+    let replacement = distinct_publication_row(
+        first_selection.project_root().to_path_buf(),
+        "replacement",
+        b"replacement",
+    );
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![replacement]),
+    });
+    assert!(!app.workspace_previews.contains_key(&first_selection));
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_action_menu_and_prompt_refuse_same_project_replacement() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("stale-session-menu");
+    let first = distinct_publication_row(project.clone(), "first", b"first-menu");
+    let first_selection = first.selection();
+    let replacement = distinct_publication_row(project, "replacement", b"replacement-menu");
+    open_session_manager_for_refresh(&mut app);
+    app.workspace_generation = 1;
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![first.clone()]),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.session_action_menu.as_mut().unwrap().selected = 4;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![replacement.clone()]),
+    });
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.status_error);
+    assert!(app.status.contains("selected session changed"));
+    assert!(app.session_action_menu.is_none());
+    assert!(app.workspace_pending_selection.is_none());
+    assert_eq!(app.workspace_generation, 1);
+
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![first]),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.session_action_menu.as_mut().unwrap().selected = 1;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.prompt_kind, PromptKind::SessionRename);
+    assert_eq!(app.session_rename_target.as_ref(), Some(&first_selection));
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![replacement]),
+    });
+    app.command = "renamed".to_owned();
+    app.command_cursor = app.command.chars().count();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.status_error);
+    assert!(app.status.contains("selected session changed"));
+    assert!(app.workspace_pending_selection.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_open_and_number_prompt_never_retarget_same_project_replacement() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("stale-session-open-number");
+    let first = distinct_publication_row(project.clone(), "first", b"first-open");
+    let first_selection = first.selection();
+    let replacement = distinct_publication_row(project, "replacement", b"replacement-open");
+    open_session_manager_for_refresh(&mut app);
+    app.workspace_generation = 1;
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![first.clone()]),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![replacement.clone()]),
+    });
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.status.contains("selected session changed"));
+    assert!(app.take_workspace_switch().is_none());
+
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![first]),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.session_action_menu.as_mut().unwrap().selected = 2;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.prompt_kind, PromptKind::SessionNumber);
+    assert_eq!(app.session_number_target.as_ref(), Some(&first_selection));
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 1,
+        result: Ok(vec![replacement]),
+    });
+    app.command = "3".to_owned();
+    app.command_cursor = 1;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.status.contains("selected session changed"));
+    assert!(app.workspace_pending_selection.is_none());
+    assert!(app.workspace_preview_target.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_inventory_and_completions_require_full_unique_identity() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let project = temporary("selected-inventory-identity");
+    let first = distinct_publication_row(project.clone(), "first", b"inventory-first");
+    let second = distinct_publication_row(project.clone(), "second", b"inventory-second");
+    let first_selection = first.selection();
+    let second_selection = second.selection();
+    app.workspace_rows = vec![first.clone(), first.clone()];
+    open_session_manager_for_refresh(&mut app);
+    app.rebuild_workspace_picker();
+    app.open_session_inventory();
+    assert!(app.status.contains("duplicate selection identity"));
+    assert!(!app.session_inventory_open());
+    assert!(app.list.is_some());
+
+    app.workspace_rows = vec![first, second];
+    app.rebuild_workspace_picker();
+    app.open_session_inventory();
+    let (generation, selection) = app.session_inventory_request().unwrap();
+    assert_eq!(selection, &first_selection);
+    app.apply_workspace_event(WorkspaceEvent::Inventory {
+        generation,
+        path: project.clone(),
+        selection: second_selection.clone(),
+        result: Err("wrong publication".to_owned()),
+    });
+    assert_ne!(
+        app.list.as_ref().unwrap().selected_item().unwrap().label,
+        "wrong publication"
+    );
+    app.apply_workspace_event(WorkspaceEvent::Inventory {
+        generation,
+        path: project.clone(),
+        selection: first_selection.clone(),
+        result: Err("correct publication".to_owned()),
+    });
+    assert_eq!(
+        app.list.as_ref().unwrap().selected_item().unwrap().label,
+        "correct publication"
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(
+        app.selected_workspace_selection(),
+        Some(first_selection.clone())
+    );
+
+    app.workspace_pending_selection = Some((8, first_selection.clone()));
+    app.workspace_generation = 9;
+    app.apply_workspace_event(WorkspaceEvent::Polled {
+        result: Ok(vec![distinct_publication_row(
+            project.clone(),
+            "second",
+            b"inventory-second",
+        )]),
+    });
+    app.apply_workspace_event(WorkspaceEvent::Stopped {
+        generation: 8,
+        selector: project.clone(),
+        selection: Some(second_selection),
+        result: Err("wrong completion".to_owned()),
+    });
+    assert_eq!(
+        app.workspace_pending_selection,
+        Some((8, first_selection.clone()))
+    );
+    app.apply_workspace_event(WorkspaceEvent::Stopped {
+        generation: 8,
+        selector: project,
+        selection: Some(first_selection),
+        result: Err("original publication refused".to_owned()),
+    });
+    assert!(app.workspace_pending_selection.is_none());
+    assert_eq!(app.status, "original publication refused");
+}
+
+#[cfg(unix)]
 #[test]
 fn session_navigation_cycles_running_catalog_order_and_never_starts_history() {
     let mut app = App::new(Config::default(), None).unwrap();
@@ -3327,16 +3629,20 @@ fn session_navigation_cycles_running_catalog_order_and_never_starts_history() {
     ];
     app.cycle_persistent_session(true);
     let request = app.take_workspace_switch().unwrap();
-    assert_eq!(request.selector, unnumbered);
+    assert_eq!(switch_target_path(&request), unnumbered);
     assert!(request.running_only);
     app.cycle_persistent_session(false);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, unnumbered);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        unnumbered
+    );
     app.workspace_rows.truncate(1);
     app.cycle_persistent_session(true);
     assert!(app.take_workspace_switch().is_none());
     app.previous_persistent_session();
     let request = app.take_workspace_switch().unwrap();
-    assert!(request.previous_session && request.running_only);
+    assert_eq!(request.target, WorkspaceSwitchTarget::Previous);
+    assert!(request.running_only);
 }
 
 #[cfg(unix)]
@@ -3397,7 +3703,10 @@ fn session_directory_chooser_opens_exact_empty_directory_and_cancel_preserves_in
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.list.as_ref().unwrap().title.contains("empty"));
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3465,7 +3774,7 @@ fn session_directory_chooser_matches_beyond_the_result_limit() {
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(
-        app.take_workspace_switch().unwrap().selector,
+        switch_target_path(&app.take_workspace_switch().unwrap()),
         root.join(name)
     );
     fs::remove_dir_all(root).unwrap();
@@ -3486,6 +3795,7 @@ fn session_inventory_ignores_late_replies_and_carries_resource_identity() {
     app.apply_workspace_event(WorkspaceEvent::Inventory {
         generation: 1,
         path: target.clone(),
+        selection: crate::workspace::WorkspaceSelection::project_only(target.clone()),
         result: Ok(crate::workspace::DestinationInventory {
             incarnation: "a".repeat(64),
             entries: vec![OpenDestinationEntry {
@@ -3502,7 +3812,7 @@ fn session_inventory_ignores_late_replies_and_carries_resource_identity() {
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let request = app.take_workspace_switch().unwrap();
-    assert_eq!(request.selector, target);
+    assert_eq!(switch_target_path(&request), target);
     assert!(request.running_only);
     assert_eq!(
         request.visit.unwrap().destination,
@@ -3510,6 +3820,7 @@ fn session_inventory_ignores_late_replies_and_carries_resource_identity() {
     );
     app.apply_workspace_event(WorkspaceEvent::Inventory {
         generation: 1,
+        selection: crate::workspace::WorkspaceSelection::project_only(target.clone()),
         path: target,
         result: Err("late reply".to_owned()),
     });
@@ -3565,7 +3876,10 @@ fn session_directory_background_roots_preserve_selected_path() {
         "child/"
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3594,7 +3908,10 @@ fn session_directory_paste_uses_path_completion_state() {
             .contains(&child.display().to_string())
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3669,6 +3986,10 @@ fn clickable_session_strip() -> (App, FrameGeometry, PointerEvent) {
 fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
     let (mut app, geometry, click) = clickable_session_strip();
     let target = app.workspace_rows[2].project_root.clone();
+    app.workspace_rows[2].publication_key = Some(crate::workspace::PublicationKey::for_test(
+        b"strip-original",
+    ));
+    let target_selection = app.workspace_rows[2].selection();
     let view = app.prepare_view(geometry);
     let selection = app.active().selection.clone();
     // " 1 home · " takes 10 cells. Every cell of " 界é · ",
@@ -3679,7 +4000,11 @@ fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
             app.handle_pointer(PointerEvent { column, ..click }, &view)
                 .unwrap();
             let request = app.take_workspace_switch().unwrap();
-            assert_eq!(request.selector, target);
+            assert_eq!(switch_target_path(&request), target);
+            assert_eq!(
+                request.target,
+                WorkspaceSwitchTarget::Selected(target_selection.clone())
+            );
             assert!(request.running_only);
             assert_eq!(app.mode, mode);
             assert_eq!(app.active().selection, selection);
@@ -3687,9 +4012,13 @@ fn session_strip_click_selects_visible_identity_in_all_editing_modes() {
         }
     }
     // A catalog refresh after preparation must not retarget the visible label.
-    app.workspace_rows[2] = navigation_row(temporary("replacement-host"), true, None);
+    app.workspace_rows[2] =
+        distinct_publication_row(target.clone(), "replacement", b"strip-replacement");
     app.handle_pointer(click, &view).unwrap();
-    assert_eq!(app.take_workspace_switch().unwrap().selector, target);
+    assert_eq!(
+        app.take_workspace_switch().unwrap().target,
+        WorkspaceSwitchTarget::Selected(target_selection)
+    );
     assert_eq!(
         app.snapshot(&view).session_strip.unwrap().entries[1].name,
         "界e\u{301}"
@@ -3743,7 +4072,7 @@ fn session_strip_overflow_clicks_only_displayed_entries() {
     // " 1 home ·  界é ·  …1": the leading catalog entry was omitted.
     app.handle_pointer(click, &view).unwrap();
     assert_eq!(
-        app.take_workspace_switch().unwrap().selector,
+        switch_target_path(&app.take_workspace_switch().unwrap()),
         app.workspace_rows[3].project_root
     );
     for column in 20..23 {
@@ -3800,6 +4129,6 @@ fn session_strip_host_rejects_clicks_from_frames_with_replaced_identities() {
         HostInputOutcome::Applied
     );
     let request = host.app_mut().take_workspace_switch().unwrap();
-    assert_eq!(request.selector, target);
+    assert_eq!(switch_target_path(&request), target);
     assert!(request.running_only);
 }

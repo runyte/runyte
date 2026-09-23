@@ -66,6 +66,11 @@ const STARTUP_BOUND: &[StartupBound] = &[
         differs: |loaded, running| loaded.workspace.state != running.workspace.state,
         restore: |loaded, running| loaded.workspace.state.clone_from(&running.workspace.state),
     },
+    StartupBound {
+        key: "workspace.state_anchor",
+        differs: |loaded, running| loaded.workspace.state_anchor != running.workspace.state_anchor,
+        restore: |loaded, running| loaded.workspace.state_anchor = running.workspace.state_anchor,
+    },
 ];
 
 impl App {

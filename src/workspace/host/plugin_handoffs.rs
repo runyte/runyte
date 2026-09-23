@@ -75,6 +75,12 @@ impl WorkspaceHost {
             .and_then(|instance| instance.application.requests.get(invocation))
             .ok_or_else(stale)?;
         self.app.plugin_foreground(context)?;
+        if cfg!(windows) && !context.native_handoff_allowed {
+            return Err(Error::new(
+                Code::ContextChanged,
+                "Native handoff requires current physical approval",
+            ));
+        }
         Ok(context.clone())
     }
     pub(super) fn application_handoff_request(
@@ -300,7 +306,8 @@ impl WorkspaceHost {
                                 )),
                             );
                         }
-                        self.app
+                        let context = self
+                            .app
                             .plugins
                             .instances
                             .get_mut(&owner)
@@ -308,8 +315,9 @@ impl WorkspaceHost {
                             .application
                             .requests
                             .get_mut(&invocation)
-                            .unwrap()
-                            .foreground_allowed = false;
+                            .unwrap();
+                        context.foreground_allowed = false;
+                        context.native_handoff_allowed = false;
                         self.plugin_handoffs.get_mut(&key).unwrap().launched = true;
                         #[cfg(test)]
                         let launcher = self.plugin_external_launcher.clone();
@@ -377,6 +385,7 @@ impl WorkspaceHost {
                                 .get_mut(&invocation)
                         {
                             context.foreground_allowed = false;
+                            context.native_handoff_allowed = false;
                         }
                         self.plugin_handoffs.get_mut(&key).unwrap().replied = true;
                         self.application_local_reply(owner, event.request, result)?;
@@ -430,3 +439,7 @@ async fn send_result(lease: Arc<handoff::Lease>, result: Result<handoff::Prepare
     };
     let _ = sender.send(event).await;
 }
+
+#[cfg(all(test, windows))]
+#[path = "tests/plugin_handoffs_windows.rs"]
+mod tests;

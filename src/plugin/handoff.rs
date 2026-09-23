@@ -48,7 +48,7 @@ pub struct Notification {
     pub body: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct Lease {
     pub owner: usize,
     pub generation: String,
@@ -56,13 +56,13 @@ pub(crate) struct Lease {
     pub sender: tokio::sync::mpsc::Sender<super::Event>,
     pub permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl std::fmt::Debug for Lease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HandoffLease").finish_non_exhaustive()
     }
 }
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for Lease {
     fn drop(&mut self) {
         let Some(permit) = self.permit.take() else {
@@ -82,14 +82,14 @@ impl Drop for Lease {
 }
 
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) enum Prepared {
     Terminal(Box<crate::terminal::PendingTerminal>),
     External(crate::external_open::system::Prepared),
     Launched,
 }
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) enum Kind {
     Prepared {
         result: Result<Prepared, super::application::Error>,
@@ -100,13 +100,13 @@ pub(crate) enum Kind {
     },
 }
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub struct Event {
     pub(crate) generation: String,
     pub(crate) request: String,
     pub(crate) kind: Kind,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[derive(Debug)]
 pub enum Event {}

@@ -30,8 +30,8 @@ roof. It gives us some unique benefits:
 
 If you work with agents a lot, you'll also appreciate our **Markdown formatting**
 with `?`, including wide tables and **image pasting** with
-`Ctrl+V`. Runyte saves images in the project's temporary cache and inserts a
-Markdown link into your document.
+`Ctrl+V` (or `Alt-v` when a terminal reserves `Ctrl+V`). Runyte saves images
+in the project's temporary cache and inserts a Markdown link into your document.
 
 Press `gf` on a file path in a buffer or terminal review to open it. Markdown
 link and image labels work too. Images and other binary files open in an external program you choose.
@@ -46,9 +46,12 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. This source tree also includes
-provisional native Windows support for standalone editing, file management,
-text clipboard, and integrated terminals. See the
+Linux and macOS provide the full feature set. Windows is supported in standalone
+mode in this source tree, including editing, `--wait`, file management,
+integrated terminals, clipboard, language services, Git when installed, and the
+optional context bridge. Plugins and interactive persistent mode are not yet
+supported on Windows. Native session controls and foreground hosts are available,
+but a TUI cannot attach to a Windows host. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
@@ -125,14 +128,16 @@ Each host serves one workspace. Switching persistent sessions connects the
 client to another host. Persistent sessions survive detaching, but not a host
 shutdown or reboot.
 
-Add `-a` when starting Runyte to run in the persistent mode:
+On Linux and macOS, add `-a` when starting Runyte to run in persistent mode:
 
 ```sh
 runyte -a  # attach to a session or start a new one
 ```
 
-Press `Space Space` to open the session manager in Runyte.
-Press `Shift Left` and `Shift Right` to quickly switch between sessions.
+Press `Space Space` to open the session manager in Runyte. On Windows, its
+standalone editor can list, preview, rename, and stop native detached sessions;
+attachment and switching remain unavailable.
+On Unix, press `Shift Left` and `Shift Right` to quickly switch between sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.
@@ -199,7 +204,7 @@ runyte -a /path/to/notes
 
 Run `runyte --help` for the complete command-line interface. To let
 `:quit-here` change the launching shell's directory, use the
-[Bash/Zsh wrapper](docs/user-guide.md#change-the-shell-directory-on-exit).
+[shell wrappers](docs/user-guide.md#change-the-shell-directory-on-exit).
 
 ## Screenshots
 
@@ -245,17 +250,14 @@ the complete manual. `:log-open` and `:service-health` help diagnose failures.
 
 ## Status and contributing
 
-Runyte is ready for general use on Linux and macOS. Native Windows support is
-provisional and currently covers the standalone editor and integrated terminals.
+Contributions are welcome in the form of:
 
-Contributions are welcome, especially:
+- Feature requests through [GitHub Issues](https://github.com/runyte/runyte/issues).
+- Bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
+- [Plugin development](docs/plugins/authoring.md), in any programming language.
 
-- Bug reports and feature requests through
-  [GitHub Issues](https://github.com/runyte/runyte/issues).
-- New [plugins](docs/plugins/authoring.md), in any programming language.
-
-See the [contributing guide](CONTRIBUTING.md) for what makes a useful report
-and how to write and share a plugin.
+See the [contributing guide](CONTRIBUTING.md) for how to describe a feature
+request, report a bug, or share a plugin.
 
 ## The name
 

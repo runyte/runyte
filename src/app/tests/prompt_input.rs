@@ -247,7 +247,10 @@ fn session_directory_paste_preserves_completion_state() {
     assert_eq!(before, after);
     paste(&mut app, "ld");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.take_workspace_switch().unwrap().selector, child);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
 }
 
 #[test]

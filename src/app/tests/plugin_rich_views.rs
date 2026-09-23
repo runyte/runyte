@@ -346,11 +346,6 @@ fn plugin_action_arguments_open_palette_and_submit_quoted_unicode_on_populated_o
         key(&mut app, KeyCode::Enter, Modifiers::NONE);
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.active().buffer, buffer);
-        if cfg!(windows) {
-            assert!(receiver.try_recv().is_err());
-            assert!(app.status.contains("unavailable"), "{}", app.status);
-            continue;
-        }
         match receiver.try_recv().unwrap() {
             plugin::HostMessage::Application(api::HostMessage::Request {
                 method, params, ..

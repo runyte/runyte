@@ -1,5 +1,11 @@
 # Windows support
 
+Current continuation: Phase 1 and Phase 2.1–2.4 are complete; Phase 2.5 is in
+progress and Phase 2.6 remains pending. The
+[handoff](../reviews/windows_phase2_handoff.md) records the current checkout,
+validation and next package; the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
+contains detailed delivery evidence. Earlier investigations below are historical.
+
 Windows support is incomplete; Linux and macOS provide the full feature set.
 The Phase-1 implementation and validation status are recorded below.
 Runyte may omit or disable features on Windows when a sound implementation would
@@ -66,9 +72,12 @@ actionable findings before the next package starts.
 Phase 1 is implemented in six reviewed work packages on `feat/windows-support`,
 after merging the 0.3.1 release from `main` (`e5d05da`) in `4bceec6`. Native
 formatting, Clippy, the full workspace suite (2,601 passed, zero failures), the
-optimized build and packaged executable smoke test pass. Remote Linux/macOS
-gates remain pending; detailed evidence is recorded in
-`context/plans/active/PLAN_WINDOWS_PHASE1.md`.
+optimized build and packaged executable smoke test pass. After CI fixture
+repairs through `fc9c324`, remote run
+[`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
+passes every job, including native Windows tests, Linux/macOS regression suites,
+and both 89% coverage gates. Detailed evidence is recorded in
+`context/plans/completed/PLAN_WINDOWS_PHASE1.md`.
 
 The selected target is `x86_64-pc-windows-msvc`, Windows 11 24H2 or later with
 Windows Terminal. Native development uses Windows build `10.0.26200.9457`,
@@ -82,6 +91,12 @@ commands retain registry-backed unavailable states. LSP, integrated Git,
 persistent sessions, plugins, context access, shell filters, image paste,
 system opening, private diagnostic logs, `--wait` and `:quit-here` are unavailable
 in Phase 1. Configuring a deferred service cannot start it.
+
+A reported Phase-1 input problem is tracked separately in
+[`windows_control_pane_keys.md`](resolved/windows_control_pane_keys.md): `Ctrl+h` in the
+explorer was treated as Backspace, and `Ctrl+j` as Enter. Commit `af2218e` fixes
+the native transport with reviewed decoder and real
+ConPTY regressions; the resolution records the physical-capture limitation.
 
 Terminal cwd must have a verified equivalent ordinary Windows spelling shorter
 than 260 UTF-16 units. ConPTY stalled during the native extended-prefix cwd
@@ -104,6 +119,83 @@ The Linux/macOS 89% coverage gates remain unchanged. Native Windows coverage is
 provisional without a measured llvm-cov baseline. Windows CI runs formatting,
 all-target Clippy and tests; the release workflow adds an MSVC ZIP and includes
 it in SHA256SUMS. No release publication or version bump is part of this work.
+
+## Phase 2: native Git acceptance
+
+Phase 2 begins with optional integrated Git. The local implementation now has
+native executable discovery, isolated process ownership, strict repository
+paths and editor availability. Git remains optional; absent Git does not start
+a worker. The mixed-launch inheritance and delayed-reader failures have separate
+regressions and reviewed corrections, and all 94 parallel provider tests pass.
+The restored native editor/discovery suite passes 142 tests. Native handoff
+passes formatting, all-target Clippy with warnings denied, and the full suite
+(2,874 passed, zero failures, 34 ignored fixture/performance entries).
+Cross-platform CI acceptance passes at `dbd30fc` in
+[`35578396537`](https://github.com/runyte/runyte/actions/runs/35578396537),
+including native Windows, Linux/macOS tests and both unchanged 89% coverage
+gates. Sub-phase 2.1 is complete; the broader Phase 2 remains open.
+
+Sub-phase 2.2 adds native private storage and standalone diagnostics on local
+NTFS. Ownership, reparse refusal, pinned identity, atomic replacement and
+cleanup have native coverage. Logs retain exclusive writer ownership across
+rotation while remaining readable; real ConPTY acceptance covers `:log-open`,
+default-log degradation and explicit-log refusal. All four packages have
+independent reviews with no remaining findings. Native formatting, Clippy and
+2,907 tests pass. All jobs in cross-platform acceptance run
+[`35590400592`](https://github.com/runyte/runyte/actions/runs/35590400592) pass,
+including both unchanged Unix coverage gates.
+
+Sub-phase 2.3 restores language services after workspace permission, with native
+executable discovery, owned asynchronous pipes/process trees, local-drive file
+URIs and account-scoped permission storage. All three packages have independent
+reviews with no remaining findings. Formatting, Clippy and the full native suite
+pass (2,940 tests); required real rust-analyzer acceptance separately covers
+initialization, diagnostics, edits, restart and revocation cleanup. CI provisions
+and requires that acceptance. Cross-platform CI passes at `4d43fa6` in
+[run 35606557698](https://github.com/runyte/runyte/actions/runs/35606557698);
+standalone integrations, persistent sessions, plugins and context access remain.
+Sub-phase 2.4's shell-filter package enables Windows PowerShell filters with
+bounded UTF-8 streams, cancellation and owned process-tree cleanup. Independent
+review has no remaining findings; formatting, Clippy, 2,957 native tests and
+required real rust-analyzer acceptance pass. The next package restores image
+paste through native PNG and DIB clipboard formats and private cache storage.
+Its independent reviews have no remaining findings; native clipboard, cache
+and editor tests, formatting, Clippy and the full suite (2,973 passed) succeed.
+CI subsequently exposes shared window-station state between the text and image
+fixtures. Reviewed repair `b26d65f` uses distinct create-only stations and a
+coordinated isolation regression. Creating these stations requires privileges
+unavailable to the local development token; three explicitly required Windows
+CI tests provide that native acceptance, with no shared-clipboard fallback.
+External opening is now implemented with nonblocking, bounded native dispatch,
+literal file/URL arguments and program-cache updates after acceptance. Its
+independent review has no remaining findings. Formatting, Clippy, 2,993 local
+tests and required real rust-analyzer acceptance pass. Cross-platform CI run
+[`35618761952`](https://github.com/runyte/runyte/actions/runs/35618761952) at
+`8daa848` passes every job, including privileged clipboard isolation, native
+openers/wait behavior and both Unix coverage gates. Standalone `--wait` now
+opens a new editor and returns when that editor quits, retaining save/discard
+protection and nonzero failure exits. Its independent review, real ConPTY
+acceptance, formatting, Clippy and full native suite (2,994 passed) succeed.
+PowerShell directory handoff is implemented and independently reviewed;
+native shell acceptance passes. It uses an owner-private pinned parent,
+atomic UTF-16 records and literal directory changes. Unsupported directory
+spellings are refused before quitting. Review corrected wrapper error status
+and required whole-process-tree ownership in the acceptance fixture. Native
+acceptance also exposed and corrected PowerShell startup with extended
+executable paths: the PTY now prefers an identity-verified ordinary spelling.
+Formatting, Clippy and the full local suite pass with 3,008 tests and zero
+failures, plus six native transport cases.
+Combined branch/worktree deletion is explicitly refused without mutation on
+Windows: remove the worktree first, then delete its branch. Worktree switching
+remains deferred with persistent sessions.
+The ordered work packages, validation limits and continuation details are in
+[`PLAN_WINDOWS_PHASE2.md`](../plans/active/PLAN_WINDOWS_PHASE2.md).
+
+The independently validated Linux PTY allocation fix and resolution are
+included as `8e2bd5d` and `c6ca884`, cherry-picked from `5e30ffb` and `6e6f270`
+after integration review. Its regression is separate from the Windows process
+inheritance regression. The remaining macOS gap is tracked in
+[`macos_pty_descriptor_inheritance.md`](macos_pty_descriptor_inheritance.md).
 
 The investigation below records the pre-implementation state. Its compiler
 errors and "current" observations describe the inspected revisions, rather

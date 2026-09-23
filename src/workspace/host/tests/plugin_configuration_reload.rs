@@ -785,6 +785,7 @@ impl Outstanding {
                     "p:1".into(),
                     api::CapturedContext {
                         foreground_allowed: true,
+                        native_handoff_allowed: false,
                         action: None,
                         pane: 0,
                         buffer: 0,

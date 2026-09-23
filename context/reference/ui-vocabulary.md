@@ -24,7 +24,10 @@ them, regardless of which extensibility direction is chosen.
   file's bytes, or the entries an explorer's directory lists. It is
   independent of `[+]`, which means the buffer text differs from its baseline.
   The first markers describe the buffer; the last describes how this pane is
-  presented, and is absent in an ordinary layout.
+  presented, and is absent in an ordinary layout. On Windows, file and
+  explorer titles show ordinary drive or UNC spelling for ordinary names;
+  verbatim spelling stays visible for names that need it. This affects
+  presentation only, not the stored path identity.
 - **Pane body** — the complete drawable interior of a pane border.
 - **Gutter** — the left part of a pane body reserved for line numbers,
   soft-wrap continuation markers, syntax-fold markers, Git change marks, and
@@ -432,6 +435,21 @@ the overlay open with these temporary choices; the initial selection returns
 to the temporary refusal. That refusal does not change a remembered decision.
 
 ## Session strip and Navigator
+
+The **session manager** keeps each displayed row's identity across catalog
+polls, previews, action menus, and rename or number prompts. Separate live
+publications for one project remain separate rows even when their visible path
+and workspace ID match. A pending menu confirmation or prompt for a replaced
+publication refuses and asks the user to choose again; its path or name cannot
+redirect the action. Unix and stopped rows retain project identity. The Windows
+manager presents control-only rows from its owned native service.
+If refresh loses the selected publication key, the manager requires explicit
+row movement before another action. Native Enter does not attach; its menu
+offers Rename, Close, and confirmed Force close for compatible running rows,
+only Force close for incompatible running rows, or Rename for stopped rows.
+Global `:session-clean` is distinct from selected-row
+actions. Current markers, digit shortcuts, destinations, the session strip,
+and interactive attachment remain unavailable.
 
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines

@@ -216,9 +216,7 @@ impl App {
         } else {
             CommandAvailability::Unavailable("syntax is unavailable for this buffer".to_owned())
         };
-        let lsp_manager = if cfg!(windows) {
-            CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
-        } else if !self.config.lsp.enable {
+        let lsp_manager = if !self.config.lsp.enable {
             CommandAvailability::Unavailable("language servers are disabled in settings".to_owned())
         } else if !self.lsp_workspace_allowed {
             CommandAvailability::Unavailable(
@@ -230,9 +228,6 @@ impl App {
             CommandAvailability::Available
         };
         let lsp_document = match self.language_of(buffer_id) {
-            _ if cfg!(windows) => {
-                CommandAvailability::Unavailable("LSP is unavailable in Windows Phase 1".to_owned())
-            }
             None => CommandAvailability::Unavailable(
                 "the active buffer has no recognized language".to_owned(),
             ),
@@ -262,9 +257,7 @@ impl App {
             }
             Some(_) => CommandAvailability::Available,
         };
-        let git_project = if cfg!(windows) {
-            CommandAvailability::Unavailable("Git is unavailable in Windows Phase 1".to_owned())
-        } else if !self.has_git() {
+        let git_project = if !self.has_git() {
             CommandAvailability::Unavailable("no `git` executable was found".to_owned())
         } else if let Some(message) = self.git_state.discovery_failure_message() {
             CommandAvailability::Unavailable(message)
@@ -295,6 +288,15 @@ impl App {
                 cfg!(unix),
                 self.persistent_session,
             ),
+            session_controls: if cfg!(windows) {
+                if self.ports.workspace_service.is_some() {
+                    CommandAvailability::Available
+                } else {
+                    CommandAvailability::Unavailable("session service is unavailable".to_owned())
+                }
+            } else {
+                persistent_session_availability(cfg!(unix), self.persistent_session)
+            },
         }
     }
 
@@ -530,8 +532,51 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        let previous = self.plugin_physical_input;
+        self.plugin_physical_input = matches!(
+            input,
+            InputEvent::Key(KeyStroke {
+                code: KeyCode::Enter,
+                modifiers: Modifiers::NONE,
+            })
+        );
+        let result = self.handle_frontend_input(input, true);
+        self.plugin_physical_input = previous;
+        result
+    }
+
+    /// Applies an operating-system key repeat through the ordinary input
+    /// lifecycle while withholding one-shot approval authority. Repeats still
+    /// invalidate captured foreground state and retain normal motion/count
+    /// behavior, but cannot accept a native confirmation or handoff.
+    pub(crate) fn handle_repeated_input(&mut self, input: InputEvent) -> Result<()> {
+        let repeated_enter = matches!(
+            input,
+            InputEvent::Key(KeyStroke {
+                code: KeyCode::Enter,
+                modifiers: Modifiers::NONE,
+            })
+        );
+        let previous = self.plugin_physical_input;
+        self.plugin_physical_input = false;
+        let result = self.handle_frontend_input(input, !repeated_enter);
+        self.plugin_physical_input = previous;
+        if repeated_enter && result.is_ok() {
+            // The repeat invalidated every earlier invocation, but this
+            // retained surface still belongs to the same visible interaction.
+            // A later fresh Enter must be able to approve it.
+            if let Some(surface) = self.plugins.input.as_mut() {
+                surface.context.foreground = self.plugins.foreground_generation;
+            }
+            self.retain_provider_reload_after_repeat();
+            self.retain_provider_overwrite_after_repeat();
+        }
+        result
+    }
+
+    fn handle_frontend_input(&mut self, input: InputEvent, approval: bool) -> Result<()> {
         if self.context_overlay_active() {
-            self.handle_context_input(input);
+            self.handle_context_input(input, approval);
             return Ok(());
         }
         self.cancel_plugin_validation_intent();
@@ -555,12 +600,16 @@ impl App {
         }
         if reload_owned_input && self.plugins.provider_reload.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_provider_reload_input(input);
+            if approval {
+                self.handle_provider_reload_input(input);
+            }
             return Ok(());
         }
         if overwrite_owned_input && self.plugins.provider_overwrite.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_provider_overwrite_input(input);
+            if approval {
+                self.handle_provider_overwrite_input(input);
+            }
             return Ok(());
         }
         // A stale surface no longer owns ordinary editor input. Keep its
@@ -572,7 +621,9 @@ impl App {
         }
         if self.plugins.input.is_some() {
             self.last_interaction = Instant::now();
-            self.handle_plugin_input(input);
+            if approval {
+                self.handle_plugin_input(input);
+            }
             return Ok(());
         }
         self.handle_input_inner(input, false)
@@ -620,6 +671,18 @@ impl App {
         let result = match input {
             InputEvent::Key(key) => self.handle_key_stroke(key),
             InputEvent::Text(text) => self.handle_text(&text),
+            InputEvent::ClipboardPaste => {
+                if self.jump.take().is_some() {
+                    self.status("jump cancelled");
+                } else if !overlay_owns_input
+                    && self.active_terminal().is_none()
+                    && self.mode != Mode::Command
+                {
+                    self.grammar.reset();
+                    self.execute_editor_command(EditorCommand::ClipboardPaste)?;
+                }
+                Ok(())
+            }
             InputEvent::Pointer(_) => Ok(()),
         };
         if result.is_ok() {
@@ -747,9 +810,9 @@ impl App {
                         .entries
                         .iter()
                         .find(|label| label.cells.contains(&column))
-                        && let Some(path) = strip.targets.get(label.index)
-                        && path != &self.project_root
-                        && self.request_workspace_switch(path.clone())
+                        && let Some(selection) = strip.targets.get(label.index)
+                        && selection.project_root() != self.project_root
+                        && self.request_selected_workspace_switch(selection.clone())
                     {
                         self.workspace_switch.as_mut().unwrap().running_only = true;
                     }
@@ -4354,7 +4417,7 @@ impl App {
                 // prompt cannot leave a file, or a branch, waiting behind the
                 // next one.
                 let target = self.external_target.take();
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 let session_rename_target = self.session_rename_target.take();
                 #[cfg(unix)]
                 let session_number_target = self.session_number_target.take();
@@ -4375,17 +4438,17 @@ impl App {
                         self.lsp_rename(value);
                     }
                 } else if kind == PromptKind::SessionRename {
-                    #[cfg(unix)]
+                    #[cfg(any(unix, windows))]
                     if let Some(target) = session_rename_target {
-                        self.rename_session(target, value);
+                        self.rename_selected_session(target, value);
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(not(any(unix, windows)))]
                     self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::SessionNumber {
                     #[cfg(unix)]
                     if let Some(target) = session_number_target {
                         match parse_session_number(&value) {
-                            Ok(number) => self.number_session(target, number),
+                            Ok(number) => self.number_selected_session(target, number),
                             Err(error) => self.action_failed(error),
                         }
                     }
@@ -4742,7 +4805,7 @@ impl App {
 
     pub(super) fn close_prompt(&mut self) {
         self.prompt_input_error = None;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let session_manager_return_target = self.session_manager_return_target.take();
         // Still set only when the prompt is being abandoned: a submitted
         // rename takes its own target before closing.
@@ -4756,10 +4819,13 @@ impl App {
         // cannot inherit a target nobody asked about. The branch a new one
         // would have started from is dropped for the same reason.
         self.external_target = None;
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.session_rename_target = None;
-            self.session_number_target = None;
+            #[cfg(unix)]
+            {
+                self.session_number_target = None;
+            }
         }
         self.git_branch_start = None;
         self.git_worktree_start = None;
@@ -4769,18 +4835,17 @@ impl App {
         if abandoned_terminal_rename && !self.terminals.is_empty() {
             self.open_terminal_list();
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(target) = session_manager_return_target {
             self.rebuild_workspace_picker();
-            if let Some(selected) = self
-                .workspace_rows
-                .iter()
-                .position(|row| row.project_root == target)
-                && let Some(picker) = self.list.as_mut()
-            {
-                picker.selected = selected;
+            if self.restore_workspace_selection(&target) {
+                self.request_selected_workspace_preview();
+            } else {
+                #[cfg(windows)]
+                {
+                    self.session_manager_selection_lost = true;
+                }
             }
-            self.request_selected_workspace_preview();
         }
     }
 
@@ -5288,24 +5353,39 @@ impl App {
                 Ok(())
             }
             (Colon::SessionList, InvocationParameters::None) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
                 ) {
                     return Ok(());
                 }
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 {
+                    #[cfg(windows)]
+                    if self.ports.workspace_service.is_none() {
+                        self.action_failed("session service is unavailable");
+                        return Ok(());
+                    }
                     self.workspace_previews.clear();
                     self.workspace_preview_target = None;
+                    #[cfg(windows)]
+                    {
+                        self.session_manager_selection_lost = false;
+                    }
+                    #[cfg_attr(windows, allow(unused_mut))]
                     let mut picker = ListPicker::new("Sessions · loading…", Vec::new());
-                    picker.primary_action = Some("attach".to_owned());
+                    #[cfg(unix)]
+                    {
+                        picker.primary_action = Some("attach".to_owned());
+                    }
                     self.list = Some(picker);
                     self.request_workspace_refresh();
                 }
                 Ok(())
             }
             (Colon::SessionStop, InvocationParameters::OptionalPath(selector)) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
@@ -5314,11 +5394,17 @@ impl App {
                 }
                 #[cfg(unix)]
                 self.stop_session(selector.unwrap_or_else(|| self.project_root.clone()));
-                #[cfg(not(unix))]
-                let _ = selector;
+                #[cfg(windows)]
+                match selector {
+                    Some(selector) => self.stop_session_selector(selector),
+                    None => {
+                        self.action_failed("session-stop needs an explicit selector on Windows")
+                    }
+                }
                 Ok(())
             }
             (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
+                #[cfg(unix)]
                 if self.reject_unavailable_persistent_session(
                     platform_supports_persistent_sessions,
                     true,
@@ -5327,8 +5413,15 @@ impl App {
                 }
                 #[cfg(unix)]
                 self.rename_session(workspace, name);
-                #[cfg(not(unix))]
-                let _ = (workspace, name);
+                #[cfg(windows)]
+                self.rename_session_selector(workspace, name);
+                Ok(())
+            }
+            (Colon::SessionClean, InvocationParameters::None) => {
+                #[cfg(windows)]
+                self.clean_session_history();
+                #[cfg(not(windows))]
+                self.action_failed("native session history cleaning is available on Windows");
                 Ok(())
             }
             (Colon::Format, InvocationParameters::None) => {

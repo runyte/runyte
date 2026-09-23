@@ -18,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Windows Phase 1](completed/PLAN_WINDOWS_PHASE1.md): native standalone editing,
+  file management, console input, text clipboard and ConPTY terminal sessions,
+  with native Windows CI and Linux/macOS regression acceptance;
 - [Database viewer UX and full-value inspection](completed/PLAN_DBVIEWER_UX_AND_FULL_VALUES.md):
   grouped actions, explicit view identity, labelled top metadata and on-demand
   complete-value documents through compatible `runyte-1` extensions;

@@ -155,6 +155,8 @@ impl TerminalPreparation {
         let id = self.reservation.cancellation.id;
         let events = self.reservation.cancellation.events.clone();
         let gate = events.clone();
+        #[cfg(windows)]
+        let cancellation = self.reservation.cancellation.clone();
         let child = pty::Pty::spawn_gated_in_context(
             &self.request.program,
             &self.request.arguments,
@@ -171,6 +173,8 @@ impl TerminalPreparation {
             },
             pty::PendingActivation {
                 wait: Arc::new(move || gate.wait_until_active(id)),
+                #[cfg(windows)]
+                cancel: Arc::new(move || cancellation.cancel()),
                 lifetime: self.reservation.budget.clone(),
             },
         )?;
@@ -364,5 +368,8 @@ impl TerminalSessions {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
+mod tests;
+#[cfg(all(test, windows))]
+#[path = "pending/tests_windows.rs"]
 mod tests;

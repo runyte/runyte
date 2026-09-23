@@ -353,6 +353,11 @@ fn every_startup_bound_setting_is_kept_and_named_on_its_own() {
             source: "workspace:\n  state: .elsewhere\n",
             effective: |app| app.config.workspace.state.as_os_str() == ".runyte",
         },
+        Kept {
+            key: "workspace.state_anchor",
+            source: "workspace:\n  state_anchor: profile\n",
+            effective: |app| app.config.workspace.state_anchor.is_none(),
+        },
     ];
     for Kept {
         key,

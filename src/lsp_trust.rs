@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;
 
 #[derive(Debug)]
@@ -29,19 +29,37 @@ struct Decision {
 
 impl TrustStore {
     pub fn new(directory: Option<PathBuf>, project: &Path) -> io::Result<Self> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let home = crate::user_paths::system_home_directory();
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let home: Option<PathBuf> = None;
-        Self::new_with_home(directory, project, home.as_deref())
+        #[cfg(windows)]
+        let standard = crate::user_paths::system_local_app_data_directory()
+            .map(|path| path.join("runyte/cache/lsp-trust"));
+        #[cfg(not(windows))]
+        let standard = home.as_ref().map(|home| home.join(Self::HOME_CACHE));
+        Self::new_with_account_paths(directory, project, home.as_deref(), standard.as_deref())
     }
 
     /// The account home is injected separately from environment-selected cache
     /// storage. An arbitrary XDG override inside a project is still rejected.
+    #[cfg(all(test, unix))]
     pub(crate) fn new_with_home(
         directory: Option<PathBuf>,
         project: &Path,
         account_home: Option<&Path>,
+    ) -> io::Result<Self> {
+        let standard = account_home.map(|home| home.join(Self::HOME_CACHE));
+        Self::new_with_account_paths(directory, project, account_home, standard.as_deref())
+    }
+
+    /// Account identity and its standard trust location are independent: the
+    /// Windows local application-data folder may be redirected outside home.
+    pub(crate) fn new_with_account_paths(
+        directory: Option<PathBuf>,
+        project: &Path,
+        account_home: Option<&Path>,
+        standard_trust_directory: Option<&Path>,
     ) -> io::Result<Self> {
         let project = project.canonicalize()?;
         if let Some(directory) = &directory {
@@ -50,22 +68,28 @@ impl TrustStore {
                     "LSP trust storage must have an absolute path",
                 ));
             }
+            #[cfg(windows)]
+            let compared_directory = crate::path_safety::canonicalize_existing_prefix(directory)
+                .map_err(io::Error::other)?;
+            #[cfg(not(windows))]
+            let compared_directory = directory.clone();
+            #[cfg(windows)]
+            let standard_trust_directory = standard_trust_directory
+                .map(crate::path_safety::canonicalize_existing_prefix)
+                .transpose()
+                .map_err(io::Error::other)?;
             let home_cache = account_home.is_some_and(|home| {
                 home.canonicalize().ok().as_ref() == Some(&project)
-                    && *directory == home.join(Self::HOME_CACHE)
+                    && standard_trust_directory
+                        .as_ref()
+                        .is_some_and(|standard| compared_directory == *standard)
             });
             if !home_cache {
-                crate::project_root::validate_state_root(&project, std::slice::from_ref(directory))
+                crate::project_root::validate_state_root(&project, &[compared_directory])
                     .map_err(io::Error::other)?;
             }
         }
-        #[cfg(unix)]
-        let project = {
-            use std::os::unix::ffi::OsStrExt;
-            project.as_os_str().as_bytes().to_vec()
-        };
-        #[cfg(not(unix))]
-        let project = project.to_string_lossy().as_bytes().to_vec();
+        let project = project_bytes(&project);
         let name = format!("{}.json", crate::hash::sha256_hex(&project));
         Ok(Self {
             directory,
@@ -76,7 +100,7 @@ impl TrustStore {
 
     #[cfg(target_os = "macos")]
     pub(crate) const HOME_CACHE: &str = "Library/Caches/runyte/lsp-trust";
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     pub(crate) const HOME_CACHE: &str = ".cache/runyte/lsp-trust";
 
     pub(crate) fn can_remember(&self) -> bool {
@@ -138,5 +162,26 @@ impl TrustStore {
         })
         .map_err(io::Error::other)?;
         directory.atomic_write(self.name.as_ref(), &bytes)
+    }
+}
+
+fn project_bytes(project: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        project.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        project
+            .as_os_str()
+            .encode_wide()
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        project.to_string_lossy().as_bytes().to_vec()
     }
 }

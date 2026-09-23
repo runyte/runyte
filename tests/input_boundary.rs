@@ -20,6 +20,8 @@ fn crossterm_is_confined_to_terminal_acquisition_and_the_tui_adapter() {
     let adapter = source_root.join("tui/input.rs");
     let windows_adapter = source_root.join("tui/windows_input.rs");
     let windows_tests = source_root.join("tui/windows_input");
+    let windows_console_tests = source_root.join("tui/windows_console_acceptance.rs");
+    let windows_frontend = source_root.join("tui/windows_frontend.rs");
     let mut sources = Vec::new();
     rust_sources_below(&source_root, &mut sources);
 
@@ -27,6 +29,8 @@ fn crossterm_is_confined_to_terminal_acquisition_and_the_tui_adapter() {
         if source == main
             || source == adapter
             || source == windows_adapter
+            || source == windows_console_tests
+            || source == windows_frontend
             || source.starts_with(&windows_tests)
         {
             continue;

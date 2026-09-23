@@ -78,6 +78,7 @@ pub struct AppCapabilitySnapshot {
     pub git_project: CommandAvailability,
     pub git_refresh: CommandAvailability,
     pub persistent_session: CommandAvailability,
+    pub session_controls: CommandAvailability,
 }
 
 impl AppCapabilitySnapshot {
@@ -99,6 +100,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::GitProject => self.git_project.clone(),
             CommandCapability::GitRefresh => self.git_refresh.clone(),
             CommandCapability::PersistentSession => self.persistent_session.clone(),
+            CommandCapability::SessionControls => self.session_controls.clone(),
         }
     }
 }
@@ -300,6 +302,9 @@ mod tests {
             persistent_session: CommandAvailability::Unavailable(
                 PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
             ),
+            session_controls: CommandAvailability::Unavailable(
+                PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
+            ),
         };
         let outline = crate::command::resolve_command("outline").unwrap();
         let status = crate::command::resolve_command("lsp-status").unwrap();
@@ -311,25 +316,14 @@ mod tests {
             snapshot.command_availability(outline).reason(),
             Some("plain text buffer")
         );
-        assert_eq!(
-            snapshot.command_availability(status).is_available(),
-            !cfg!(windows)
-        );
+        assert!(snapshot.command_availability(status).is_available());
         assert_eq!(
             snapshot.command_availability(format).reason(),
-            Some(if cfg!(windows) {
-                "LSP is unavailable in Windows Phase 1"
-            } else {
-                "no configured server"
-            })
+            Some("no configured server")
         );
         assert_eq!(
             snapshot.command_availability(git_status).reason(),
-            Some(if cfg!(windows) {
-                "Git is unavailable in Windows Phase 1"
-            } else {
-                "not a Git repository"
-            })
+            Some("not a Git repository")
         );
         assert_eq!(
             snapshot.command_availability(session_attach).reason(),

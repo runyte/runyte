@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Modifier};
-#[cfg(not(windows))]
 use runyte::external_open::ProgramCache;
 use runyte::{
     app::App,
@@ -945,23 +944,29 @@ fn pane_titles_show_structural_file_and_explorer_types() {
 
     let mut file = App::new(Config::default(), Some(path.clone())).unwrap();
     let screen = render(180, 20, &mut file, &hints);
+    let file_path = path.display().to_string();
+    let file_path = file_path.strip_prefix(r"\\?\").unwrap_or(&file_path);
     assert!(
         screen
             .lines()
             .next()
             .unwrap()
-            .contains(&format!("[file] {}", path.display())),
+            .contains(&format!("[file] {file_path}")),
         "{screen}"
     );
 
     let mut explorer = App::new(Config::default(), Some(directory.clone())).unwrap();
     let screen = render(180, 20, &mut explorer, &hints);
+    let explorer_path = directory.display().to_string();
+    let explorer_path = explorer_path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&explorer_path);
     assert!(
         screen
             .lines()
             .next()
             .unwrap()
-            .contains(&format!("[explorer] {}", directory.display())),
+            .contains(&format!("[explorer] {explorer_path}")),
         "{screen}"
     );
 
@@ -1215,7 +1220,6 @@ fn exact_one_key_action_is_forwarded_without_a_post_factum_hint() {
 /// A binary file named on the command line is asked about, not opened, and the
 /// remembered programs are offered above the prompt.
 #[test]
-#[cfg(not(windows))]
 fn a_binary_argument_opens_the_open_with_prompt_over_its_hints() {
     let directory = std::env::temp_dir().join(format!("runyte-open-with-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();

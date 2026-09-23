@@ -1,5 +1,12 @@
 # Windows Phase 1
 
+Completed on `feat/windows-support` through `fc9c324`. Remote acceptance run
+[`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
+passed every job, including native Windows formatting, Clippy and tests,
+Linux/macOS regression suites, and both 89% coverage gates. The implementation
+and CI repairs are committed and pushed. Remaining Windows integrations are
+tracked in `context/plans/active/PLAN_WINDOWS_PHASE2.md`.
+
 Scope: native standalone editing and file management with independent ConPTY
 terminals on `x86_64-pc-windows-msvc`. The acceptance requirements remain in
 `context/issues/windows_support.md`. Windows 11 24H2 or later with Windows
@@ -217,5 +224,6 @@ can be on different drives. The fixture now creates both directories beneath
 one temporary root and changes cwd only in a compiled test subprocess, with
 fixture-owned configuration. `review_wp1` found no actionable issue; all 25
 headless tests pass locally, including the parent that exercises the ignored
-child entry. This repair needs its own remote rerun before the Phase-1 gate is
-declared complete.
+child entry. Commit `fc9c324` contains this repair. Its remote run `35542444854`
+passed all jobs, completing Phase-1 acceptance. Earlier pending/failure entries
+above record the validation sequence rather than the final gate status.

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-#[cfg(not(windows))]
 use std::rc::Rc;
 use std::{
     collections::HashSet,
@@ -24,6 +23,14 @@ fn key(app: &mut App, code: KeyCode, modifiers: Modifiers) {
 
 fn press(app: &mut App, character: char) {
     key(app, KeyCode::Char(character), Modifiers::NONE);
+}
+
+fn switch_target_path(request: &WorkspaceSwitchRequest) -> &Path {
+    match &request.target {
+        WorkspaceSwitchTarget::UserSelector(path) => path,
+        WorkspaceSwitchTarget::Selected(selection) => selection.project_root(),
+        WorkspaceSwitchTarget::Previous => panic!("previous session has no captured path"),
+    }
 }
 
 fn finish_macro_replay(app: &mut App) {
@@ -58,7 +65,6 @@ fn open_filler_special_buffers(app: &mut App, count: usize) -> Vec<usize> {
         .collect()
 }
 
-#[cfg(not(windows))]
 fn context_action(app: &mut App, mnemonic: char) {
     key(app, KeyCode::Tab, Modifiers::NONE);
     press(app, mnemonic);
@@ -175,9 +181,8 @@ mod comparisons;
 mod config_reload;
 mod editing;
 mod editing_and_buffers;
-#[cfg(not(windows))]
+mod external_dispatch;
 mod git;
-#[cfg(not(windows))]
 mod git_discovery;
 mod language;
 mod markdown_positions;
@@ -205,6 +210,8 @@ mod provider_documents;
 mod search_and_pickers;
 mod session_navigation;
 mod tutorial;
+#[cfg(windows)]
+mod windows_session_manager;
 mod workspace;
 
 use commands::{type_command, type_text, vim_app};

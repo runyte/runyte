@@ -194,7 +194,7 @@ pub enum HostEvent {
     GitInvalidation(GitInvalidation),
     Git(GitServiceEvent),
     Terminal(crate::terminal::TerminalOutput),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Workspace(super::WorkspaceEvent),
 }
 
@@ -238,9 +238,9 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod context;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod context_reads;
 mod pipe;
 mod plugin_activity;
@@ -249,7 +249,7 @@ mod plugin_documents;
 mod plugin_editor;
 mod plugin_filesystem;
 mod plugin_filesystem_apply;
-#[cfg_attr(not(unix), path = "host/plugin_handoffs_unavailable.rs")]
+#[cfg_attr(not(any(unix, windows)), path = "host/plugin_handoffs_unavailable.rs")]
 mod plugin_handoffs;
 mod plugin_interaction;
 mod plugin_manager;
@@ -271,7 +271,7 @@ mod plugin_validation;
 mod plugins;
 
 pub struct WorkspaceHost {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     context: context::State,
     provider_writes: std::collections::BTreeMap<String, plugin_provider_writes::PendingWrite>,
     provider_uncertain: std::collections::BTreeMap<usize, (String, usize, String)>,
@@ -385,7 +385,7 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             context: Default::default(),
             provider_writes: Default::default(),
             provider_uncertain: Default::default(),
@@ -1188,7 +1188,7 @@ impl WorkspaceHost {
         self.app
             .note_context_frame(geometry.editor.width, geometry.editor.height, id.0);
         let editor = self.app.snapshot(&view);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.context_enabled() {
             self.context.frame = Some(editor.clone());
             self.context.frame_id = id.0;
@@ -1451,6 +1451,15 @@ impl WorkspaceHost {
         }
     }
 
+    /// Applies one operating-system repeat through the ordinary input
+    /// lifecycle without granting one-shot native approval authority.
+    /// Frontends retain their repeat/coalescing policy; this boundary owns the
+    /// editor-state invalidation that every dispatched repetition requires.
+    pub fn execute_repeated_input(&mut self, input: InputEvent) -> Result<HostInputOutcome> {
+        self.app.handle_repeated_input(input)?;
+        Ok(HostInputOutcome::Applied)
+    }
+
     pub fn apply_event(&mut self, event: HostEvent) {
         match event {
             HostEvent::Syntax(event) => {
@@ -1463,7 +1472,7 @@ impl WorkspaceHost {
             HostEvent::GitInvalidation(event) => self.apply_git_invalidation(event),
             HostEvent::Git(event) => self.apply_git_service_event(event),
             HostEvent::Terminal(output) => self.app.apply_terminal_output(output),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             HostEvent::Workspace(event) => self.app.apply_workspace_event(event),
         }
     }
@@ -1689,25 +1698,25 @@ impl WorkspaceHost {
     /// Refreshes the session manager only when one of its rounded activity
     /// values crossed a visible boundary.
     pub fn refresh_session_activity(&mut self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.app.refresh_workspace_activity()
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl WorkspaceHost {
     pub fn sync_context(&mut self) {}
     pub fn context_delay(&self) -> Option<Duration> {
         None
     }
     pub fn handle_context_event(&mut self, event: super::context::Event) {
-        match event {}
+        drop(event);
     }
 }
 

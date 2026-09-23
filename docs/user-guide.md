@@ -559,7 +559,17 @@ workspace identity internally, so the child never rediscovers a project its
 parent already resolved.
 
 For tools that need an editor process to stay open, configure
-`runyte --wait`. One invocation may name several files and returns success only
+`runyte --wait`.
+
+On Windows, this opens a new standalone editor with the requested files and
+waits until that editor quits. It does not attach to an existing editor or
+complete when an individual buffer closes: `:wbc` alone leaves the process
+running. Normal save/discard protection applies, including explicit force
+quit. Startup failure, terminal loss, and termination return nonzero. This
+mode works even when `workspace.mode` is configured as persistent; Windows
+persistent hosting remains unavailable.
+
+On Unix, one invocation may name several files and returns success only
 after every requested buffer is explicitly closed or completed. `:wbc` writes
 and closes the requested buffer without changing the pane layout. An activated
 wait buffer enters Normal mode, including when an existing persistent session
@@ -587,11 +597,11 @@ already taken over; lifecycle loss, explicit cancellation, and host failure
 all exit nonzero.
 
 For example, `git config core.editor 'runyte --wait'` gives Git commit and
-rebase message files this lifecycle. Persistent hosting and `--wait` currently
-use the private, versioned Unix local protocol; it is a bundled-client contract,
+rebase message files this lifecycle. On Unix, persistent hosting and `--wait`
+use the private, versioned local protocol; it is a bundled-client contract,
 not a public automation API.
 
-`Space Space` or `:session-list` (`:sl`) opens the session manager: a
+On Unix, `Space Space` or `:session-list` (`:sl`) opens the session manager: a
 filterable list of running and recently visited persistent sessions, numbered
 sessions first in digit order and the rest least recently visited first. The
 current session is marked with `*` wherever its digit puts it and is the
@@ -743,7 +753,7 @@ the lowest free digit again on the next listing, and it stays in the by-visit
 part of the list until it is numbered by hand or stopped. The session displaced
 by a swap is not unpinned that way and may be numbered again automatically. A
 stopped row's menu has no Renumber: there is no digit on it to change.
-A standalone workspace owns no persistent host, so the whole `session`
+On Unix, a standalone workspace owns no persistent host, so the `session`
 namespace is inert there rather than a set of commands that each refuse.
 `Space Space` and `Space 1`–`Space 9` grey out in the key-hint popup, and
 `:session-list`,
@@ -1446,20 +1456,91 @@ MSVC builds require the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`).
 Install Microsoft's x64 Visual C++ Redistributable if it is absent; the ZIP
 does not bundle that runtime.
 
-| Area | Native Windows Phase 1 |
+| Area | Native Windows support |
 | --- | --- |
 | Editing | Unicode text, selections, search, undo/redo, save, LF/CRLF, buffers and panes |
 | Files | Explorer, create, rename, move, copy, confirmed deletion and collision refusal |
 | Syntax | Bundled Tree-sitter highlighting and syntax tools |
-| Input | Native console input, bracketed paste and Unicode text clipboard |
+| Input | Native console input, bracketed paste, Unicode text clipboard and image paste |
 | Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
-| Deferred | LSP, integrated Git, plugins, context bridge, persistent sessions, shell filters, image paste, external file/URL opening, private diagnostic logs, `--wait` and `:quit-here` |
+| Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
+| Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
+| Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
+| Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
+| External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
+| Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
+| Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
+| Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
+| Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
+| Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
+| Deferred | Interactive persistent attachment and switching, session restart, and plugins |
+
+The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
+or detached-host shutdown. Closing that console follows the same cleanup path,
+but Windows may end the process before cleanup finishes; unsaved editor state
+cannot be promised on console close. These console events are separate from
+keys delivered to an integrated ConPTY terminal session.
 
 Deferred commands remain discoverable and report why they are unavailable.
-Existing configuration cannot enable deferred services. Use `:notifications`
-and `:service-health` for diagnostics. Ordinary Git commands can run in an
-integrated terminal when Git is installed; editor Git integration is planned
-as the first Phase-2 sub-phase and will remain disabled when Git is missing.
+Existing configuration cannot enable persistent attachment, restart, or plugins.
+Use `:notifications`
+and `:service-health` for diagnostics. Git integration is enabled when a native
+`git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
+Git is optional: if it is absent, Git commands are disabled with a clear reason,
+and editing still works. Restart Runyte after installing Git or changing `PATH`.
+Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
+
+Native session controls work from a directory outside any project. The CLI
+uses captured cache/runtime settings and a complete session catalog; an
+unavailable catalog fails the command instead of showing an empty list.
+`--session-stop` requires an explicit workspace ID, name, or path on Windows.
+Normal stop respects protected editor state, and `--force` requests its loss.
+`--include-hidden` with listing or stop-all includes separately published
+hosts from isolated environments. If two live Windows publications have the
+same project path and ID, both remain visible; selecting by that path or ID
+fails as ambiguous. An unambiguous name can select one of them. A stopped
+session is reported only after
+its original host process exits. Foreground `--serve` discovers an existing
+project workspace or accepts an explicit `--project-root`; if neither is
+available it refuses startup without prompting. It retires the host when its
+original launching process exits. A detached host is independent of its
+short-lived launcher.
+Public `--persistent` attachment, session restart, and editor session navigation
+remain unavailable.
+
+In a standalone Windows editor, `Space Space` and `:session-list` show the
+native catalog. Distinct live publications for one project remain separate
+rows. Tab opens exact-row Rename, Close, and Force close actions for a
+compatible running session, only Force close for an incompatible running
+publication, or Rename for a stopped record; Force close requires a second
+Enter.
+Enter does not attach, and the manager shows no current marker, session number,
+or digit shortcuts. Preview reads only the selected compatible publication.
+`:session-stop WORKSPACE` and `:session-rename WORKSPACE NAME` use a fresh
+complete catalog and require an unambiguous selector; `:session-stop` without
+one refuses on Windows. `:session-clean` cleans only verified stopped history
+and applies to the whole catalog. Attachment, destination navigation, and the
+session strip remain unavailable.
+
+Language servers also use native `.exe` or `.com` executables, specified by an
+absolute path or discovered through absolute `PATH` entries. To run a script,
+configure its native interpreter as the executable and supply the script in
+`args`. Servers start only after [workspace approval](#language-servers).
+Missing servers leave editing available and report their failure through LSP
+status. File URIs support local drive paths, including equivalent extended
+paths, Unicode and spaces; network authorities, device paths and alternate
+data streams are refused. Remembered decisions use the Windows account's
+profile and local application-data folders, with private storage on local NTFS.
+The workspace working directory must have an equivalent ordinary Windows
+spelling shorter than 260 UTF-16 units, as for Git and terminal processes;
+unsupported working directories report a server launch failure.
+
+Git working directories and worktree destinations need an equivalent ordinary
+Windows spelling shorter than 260 UTF-16 units. Unsupported paths are refused
+before worktree creation creates a branch. Worktree switching requires persistent
+sessions and remains unavailable. Combined deletion of a branch and its worktree
+is refused without changing either: remove the worktree from `:git-worktrees`,
+then delete the branch from `:git-branches` as two separately reviewed actions.
 
 Configuration defaults to `%APPDATA%\runyte\config.yaml`; a nonempty
 `XDG_CONFIG_HOME` takes precedence. `--config` selects an explicit file.
@@ -1468,10 +1549,16 @@ PowerShell and Git Bash are optional. See [terminals](#terminals) for command
 quoting and terminal working-directory limits. Network shares and long-path
 filesystem operations remain unvalidated; failures preserve recoverable edits.
 
-The outer terminal can reserve shortcuts such as `Ctrl-Shift-v` for paste.
+The outer terminal can reserve shortcuts such as `Ctrl-v` or `Ctrl-Shift-v`
+for paste.
 Bracketed text paste is delivered as text, including in Normal mode, so pasted
-command-looking lines do not execute editor commands. `Ctrl-v` uses the native
-text clipboard. Image paste is unavailable. Keyboard-layout and IME behavior
+command-looking lines do not execute editor commands. `Ctrl-v` and `Alt-v` use
+the native clipboard for text and images. Windows Terminal reserves `Ctrl-v`
+for its paste action. Runyte recognizes the empty paste event that some
+versions send for an image; if the terminal sends no event, use `Alt-v`.
+An empty image paste is handled as a clipboard action even when a multi-key
+editor command is waiting for its next key.
+Keyboard-layout and IME behavior
 beyond the automated input cases still needs reports from native setups.
 
 ### Startup files and input
@@ -1491,10 +1578,26 @@ paths beginning with `-` or `+`, as in `runyte -- +draft.md -notes.md`.
 Binary startup targets still use the interactive external-program prompt;
 open binary files one at a time so no explicit target can be silently skipped.
 The prompt initially selects the preferred application registered with the
-desktop (`xdg-open` on Linux and `open` on macOS). Use Up and Down to select an
+desktop (`xdg-open` on Linux, `open` on macOS, and **System default** on Windows). Use Up and Down to select an
 application, Enter to open with the selected application, or type another
 program. Explicit choices are remembered. Press Tab on a remembered choice to
 delete it or make it the default selection for later binary files.
+
+On Windows, external applications open in the background while editing stays
+responsive. Runyte remembers an explicit program only after Windows accepts
+its launch. A launch whose result is still unknown after five seconds reports
+that uncertainty and is not retried automatically. Acceptance does not establish
+that the application displayed the target. Viewer applications can remain open
+after Runyte exits, subject to restrictions imposed by the process that started
+Runyte.
+
+An explicit Windows program uses native executable lookup and argument quoting;
+quote paths containing spaces, for example `"C:\Program Files\Viewer\viewer.exe" --fit`.
+The file is passed as one final argument. Shell operators are literal arguments;
+script wrappers are not discovered as native programs. The system-default file
+handler requires an equivalent ordinary path shorter than 260 UTF-16 units;
+an explicitly chosen viewer may support longer extended paths. Network-share
+opening is not part of the validated support claim.
 
 Piped/stdin scratch input (`runyte -`) is deliberately deferred: Crossterm
 owns stdin for terminal events in the current standalone process. Before `--`,
@@ -1806,7 +1909,7 @@ context; scoped explorer keys are documented under
 | `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
-| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
+| `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
 | `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
 | `<n>` before a command | Repeat a motion or countable command |
@@ -1828,8 +1931,8 @@ from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
 
-`Ctrl-v` is the paste key an image arrives on, in Normal, Select, Insert, and
-Replace alike. A terminal cannot draw a picture, so a clipboard holding one is
+`Ctrl-v` and `Alt-v` paste an image in Normal, Select, Insert, and Replace
+alike. A terminal cannot draw a picture, so a clipboard holding one is
 stored under `.runyte/cache/images/` in the workspace and the document is given
 a numbered Markdown link to it, such as
 `[Image 1](.runyte/cache/images/1f0a2b3c4d5e6f70.png)`. The file is named by
@@ -1838,13 +1941,22 @@ file, and the number continues past the highest `[Image N]` the document
 already holds rather than counting how many it has. `?` renders that link as
 **Image 1** alone, without the path. A clipboard holding no image — or a
 machine with no helper that can hand one over, or one whose display server is
-not answering — pastes text instead, exactly as `Space c p` does, so `Ctrl-v`
-stays useful wherever an ordinary paste works.
+not answering — pastes text instead, exactly as `Space c p` does, so both keys
+stay useful wherever an ordinary paste works.
 
-On Linux and macOS, image-cache directories and images are private (`0700`
-and `0600`). Symlinked storage paths, hard-linked entries, and existing files
+Image-cache directories and images are private: `0700` and `0600` on Linux
+and macOS, and owner-only permissions on Windows local NTFS. Symlinked or
+reparse-point storage paths, hard-linked entries, and existing files
 whose bytes disagree with their content-hash name are refused. Temporary
 writes use exclusively created files and atomic publication.
+
+On Windows, image paste reads registered PNG data or converts supported native
+bitmap clipboard data to PNG. Plain text takes precedence, as below. Clipboard
+data and converted images are bounded to 64 MiB; bitmap dimensions must also
+fit within 64 MiB of RGBA pixels. Unsupported compressed bitmap layouts and
+custom color profiles report an error. The editor waits at most one second
+for a clipboard request; if Windows delays it longer, another request reports
+that the clipboard is still busy. Retry after the worker finishes.
 
 A clipboard offering text *as well as* a picture counts as holding text.
 Copying a range of spreadsheet cells or a formatted passage attaches a rendered
@@ -1855,8 +1967,9 @@ a screenshot tool and a browser's "Copy Image" both produce. If `Ctrl-v` pastes
 text where an image was expected, this rule is why, and the source is
 advertising a text form of what was copied. Once the clipboard has said it
 holds an image, failing to fetch it is reported rather than quietly pasting
-text in its place. `Ctrl-v` is deliberately unbound inside a terminal, where it
-still reaches the program running there.
+text in its place. Both keys are deliberately unbound in Terminal Insert,
+where they still reach the program running there if the outer terminal passes
+them through.
 
 `.runyte/` is not tracked by Git, so a pasted image travels with the working
 copy rather than with the commit. A document that will be read from another
@@ -1901,7 +2014,7 @@ The direct editing keys shared by Insert and Replace modes are:
 | `Ctrl-x` | Ask the language server for completions |
 | `Ctrl-c` | Comment or uncomment the lines holding the carets |
 | `Ctrl-s` | Save |
-| `Ctrl-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
+| `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
 Backspace or Shift-Backspace in Replace mode retraces the current overwrite
@@ -2258,11 +2371,21 @@ information, while an already captured review keeps its original links.
 | `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 
-`:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
+On Unix, `:pipe sort` sends each selection to a separate `/bin/sh -c` invocation on
 stdin and replaces it with stdout. Programs resolve through the inherited
 `PATH`; arguments, quotes and pipelines are interpreted by the shell. Runyte
 does not expand editor variables or interpolate selected text into the command.
 The working directory is the workspace root captured when the command starts.
+
+Windows uses the system Windows PowerShell with no profile, in noninteractive
+mode, independently of `COMSPEC`. Commands use PowerShell syntax. For example,
+`:pipe [Console]::Write([Console]::In.ReadToEnd().ToUpperInvariant())` replaces
+each selection with its uppercase text. Console input/output and native pipeline
+output use UTF-8 without a BOM. Use `[Console]::In.ReadToEnd()` and
+`[Console]::Write(...)` when exact newlines matter; PowerShell object pipelines
+apply their own text formatting. Selected text is supplied only as stdin and
+is never inserted into the command. The workspace cwd must have an equivalent
+ordinary Windows spelling shorter than 260 UTF-16 units.
 
 Selections run sequentially, with at most one pipe job per workspace and 256
 selections per job. Command text is limited to 16 KiB, selected input and combined
@@ -2278,8 +2401,9 @@ edit followed by undo), closed, or became read-only. Moving selections does not
 retarget the result. `:pipe-cancel` cancels the job. The workspace host owns it in
 both modes, so detaching and reattaching a persistent session does not restart or
 cancel it. Host shutdown cancels outstanding work. Cancellation, timeout, failure
-and shell completion kill the owned process group and reap the shell; processes
-that deliberately leave that group are outside cleanup’s scope. Inherited output
+and shell completion kill the owned process tree. Unix uses a process group and
+reaps the shell; processes that deliberately leave that group are outside its
+cleanup scope. Windows uses a job that disallows breakaway. Inherited output
 pipes cannot keep a completed shell’s job alive indefinitely. No default key
 binding is added; the bare `|` key remains reserved.
 
@@ -2293,6 +2417,12 @@ Insert-mode editing, and takes all four away from a terminal's child, where
 `Ctrl-h` is backspace and `Ctrl-l` clears the screen. Both prefixed spellings
 keep working, and help and the key-hint popup describe whichever set is
 actually in force.
+
+On native Windows, Runyte requests keyboard reporting that keeps Ctrl chords
+distinct from Backspace and Enter. Fast pane keys work in the explorer too;
+the physical Backspace and Enter keys retain directory navigation and opening.
+The default directions are left/down/up/right for `Ctrl-h/j/k/l` respectively;
+configured bindings still determine the action.
 
 `Space w =` levels the splits again after the `:resize-*` commands or a
 dragged border have skewed them. It gives every pane the same width and then
@@ -3467,6 +3597,8 @@ are enabled.
                         (alias: document-outline)
 :config                 open the settings menu (alias: settings)
 :config-reload          re-read the loaded configuration file into this session
+:context-access [identity]
+                        review, grant, inspect, or revoke agent context access
 :terminal [command]     run a program in this pane, or $SHELL (aliases: t, term)
 :terminal-file-directory [command]
                         run from the active file's parent
@@ -3490,7 +3622,7 @@ are enabled.
 :write-quit             save, then close the pane or quit from the last one (alias: wq)
 :write-buffer-close     save and close the buffer in place (alias: wbc)
 :session-1 … :session-9 attach directly to the numbered running persistent session
-:session-list           open the session manager (persistent mode; alias: sl)
+:session-list           open the session manager (Unix persistent mode or Windows native controls; alias: sl)
 :session-attach WORKSPACE
                         attach to another workspace's persistent session
                         (alias: attach)
@@ -3498,6 +3630,7 @@ are enabled.
                         stop a clean persistent session
 :session-rename WORKSPACE NAME
                         rename a persistent session
+:session-clean          clean verified stopped session history (Windows)
 ```
 
 The working directory starts at the directory where Runyte was launched.
@@ -3541,6 +3674,25 @@ function runyte() {
 }
 ```
 
+For Windows PowerShell 5.1, save [runyte.ps1](../contrib/runyte.ps1) in a stable
+local location and dot-source it from your PowerShell profile:
+
+```powershell
+. 'C:\Tools\Runyte\runyte.ps1'
+```
+
+The function starts `runyte.exe` and waits for it. Normal `:quit` leaves the
+caller directory unchanged; successful `:quit-here` changes it using a literal
+path. The function returns to the caller with the editor status in
+`$LASTEXITCODE`, or a nonzero status if the wrapper fails.
+
+Windows handoff requires private local NTFS temporary storage. The destination
+must have an identity-equivalent ordinary local or UNC spelling shorter than
+260 UTF-16 units, with valid Unicode path components. Unsupported paths are
+refused before quitting. The bounded, versioned handoff record preserves UTF-16
+code units; it differs from the Unix NUL-terminated byte format. PowerShell 7
+has not been validated for this wrapper.
+
 After reloading the shell configuration, invoke `runyte` normally. The
 `--cwd-file` option is intended for shell integration; Runyte writes it only
 after a successful `:quit-here` command. Without the wrapper, `:quit-here`
@@ -3549,7 +3701,7 @@ acting like plain `:quit`.
 Session-management commands such as `--session-list` accept the option but leave the
 file untouched, so they can be invoked through the same shell function.
 
-The wrapper works the same way against a persistent host. `:quit-here` runs in
+On Unix, the wrapper also works against a persistent host. `:quit-here` runs in
 the host, which reports the directory it chose while the attached client writes
 the file — so the same wrapper serves both modes, and the directory follows you
 across a workspace switch. Because the capability belongs to the client rather
@@ -3568,6 +3720,14 @@ bridge's instructions, then run `:context-access` inside each target workspace.
 An optional identity name, such as `:context-access codex`, gives separate
 local bridge installations separate grants and revocation controls.
 
+Context services start with normal Runyte workspace startup on Linux, macOS,
+and Windows. On Windows the bridge discovers live workspaces with
+`runyte.exe --context-list --json` and authenticates over private local named
+pipes; it does not open a TCP listener. This availability does not enable the
+separate Windows plugin system or interactive persistent attachment and
+switching. A foreground or detached Windows host can expose its workspace to
+the bridge even though attaching another Windows TUI remains unavailable.
+
 The native **Agent context access** overlay starts on **Reject**. Use `1` for
 terminal reads, `2` for editor context reads, `3` for buffer edits and `4` for
 terminal proposals. Editing requires editor reads; proposing requires terminal
@@ -3579,14 +3739,23 @@ scopes and recent request metadata; `x` revokes access immediately. Revocation
 also removes its remembered grant, disconnects readers, releases snapshots and
 cancels terminal text that has not started writing.
 
+Granting, changing, and revoking access require physical input from the active
+Runyte frontend. Repeated input, pasted text, protocol clients, and the bridge
+cannot approve their own request.
+
 Grants cover unsaved content and potentially sensitive terminal output. They
 belong to the canonical project root and bridge identity, so a clone, nested
 workspace or different identity needs its own grant. Private credential and
 remembered-grant files live outside the project under the account's Runyte
 cache (`~/.cache/runyte/context` on Linux and
-`~/Library/Caches/runyte/context` on macOS). `RUNYTE_CONTEXT_HOME` can select an
-absolute, owner-private directory outside the workspace, for example when the
-platform's Unix socket path limit requires a shorter path. No credentials or
+`~/Library/Caches/runyte/context` on macOS). Windows uses `runyte\context`
+below the account's LocalAppData known folder, resolved through the operating
+system instead of the inherited `%LOCALAPPDATA%` value. `RUNYTE_CONTEXT_HOME`
+can select an absolute, owner-private directory outside the workspace. On
+Windows its immediate parent must already exist and the storage must be on
+local NTFS; Runyte applies a protected owner-only ACL and refuses reparse or
+hardlink traversal. On Unix the override can also shorten a path to fit the
+local socket limit. No credentials or
 terminal content are written into tracked project context. This is permission
 for Runyte's API, not an operating-system sandbox against other processes
 already running as your user.
@@ -3610,6 +3779,11 @@ listing does not itself grant content access. The bridge authenticates each
 target separately. Restarting a host or reconnecting a bridge invalidates its
 old resource handles. A slow or unavailable host does not prevent other hosts
 from being discovered.
+
+On Windows, the discovery output contains the local named-pipe address and
+exact host process identity needed for authentication. Treat it as ephemeral:
+configure the bridge with the absolute `runyte.exe` path when necessary and let
+the bridge perform discovery instead of copying a pipe name into client setup.
 
 Terminal reads return decoded physical rows, with blank rows, Unicode,
 revision and truncation information. They do not reconstruct conversations or
@@ -3678,6 +3852,9 @@ written.
 ### Who owns the log
 
 On Linux and macOS, logs are created with owner-only permissions (`0600`).
+On Windows, logs use a protected ACL granting access to their owning user.
+Native private storage currently requires local NTFS; network volumes, reparse
+points and hardlinked files are refused. Other filesystem types remain unsupported.
 Runtime writes reject symlinked parent directories, symlinked file targets,
 hard-linked files, and special files such as FIFOs. Rotation uses the opened
 file and directory even if their original pathnames change. A refused default
@@ -3738,7 +3915,7 @@ high-volume trace. Each `-v` raises the level and the cap is trace:
 
 `--log PATH` selects an explicit destination. Failing to honour it is a startup
 error, because silently choosing another file would make the requested capture
-misleading. On Unix, a path already owned by another running Runyte process is
+misleading. A path already owned by another running Runyte process is
 refused after a two-second handover window; choose a different path or let the
 first process exit. An unwritable *default* destination only degrades logging:
 editing continues, a persistent host still serves, and the failure appears on
@@ -3893,7 +4070,8 @@ file says so without treating it as a deletion, so creating the file and
 reloading again is the way to start using one mid-session.
 
 Settings that were read before the editor existed are reported rather than
-adopted. `editor.mouse`, `lsp.enable`, `workspace.mode`, and `workspace.state`
+adopted. `editor.mouse`, `lsp.enable`, `workspace.mode`, `workspace.state`, and
+`workspace.state_anchor`
 keep the value this process started with, and the status line names them as
 requiring a restart. The `[config]` page then shows the file's value as saved
 while the effective value stays what the editor is actually doing. Everything
@@ -3953,6 +4131,8 @@ editor:
 
 workspace:
   state: .runyte # `root` is accepted as a compatibility alias
+  # Windows plugin-state durability boundary: profile or local-app-data.
+  # state_anchor: profile
   mode: standalone # `persistent` changes future bare launches; restart required
 
 notifications:
@@ -3998,6 +4178,16 @@ walks upward, confirming your home directory makes every directory below it
 with no Git repository and no state directory of its own part of that one
 workspace; the prompt says so before asking to confirm that particular
 location. `workspace.root` is accepted as an alias for `workspace.state`.
+
+On Windows, `workspace.state_anchor` can be `profile` or `local-app-data` for
+durable plugin state. Runyte resolves that boundary from the current account's
+OS known-folder record. The configured `workspace.state` must be a proper
+descendant of the selected boundary. Runyte traverses existing ordinary parent
+directories without changing them and creates or admits only the final state
+directory as private storage. It does not accept a custom anchor, relocate
+existing state, or fall back to another ancestor. Omitting the setting retains
+the existing full-ancestry behavior. Unix accepts the setting so one
+configuration can be shared, but keeps its existing state storage behavior.
 
 ### Key remapping
 

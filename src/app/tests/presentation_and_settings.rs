@@ -1576,7 +1576,7 @@ fn opening_the_log_without_one_installed_reports_it_rather_than_opening_a_page()
         .platform_unavailable()
         .unwrap_or("no diagnostic log");
     assert!(app.status.contains(reason), "{}", app.status);
-    assert_eq!(app.status_error, !cfg!(windows));
+    assert!(app.status_error);
 }
 
 /// `acknowledge` in `NotificationCenter` only marks read what already
@@ -1776,7 +1776,7 @@ fn successful_worktree_creation_attaches_only_in_persistent_mode() {
     assert_eq!(
         persistent
             .take_workspace_switch()
-            .map(|request| request.selector),
+            .map(|request| switch_target_path(&request).to_path_buf()),
         Some(destination)
     );
 }

@@ -3,7 +3,7 @@
 //! Pane preparation, semantic overlay snapshots, and presentation-facing state.
 
 // Application-module dependencies:
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::WorkspaceRow;
 use super::{
     App, BindingScope, Buffer, BufferKind, CompletionSource, ConfirmationOverlay, ContentAlignment,
@@ -1742,12 +1742,14 @@ impl App {
                 None,
             ));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if let Some(menu) = &self.session_action_menu {
             overlays.push(bounded(
                 OverlayKind::BufferActions,
-                self.workspace_rows
-                    .get(menu.row)
+                self.workspace_row_index(&menu.selection)
+                    .ok()
+                    .flatten()
+                    .and_then(|index| self.workspace_rows.get(index))
                     .map_or_else(|| "Session actions".to_owned(), WorkspaceRow::display_name),
                 "",
                 menu.actions

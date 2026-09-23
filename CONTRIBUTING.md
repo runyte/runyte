@@ -1,12 +1,21 @@
 # Contributing to Runyte
 
-Runyte is ready for general use on Linux and macOS. It is maintained by one
-person, so the most useful contributions are the ones a single maintainer cannot
-produce alone: reports from setups other than the maintainer's, feature
-requests, and plugins.
+Feature requests, bug reports, and plugin development are welcome.
 
 Suspected security vulnerabilities do not belong in any of the channels below.
 Follow the [security policy](SECURITY.md) instead.
+
+## Request a feature
+
+Open an issue on [GitHub Issues](https://github.com/runyte/runyte/issues).
+Describe the workflow you want to improve, what is difficult today, and how
+the proposed feature would help. Include a concrete example and check for an
+existing request before opening a new one.
+
+Runyte's selection-first model and its keymap are deliberate, so a request that
+works with them lands more easily than one that adds a second way to do
+something already bound. Anything an external process could do is better as a
+plugin than as an editor feature.
 
 ## Report a bug
 
@@ -31,17 +40,6 @@ Review them before attaching, and redact anything you would not publish.
 Behavior that differs from Helix is not necessarily a bug. The
 [keymap register](context/reference/helix-keymap-v1.md) records the deliberate
 differences; a report that one of them is a poor choice is still welcome.
-
-## Request a feature
-
-Open an issue on [GitHub Issues](https://github.com/runyte/runyte/issues)
-describing what you are trying to do and what currently stands in the way,
-rather than the implementation you have in mind.
-
-Runyte's selection-first model and its keymap are deliberate, so a request that
-works with them lands more easily than one that adds a second way to do
-something already bound. Anything an external process could do is better as a
-plugin than as an editor feature.
 
 ## Write a plugin
 

@@ -342,6 +342,7 @@ impl App {
             .map_err(|error| anyhow::anyhow!(error.message))?;
         let capture = plugin::application::CapturedContext {
             foreground_allowed: true,
+            native_handoff_allowed: !cfg!(windows) || self.plugin_physical_input,
             action: self.active_action_id,
             pane: self.active_pane,
             buffer: self.active().buffer,

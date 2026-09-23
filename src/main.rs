@@ -1,16 +1,37 @@
 // SPDX-License-Identifier: MPL-2.0
 
+#[cfg(any(unix, windows))]
+mod host_requests;
+#[cfg(windows)]
+#[cfg_attr(not(test), allow(dead_code))]
+#[path = "tui/windows_frontend.rs"]
+mod windows_frontend;
+#[cfg(windows)]
+mod windows_host;
+#[cfg(unix)]
+use host_requests::{bounded_destination_label, handle_workspace_request, is_workspace_request};
+
 #[cfg(all(test, windows))]
 #[path = "tui/windows_console_acceptance.rs"]
 mod windows_console_acceptance;
 
+#[cfg(all(test, windows))]
+#[path = "tui/windows_frontend_acceptance.rs"]
+mod windows_frontend_acceptance;
+
+#[cfg(all(test, windows))]
+#[path = "tui/windows_git_acceptance.rs"]
+mod windows_git_acceptance;
+
 use std::{
-    fs,
     io::{self, Write, stdout},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
+
+#[cfg(any(not(windows), debug_assertions, test))]
+use std::fs;
 
 #[cfg(unix)]
 use std::thread;
@@ -35,6 +56,8 @@ use crossterm::{
         enable_raw_mode,
     },
 };
+#[cfg(windows)]
+use futures_util::FutureExt;
 #[cfg(not(windows))]
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -139,15 +162,23 @@ use runyte::workspace::lifecycle::{
 #[cfg(unix)]
 use runyte::workspace::transport::{
     BufferedLocalClient, ClientRequest, FeatureGroup, HostResponse, IncompatibleHost, LocalClient,
-    LocalEndpoint, LocalServer, ServerEvent, TransportChange, decode_path, encode_path,
+    LocalEndpoint, LocalServer, ServerEvent, decode_path, encode_path,
     registered_hosts_all_namespaces,
 };
 #[cfg(unix)]
 use runyte::workspace::{
-    WorkspaceService, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
-    known_workspaces, known_workspaces_all_namespaces, known_workspaces_for_navigation,
-    record_recent_workspace, record_workspace_activity, rename_known_workspace,
-    resolve_known_workspace, resolve_known_workspace_from_directory,
+    WorkspaceRow, WorkspaceService, abbreviated_id_width, clear_stopped_sessions,
+    ensure_recent_workspace, known_workspaces, known_workspaces_all_namespaces,
+    known_workspaces_for_navigation, record_recent_workspace, record_workspace_activity,
+    rename_known_workspace, resolve_known_workspace, resolve_known_workspace_from_directory,
+};
+#[cfg(windows)]
+use runyte::workspace::{
+    normalize_session_name,
+    windows_catalog::{HistoryTarget, WorkspaceRow, abbreviated_id_width},
+    windows_control::{ControlSnapshot, StopAllReport, UserSelector},
+    windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
+    windows_parent_identity::ForegroundParentSupervisor,
 };
 
 fn main() -> Result<()> {
@@ -156,7 +187,17 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .context("failed to start the async runtime")?;
+    #[cfg(windows)]
+    let mut native_termination = runtime.block_on(async { TerminationSignals::new() })?;
+    #[cfg(windows)]
+    let result = runtime.block_on(run(&mut startup, &mut native_termination));
+    #[cfg(not(windows))]
     let result = runtime.block_on(run(&mut startup));
+    #[cfg(windows)]
+    let result = reconcile_pending_console_event(
+        result,
+        runtime.block_on(native_termination.pending_event()),
+    );
     drop(runtime);
     // Only that the process is ending, never the chain that ended it. An
     // arbitrary propagated error is unclassified text — an option's value, a
@@ -169,6 +210,16 @@ fn main() -> Result<()> {
         Err(_) => log_error!("process", "runyte exited with an error"),
     }
     runyte::log::shutdown();
+    #[cfg(windows)]
+    let result = reconcile_pending_console_event(result, native_termination.recv().now_or_never());
+    #[cfg(windows)]
+    drop(native_termination);
+    #[cfg(windows)]
+    if result.as_ref().err().is_some_and(console_closed) {
+        // A closed console may no longer accept Rust's top-level Result
+        // reporter. Cleanup and logging already ran; avoid writing to it.
+        std::process::exit(1);
+    }
     #[cfg(unix)]
     if let Err(error) = &result
         && let Some(signal) = error.downcast_ref::<TerminatedBySignal>()
@@ -188,16 +239,102 @@ fn main() -> Result<()> {
     result
 }
 
+#[cfg(not(windows))]
 #[derive(Debug)]
 struct TerminatedBySignal(i32);
 
+#[cfg(not(windows))]
 impl std::fmt::Display for TerminatedBySignal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "terminated by signal {}", self.0)
     }
 }
 
+#[cfg(not(windows))]
 impl std::error::Error for TerminatedBySignal {}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConsoleEvent {
+    CtrlC,
+    CtrlBreak,
+    Close,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct TerminatedByConsole(ConsoleEvent);
+
+#[cfg(windows)]
+impl std::fmt::Display for TerminatedByConsole {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self.0 {
+            ConsoleEvent::CtrlC => "terminated by Ctrl+C",
+            ConsoleEvent::CtrlBreak => "terminated by Ctrl+Break",
+            ConsoleEvent::Close => "console closed",
+        })
+    }
+}
+
+#[cfg(windows)]
+impl std::error::Error for TerminatedByConsole {}
+
+#[cfg(windows)]
+fn console_closed(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<TerminatedByConsole>()
+        .is_some_and(|event| event.0 == ConsoleEvent::Close)
+}
+
+#[cfg(windows)]
+fn prefer_pending_console_close(result: Result<()>, pending: Option<ConsoleEvent>) -> Result<()> {
+    if pending != Some(ConsoleEvent::Close) || result.as_ref().err().is_some_and(console_closed) {
+        return result;
+    }
+    let close = terminated(ConsoleEvent::Close);
+    match result {
+        Ok(()) => Err(close),
+        Err(previous) => Err(close.context(format!("previous shutdown result: {previous:#}"))),
+    }
+}
+
+#[cfg(windows)]
+fn reconcile_pending_console_event(
+    result: Result<()>,
+    pending: Option<ConsoleEvent>,
+) -> Result<()> {
+    if pending == Some(ConsoleEvent::Close) {
+        return prefer_pending_console_close(result, pending);
+    }
+    match (result, pending) {
+        (Ok(()), Some(event)) => Err(terminated(event)),
+        (result, _) => result,
+    }
+}
+
+#[cfg(windows)]
+fn finish_standalone_native(
+    outcome: Result<()>,
+    context: Result<()>,
+    catalog: Result<()>,
+    plugins: Result<()>,
+    event: Option<ConsoleEvent>,
+) -> Result<()> {
+    let mut result = event.map_or(outcome, |event| Err(terminated(event)));
+    for (label, cleanup) in [
+        ("context service shutdown failed", context),
+        ("native catalog shutdown failed", catalog),
+        ("plugin shutdown failed", plugins),
+    ] {
+        if let Err(error) = cleanup {
+            result = match result {
+                Ok(()) => Err(error.context(label)),
+                Err(primary) => Err(primary.context(format!("{label}: {error}"))),
+            };
+        }
+    }
+    result
+}
 
 #[cfg(unix)]
 #[derive(Debug)]
@@ -699,8 +836,14 @@ fn install_termination_handlers() -> Result<()> {
     result.map_err(|code| std::io::Error::from_raw_os_error(code).into())
 }
 
+#[cfg(not(windows))]
 fn terminated(signal: i32) -> anyhow::Error {
     TerminatedBySignal(signal).into()
+}
+
+#[cfg(windows)]
+fn terminated(event: ConsoleEvent) -> anyhow::Error {
+    TerminatedByConsole(event).into()
 }
 
 #[cfg(unix)]
@@ -929,27 +1072,47 @@ fn process_queue_has_exited(
 ) -> Result<bool> {
     use std::os::fd::AsRawFd;
 
-    let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
     let timeout = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: the kqueue descriptor is live, the output has capacity for one
-    // event, and the zero timeout performs a non-blocking observation.
-    let count = unsafe {
-        libc::kevent(
-            process_queue.as_raw_fd(),
-            std::ptr::null(),
-            0,
-            event.as_mut_ptr(),
-            1,
-            &timeout,
-        )
+    process_queue_has_exited_with(pid, |event| {
+        // SAFETY: the kqueue descriptor is live, the output has capacity for
+        // one event, and the zero timeout performs a non-blocking observation.
+        let count = unsafe {
+            libc::kevent(
+                process_queue.as_raw_fd(),
+                std::ptr::null(),
+                0,
+                event.as_mut_ptr(),
+                1,
+                &timeout,
+            )
+        };
+        if count == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(count)
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn process_queue_has_exited_with(
+    pid: libc::pid_t,
+    mut observe: impl FnMut(&mut std::mem::MaybeUninit<libc::kevent>) -> std::io::Result<libc::c_int>,
+) -> Result<bool> {
+    // A signal can interrupt this nonblocking read without consuming the
+    // NOTE_EXIT event. Retry the same retained queue rather than consulting a
+    // PID that could later name another process.
+    let (count, event) = loop {
+        let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+        match observe(&mut event) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error).context("cannot read host supervisor process queue"),
+            Ok(count) => break (count, event),
+        }
     };
-    if count == -1 {
-        return Err(std::io::Error::last_os_error())
-            .context("cannot read host supervisor process queue");
-    }
     if count == 0 {
         return Ok(false);
     }
@@ -982,10 +1145,48 @@ fn process_is_zombie(_pid: libc::pid_t) -> bool {
     false
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+struct TerminationSignals {
+    ctrl_c: tokio::signal::windows::CtrlC,
+    ctrl_break: tokio::signal::windows::CtrlBreak,
+    close: tokio::signal::windows::CtrlClose,
+}
+
+#[cfg(windows)]
+impl TerminationSignals {
+    fn new() -> Result<Self> {
+        // One owner is installed before launch parsing and stays alive through
+        // startup and cleanup. Tokio's close handler preserves its callback
+        // thread for the operating system's limited cleanup window.
+        Ok(Self {
+            ctrl_c: tokio::signal::windows::ctrl_c()?,
+            ctrl_break: tokio::signal::windows::ctrl_break()?,
+            close: tokio::signal::windows::ctrl_close()?,
+        })
+    }
+
+    async fn recv(&mut self) -> ConsoleEvent {
+        tokio::select! {
+            biased;
+            _ = self.close.recv() => ConsoleEvent::Close,
+            _ = self.ctrl_break.recv() => ConsoleEvent::CtrlBreak,
+            _ = self.ctrl_c.recv() => ConsoleEvent::CtrlC,
+        }
+    }
+
+    async fn pending_event(&mut self) -> Option<ConsoleEvent> {
+        tokio::select! {
+            biased;
+            event = self.recv() => Some(event),
+            _ = std::future::ready(()) => None,
+        }
+    }
+}
+
+#[cfg(all(not(unix), not(windows)))]
 struct TerminationSignals;
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(windows)))]
 impl TerminationSignals {
     fn new() -> Result<Self> {
         Ok(Self)
@@ -996,7 +1197,10 @@ impl TerminationSignals {
     }
 }
 
-async fn run(startup: &mut StartupTrace) -> Result<()> {
+async fn run(
+    startup: &mut StartupTrace,
+    #[cfg(windows)] native_termination: &mut TerminationSignals,
+) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
     #[cfg(unix)]
     let supervising_parent = HostSupervisor::for_launch(&arguments)?;
@@ -1011,25 +1215,54 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::RestartSession {
+        anyhow::bail!("session restart is not yet supported on Windows");
+    }
+
+    // Capture a foreground host's natural parent before configuration or App
+    // startup. Detached hosts have a disposable inheritance parent and never
+    // turn that process into a supervisor.
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::Serve {
+        let supervisor = if arguments.detached_host {
+            None
+        } else {
+            Some(ForegroundParentSupervisor::capture()?)
+        };
+        return windows_host::run(arguments, startup, native_termination, supervisor).await;
+    }
+
+    // Windows initially supports --wait as a foreground standalone editor.
+    // Keep its exit requirement separate from launch mode: no persistent host,
+    // attachment, or per-buffer completion token is involved.
+    #[cfg(windows)]
+    let standalone_wait = arguments.mode == LaunchMode::Wait;
+    #[cfg(windows)]
+    if standalone_wait {
+        arguments.mode = LaunchMode::Standalone;
+    }
+
     if arguments.mode == LaunchMode::ListContext {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use runyte::workspace::context::{
                 discovery,
                 storage::{Storage, environment_fingerprint},
             };
-            let result = discovery::discover(
-                Storage::default_root(),
-                &environment_fingerprint(),
-                arguments.include_hidden,
-            )
-            .await?;
+            #[cfg(unix)]
+            let root = Storage::default_root();
+            #[cfg(windows)]
+            let root = Storage::default_location().map(|location| location.root().to_owned());
+            let result =
+                discovery::discover(root, &environment_fingerprint(), arguments.include_hidden)
+                    .await?;
             serde_json::to_writer(stdout().lock(), &result)?;
             println!();
             return Ok(());
         }
-        #[cfg(not(unix))]
-        anyhow::bail!("context discovery is supported only on Unix");
+        #[cfg(all(not(unix), not(windows)))]
+        anyhow::bail!("context discovery is not supported on this platform");
     }
 
     #[cfg(unix)]
@@ -1134,8 +1367,17 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 _ => unreachable!(),
             };
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            return run_native_control_cli(&arguments, startup).await;
+        }
+        #[cfg(all(not(unix), not(windows)))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
+    }
+
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::StopSession {
+        return run_native_control_cli(&arguments, startup).await;
     }
 
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
@@ -1154,6 +1396,19 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         .cwd_file
         .take()
         .map(|path| resolve_cwd_file_path(&launch_directory, path));
+    // Only an editor that can perform the handoff admits the output path.
+    // Pin its already-private parent before acquiring the terminal or editing.
+    #[cfg(windows)]
+    let cwd_handoff = if arguments.mode == LaunchMode::Standalone {
+        arguments
+            .cwd_file
+            .as_deref()
+            .map(runyte::cwd_handoff::Prepared::prepare)
+            .transpose()
+            .context("cannot prepare private PowerShell directory handoff")?
+    } else {
+        None
+    };
     let mut reserved_user_roots = config_path
         .as_deref()
         .map(|path| config::config_root_for(path, &launch_directory))
@@ -1403,9 +1658,9 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // a more specific startup error on invocations that have no usable TTY.
     let standalone_color_depth =
         (arguments.mode == LaunchMode::Standalone).then(terminal_color_depth);
-    // Preserve and publish the ordinary terminal state before installing the
-    // handler. A signal before installation keeps its safe default disposition;
-    // every signal after installation sees startup protection already armed.
+    // Unix preserves terminal state before installing its signal handler.
+    // Windows already owns its console listeners from before launch parsing;
+    // terminal restoration is handled by the guard during startup and exit.
     let startup_restore = if arguments.mode == LaunchMode::Standalone {
         Some(StartupSignalExit::arm())
     } else {
@@ -1415,7 +1670,14 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         .as_ref()
         .is_some_and(std::result::Result::is_ok)
     {
-        Some(TerminationSignals::new()?)
+        #[cfg(windows)]
+        {
+            Some(native_termination)
+        }
+        #[cfg(not(windows))]
+        {
+            Some(TerminationSignals::new()?)
+        }
     } else {
         None
     };
@@ -1500,6 +1762,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
     // returned.
     let color_depth = standalone_color_depth.expect("standalone terminal colour depth");
     let _terminal = standalone_terminal.expect("standalone terminal guard")?;
+    #[cfg(windows)]
+    let termination = standalone_termination
+        .take()
+        .expect("standalone termination signals");
+    #[cfg(not(windows))]
     let mut termination = standalone_termination
         .take()
         .expect("standalone termination signals");
@@ -1522,13 +1789,43 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
 
     // Optional services start only after the standalone editor is usable.
     // Their initialization must never hide first-frame latency.
-    let mut services = start_host_services(&mut app, startup, config_path.as_deref(), false)?;
+    #[cfg(windows)]
+    let native_catalog = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: reserved_user_roots.clone(),
+        roots: CapturedRoots::capture(),
+    })
+    .and_then(|scope| {
+        let current = scope.known_read_location(&project_root, &state_root)?;
+        Ok(NativeCatalogConfig {
+            scope,
+            current,
+            configured_state: app.config.workspace.state.clone(),
+            parent_attach: None,
+        })
+    })
+    .map(Some)
+    .unwrap_or_else(|error| {
+        app.report_host_error(format!("native session catalog is unavailable: {error}"));
+        None
+    });
+    let mut services = start_host_services(
+        &mut app,
+        startup,
+        config_path.as_deref(),
+        false,
+        #[cfg(windows)]
+        native_catalog,
+    )?;
     if let Err(error) = startup.write_requested() {
         app.report_host_error(format!("failed to write startup timing report: {error}"));
     }
+    let interactive_outcome: Result<()> = async {
+    #[cfg(all(windows, debug_assertions))]
+    wait_at_post_service_failure_barrier().await?;
     // Service discovery can add a useful failure/status message. Present it
     // before waiting for input so a quiet terminal never leaves the initial
-    // pre-service frame stale.
+    // pre-service frame stale. From this point onward every fallible frontend
+    // setup step is captured so the services below are joined during cleanup.
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
@@ -1593,7 +1890,11 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                     }
                     Some(event) => {
                         let key_kind = terminal_key_kind(&event);
-                        let Some(input) = convert_event(event)? else {
+                        #[cfg(windows)]
+                        let converted = convert_windows_event(event, app.app())?;
+                        #[cfg(not(windows))]
+                        let converted = convert_event(event)?;
+                        let Some(input) = converted else {
                             key_repeat_detector.observe(key_kind, None, Instant::now());
                             continue;
                         };
@@ -1602,7 +1903,6 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                             Some(&input),
                             Instant::now(),
                         );
-                        if repeated && app.context_overlay_active() { continue; }
                         if let Some(frame)=app.current_frame_id() { app.context_frame_presented(frame); }
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
@@ -1668,14 +1968,19 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                                 }
                                 HintEventResult::Consumed
                             }
-                            InputEvent::Key(_) | InputEvent::Text(_) => {
+                            InputEvent::Key(_) | InputEvent::Text(_) | InputEvent::ClipboardPaste => {
                                 observe_key_or_text_hint(app.app(), &mut key_hints, &input)
                             }
                         };
                         if hint_result == HintEventResult::Forward {
                             let dispatches = motion_repeat_dispatches(&app, &input, repeated);
                             for _ in 0..dispatches {
-                                if let Err(error) = app.execute(HostCommand::Input(input.clone())) {
+                                let result = if repeated && app.context_overlay_active() {
+                                    app.execute_repeated_input(input.clone())
+                                } else {
+                                    app.execute(HostCommand::Input(input.clone()))
+                                };
+                                if let Err(error) = result {
                                     app.report_host_error(error.to_string());
                                     break;
                                 }
@@ -1765,6 +2070,26 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 }
             }
             event = async {
+                #[cfg(windows)]
+                { match services.native_catalog_events.as_mut() {
+                    Some(events) => events.recv().await,
+                    None => std::future::pending().await,
+                }}
+                #[cfg(not(windows))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                #[cfg(windows)]
+                if let Some(event) = event {
+                    app.apply_event(HostEvent::Workspace(event));
+                } else {
+                    services.native_catalog_events = None;
+                    app.app_mut().detach_workspace_service();
+                    note_ended_service(&mut ended_services, "native session catalog");
+                }
+                #[cfg(not(windows))]
+                let _ = event;
+            }
+            event = async {
                 match services.git_events.as_mut() {
                     Some(events) => events.recv().await,
                     None => std::future::pending().await,
@@ -1780,7 +2105,8 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
                 services.git_monitor.sync(app.git_monitor_repository());
                 let changed = app.refresh_git_if_due(Instant::now());
                 let activity_changed = app.refresh_session_activity();
-                if !changed && !activity_changed {
+                let open_changed = app.app_mut().poll_external_opens(Instant::now());
+                if !changed && !activity_changed && !open_changed {
                     continue;
                 }
             }
@@ -1846,13 +2172,43 @@ async fn run(startup: &mut StartupTrace) -> Result<()> {
         })?;
         frame_pending = false;
     }
+    Ok(())
+    }.await;
+    #[cfg(not(windows))]
+    interactive_outcome?;
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
-    app.shutdown_plugins().await?;
-    let cwd_file = arguments.cwd_file;
-    if let (Some(cwd_file), Some(directory)) = (cwd_file.as_deref(), quit_directory) {
+    #[cfg(windows)]
+    let context_shutdown = app.shutdown_context().await.map_err(anyhow::Error::from);
+    #[cfg(windows)]
+    let catalog_shutdown = services.shutdown_native_catalog().await;
+    let plugins_shutdown = app.shutdown_plugins().await;
+    #[cfg(windows)]
+    finish_standalone_native(
+        interactive_outcome,
+        context_shutdown,
+        catalog_shutdown,
+        plugins_shutdown,
+        received_signal,
+    )?;
+    #[cfg(not(windows))]
+    plugins_shutdown?;
+    #[cfg(windows)]
+    anyhow::ensure!(
+        !standalone_wait || app.should_quit,
+        "standalone --wait ended before the editor was explicitly quit"
+    );
+    #[cfg(not(windows))]
+    if let (Some(cwd_file), Some(directory)) = (arguments.cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
     }
+    #[cfg(windows)]
+    if let (Some(handoff), Some(directory)) = (cwd_handoff.as_ref(), quit_directory) {
+        handoff
+            .write(&directory)
+            .context("cannot publish PowerShell directory handoff")?;
+    }
+    #[cfg(not(windows))]
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
     }
@@ -1960,6 +2316,12 @@ fn workspace_selector_path(selector: &Path, working_directory: &Path) -> PathBuf
 /// different project from the one it is running in. Failing here keeps that
 /// mismatch from reaching workspace identity, which is derived from the root.
 fn resolve_requested_project_root(launch_directory: &Path, requested: &Path) -> Result<PathBuf> {
+    let canonical_launch = launch_directory.canonicalize().with_context(|| {
+        format!(
+            "cannot resolve launch directory {}",
+            launch_directory.display()
+        )
+    })?;
     let project_root = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve project root {}", requested.display()))?;
@@ -1969,7 +2331,7 @@ fn resolve_requested_project_root(launch_directory: &Path, requested: &Path) -> 
         project_root.display()
     );
     anyhow::ensure!(
-        launch_directory.starts_with(&project_root),
+        canonical_launch.starts_with(&project_root),
         "launch directory {} is outside project root {}",
         launch_directory.display(),
         project_root.display()
@@ -2186,7 +2548,9 @@ async fn run_host_server(
                                 let terminal = runyte::terminal::TerminalId::from_raw(*terminal);
                                 let result = if active.as_ref().is_some_and(|client| control_attachments.get(&id).copied().flatten() == Some(client.id)) && host.app().terminals.validates_parent(terminal, capability,
                                     peer_processes.get(&id).copied().flatten()) {
-                                    host.create_parent_wait_request(terminal, paths.iter().cloned().map(decode_path).collect())
+                                    paths.iter().cloned().map(decode_path).collect::<io::Result<Vec<_>>>()
+                                        .map_err(anyhow::Error::from)
+                                        .and_then(|paths| host.create_parent_wait_request(terminal, paths))
                                 } else { Err(anyhow::anyhow!("parent editing context is stale or detached; return to the owning persistent session")) };
                                 let response = result.map_or_else(|error| HostResponse::Error { message: error.to_string() }, |(token,buffers)| {
                                     let token: WaitToken = token.into();
@@ -2375,6 +2739,15 @@ async fn run_host_server(
                                 host.report_host_error(message);
                                 changed = true;
                             }
+                            request @ (ClientRequest::NativeSwitchCommit { .. }
+                            | ClientRequest::NativeParentSwitchCommitObserved { .. }
+                            | ClientRequest::NativeSwitchAbort { .. }) => {
+                                send_active_response(
+                                    &mut active,
+                                    unix_native_switch_refusal(&request)
+                                        .expect("provisional switch request was matched"),
+                                );
+                            }
                             ClientRequest::Hello { .. } => {}
                             ClientRequest::Invoke { .. }
                             | ClientRequest::Health
@@ -2541,6 +2914,27 @@ async fn run_host_server(
                 }
             }
             event = async {
+                #[cfg(windows)]
+                { match services.native_catalog_events.as_mut() {
+                    Some(events) => events.recv().await,
+                    None => std::future::pending().await,
+                }}
+                #[cfg(not(windows))]
+                { std::future::pending::<Option<()>>().await }
+            } => {
+                #[cfg(windows)]
+                if let Some(event) = event {
+                    host.apply_event(HostEvent::Workspace(event));
+                    changed = true;
+                } else {
+                    services.native_catalog_events = None;
+                    host.app_mut().detach_workspace_service();
+                    note_ended_service(&mut ended_services, "native session catalog");
+                }
+                #[cfg(not(windows))]
+                let _ = event;
+            }
+            event = async {
                 match services.git_events.as_mut() {
                     Some(events) => events.recv().await,
                     None => std::future::pending().await,
@@ -2556,6 +2950,7 @@ async fn run_host_server(
                 services.file_monitor.sync(host.file_monitor_requests());
                 services.git_monitor.sync(host.git_monitor_repository());
                 changed = host.refresh_git_if_due(Instant::now());
+                changed |= host.app_mut().poll_external_opens(Instant::now());
                 if active.is_some() { changed |= host.refresh_session_activity(); }
             }
             _ = idle_tick.tick() => {
@@ -2826,23 +3221,43 @@ fn publish_attached_frame(
     }
 }
 
-#[cfg(unix)]
 fn dispatch_host_key_or_text(
     host: &mut WorkspaceHost,
     key_hints: &mut KeyHintState,
     input: InputEvent,
     repeated: bool,
 ) {
-    if repeated && host.context_overlay_active() {
-        return;
-    }
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
         return;
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, repeated);
     for _ in 0..dispatches {
-        if let Err(error) = host.execute(HostCommand::Input(input.clone())) {
+        let result = if repeated && host.context_overlay_active() {
+            host.execute_repeated_input(input.clone())
+        } else {
+            host.execute(HostCommand::Input(input.clone()))
+        };
+        if let Err(error) = result {
+            host.report_host_error(error.to_string());
+            break;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn dispatch_host_repeated_key_or_text(
+    host: &mut WorkspaceHost,
+    key_hints: &mut KeyHintState,
+    input: InputEvent,
+) {
+    let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
+    if hint_result != HintEventResult::Forward {
+        return;
+    }
+    let dispatches = motion_repeat_dispatches(host.app(), &input, true);
+    for _ in 0..dispatches {
+        if let Err(error) = host.execute_repeated_input(input.clone()) {
             host.report_host_error(error.to_string());
             break;
         }
@@ -2862,7 +3277,7 @@ fn observe_key_or_text_hint(
         InputEvent::Key(key) if !app.has_input_overlay() => {
             observe_editor_key_hint(app, key_hints, *key)
         }
-        InputEvent::Key(_) | InputEvent::Text(_) => {
+        InputEvent::Key(_) | InputEvent::Text(_) | InputEvent::ClipboardPaste => {
             key_hints.clear();
             HintEventResult::Forward
         }
@@ -2945,309 +3360,6 @@ fn trace_input(
 }
 
 #[cfg(unix)]
-fn is_workspace_request(request: &ClientRequest) -> bool {
-    matches!(
-        request,
-        ClientRequest::Invoke { .. }
-            | ClientRequest::Health
-            | ClientRequest::SessionPreview
-            | ClientRequest::DestinationInventory
-            | ClientRequest::VisitDestination { .. }
-            | ClientRequest::ListBuffers
-            | ClientRequest::ReadBuffer { .. }
-            | ClientRequest::OpenBuffers { .. }
-            | ClientRequest::ApplyTransaction { .. }
-            | ClientRequest::SaveBuffer { .. }
-            | ClientRequest::CloseBuffer { .. }
-            | ClientRequest::CreateWait { .. }
-            | ClientRequest::WaitStatus { .. }
-            | ClientRequest::CompleteWaitBuffer { .. }
-            | ClientRequest::CancelWait { .. }
-    )
-}
-
-#[cfg(unix)]
-struct WorkspaceReply {
-    response: HostResponse,
-    publish_frame: bool,
-}
-
-#[cfg(unix)]
-fn workspace_response_publishes_frame(response: &HostResponse) -> bool {
-    matches!(
-        response,
-        HostResponse::CommandResult { .. }
-            | HostResponse::Opened { .. }
-            | HostResponse::TransactionApplied { .. }
-            | HostResponse::Saved { .. }
-            | HostResponse::Closed { .. }
-            | HostResponse::WaitCreated { .. }
-            | HostResponse::DestinationVisitResult { .. }
-    )
-}
-
-#[cfg(unix)]
-fn bounded_destination_label(value: &str) -> String {
-    let mut end = value
-        .len()
-        .min(runyte::protocol::MAX_DESTINATION_LABEL_BYTES);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
-}
-
-#[cfg(unix)]
-fn handle_workspace_request(
-    host: &mut WorkspaceHost,
-    request: ClientRequest,
-    interactive_attached: bool,
-    allow_invoke: bool,
-) -> Option<WorkspaceReply> {
-    use runyte::{
-        command::parse_named_command,
-        text::{Change, Transaction},
-        workspace::BufferRequestError,
-    };
-
-    let result = match request {
-        ClientRequest::Health => Ok(HostResponse::Health {
-            plugin_jobs: host.protected_state().plugin_jobs,
-            activity_leases: host.protected_state().activity_leases,
-            activities: host
-                .app()
-                .plugin_activity_health()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            protocol: runyte::workspace::transport::PROTOCOL_VERSION,
-            pid: std::process::id(),
-            interactive_attached,
-            unsaved_buffers: host.protected_state().unsaved_buffers,
-            open_buffers: host.open_buffer_count(),
-            pending_wait_requests: host.protected_state().pending_wait_requests,
-            live_terminals: host.protected_state().live_terminals,
-            terminal_sessions: host.app().terminals.len(),
-            terminal_line_activity_unix_seconds: host.terminal_line_activity_unix_seconds(),
-            unread_terminals: host
-                .app()
-                .terminals
-                .iter()
-                .filter(|terminal| terminal.unread_activity())
-                .count(),
-            terminal_bell: host.app().terminals.iter().any(|terminal| terminal.bell()),
-        }),
-        ClientRequest::DestinationInventory => {
-            let entries = host.app().open_destination_inventory();
-            let truncated = entries.len() > runyte::protocol::MAX_DESTINATIONS;
-            Ok(HostResponse::DestinationInventory {
-                incarnation: host.incarnation().to_owned(),
-                truncated,
-                entries: entries
-                    .into_iter()
-                    .take(runyte::protocol::MAX_DESTINATIONS)
-                    .map(|entry| {
-                        let destination = match entry.destination {
-                            runyte::app::OpenDestination::Buffer(index) => {
-                                runyte::protocol::OpenDestination::Buffer(index as u64 + 1)
-                            }
-                            runyte::app::OpenDestination::Terminal(id) => {
-                                runyte::protocol::OpenDestination::Terminal(id.get())
-                            }
-                        };
-                        runyte::protocol::OpenDestinationEntry {
-                            destination,
-                            label: bounded_destination_label(&entry.label),
-                            detail: bounded_destination_label(&entry.detail),
-                        }
-                    })
-                    .collect(),
-            })
-        }
-        ClientRequest::VisitDestination {
-            incarnation,
-            destination,
-        } => {
-            if !allow_invoke {
-                Err(anyhow::anyhow!(
-                    "visiting a destination requires the interactive attachment"
-                ))
-            } else {
-                let destination = match destination {
-                    runyte::protocol::OpenDestination::Buffer(id) => usize::try_from(id)
-                        .ok()
-                        .and_then(|id| id.checked_sub(1))
-                        .map(runyte::app::OpenDestination::Buffer),
-                    runyte::protocol::OpenDestination::Terminal(id) => {
-                        Some(runyte::app::OpenDestination::Terminal(
-                            runyte::terminal::TerminalId::from_raw(id),
-                        ))
-                    }
-                };
-                let error = if incarnation != host.incarnation() {
-                    Some(
-                        "the persistent host was replaced; its restored layout is unchanged"
-                            .to_owned(),
-                    )
-                } else if !destination
-                    .is_some_and(|destination| host.app_mut().visit_open_destination(destination))
-                {
-                    Some(
-                        "the selected resource is no longer open; the restored layout is unchanged"
-                            .to_owned(),
-                    )
-                } else {
-                    None
-                };
-                if let Some(message) = &error {
-                    host.report_host_error(message.clone());
-                }
-                Ok(HostResponse::DestinationVisitResult { error })
-            }
-        }
-        ClientRequest::SessionPreview => Ok(HostResponse::SessionPreview {
-            preview: host.session_preview().into(),
-        }),
-        ClientRequest::Invoke { command } => {
-            if !allow_invoke {
-                Err(anyhow::anyhow!(
-                    "semantic commands require the attached interactive client"
-                ))
-            } else {
-                parse_named_command(&command.name, command.argument.as_deref())
-                    .map_err(anyhow::Error::from)
-                    .and_then(|invocation| {
-                        host.execute_expected_command(
-                            command.frame.into(),
-                            command.buffer.into(),
-                            command.revision.into(),
-                            invocation,
-                        )
-                        .map_err(anyhow::Error::from)
-                    })
-                    .map(|outcome| HostResponse::CommandResult {
-                        outcome: outcome.into(),
-                    })
-            }
-        }
-        ClientRequest::ListBuffers => Ok(HostResponse::Buffers {
-            buffers: host.buffer_metadata().into_iter().map(Into::into).collect(),
-        }),
-        ClientRequest::ReadBuffer { buffer } => host
-            .read_buffer(buffer.into())
-            .map(|buffer| HostResponse::Buffer {
-                buffer: buffer.into(),
-            })
-            .map_err(anyhow::Error::from),
-        ClientRequest::OpenBuffers { paths, activate } => {
-            if paths.is_empty() || paths.len() > 32 {
-                Err(anyhow::anyhow!("open request requires 1 to 32 paths"))
-            } else {
-                host.open_buffers(paths.into_iter().map(decode_path), activate)
-                    .map(|buffers| HostResponse::Opened {
-                        buffers: buffers.into_iter().map(Into::into).collect(),
-                    })
-            }
-        }
-        ClientRequest::ApplyTransaction {
-            buffer,
-            expected,
-            changes,
-        } => {
-            if changes.is_empty() || changes.len() > 4096 {
-                Err(anyhow::anyhow!("transaction requires 1 to 4096 changes"))
-            } else if changes.iter().any(|change| change.from > change.to) {
-                Err(anyhow::anyhow!(
-                    "transaction ranges must be forward and half-open"
-                ))
-            } else {
-                let transaction = Transaction::new(
-                    changes
-                        .into_iter()
-                        .map(|TransportChange { from, to, text }| Change::new(from, to, text))
-                        .collect(),
-                );
-                match host.apply_expected_transaction(buffer.into(), expected.into(), transaction) {
-                    Ok(revision) => Ok(HostResponse::TransactionApplied {
-                        buffer,
-                        revision: revision.into(),
-                    }),
-                    Err(BufferRequestError::Stale { expected, actual }) => {
-                        Ok(HostResponse::StaleRevision {
-                            buffer,
-                            expected: expected.into(),
-                            actual: actual.into(),
-                        })
-                    }
-                    Err(error) => Err(anyhow::Error::from(error)),
-                }
-            }
-        }
-        ClientRequest::SaveBuffer { buffer } => {
-            host.save_buffer(buffer.into())
-                .map(|revision| HostResponse::Saved {
-                    buffer,
-                    revision: revision.into(),
-                })
-        }
-        ClientRequest::CloseBuffer { buffer, discard } => host
-            .close_buffer(buffer.into(), discard)
-            .map(|()| HostResponse::Closed { buffer }),
-        ClientRequest::CreateWait { paths } => {
-            if paths.is_empty() || paths.len() > 32 {
-                Err(anyhow::anyhow!("wait request requires 1 to 32 paths"))
-            } else {
-                host.create_wait_request(paths.into_iter().map(decode_path), true)
-                    .map(|(token, buffers)| HostResponse::WaitCreated {
-                        token: token.into(),
-                        buffers: buffers.into_iter().map(Into::into).collect(),
-                        interactive_attached,
-                    })
-            }
-        }
-        ClientRequest::WaitStatus { token } => host
-            .wait_status(token.into())
-            .map(|status| HostResponse::WaitState {
-                token,
-                status: status.into(),
-                interactive_attached,
-            })
-            .ok_or_else(|| anyhow::anyhow!("unknown wait token {token}")),
-        ClientRequest::CompleteWaitBuffer { token, buffer } => host
-            .complete_wait_buffer(token.into(), buffer.into())
-            .and_then(|()| {
-                host.wait_status(token.into())
-                    .ok_or_else(|| anyhow::anyhow!("unknown wait token {token}"))
-            })
-            .map(|status| HostResponse::WaitState {
-                token,
-                status: status.into(),
-                interactive_attached,
-            }),
-        ClientRequest::CancelWait { token } => host
-            .cancel_wait(token.into(), "wait client cancelled the request")
-            .and_then(|()| {
-                host.wait_status(token.into())
-                    .ok_or_else(|| anyhow::anyhow!("unknown wait token {token}"))
-            })
-            .map(|status| HostResponse::WaitState {
-                token,
-                status: status.into(),
-                interactive_attached,
-            }),
-        _ => return None,
-    };
-    let response = result.unwrap_or_else(|error| HostResponse::Error {
-        message: error.to_string(),
-    });
-    let publish_frame = workspace_response_publishes_frame(&response);
-    Some(WorkspaceReply {
-        response,
-        publish_frame,
-    })
-}
-
-#[cfg(unix)]
 fn send_control_response(
     controls: &mut std::collections::HashMap<u64, runyte::workspace::transport::ResponseSender>,
     id: u64,
@@ -3304,6 +3416,19 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn unix_native_switch_refusal(request: &ClientRequest) -> Option<HostResponse> {
+    matches!(
+        request,
+        ClientRequest::NativeSwitchCommit { .. }
+            | ClientRequest::NativeParentSwitchCommitObserved { .. }
+            | ClientRequest::NativeSwitchAbort { .. }
+    )
+    .then(|| HostResponse::Refused {
+        message: "provisional native session switching is unavailable on this host".to_owned(),
+    })
 }
 
 #[cfg(unix)]
@@ -3419,10 +3544,26 @@ fn switch_attached_workspace(
     send_active_response(
         active,
         HostResponse::SwitchWorkspace {
-            selector_bytes: encode_path(&request.selector),
+            target: Box::new(match request.target {
+                runyte::app::WorkspaceSwitchTarget::UserSelector(selector) => {
+                    runyte::protocol::WorkspaceSwitchTarget::UserSelector {
+                        selector_bytes: encode_path(&selector),
+                    }
+                }
+                runyte::app::WorkspaceSwitchTarget::Selected(selection) => {
+                    runyte::protocol::WorkspaceSwitchTarget::Selected {
+                        project_root_bytes: encode_path(selection.project_root()),
+                        publication_key: selection
+                            .publication_key()
+                            .map(runyte::workspace::PublicationKey::to_bytes),
+                    }
+                }
+                runyte::app::WorkspaceSwitchTarget::Previous => {
+                    runyte::protocol::WorkspaceSwitchTarget::Previous
+                }
+            }),
             working_directory_bytes: encode_path(&request.working_directory),
             running_only: request.running_only,
-            previous_session: request.previous_session,
             visit: request
                 .visit
                 .map(|visit| runyte::protocol::DestinationVisit {
@@ -3535,10 +3676,9 @@ async fn run_workspace_switcher(
                 quit_returns = Some(candidates);
             }
             AttachOutcome::Switch {
-                mut selector,
+                target,
                 working_directory,
                 running_only,
-                previous_session,
                 parent_receipt,
                 visit,
             } => {
@@ -3548,13 +3688,18 @@ async fn run_workspace_switcher(
                         receipt,
                     });
                 }
-                if previous_session {
-                    let Some(previous_session) = history.previous.as_ref() else {
+                let selector = match unix_switch_selector(target, history.previous.as_ref()) {
+                    Ok(Some(selector)) => selector,
+                    Ok(None) => {
                         notice = Some("No previous persistent session".to_owned());
                         continue;
-                    };
-                    selector = previous_session.project_root().to_owned();
-                }
+                    }
+                    Err(error) => {
+                        let prepared = Err(error);
+                        apply_prepared_switch(prepared, &mut current, &mut previous, &mut notice);
+                        continue;
+                    }
+                };
                 let prepared = if running_only {
                     resolve_registered_host_from_directory(&selector, &working_directory)
                         .map(|host| (host.project_root != current.project_root()).then(|| host.endpoint().clone()))
@@ -3587,6 +3732,31 @@ async fn run_workspace_switcher(
                 None => anyhow::bail!(message),
             },
         }
+    }
+}
+
+#[cfg(unix)]
+fn unix_switch_selector(
+    target: runyte::protocol::WorkspaceSwitchTarget,
+    previous: Option<&LocalEndpoint>,
+) -> Result<Option<PathBuf>> {
+    match target {
+        runyte::protocol::WorkspaceSwitchTarget::Previous => {
+            Ok(previous.map(|endpoint| endpoint.project_root().to_owned()))
+        }
+        runyte::protocol::WorkspaceSwitchTarget::UserSelector { selector_bytes } => {
+            Ok(Some(decode_path(selector_bytes)?))
+        }
+        runyte::protocol::WorkspaceSwitchTarget::Selected {
+            publication_key: Some(_),
+            ..
+        } => anyhow::bail!(
+            "native publication selections cannot be resolved by the Unix session switcher"
+        ),
+        runyte::protocol::WorkspaceSwitchTarget::Selected {
+            project_root_bytes,
+            publication_key: None,
+        } => Ok(Some(decode_path(project_root_bytes)?)),
     }
 }
 
@@ -3968,10 +4138,9 @@ enum AttachOutcome {
     Quit,
     /// The editor asked to move to another workspace.
     Switch {
-        selector: std::path::PathBuf,
+        target: runyte::protocol::WorkspaceSwitchTarget,
         working_directory: std::path::PathBuf,
         running_only: bool,
-        previous_session: bool,
         parent_receipt: Option<String>,
         visit: Option<runyte::protocol::DestinationVisit>,
     },
@@ -4279,7 +4448,7 @@ async fn run_attached(
                         // file belongs to this process, so writing it is the
                         // client's half of the handoff.
                         if let (Some(cwd_file), Some(directory)) =
-                            (cwd_file, directory_bytes.map(decode_path))
+                            (cwd_file, directory_bytes.map(decode_path).transpose()?)
                         {
                             write_cwd_file(cwd_file, &directory)?;
                         }
@@ -4293,10 +4462,9 @@ async fn run_attached(
                         anyhow::bail!("workspace host disconnected without ending the attachment");
                     }
                     Some(HostResponse::SwitchWorkspace {
-                        selector_bytes,
+                        target,
                         working_directory_bytes,
                         running_only,
-                        previous_session,
                         visit,
                     }) => {
                         anyhow::ensure!(
@@ -4304,10 +4472,9 @@ async fn run_attached(
                             "wait request was cancelled by a workspace switch"
                         );
                         return Ok(AttachOutcome::Switch {
-                            selector: decode_path(selector_bytes),
-                            working_directory: decode_path(working_directory_bytes),
+                            target: *target,
+                            working_directory: decode_path(working_directory_bytes)?,
                             running_only,
-                            previous_session,
                             parent_receipt: None,
                             visit,
                         });
@@ -4317,8 +4484,12 @@ async fn run_attached(
                     }
                     Some(HostResponse::ParentSwitchWorkspace { selector, directory, receipt }) => {
                         anyhow::ensure!(wait_token.is_none(), "a wait-owned attachment cannot switch persistent sessions");
-                        return Ok(AttachOutcome::Switch { selector: decode_path(selector), working_directory: decode_path(directory),
-                            running_only: false, previous_session: false, parent_receipt: Some(receipt), visit: None });
+                        return Ok(AttachOutcome::Switch {
+                            target: runyte::protocol::WorkspaceSwitchTarget::UserSelector {
+                                selector_bytes: selector,
+                            },
+                            working_directory: decode_path(directory)?, running_only: false,
+                            parent_receipt: Some(receipt), visit: None });
                     }
                     Some(HostResponse::Welcome { .. }) => {}
                     Some(_) => {}
@@ -4419,7 +4590,7 @@ async fn run_parent_request(
     context: runyte::workspace::parent::ParentContext,
     launching_parent: Option<&HostSupervisor>,
 ) -> Result<()> {
-    let endpoint = LocalEndpoint::from_parent_metadata(&decode_path(context.metadata)).context(
+    let endpoint = LocalEndpoint::from_parent_metadata(&decode_path(context.metadata)?).context(
         "Runyte parent context is stale; return to its persistent session or open a fresh terminal",
     )?;
     let directory = std::env::current_dir()?;
@@ -4607,6 +4778,166 @@ async fn run_wait(
     outcome
 }
 
+#[cfg(windows)]
+async fn run_native_control_cli(
+    arguments: &LaunchArguments,
+    startup: &mut StartupTrace,
+) -> Result<()> {
+    anyhow::ensure!(
+        arguments.project_root.is_none(),
+        "--project-root is not available in this workspace mode"
+    );
+    if arguments.mode == LaunchMode::StopSession {
+        anyhow::ensure!(
+            arguments.workspace_selector.is_some(),
+            "--session-stop on Windows requires an explicit workspace selector"
+        );
+    }
+    // Root selection belongs to this invocation, not to an inferred cwd
+    // project. A missing launch directory still permits IDs, names and
+    // absolute selectors to reach a complete captured catalog.
+    let launch_directory = match std::env::current_dir() {
+        Ok(path) => Some(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("cannot inspect launch directory"),
+    };
+    let roots = CapturedRoots::capture();
+    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    startup.mark(StartupPhase::ConfigLoaded);
+    let mut reserved_user_roots = config_path
+        .as_deref()
+        .map(|path| {
+            // Config::load returns an absolute path. Preserve its canonical
+            // parent admission even when the process cwd has disappeared.
+            config::config_root_for(path, path.parent().unwrap_or(path))
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(cache) = external_open::cache_root() {
+        reserved_user_roots.push(cache);
+    }
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots,
+        roots,
+    })?;
+    let mut controls =
+        ControlSnapshot::observe(&scope, &config.workspace.state, arguments.include_hidden).await?;
+    match arguments.mode {
+        LaunchMode::ListSessions => {
+            print!(
+                "{}",
+                format_session_table(controls.history().entries().iter().map(|entry| entry.row()))
+            );
+        }
+        LaunchMode::StopAllSessions => {
+            let mut operation = controls.stop_all(arguments.force)?;
+            operation.run_to_completion().await;
+            report_native_stop_all(operation.report())?;
+        }
+        LaunchMode::CleanSessions => {
+            let cleared = controls.clean()?;
+            println!(
+                "forgot {cleared} stopped session{}",
+                if cleared == 1 { "" } else { "s" }
+            );
+        }
+        LaunchMode::RenameSession => {
+            let selector = arguments
+                .workspace_selector
+                .as_deref()
+                .expect("parser set selector");
+            let selected = controls.select(UserSelector {
+                selector,
+                working_directory: launch_directory.as_deref(),
+            })?;
+            let name = normalize_session_name(
+                arguments
+                    .workspace_name
+                    .as_deref()
+                    .expect("parser set name"),
+            );
+            let outcome = controls.rename(selected, &name).await?;
+            if let Some(issue) = outcome.cache_issue {
+                eprintln!(
+                    "session name changed, but recent history could not be refreshed: {issue}"
+                );
+            }
+        }
+        LaunchMode::StopSession => {
+            let selector = arguments
+                .workspace_selector
+                .as_deref()
+                .expect("checked explicit selector");
+            let selected = controls.select(UserSelector {
+                selector,
+                working_directory: launch_directory.as_deref(),
+            })?;
+            let incompatible = match controls.history().target(selected) {
+                Some(HistoryTarget::Live { publication, row })
+                    if row.incompatible_protocol.is_some() =>
+                {
+                    Some((
+                        publication.metadata().process.pid,
+                        publication.metadata().protocol,
+                    ))
+                }
+                _ => None,
+            };
+            let outcome = controls.stop(selected, arguments.force).await?;
+            if let Some((pid, protocol)) = incompatible {
+                eprintln!(
+                    "force-stopped persistent session process {pid} (protocol {protocol}); its protected live state was discarded"
+                );
+            }
+            for issue in outcome.cleanup_issues {
+                eprintln!("session stopped; observation cleanup is incomplete: {issue}");
+            }
+        }
+        _ => unreachable!("native CLI dispatch selected a control mode"),
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn report_native_stop_all(report: StopAllReport) -> Result<()> {
+    for issue in &report.cleanup_issues {
+        eprintln!("session stopped; observation cleanup is incomplete: {issue}");
+    }
+    if report.omitted_cleanup_details > 0 {
+        eprintln!(
+            "{} further observation cleanup detail(s) omitted",
+            report.omitted_cleanup_details
+        );
+    }
+    if report.failed == 0 && report.unknown == 0 {
+        println!(
+            "stopped {} session{}",
+            report.stopped,
+            if report.stopped == 1 { "" } else { "s" }
+        );
+        return Ok(());
+    }
+    let mut message = format!(
+        "stopped {} of {} running sessions; {} failed, {} outcome(s) unknown",
+        report.stopped, report.total, report.failed, report.unknown
+    );
+    for detail in report.failures {
+        message.push('\n');
+        message.push_str(&detail);
+    }
+    if report.omitted_failure_details > 0 {
+        message.push_str(&format!(
+            "\n{} further failure detail(s) omitted",
+            report.omitted_failure_details
+        ));
+    }
+    if let Some(admitted) = report.admitted_summary {
+        message.push_str("\noutcome unknown for ");
+        message.push_str(&admitted);
+    }
+    anyhow::bail!(message)
+}
+
 #[cfg(unix)]
 async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
     let workspaces = if include_hidden {
@@ -4614,8 +4945,15 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
     } else {
         known_workspaces(state).await?
     };
+    print!("{}", format_session_table(workspaces.iter()));
+    Ok(())
+}
+
+#[cfg(any(unix, windows))]
+fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRow>) -> String {
+    let workspaces = workspaces.into_iter().collect::<Vec<_>>();
     let width = abbreviated_id_width(workspaces.iter().map(|workspace| workspace.id.as_str()));
-    let mut rows = workspaces
+    let rows = workspaces
         .iter()
         .map(|workspace| {
             [
@@ -4665,21 +5003,23 @@ async fn list_sessions(state: &Path, include_hidden: bool) -> Result<()> {
                 widths[index].max(unicode_width::UnicodeWidthStr::width(value.as_str()));
         }
     }
-    print_workspace_row(&headings, &widths);
-    print_workspace_row(&widths.map(|width| "-".repeat(width)), &widths);
-    for row in rows.drain(..) {
-        print_workspace_row(&row, &widths);
+    let mut output = String::new();
+    append_workspace_row(&mut output, &headings, &widths);
+    append_workspace_row(&mut output, &widths.map(|width| "-".repeat(width)), &widths);
+    for row in rows {
+        append_workspace_row(&mut output, &row, &widths);
     }
-    Ok(())
+    output
 }
 
-#[cfg(unix)]
-fn print_workspace_row(row: &[String; 10], widths: &[usize; 10]) {
+#[cfg(any(unix, windows))]
+fn append_workspace_row(output: &mut String, row: &[String; 10], widths: &[usize; 10]) {
     let cells = std::array::from_fn::<_, 10, _>(|index| pad_table_cell(&row[index], widths[index]));
-    println!("{}", cells.join("  "));
+    output.push_str(&cells.join("  "));
+    output.push('\n');
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn pad_table_cell(value: &str, width: usize) -> String {
     let used = unicode_width::UnicodeWidthStr::width(value);
     format!("{value}{}", " ".repeat(width.saturating_sub(used)))
@@ -5047,7 +5387,58 @@ async fn context_timeout(delay: Option<Duration>) {
     }
 }
 
+/// Lets a native process fixture stop after service ownership is complete and
+/// then inject a frontend setup failure. The error remains inside the ordinary
+/// standalone outcome so context, catalog and plugin cleanup are all joined.
+#[cfg(all(windows, debug_assertions))]
+async fn wait_at_post_service_failure_barrier() -> Result<()> {
+    let Some(base) = std::env::var_os("RUNYTE_TEST_POST_SERVICE_FAILURE_BARRIER") else {
+        return Ok(());
+    };
+    let base = PathBuf::from(base);
+    anyhow::ensure!(
+        base.is_absolute(),
+        "RUNYTE_TEST_POST_SERVICE_FAILURE_BARRIER must name an absolute path"
+    );
+    let (ready, release) = runyte::test_support::wait_status_barrier_paths(base);
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&ready)
+        .with_context(|| {
+            format!(
+                "cannot publish post-service failure barrier {}",
+                ready.display()
+            )
+        })?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if release.try_exists().with_context(|| {
+            format!(
+                "cannot inspect post-service failure barrier {}",
+                release.display()
+            )
+        })? {
+            anyhow::bail!("injected post-service frontend failure after service startup");
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "post-service failure barrier timed out waiting for {}",
+                release.display()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 struct HostServices {
+    #[cfg(windows)]
+    native_catalog: Option<runyte::workspace::WorkspaceServiceHandle>,
+    #[cfg(windows)]
+    native_catalog_owner: Option<runyte::workspace::windows_service::WorkspaceServiceOwner>,
+    #[cfg(windows)]
+    // The event receiver stays with the owner and enters the host loop directly.
+    native_catalog_events: Option<tokio::sync::mpsc::Receiver<runyte::workspace::WorkspaceEvent>>,
     context_events: tokio::sync::mpsc::Receiver<runyte::workspace::context::Event>,
     pipe_events: tokio::sync::mpsc::Receiver<runyte::pipe::Completion>,
     plugin_events: Option<tokio::sync::mpsc::Receiver<runyte::plugin::Event>>,
@@ -5071,6 +5462,43 @@ struct HostServices {
     terminal_events: TerminalEvents,
 }
 
+#[cfg(windows)]
+struct NativeCatalogConfig {
+    scope: DiscoveryScope,
+    current: runyte::workspace::windows_location::KnownReadLocation,
+    configured_state: PathBuf,
+    parent_attach: Option<runyte::workspace::windows_service::ParentAttachStartup>,
+}
+
+#[cfg(windows)]
+impl NativeCatalogConfig {
+    fn from_layout(
+        layout: &runyte::workspace::windows_location::ResolvedLayout,
+        configured_state: PathBuf,
+        parent_attach: runyte::workspace::windows_service::ParentAttachStartup,
+    ) -> Self {
+        Self {
+            scope: layout.discovery_scope().clone(),
+            current: layout.read_location(),
+            configured_state,
+            parent_attach: Some(parent_attach),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl HostServices {
+    async fn shutdown_native_catalog(&mut self) -> Result<()> {
+        if let Some(owner) = self.native_catalog_owner.as_mut() {
+            owner.shutdown().await?;
+        }
+        self.native_catalog_owner = None;
+        self.native_catalog = None;
+        self.native_catalog_events = None;
+        Ok(())
+    }
+}
+
 async fn receive_workspace_event(
     events: &mut Option<tokio::sync::mpsc::Receiver<HostEvent>>,
 ) -> Option<HostEvent> {
@@ -5085,7 +5513,64 @@ fn start_host_services(
     startup: &mut StartupTrace,
     config_path: Option<&Path>,
     persistent: bool,
+    #[cfg(windows)] native_catalog: Option<NativeCatalogConfig>,
 ) -> Result<HostServices> {
+    // Windows context initialization is the only fallible service setup below.
+    // Complete it before spawning or transferring ownership of any other
+    // service so an initialization error has no background owners to abandon.
+    #[cfg(unix)]
+    let context_events = app.start_context(if persistent {
+        runyte::workspace::context::storage::HostMode::Persistent
+    } else {
+        runyte::workspace::context::storage::HostMode::Standalone
+    });
+    #[cfg(windows)]
+    let context_events = app.start_context(if persistent {
+        runyte::workspace::context::storage::HostMode::Persistent
+    } else {
+        runyte::workspace::context::storage::HostMode::Standalone
+    })?;
+    #[cfg(all(not(unix), not(windows)))]
+    let context_events = tokio::sync::mpsc::channel(1).1;
+    #[cfg(windows)]
+    let (native_catalog_handle, native_catalog_owner, native_catalog_events) = if let Some(config) =
+        native_catalog
+    {
+        let NativeCatalogConfig {
+            scope,
+            current,
+            configured_state,
+            parent_attach,
+        } = config;
+        let spawned = match parent_attach {
+            Some(parent_attach) => {
+                runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_parent_attach(
+                    scope,
+                    Some(current),
+                    configured_state,
+                    parent_attach,
+                )
+            }
+            None => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
+                scope,
+                Some(current),
+                configured_state,
+            ),
+        };
+        match spawned {
+            Ok((handle, owner, events)) => (Some(handle), Some(owner), Some(events)),
+            Err(error) => {
+                app.report_host_error(format!("native session catalog could not start: {error}"));
+                (None, None, None)
+            }
+        }
+    } else {
+        (None, None, None)
+    };
+    #[cfg(windows)]
+    if let Some(service) = native_catalog_handle.as_ref() {
+        app.attach_workspace_service(service.clone());
+    }
     let git_events = if let Some(provider) = GitCliProvider::from_environment() {
         let (service, events) = GitService::spawn(provider);
         app.attach_git_service(service);
@@ -5093,12 +5578,8 @@ fn start_host_services(
     } else {
         None
     };
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
-    #[cfg(windows)]
-    if app.config.lsp.enable {
-        app.report_host_error("LSP is unavailable in Windows Phase 1");
-    }
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);
@@ -5138,17 +5619,17 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = app.start_plugins();
     let pipe_events = app.start_pipe_service();
-    #[cfg(unix)]
-    let context_events = app.start_context(if persistent {
-        runyte::workspace::context::storage::HostMode::Persistent
-    } else {
-        runyte::workspace::context::storage::HostMode::Standalone
-    });
-    #[cfg(not(unix))]
-    let context_events = tokio::sync::mpsc::channel(1).1;
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let _ = config_path;
+    #[cfg(all(not(unix), not(windows)))]
     let _ = (config_path, persistent);
     Ok(HostServices {
+        #[cfg(windows)]
+        native_catalog: native_catalog_handle,
+        #[cfg(windows)]
+        native_catalog_owner,
+        #[cfg(windows)]
+        native_catalog_events,
         context_events,
         pipe_events,
         plugin_events,
@@ -5167,6 +5648,7 @@ fn start_host_services(
     })
 }
 
+#[cfg(not(windows))]
 fn write_cwd_file(path: &Path, directory: &Path) -> Result<()> {
     let mut contents = directory.as_os_str().as_encoded_bytes().to_vec();
     if cfg!(unix) {
@@ -5229,7 +5711,7 @@ fn atomic_write_cwd_file_with(
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn atomic_write_cwd_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(path, contents)
 }
@@ -5328,6 +5810,26 @@ fn terminal_key_kind(event: &CrosstermEvent) -> Option<KeyEventKind> {
     match event {
         CrosstermEvent::Key(key) => Some(key.kind),
         _ => None,
+    }
+}
+
+/// Some Windows Terminal builds send an empty bracketed paste for an image.
+/// A semantic paste event avoids interpreting it as the next key in a pending
+/// command or as a configured binding. Terminals and overlays own their paste.
+#[cfg(windows)]
+fn is_empty_windows_image_paste(event: &CrosstermEvent, app: &App) -> bool {
+    matches!(event, CrosstermEvent::Paste(text) if text.is_empty())
+        && app.active_terminal().is_none()
+        && !app.has_input_overlay()
+        && app.mode != runyte::command::Mode::Command
+}
+
+#[cfg(windows)]
+fn convert_windows_event(event: CrosstermEvent, app: &App) -> Result<Option<InputEvent>> {
+    if is_empty_windows_image_paste(&event, app) {
+        Ok(Some(InputEvent::ClipboardPaste))
+    } else {
+        Ok(convert_event(event)?)
     }
 }
 
@@ -5463,6 +5965,8 @@ fn motion_repeat_dispatches(app: &App, input: &InputEvent, repeated: bool) -> us
 struct TerminalGuard {
     #[cfg(windows)]
     _console_mode: runyte::tui::windows_input::ConsoleMode,
+    #[cfg(windows)]
+    keyboard_mode: Option<runyte::tui::windows_input::KeyboardMode>,
     mouse_enabled: bool,
     #[cfg_attr(not(unix), allow(dead_code))]
     keyboard_enhancement: bool,
@@ -5562,22 +6066,31 @@ impl TerminalGuard {
             let _ = disable_raw_mode();
             return Err(error).context("failed to enable mouse capture");
         }
-        let guard = Self {
+        #[allow(unused_mut)]
+        let mut guard = Self {
             mouse_enabled,
             keyboard_enhancement,
             #[cfg(windows)]
             _console_mode: console_mode,
+            #[cfg(windows)]
+            keyboard_mode: None,
         };
         // Crossterm's native mouse setup replaces the whole input mode. Restore
         // VT input before accepting any editor input; guard owns rollback.
         #[cfg(windows)]
         guard._console_mode.enable_vt()?;
+        #[cfg(windows)]
+        {
+            guard.keyboard_mode = Some(runyte::tui::windows_input::KeyboardMode::enable()?);
+        }
         Ok(guard)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        drop(self.keyboard_mode.take());
         let mut output = stdout();
         if self.mouse_enabled {
             let _ = output.execute(DisableMouseCapture);
@@ -5651,21 +6164,6 @@ fn report_retained_host_logging(arguments: &LaunchArguments) {
 /// preventing a host from serving; a failed explicit `--log` is a startup
 /// error, because silently choosing another destination would make the
 /// requested capture misleading.
-#[cfg(windows)]
-fn initialize_logging(
-    arguments: &LaunchArguments,
-    role: LogRole,
-    _state_root: &Path,
-    _project_root: &Path,
-) -> Result<Option<String>> {
-    const REASON: &str = "Private diagnostic log storage is unavailable in Windows Phase 1; use :notifications or :service-health";
-    anyhow::ensure!(arguments.log.is_none(), "{REASON}");
-    diagnostic_log::note_unavailable(role, None, REASON.into());
-    diagnostic_log::note_failure_reported();
-    Ok(None)
-}
-
-#[cfg(not(windows))]
 fn initialize_logging(
     arguments: &LaunchArguments,
     role: LogRole,
@@ -5719,7 +6217,6 @@ fn initialize_logging(
 /// session listings show, so a record can be matched to a listed session
 /// without pasting a 32-character hash onto every line. The startup record
 /// carries the complete ID.
-#[cfg(not(windows))]
 const ABBREVIATED_LOG_WORKSPACE_ID: usize = 8;
 
 fn print_help() {
@@ -5745,6 +6242,9 @@ MODES:
     between TUIs and is currently available only on Unix.
 
         --standalone     Use standalone mode, overriding configuration
+        --wait FILE...   Windows: open a standalone editor and wait until it quits
+                         Unix: open through persistent mode and wait for
+                         explicit buffer completion
     -a, --persistent [WORKSPACE]
                          Attach to the selected or current session, starting it
                          if needed. If WORKSPACE is omitted, use the workspace
@@ -5761,13 +6261,15 @@ PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
     associated with one workspace. CLI listing also works from standalone mode;
     session commands inside the editor need workspace.mode: persistent.
+    Windows supports list, rename, selected stop, stop-all and clean for native
+    persistent sessions, including through the standalone session manager.
+    Stop requires WORKSPACE there. Foreground --serve follows its launching
+    process; attachment and restart remain unavailable.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
     or directory, so a session is reachable from anywhere.
 
         --serve          Keep a persistent session alive in the foreground
-        --wait FILE...   Edit files through persistent mode and wait for
-                         explicit completion
     -l, --session-list   List running and recently visited sessions
     -s, --session-stop [WORKSPACE]
                          Stop the selected or current session
@@ -5821,7 +6323,8 @@ TARGETS:
     position keep their ordinary meaning: workspace.mode: persistent changes
     only a bare runyte, and --persistent reads its argument as a workspace
     rather than a file. Use --init to make a directory the exact standalone
-    workspace root, or --wait to open files through a persistent session.
+    workspace root. --wait uses a persistent session on Unix; on Windows it
+    opens a new standalone editor and waits until that editor quits.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.
@@ -6033,20 +6536,26 @@ mod tests {
 
     #[cfg(unix)]
     use super::keyboard_enhancement_flags_for;
+    #[cfg(not(windows))]
+    use super::write_cwd_file;
     #[cfg(unix)]
     use super::{
-        AttachedClient, AttachedWorkspaceActivity, HostResponse, PointerBatcher, WaitStatus,
-        WaitToken, apply_prepared_switch, atomic_write_cwd_file_with, dispatch_host_key_or_text,
-        recover_switched_attachment, send_active_response, start_workspace_switch_host,
-        workspace_response_publishes_frame,
+        AttachedClient, AttachedWorkspaceActivity, PointerBatcher, apply_prepared_switch,
+        atomic_write_cwd_file_with, dispatch_host_key_or_text, recover_switched_attachment,
+        send_active_response, start_workspace_switch_host, unix_native_switch_refusal,
+        unix_switch_selector,
     };
     use super::{
         KeyRepeatDetector, frame_publication_ready, initialize_attached_directory,
         is_passive_pointer, is_redraw_only_event, motion_repeat_dispatches,
         observe_key_or_text_hint, pace_file_picker_event, rejected_text_input,
         resolve_cwd_file_path, resolve_requested_project_root, starts_on_about,
-        uses_automatic_persistent_mode, write_cwd_file, write_startup_screen,
+        uses_automatic_persistent_mode, write_startup_screen,
     };
+    #[cfg(windows)]
+    use super::{convert_windows_event, is_empty_windows_image_paste, start_host_services};
+    #[cfg(windows)]
+    use crossterm::event::Event as CrosstermEvent;
     use runyte::launch::LaunchArguments;
     use runyte::{
         app::App,
@@ -6055,6 +6564,31 @@ mod tests {
         key_hints::KeyHintState,
         tui::input::convert_event,
     };
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn context_start_failure_precedes_other_service_ownership() {
+        let root = runyte::test_support::TestRuntimeRoot::new("context-service-order").unwrap();
+        let app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+        let mut host = runyte::workspace::WorkspaceHost::new(app);
+        host.shutdown_context().await.unwrap();
+
+        let error = start_host_services(
+            &mut host,
+            &mut runyte::startup::StartupTrace::new(),
+            None,
+            false,
+            None,
+        )
+        .err()
+        .expect("repeated context startup must fail");
+
+        assert!(error.to_string().contains("shut down"));
+        assert!(
+            host.take_terminal_events().is_some(),
+            "later service startup must not claim the terminal event owner"
+        );
+    }
 
     #[test]
     fn finder_refill_defers_unrelated_frame_requests_until_it_is_whole() {
@@ -6076,6 +6610,23 @@ mod tests {
             !frame_pending,
             "a refill with no frame request must not invent one"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_refuses_provisional_native_switch_receipts() {
+        for request in [
+            runyte::protocol::ClientRequest::NativeSwitchCommit { receipt: 7 },
+            runyte::protocol::ClientRequest::NativeParentSwitchCommitObserved { receipt: 7 },
+            runyte::protocol::ClientRequest::NativeSwitchAbort { receipt: 7 },
+        ] {
+            assert!(matches!(
+                unix_native_switch_refusal(&request),
+                Some(runyte::protocol::HostResponse::Refused { message })
+                    if message.contains("provisional native session switching")
+            ));
+        }
+        assert!(unix_native_switch_refusal(&runyte::protocol::ClientRequest::Detach).is_none());
     }
 
     #[test]
@@ -6148,6 +6699,31 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    #[test]
+    fn interrupted_process_queue_observation_keeps_note_exit() {
+        let pid = 42;
+        let mut observations = 0;
+        let exited = super::process_queue_has_exited_with(pid, |event| {
+            observations += 1;
+            if observations == 1 {
+                return Err(std::io::Error::from_raw_os_error(libc::EINTR));
+            }
+            event.write(libc::kevent {
+                ident: pid as libc::uintptr_t,
+                filter: libc::EVFILT_PROC,
+                flags: 0,
+                fflags: libc::NOTE_EXIT,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            });
+            Ok(1)
+        })
+        .unwrap();
+        assert!(exited);
+        assert_eq!(observations, 2);
+    }
+
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn host_supervisor_process_queue_reports_child_exit() {
         let mut child = std::process::Command::new("sleep")
@@ -6212,6 +6788,7 @@ mod tests {
         assert!(supervisor.exited().unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
     fn process_termination_errors_keep_their_stable_user_messages() {
         assert_eq!(
@@ -6227,22 +6804,6 @@ mod tests {
             super::WaitTerminalLost.to_string(),
             "wait request lost its terminal before completion"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn read_only_wait_responses_do_not_publish_editor_frames() {
-        let token: WaitToken = serde_json::from_str("1").unwrap();
-        let response = HostResponse::WaitState {
-            token,
-            status: WaitStatus::Pending {
-                buffers: Vec::new(),
-                remaining: Vec::new(),
-            },
-            interactive_attached: true,
-        };
-
-        assert!(!workspace_response_publishes_frame(&response));
     }
 
     #[cfg(unix)]
@@ -6305,6 +6866,20 @@ mod tests {
         assert_eq!(notice.as_deref(), Some("destination handshake failed"));
 
         drop(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_switcher_rejects_native_keys_before_decoding_the_project_path() {
+        let error = unix_switch_selector(
+            runyte::protocol::WorkspaceSwitchTarget::Selected {
+                project_root_bytes: vec![0xff; runyte::protocol::MAX_PATH_BYTES + 1],
+                publication_key: Some([9; 32]),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("native publication selections"));
     }
 
     #[cfg(unix)]
@@ -6734,6 +7309,31 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn empty_windows_image_paste_becomes_a_semantic_event_only_in_editor_panes() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let empty = CrosstermEvent::Paste(String::new());
+        assert!(is_empty_windows_image_paste(&empty, &app));
+        assert_eq!(
+            convert_windows_event(empty.clone(), &app).unwrap(),
+            Some(InputEvent::ClipboardPaste)
+        );
+
+        app.mode = runyte::command::Mode::Command;
+        assert!(!is_empty_windows_image_paste(&empty, &app));
+        app.mode = runyte::command::Mode::Normal;
+        let text = CrosstermEvent::Paste("ordinary text".to_owned());
+        assert!(!is_empty_windows_image_paste(&text, &app));
+
+        for key in [' ', 'b', 'b'] {
+            app.handle_input(InputEvent::Key(KeyStroke::char(key)))
+                .unwrap();
+        }
+        assert!(app.has_input_overlay());
+        assert!(!is_empty_windows_image_paste(&empty, &app));
+    }
+
     #[test]
     fn passive_pointer_motion_is_not_an_editor_or_redraw_event() {
         assert!(is_passive_pointer(&InputEvent::Pointer(PointerEvent {
@@ -6938,6 +7538,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn relative_cwd_file_keeps_the_invoking_shells_identity_after_directory_changes() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6970,6 +7571,22 @@ mod tests {
         assert_eq!(fs::read(&first).unwrap(), expected);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn relative_cwd_file_keeps_the_invoking_shells_identity_after_directory_changes() {
+        let root = runyte::test_support::TestRuntimeRoot::new("cwd-relative").unwrap();
+        let invoking = root.create_private_dir("shell").unwrap();
+        let destination = root.create_private_dir("destination").unwrap();
+        let first = resolve_cwd_file_path(&invoking, PathBuf::from("cwd"));
+        let handoff = runyte::cwd_handoff::Prepared::prepare(&first).unwrap();
+        let forwarded = resolve_cwd_file_path(&destination, first.clone());
+        assert_eq!(forwarded, first);
+        handoff.write(&destination).unwrap();
+        assert!(first.is_file());
+        assert!(!destination.join("cwd").exists());
+        assert!(fs::read(&first).unwrap().starts_with(b"RNYCWD\x01\0"));
     }
 
     #[test]
@@ -7151,91 +7768,5 @@ mod tests {
             history.attached(&source),
             Some(target.project_root().to_owned())
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn destination_inventory_is_identity_only_and_visits_require_current_host_and_interactive_role()
-    {
-        let app = App::new(Config::default(), None).unwrap();
-        let mut host = WorkspaceHost::new(app);
-        let current = host.active().buffer;
-        let response = super::handle_workspace_request(
-            &mut host,
-            runyte::protocol::ClientRequest::DestinationInventory,
-            false,
-            false,
-        )
-        .unwrap()
-        .response;
-        let HostResponse::DestinationInventory {
-            incarnation,
-            entries,
-            truncated,
-        } = response
-        else {
-            panic!("expected inventory")
-        };
-        assert!(!truncated);
-        assert!(!entries.is_empty());
-        let destination = entries[0].destination;
-        let response = super::handle_workspace_request(
-            &mut host,
-            runyte::protocol::ClientRequest::VisitDestination {
-                incarnation: incarnation.clone(),
-                destination,
-            },
-            false,
-            false,
-        )
-        .unwrap()
-        .response;
-        assert!(matches!(response, HostResponse::Error { .. }));
-        let response = super::handle_workspace_request(
-            &mut host,
-            runyte::protocol::ClientRequest::VisitDestination {
-                incarnation: "0".repeat(64),
-                destination,
-            },
-            true,
-            true,
-        )
-        .unwrap()
-        .response;
-        assert!(matches!(
-            response,
-            HostResponse::DestinationVisitResult { error: Some(_) }
-        ));
-        assert_eq!(host.active().buffer, current);
-        let response = super::handle_workspace_request(
-            &mut host,
-            runyte::protocol::ClientRequest::VisitDestination {
-                incarnation: incarnation.clone(),
-                destination: runyte::protocol::OpenDestination::Buffer(u64::MAX),
-            },
-            true,
-            true,
-        )
-        .unwrap()
-        .response;
-        assert!(matches!(
-            response,
-            HostResponse::DestinationVisitResult { error: Some(_) }
-        ));
-        let response = super::handle_workspace_request(
-            &mut host,
-            runyte::protocol::ClientRequest::VisitDestination {
-                incarnation,
-                destination,
-            },
-            true,
-            true,
-        )
-        .unwrap()
-        .response;
-        assert!(matches!(
-            response,
-            HostResponse::DestinationVisitResult { error: None }
-        ));
     }
 }

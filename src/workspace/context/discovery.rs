@@ -6,16 +6,12 @@
 use super::storage::{Registration, Storage};
 use futures_util::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    os::unix::fs::{FileTypeExt, MetadataExt},
-    path::PathBuf,
-    time::Duration,
-};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::UnixStream,
-};
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::{io, path::PathBuf, time::Duration};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 
 pub const SCHEMA: &str = "runyte.context.discovery.v1";
 const MAX_ENDPOINTS: usize = 64;
@@ -114,24 +110,52 @@ pub async fn discover(
 }
 
 async fn probe(registration: &Registration) -> io::Result<()> {
-    let metadata = std::fs::symlink_metadata(&registration.endpoint)?;
-    // SAFETY: geteuid has no preconditions.
-    let owner = unsafe { libc::geteuid() };
-    if !metadata.file_type().is_socket() || metadata.uid() != owner || metadata.mode() & 0o077 != 0
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "context endpoint is not an owner-private socket",
-        ));
-    }
-    let mut socket = UnixStream::connect(&registration.endpoint).await?;
-    let peer = socket.peer_cred()?;
-    if peer.uid() != owner || peer.pid().is_some_and(|pid| pid as u32 != registration.pid) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "context endpoint peer does not match registration",
-        ));
-    }
+    #[cfg(unix)]
+    let mut socket = {
+        let metadata = std::fs::symlink_metadata(&registration.endpoint)?;
+        // SAFETY: geteuid has no preconditions.
+        let owner = unsafe { libc::geteuid() };
+        if !metadata.file_type().is_socket()
+            || metadata.uid() != owner
+            || metadata.mode() & 0o077 != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "context endpoint is not an owner-private socket",
+            ));
+        }
+        let socket = UnixStream::connect(&registration.endpoint).await?;
+        let peer = socket.peer_cred()?;
+        if peer.uid() != owner || peer.pid().is_some_and(|pid| pid as u32 != registration.pid) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "context endpoint peer does not match registration",
+            ));
+        }
+        socket
+    };
+    #[cfg(windows)]
+    let mut socket = {
+        use crate::workspace::windows_process_identity::ProcessIdentity;
+        let expected = ProcessIdentity {
+            pid: registration.pid,
+            creation_time: registration.creation_time,
+        };
+        expected.validate()?;
+        let socket = super::transport::connect(
+            &registration.endpoint,
+            expected,
+            tokio::time::Instant::now() + PROBE_TIMEOUT,
+        )
+        .await?;
+        if socket.peer().identity() != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "context endpoint peer does not match registration",
+            ));
+        }
+        socket
+    };
     socket.write_all(b"{\"type\":\"probe\"}\n").await?;
     let mut bytes = Vec::new();
     BufReader::new(socket)
@@ -156,7 +180,7 @@ async fn probe(registration: &Registration) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::super::storage::{HostMode, random_token};
     use super::*;
@@ -367,3 +391,7 @@ mod tests {
         drop(listener);
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "tests/discovery_windows.rs"]
+mod tests;

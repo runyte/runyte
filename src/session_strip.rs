@@ -2,18 +2,19 @@
 
 //! Shared session-strip labels and cell bounds for drawing and pointer input.
 
-use std::{ops::Range, path::PathBuf};
+use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::snapshot::SessionStripSnapshot;
+use crate::workspace::WorkspaceSelection;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreparedSessionStrip {
     pub snapshot: SessionStripSnapshot,
     /// Catalog identities captured with the labels, never resolved by name or number.
-    pub targets: Vec<PathBuf>,
+    pub targets: Vec<WorkspaceSelection>,
 }
 
 #[derive(Default)]

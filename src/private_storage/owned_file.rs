@@ -4,10 +4,12 @@
 //! the editor thread. Every live file reserves room in the cleanup queue.
 
 use super::Directory;
+#[cfg(not(windows))]
+use std::io::Read;
 use std::{
     ffi::OsString,
     fs::File,
-    io::{self, Read},
+    io,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -88,7 +90,7 @@ impl OwnedFile {
         let sender = cleanup_sender()?;
         let storage = Arc::new(Directory::open(directory, true)?);
         let mut nonce = [0u8; 16];
-        File::open("/dev/urandom")?.read_exact(&mut nonce)?;
+        random(&mut nonce)?;
         let name = OsString::from(format!(
             "{prefix}-{}",
             nonce
@@ -124,7 +126,7 @@ impl OwnedFile {
     pub fn open_read(&self) -> io::Result<File> {
         let owned = &self.cleanup.as_ref().unwrap().0;
         let file = owned.directory.open_read(&owned.name)?;
-        if !same_file(&file.metadata()?, &owned.file.metadata()?) {
+        if !same_handles(&file, &owned.file)? {
             return Err(io::Error::other("private file was replaced"));
         }
         self.verify_path()?;
@@ -132,14 +134,66 @@ impl OwnedFile {
     }
 
     pub fn verify_path(&self) -> io::Result<()> {
-        let current = std::fs::symlink_metadata(&self.path)?;
-        if !same_file(&current, &self.file().metadata()?) {
-            return Err(io::Error::other(
-                "private file path no longer identifies its issued inode",
-            ));
+        #[cfg(windows)]
+        {
+            let parent = self
+                .path
+                .parent()
+                .ok_or_else(|| io::Error::other("private file has no parent"))?;
+            let directory = Directory::open_existing(parent, true)?;
+            let current = directory.open_read(self.path.file_name().unwrap())?;
+            if !same_handles(&current, self.file())? {
+                return Err(io::Error::other(
+                    "private file path no longer identifies its issued file",
+                ));
+            }
+            Ok(())
         }
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            let current = std::fs::symlink_metadata(&self.path)?;
+            if !same_file(&current, &self.file().metadata()?) {
+                return Err(io::Error::other(
+                    "private file path no longer identifies its issued inode",
+                ));
+            }
+            Ok(())
+        }
     }
+}
+
+#[cfg(windows)]
+fn random(bytes: &mut [u8]) -> io::Result<()> {
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    };
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status < 0 {
+        return Err(io::Error::other("system random generator failed"));
+    }
+    Ok(())
+}
+#[cfg(not(windows))]
+fn random(bytes: &mut [u8]) -> io::Result<()> {
+    File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+#[cfg(windows)]
+fn same_handles(left: &File, right: &File) -> io::Result<bool> {
+    super::platform::regular(left, false)?;
+    super::platform::regular(right, false)?;
+    Ok(crate::windows_fs::Identity::of(left)? == crate::windows_fs::Identity::of(right)?)
+}
+#[cfg(not(windows))]
+fn same_handles(left: &File, right: &File) -> io::Result<bool> {
+    Ok(same_file(&left.metadata()?, &right.metadata()?))
 }
 
 #[cfg(unix)]
@@ -151,7 +205,7 @@ fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
         && left.nlink() == 1
         && right.nlink() == 1
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
     false
 }

@@ -216,9 +216,56 @@ impl Drop for Local {
     }
 }
 
-fn with_private_security<T>(
+fn current_user() -> io::Result<Vec<usize>> {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    let mut token = ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut length = 0;
+    unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            ptr::null_mut(),
+            0,
+            &mut length,
+        );
+    }
+    if !(size_of::<TOKEN_USER>()..=4096).contains(&(length as usize)) {
+        return Err(io::Error::other("invalid native token user length"));
+    }
+    // TOKEN_USER embeds a native pointer into this allocation. Keep its
+    // pointer alignment and retain the allocation throughout descriptor use.
+    let mut user = vec![0usize; (length as usize).div_ceil(size_of::<usize>())];
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenUser,
+            user.as_mut_ptr().cast(),
+            length,
+            &mut length,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(user)
+}
+
+pub(crate) fn with_private_security<T>(
     operation: impl FnOnce(&SECURITY_ATTRIBUTES) -> io::Result<T>,
 ) -> io::Result<T> {
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorDacl, InitializeSecurityDescriptor, SE_DACL_PROTECTED,
+        SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+        SetSecurityDescriptorOwner, TOKEN_USER,
+    };
     let text: Vec<_> = "D:P(A;;GA;;;OW)\0".encode_utf16().collect();
     let mut descriptor = ptr::null_mut();
     if unsafe {
@@ -233,9 +280,37 @@ fn with_private_security<T>(
         return Err(io::Error::last_os_error());
     }
     let _descriptor = Local(descriptor);
+    let user = current_user()?;
+    let sid = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = ptr::null_mut();
+    if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if present == 0 || acl.is_null() {
+        return Err(io::Error::other("private security descriptor has no ACL"));
+    }
+    // SetSecurityDescriptorOwner requires absolute format. Both the SID and
+    // ACL remain owned above until the creation operation has completed.
+    // Explicit TokenUser ownership avoids an elevated token's group-valued
+    // default owner; this descriptor is only supplied to new-entry creation.
+    let mut absolute: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+    let absolute = (&mut absolute as *mut SECURITY_DESCRIPTOR).cast();
+    if unsafe {
+        InitializeSecurityDescriptor(absolute, 1 /* SECURITY_DESCRIPTOR_REVISION */)
+    } == 0
+        || unsafe { SetSecurityDescriptorOwner(absolute, sid, 0) } == 0
+        || unsafe { SetSecurityDescriptorDacl(absolute, 1, acl, 0) } == 0
+        || unsafe { SetSecurityDescriptorControl(absolute, SE_DACL_PROTECTED, SE_DACL_PROTECTED) }
+            == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
     operation(&SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor,
+        lpSecurityDescriptor: absolute,
         bInheritHandle: 0,
     })
 }
@@ -273,4 +348,99 @@ pub(crate) fn create_private_directory(path: &Path) -> io::Result<()> {
             Ok(())
         }
     })
+}
+
+/// Verify an ordinary current-directory spelling before native process startup.
+pub(crate) fn ordinary_working_directory(path: &Path) -> io::Result<PathBuf> {
+    use std::{
+        ffi::OsString,
+        path::{Component, Prefix},
+    };
+    let canonical = path.canonicalize()?;
+    let unsupported = || {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "process directory requires an extended Windows path; use a directory with an ordinary path shorter than 260 UTF-16 units",
+        )
+    };
+    let mut components = canonical.components();
+    let mut ordinary = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:", drive as char)),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut path = OsString::from(r"\\");
+                path.push(server);
+                path.push(r"\");
+                path.push(share);
+                PathBuf::from(path)
+            }
+            _ => return Err(unsupported()),
+        },
+        _ => return Err(unsupported()),
+    };
+    for component in components {
+        if let Component::Normal(name) = component {
+            crate::windows_fs::validate_relative(Path::new(name)).map_err(|_| unsupported())?;
+        }
+        ordinary.push(component.as_os_str());
+    }
+    if ordinary.as_os_str().encode_wide().count() >= 260
+        || !ordinary.is_dir()
+        || crate::windows_fs::Identity::read(&ordinary)?
+            != crate::windows_fs::Identity::read(&canonical)?
+    {
+        return Err(unsupported());
+    }
+    Ok(ordinary)
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use windows_sys::Win32::Security::{
+        EqualSid, GetSecurityDescriptorControl, GetSecurityDescriptorOwner, SE_DACL_PROTECTED,
+        TOKEN_USER,
+    };
+
+    #[test]
+    fn private_creation_descriptor_explicitly_names_the_process_user() {
+        let user = current_user().unwrap();
+        let expected = unsafe { (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        with_private_security(|attributes| {
+            let mut owner = ptr::null_mut();
+            let mut defaulted = 1;
+            assert_ne!(
+                unsafe {
+                    GetSecurityDescriptorOwner(
+                        attributes.lpSecurityDescriptor,
+                        &mut owner,
+                        &mut defaulted,
+                    )
+                },
+                0
+            );
+            assert!(
+                !owner.is_null(),
+                "creation must not use the token's default owner"
+            );
+            assert_eq!(defaulted, 0, "the owner must be explicit");
+            assert_ne!(unsafe { EqualSid(owner, expected) }, 0);
+            let mut control = 0;
+            let mut revision = 0;
+            assert_ne!(
+                unsafe {
+                    GetSecurityDescriptorControl(
+                        attributes.lpSecurityDescriptor,
+                        &mut control,
+                        &mut revision,
+                    )
+                },
+                0
+            );
+            assert_ne!(control & SE_DACL_PROTECTED, 0);
+            assert_eq!(attributes.bInheritHandle, 0);
+            Ok(())
+        })
+        .unwrap();
+    }
 }

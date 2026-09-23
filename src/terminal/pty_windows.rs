@@ -3,14 +3,19 @@
 //! ConPTY ownership. Each terminal has independent reader, writer and lifecycle
 //! threads. The editor only queues bounded input and coalesced resize requests.
 //! Closing a pane kills its job; draining and ClosePseudoConsole run off-loop.
+#[cfg(test)]
+use std::sync::Condvar;
 use std::{
     collections::VecDeque,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Write},
     mem::{size_of, zeroed},
-    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
-    path::Path,
+    os::windows::{
+        ffi::OsStrExt,
+        io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle},
+    },
+    path::{Component, Path, PathBuf, Prefix},
     ptr,
     sync::{
         Arc, Mutex,
@@ -19,7 +24,7 @@ use std::{
     thread,
 };
 use windows_sys::Win32::{
-    Foundation::{HANDLE, WAIT_OBJECT_0},
+    Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT},
     System::{Console::*, JobObjects::*, Pipes::CreatePipe, Threading::*},
 };
 
@@ -32,6 +37,19 @@ pub enum PtyEvent {
     Output(Vec<u8>),
     Exited(Option<i32>),
 }
+
+/// Used only while a plugin terminal is prepared but has not been installed.
+/// Its process stays suspended until native editor ownership is established.
+#[derive(Clone)]
+pub(super) struct PendingActivation {
+    pub(super) wait: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub(super) cancel: Arc<dyn Fn() + Send + Sync>,
+    pub(super) lifetime: Arc<dyn Send + Sync>,
+}
+
+/// Keeps unpublished accounting attached to every partial setup owner. Once
+/// all ConPTY threads exist, the activation owner alone carries that lease.
+struct SetupRetention(Mutex<Option<Arc<dyn Send + Sync>>>);
 
 struct Input {
     bytes: Vec<u8>,
@@ -51,8 +69,9 @@ struct Control {
     resize: OwnedHandle,
     dimensions: AtomicU32,
     input: Mutex<VecDeque<Input>>,
-    #[cfg(test)]
     completed: OwnedHandle,
+    #[cfg(test)]
+    cleanup_hold: Arc<(Mutex<bool>, Condvar)>,
 }
 impl Control {
     fn stop(&self) {
@@ -152,14 +171,24 @@ impl Drop for Attributes {
 struct SpawnGuard {
     process: Arc<OwnedHandle>,
     control: Arc<Control>,
+    cancel_pending: Option<Arc<dyn Fn() + Send + Sync>>,
     armed: bool,
 }
 impl Drop for SpawnGuard {
     fn drop(&mut self) {
         if self.armed {
+            if let Some(cancel) = self.cancel_pending.take() {
+                cancel();
+            }
             self.control.stop();
             unsafe {
                 TerminateProcess(self.process.as_raw_handle(), 1);
+                // Every guarded failure precedes activation, so the child is
+                // still suspended and this wait runs on the handoff worker.
+                // Keep setup accounting alive until the exact owned process
+                // has completed termination; later checkpoints retain the
+                // same lease in their reader, writer and lifecycle owners.
+                WaitForSingleObject(self.process.as_raw_handle(), INFINITE);
             }
         }
     }
@@ -218,6 +247,51 @@ fn dimensions(columns: u16, rows: u16) -> COORD {
     }
 }
 
+/// Framework-based console programs can reject their own configuration path
+/// when launched with an extended executable spelling. Prefer an ordinary
+/// spelling only after checking native identity. Paths that require extended
+/// syntax retain the previous behavior; metadata/identity failures do not fall
+/// back silently. This does not change the separate working-directory contract.
+fn executable_path(path: &Path) -> io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    let mut parts = canonical.components();
+    let mut ordinary = match parts.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => {
+                PathBuf::from(format!("{}:", drive as char))
+            }
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                let mut value = OsString::from(r"\\");
+                value.push(server);
+                value.push(r"\");
+                value.push(share);
+                PathBuf::from(value)
+            }
+            _ => return Ok(canonical),
+        },
+        _ => return Ok(canonical),
+    };
+    for part in parts {
+        if let Component::Normal(name) = part
+            && crate::windows_fs::validate_relative(Path::new(name)).is_err()
+        {
+            return Ok(canonical);
+        }
+        ordinary.push(part.as_os_str());
+    }
+    if ordinary.as_os_str().encode_wide().count() >= 260 {
+        return Ok(canonical);
+    }
+    if crate::windows_fs::Identity::read(&ordinary)?
+        != crate::windows_fs::Identity::read(&canonical)?
+    {
+        return Err(io::Error::other(
+            "terminal executable changed while resolving its Windows spelling",
+        ));
+    }
+    Ok(ordinary)
+}
+
 impl Pty {
     #[cfg(test)]
     pub(crate) fn cleanup_waiter(&self) -> Box<dyn FnOnce()> {
@@ -230,8 +304,52 @@ impl Pty {
             )
         })
     }
+    #[cfg(test)]
+    pub(super) fn hold_cleanup_for_test(&self) -> Box<dyn FnOnce()> {
+        let hold = self.control.cleanup_hold.clone();
+        *hold.0.lock().unwrap_or_else(|error| error.into_inner()) = true;
+        Box::new(move || {
+            *hold.0.lock().unwrap_or_else(|error| error.into_inner()) = false;
+            hold.1.notify_all();
+        })
+    }
     pub fn process_id(&self) -> u32 {
         self.pid
+    }
+
+    pub(super) fn contains_live_peer(
+        &self,
+        peer: &crate::workspace::windows_process_identity::PinnedProcess,
+    ) -> io::Result<bool> {
+        if self.control.stopped() {
+            return Ok(false);
+        }
+        match unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => return Ok(false),
+            WAIT_TIMEOUT => {}
+            WAIT_FAILED => return Err(io::Error::last_os_error()),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected terminal leader wait result",
+                ));
+            }
+        }
+        if !peer.is_alive()? {
+            return Ok(false);
+        }
+        let mut member = 0;
+        if unsafe {
+            IsProcessInJob(
+                peer.as_handle().as_raw_handle(),
+                self.job.as_raw_handle(),
+                &mut member,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(member != 0)
     }
     pub fn spawn(
         program: &OsStr,
@@ -250,7 +368,7 @@ impl Pty {
         directory: &Path,
         columns: u16,
         rows: u16,
-        _parent_context: Option<&str>,
+        parent_context: Option<&str>,
         events: impl Fn(PtyEvent) + Send + 'static,
     ) -> io::Result<Self> {
         Self::spawn_checked(
@@ -259,8 +377,33 @@ impl Pty {
             directory,
             columns,
             rows,
+            parent_context,
             events,
             |_, _| Ok(()),
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn spawn_gated_in_context(
+        program: &OsStr,
+        arguments: &[String],
+        directory: &Path,
+        columns: u16,
+        rows: u16,
+        parent_context: Option<&str>,
+        events: impl Fn(PtyEvent) + Send + 'static,
+        activation: PendingActivation,
+    ) -> io::Result<Self> {
+        Self::spawn_checked(
+            program,
+            arguments,
+            directory,
+            columns,
+            rows,
+            parent_context,
+            events,
+            |_, _| Ok(()),
+            Some(activation),
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -270,9 +413,16 @@ impl Pty {
         directory: &Path,
         columns: u16,
         rows: u16,
+        parent_context: Option<&str>,
         events: impl Fn(PtyEvent) + Send + 'static,
         mut checkpoint: impl FnMut(SpawnCheckpoint, u32) -> io::Result<()>,
+        activation: Option<PendingActivation>,
     ) -> io::Result<Self> {
+        let setup_retention = activation.as_ref().map(|activation| {
+            Arc::new(SetupRetention(Mutex::new(Some(
+                activation.lifetime.clone(),
+            ))))
+        });
         let program = super::windows_command::resolve_for_terminal(
             Path::new(program),
             directory,
@@ -285,7 +435,7 @@ impl Pty {
                 "terminal executable was not found on PATH",
             )
         })?;
-        let program = program.canonicalize()?;
+        let program = executable_path(&program)?;
         if program
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd"))
@@ -309,32 +459,18 @@ impl Pty {
             ));
         }
         let directory = crate::windows_fs::wide(&directory)?;
-        let environment = super::windows_command::environment();
+        let environment = super::windows_command::environment(parent_context);
         let control = Arc::new(Control {
             stop: event(true)?,
             readable: event(false)?,
             resize: event(false)?,
             dimensions: AtomicU32::new(columns as u32 | ((rows as u32) << 16)),
             input: Mutex::new(VecDeque::new()),
-            #[cfg(test)]
             completed: event(true)?,
+            #[cfg(test)]
+            cleanup_hold: Arc::new((Mutex::new(false), Condvar::new())),
         });
-        let job = Arc::new(owned(unsafe {
-            CreateJobObjectW(ptr::null(), ptr::null())
-        })?);
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if unsafe {
-            SetInformationJobObject(
-                job.as_raw_handle(),
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of_val(&limits) as u32,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        let job = Arc::new(crate::windows_process::new_job()?);
         let (input_read, input_write) = pipe()?;
         let (output_read, output_write) = pipe()?;
         let mut console = 0;
@@ -383,6 +519,9 @@ impl Pty {
         let mut guard = SpawnGuard {
             process: process.clone(),
             control: control.clone(),
+            cancel_pending: activation
+                .as_ref()
+                .map(|activation| activation.cancel.clone()),
             armed: true,
         };
         if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
@@ -391,6 +530,7 @@ impl Pty {
         checkpoint(SpawnCheckpoint::ChildOwned, info.dwProcessId)?;
         let reader_process = process.clone();
         let reader_control = control.clone();
+        let reader_retention = setup_retention.clone();
         let output_read = console
             .undrained_output
             .take()
@@ -398,6 +538,7 @@ impl Pty {
         let reader = thread::Builder::new()
             .name("runyte-conpty-read".into())
             .spawn(move || {
+                let _retention = reader_retention;
                 let mut file = File::from(output_read);
                 let mut bytes = vec![0; READ_CHUNK];
                 loop {
@@ -414,9 +555,11 @@ impl Pty {
             })?;
         checkpoint(SpawnCheckpoint::ReaderStarted, info.dwProcessId)?;
         let writer_control = control.clone();
+        let writer_retention = setup_retention.clone();
         let writer = thread::Builder::new()
             .name("runyte-conpty-write".into())
             .spawn(move || {
+                let _retention = writer_retention;
                 let mut file = File::from(input_write);
                 let handles = [
                     writer_control.stop.as_raw_handle(),
@@ -463,9 +606,13 @@ impl Pty {
         let lifecycle_control = control.clone();
         let lifecycle_process = process.clone();
         let lifecycle_job = job.clone();
+        #[cfg(debug_assertions)]
+        let lifecycle_pid = info.dwProcessId;
+        let lifecycle_retention = setup_retention.clone();
         thread::Builder::new()
             .name("runyte-conpty-lifecycle".into())
             .spawn(move || {
+                let _retention = lifecycle_retention;
                 let console = console;
                 let handles = [
                     lifecycle_control.stop.as_raw_handle(),
@@ -498,14 +645,54 @@ impl Pty {
                 drop(console);
                 let _ = writer.join();
                 let _ = reader.join();
+                #[cfg(debug_assertions)]
+                note_conpty_cleanup_fixture(lifecycle_pid);
                 #[cfg(test)]
+                {
+                    let mut held = lifecycle_control
+                        .cleanup_hold
+                        .0
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    while *held {
+                        held = lifecycle_control
+                            .cleanup_hold
+                            .1
+                            .wait(held)
+                            .unwrap_or_else(|error| error.into_inner());
+                    }
+                }
                 unsafe {
                     SetEvent(lifecycle_control.completed.as_raw_handle());
                 }
             })?;
         checkpoint(SpawnCheckpoint::LifecycleStarted, info.dwProcessId)?;
-        if unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX {
+        if let Some(activation) = activation {
+            let activation_control = control.clone();
+            let activation_job = job.clone();
+            thread::Builder::new()
+                .name("runyte-conpty-activate".into())
+                .spawn(move || {
+                    let active = (activation.wait)();
+                    drop(activation.lifetime);
+                    if !active
+                        || unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX
+                    {
+                        activation_control.stop();
+                        unsafe {
+                            TerminateJobObject(activation_job.as_raw_handle(), 1);
+                        }
+                    }
+                })?;
+        } else if unsafe { ResumeThread(primary_thread.as_raw_handle()) } == u32::MAX {
             return Err(io::Error::last_os_error());
+        }
+        if let Some(retention) = &setup_retention {
+            retention
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
         }
         guard.armed = false;
         Ok(Self {
@@ -569,9 +756,45 @@ impl Pty {
             TerminateJobObject(self.job.as_raw_handle(), 1);
         }
     }
+    pub(super) fn signal_unpublished(&self) {
+        self.control.stop();
+        unsafe {
+            TerminateJobObject(self.job.as_raw_handle(), 1);
+        }
+    }
+    pub(super) fn terminate_unpublished(&mut self) {
+        self.signal_unpublished();
+        unsafe {
+            WaitForSingleObject(self.control.completed.as_raw_handle(), INFINITE);
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn unpublished_completed(&self) -> io::Result<bool> {
+        match unsafe { WaitForSingleObject(self.control.completed.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            WAIT_FAILED => Err(io::Error::last_os_error()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected ConPTY cleanup wait result",
+            )),
+        }
+    }
     pub fn finished(&mut self) -> Option<Option<i32>> {
         (unsafe { WaitForSingleObject(self.process.as_raw_handle(), 0) } == WAIT_OBJECT_0)
             .then(|| exit_code(&self.process))
+    }
+}
+
+#[cfg(debug_assertions)]
+fn note_conpty_cleanup_fixture(pid: u32) {
+    let Some(directory) = std::env::var_os("RUNYTE_TEST_CONPTY_CLEANUP_DIR") else {
+        return;
+    };
+    let marker = PathBuf::from(directory).join(format!("conpty-cleanup-{pid}"));
+    let pending = marker.with_extension("pending");
+    if std::fs::write(&pending, b"complete").is_ok() {
+        let _ = std::fs::rename(pending, marker);
     }
 }
 fn exit_code(process: &OwnedHandle) -> Option<i32> {

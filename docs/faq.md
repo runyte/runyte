@@ -7,9 +7,20 @@ file management, text clipboard and integrated ConPTY terminals. The released
 0.3.1 packages predate this work. See the [Windows guide](user-guide.md#windows-support)
 for build requirements and the explicit feature limits.
 
-Integrated Git is deferred from Phase 1. Phase 2 begins with optional Git
-integration: machines without Git keep it disabled. Git commands can already
-run inside a terminal when Git is installed.
+Integrated Git is available when a native Git executable is found on PATH;
+machines without Git keep it disabled. Restart Runyte after installing Git.
+The Windows guide lists native path and worktree limitations.
+
+## How do I use PowerShell as the integrated terminal on Windows?
+
+Run `:terminal powershell.exe` in Runyte. This opens Windows PowerShell in the
+active pane and is the recommended way to choose it for a terminal session.
+
+If you know what you are doing, Runyte uses `%COMSPEC%` to choose the program
+for a bare `:terminal` (or `Space t n`) on Windows, falling back to `cmd.exe`.
+You can change `COMSPEC` in the environment that starts Runyte, but other
+programs may also use it and expect `cmd.exe`. See the
+[terminal guide](user-guide.md#terminals) for more about terminal commands.
 
 ## Why don't Alt-based keybindings work on macOS?
 

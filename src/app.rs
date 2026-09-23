@@ -16,9 +16,9 @@ use regex::{Regex, RegexBuilder};
 use unicode_width::UnicodeWidthChar;
 
 #[cfg(unix)]
-use crate::workspace::{
-    MAX_WORKSPACE_NUMBER, SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle,
-};
+use crate::workspace::MAX_WORKSPACE_NUMBER;
+#[cfg(any(unix, windows))]
+use crate::workspace::{SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle};
 
 use crate::{
     buffer::{
@@ -261,6 +261,7 @@ impl FinderContentSource {
 mod completion_support;
 mod config_reload;
 mod editing;
+mod external_opening;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
@@ -1909,7 +1910,7 @@ fn parse_session_number(value: &str) -> Result<Option<u8>, String> {
 #[derive(Clone, Debug)]
 #[cfg_attr(not(unix), allow(dead_code))]
 struct SessionActionMenu {
-    row: usize,
+    selection: crate::workspace::WorkspaceSelection,
     actions: Vec<SessionAction>,
     selected: usize,
     force_armed: bool,
@@ -2412,9 +2413,10 @@ impl CommandMatch<'_> {
     }
 }
 
-type DirectoryOpener = Box<dyn Fn(&Path) -> Result<()> + Send + Sync>;
+type DirectoryOpener = Box<dyn Fn(&Path) -> Result<external_open::Dispatch> + Send + Sync>;
 
-type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+type BrowserOpener = Box<dyn Fn(&str) -> Result<external_open::Dispatch> + Send + Sync>;
+type ProgramOpener = Box<dyn Fn(&str, &Path) -> Result<external_open::Dispatch> + Send + Sync>;
 
 /// Host-owned capabilities and outbound service work used by the editor.
 ///
@@ -2425,6 +2427,7 @@ type BrowserOpener = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 pub(crate) struct HostPorts {
     browser: BrowserOpener,
     directory_opener: DirectoryOpener,
+    program_opener: ProgramOpener,
     clipboard: Box<dyn SystemClipboard>,
     trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
@@ -2432,7 +2435,7 @@ pub(crate) struct HostPorts {
     /// surface is off in that case rather than reporting failures.
     git: Option<Box<dyn GitProvider>>,
     git_service: Option<GitServiceHandle>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_service: Option<WorkspaceServiceHandle>,
     word_index: Option<WordIndexHandle>,
 }
@@ -2440,8 +2443,9 @@ pub(crate) struct HostPorts {
 impl HostPorts {
     fn live() -> Self {
         let mut ports = Self::isolated(Box::new(CommandClipboard));
-        ports.browser = Box::new(external_open::launch_browser);
-        ports.directory_opener = Box::new(|path| external_open::launch("", path));
+        ports.browser = Box::new(external_open::dispatch_browser);
+        ports.directory_opener = Box::new(|path| external_open::dispatch("", path));
+        ports.program_opener = Box::new(external_open::dispatch);
         ports
     }
 
@@ -2452,11 +2456,14 @@ impl HostPorts {
             directory_opener: Box::new(|_| {
                 bail!("system file manager opening is unavailable in an isolated editor")
             }),
+            program_opener: Box::new(|_, _| {
+                bail!("external program opening is unavailable in an isolated editor")
+            }),
             trash: std::sync::Arc::new(SystemTrash),
             lsp: None,
             git: None,
             git_service: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_service: None,
             word_index: None,
         }
@@ -2639,18 +2646,20 @@ struct PendingWorkspaceSearch {
 /// generated view a session ever opened.
 const SPECIAL_BUFFER_RETENTION_LIMIT: usize = 8;
 
-/// A workspace selector together with the editor directory in which it was
-/// entered.
-///
-/// The selector stays untouched because a relative-looking value may instead
-/// be an exact workspace name or an ID prefix. The attached client uses the
-/// captured directory only when interpreting the selector as a path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkspaceSwitchTarget {
+    UserSelector(PathBuf),
+    Selected(crate::workspace::WorkspaceSelection),
+    Previous,
+}
+
+/// A typed switch target together with the editor directory in which any user
+/// selector was entered.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceSwitchRequest {
     pub visit: Option<DestinationVisit>,
     pub running_only: bool,
-    pub previous_session: bool,
-    pub selector: PathBuf,
+    pub target: WorkspaceSwitchTarget,
     pub working_directory: PathBuf,
 }
 
@@ -2741,6 +2750,7 @@ pub struct App {
     /// The binary file waiting for a program to open it, set while
     /// `PromptKind::ExternalProgram` is collecting one.
     pub external_target: Option<PathBuf>,
+    pending_external_opens: Vec<external_opening::Pending>,
     /// Programs previously chosen for binary files and their persisted default.
     pub programs: ProgramCache,
     /// The mode the command palette was opened from.
@@ -2849,6 +2859,9 @@ pub struct App {
     /// Interactive action currently dispatching. Asynchronous requests retain
     /// this identity so their completion cannot rewrite a newer action echo.
     active_action_id: Option<u64>,
+    /// Set only while dispatching an unmodified physical Enter. Native plugin
+    /// handoffs may consume authority captured in this scope.
+    plugin_physical_input: bool,
     next_action_id: u64,
     /// When the person last acted in the editor.
     ///
@@ -2889,6 +2902,10 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
+    /// Resolved once from the configured OS-known-folder policy. Plugin state
+    /// workers receive this captured boundary rather than re-reading ambient
+    /// paths after the workspace owner starts.
+    pub(crate) plugin_state_anchor: Option<PathBuf>,
     /// What Git says about the project and about each open file. Marks are
     /// derived here rather than asked for again on every edit.
     git: GitTracker,
@@ -2930,7 +2947,7 @@ pub struct App {
     /// switches roots. Standalone mode leaves this false because replacing its
     /// process would otherwise lose that text.
     persistent_session: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_rows: Vec<WorkspaceRow>,
     /// This workspace's own session number, retained for the owned snapshot.
     ///
@@ -2938,27 +2955,36 @@ pub struct App {
     /// receive the version-29 wire field. Both ultimately read the same
     /// per-user catalog.
     pub workspace_number: Option<u8>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_generation: u64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     next_workspace_status_poll: Instant,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     workspace_preview_generation: u64,
-    #[cfg(unix)]
-    workspace_preview_target: Option<PathBuf>,
-    #[cfg(unix)]
-    workspace_previews: HashMap<PathBuf, Result<SessionPreview, String>>,
-    #[cfg(unix)]
-    session_rename_target: Option<PathBuf>,
+    #[cfg(any(unix, windows))]
+    workspace_preview_target: Option<crate::workspace::WorkspaceSelection>,
+    #[cfg(any(unix, windows))]
+    workspace_previews:
+        HashMap<crate::workspace::WorkspaceSelection, Result<SessionPreview, String>>,
+    #[cfg(any(unix, windows))]
+    workspace_pending_selection: Option<(u64, crate::workspace::WorkspaceSelection)>,
+    #[cfg(windows)]
+    workspace_pending_selector: Option<u64>,
+    #[cfg(windows)]
+    workspace_pending_clean: Option<u64>,
+    #[cfg(any(unix, windows))]
+    session_rename_target: Option<crate::workspace::WorkspaceSelection>,
     /// The terminal a pending rename prompt names. Renaming is reached from
     /// the terminal list, which does not attach the terminal it acts on, so
     /// the prompt cannot read its subject from the active pane.
     terminal_rename_target: Option<TerminalId>,
     #[cfg(unix)]
-    session_number_target: Option<PathBuf>,
+    session_number_target: Option<crate::workspace::WorkspaceSelection>,
     /// The session-manager row restored after its Renumber prompt closes.
-    #[cfg(unix)]
-    session_manager_return_target: Option<PathBuf>,
+    #[cfg(any(unix, windows))]
+    session_manager_return_target: Option<crate::workspace::WorkspaceSelection>,
+    #[cfg(windows)]
+    session_manager_selection_lost: bool,
     session_action_menu: Option<SessionActionMenu>,
     terminal_action_menu: Option<TerminalActionMenu>,
     /// The buffer a commit message was opened over, returned to once the
@@ -3248,6 +3274,8 @@ impl App {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
         let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
+        let plugin_state_anchor =
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?;
         let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
             .into_iter()
             .flatten()
@@ -3388,6 +3416,7 @@ impl App {
             notifications_refresh_pending: false,
             action_feedback: None,
             active_action_id: None,
+            plugin_physical_input: false,
             next_action_id: 1,
             last_interaction: Instant::now(),
             reported_registry_errors,
@@ -3402,11 +3431,13 @@ impl App {
             home_directory: user_home_directory(),
             path_listings: RefCell::default(),
             external_target: None,
+            pending_external_opens: Vec::new(),
             programs,
             prompt_origin_mode: Mode::Normal,
             prompt_revision: 0,
             project_root,
             state_root,
+            plugin_state_anchor,
             git: GitTracker::new(),
             git_state: GitWorkflowState::default(),
             git_branch_deletion: None,
@@ -3432,26 +3463,34 @@ impl App {
             parent_wait_origins: HashMap::new(),
             workspace_switch: None,
             persistent_session: false,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_rows: Vec::new(),
             workspace_number: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_generation: 0,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             next_workspace_status_poll: Instant::now(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_preview_generation: 0,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_preview_target: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             workspace_previews: HashMap::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
+            workspace_pending_selection: None,
+            #[cfg(windows)]
+            workspace_pending_selector: None,
+            #[cfg(windows)]
+            workspace_pending_clean: None,
+            #[cfg(any(unix, windows))]
             session_rename_target: None,
             terminal_rename_target: None,
             #[cfg(unix)]
             session_number_target: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             session_manager_return_target: None,
+            #[cfg(windows)]
+            session_manager_selection_lost: false,
             session_action_menu: None,
             terminal_action_menu: None,
             commit_origin: None,
@@ -3631,7 +3670,7 @@ enum ListAction {
     WorktreeGitBranch(String),
     Terminal(TerminalId),
     TutorialMotionHints(MotionHints),
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     Workspace(usize),
 }
 
@@ -3699,7 +3738,7 @@ fn terminal_preview(session: &TerminalSession) -> String {
         .join("\n")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// The manager's right column: what this session is, as a fixed set of fields.
 ///
 /// Every row answers the same questions in the same order, so two sessions can
@@ -3815,7 +3854,11 @@ fn session_picker_preview(
         ));
     } else if !row.running {
         lines.push(String::new());
-        lines.push("No live editor state; opening this row starts the session.".to_owned());
+        if cfg!(unix) {
+            lines.push("No live editor state; opening this row starts the session.".to_owned());
+        } else {
+            lines.push("No live editor state; attachment is unavailable here.".to_owned());
+        }
     }
     if let Some(Err(error)) = preview {
         lines.push(String::new());
@@ -3824,7 +3867,7 @@ fn session_picker_preview(
     lines.join("\n")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// A short, single-unit age for the session manager and its preview.
 ///
 /// Rounding happens before choosing the next larger unit, so 59 minutes and
@@ -3848,7 +3891,7 @@ fn compact_session_elapsed(last_active_unix_seconds: Option<u64>, now: u64) -> S
     format!("{days}{unit} ago")
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 /// Whole-session activity status shown after the last-active age.
 ///
 /// The latest live-terminal baseline is sufficient because `QUIET` requires

@@ -26,6 +26,7 @@ fn native_console_fixture() {
     println!("READY");
     io::stdout().flush().unwrap();
     let mut descendants = Vec::new();
+    let mut nested_jobs = Vec::new();
     for line in io::stdin().lock().lines() {
         match line.unwrap().as_str() {
             "size" => {
@@ -38,6 +39,10 @@ fn native_console_fixture() {
                 );
                 println!("SIZE {} {}", info.dwSize.X, info.dwSize.Y);
             }
+            "context" => println!(
+                "CONTEXT {}",
+                std::env::var(crate::workspace::parent::ENVIRONMENT).unwrap()
+            ),
             "descendant" => {
                 let child = std::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
@@ -46,6 +51,38 @@ fn native_console_fixture() {
                     .spawn()
                     .unwrap();
                 println!("DESCENDANT {}", child.id());
+                descendants.push(child);
+            }
+            "nested" => {
+                let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+                assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+                let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                assert_ne!(
+                    unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) },
+                    0,
+                    "{}",
+                    io::Error::last_os_error()
+                );
+                let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+                loop {
+                    let mut line = String::new();
+                    assert_ne!(
+                        output.read_line(&mut line).unwrap(),
+                        0,
+                        "nested fixture exited"
+                    );
+                    if line.trim() == "READY" {
+                        break;
+                    }
+                }
+                println!("NESTED {}", child.id());
+                nested_jobs.push(job);
                 descendants.push(child);
             }
             "spam" => loop {
@@ -58,6 +95,7 @@ fn native_console_fixture() {
     }
     // Deliberately retain descendants on exit: the PTY's job owns cleanup.
     std::mem::forget(descendants);
+    std::mem::forget(nested_jobs);
 }
 
 fn fixture() -> (Pty, mpsc::Receiver<PtyEvent>) {
@@ -80,6 +118,34 @@ fn fixture() -> (Pty, mpsc::Receiver<PtyEvent>) {
     .unwrap();
     read_until(&receiver, "READY");
     (child, receiver)
+}
+
+#[test]
+fn native_parent_context_reaches_terminal_child() {
+    let (sender, receiver) = mpsc::channel();
+    let child = Pty::spawn_in_context(
+        std::env::current_exe().unwrap().as_os_str(),
+        &[
+            "--exact".into(),
+            FIXTURE.into(),
+            "--ignored".into(),
+            "--nocapture".into(),
+        ],
+        &std::env::temp_dir(),
+        80,
+        24,
+        Some("native-parent-context-probe"),
+        move |event| {
+            let _ = sender.send(event);
+        },
+    )
+    .unwrap();
+    read_until(&receiver, "READY");
+    assert!(child.write(b"context\r".to_vec()));
+    assert!(
+        read_until(&receiver, "CONTEXT native-parent-context-probe")
+            .contains("CONTEXT native-parent-context-probe")
+    );
 }
 
 fn read_until(events: &mpsc::Receiver<PtyEvent>, expected: &str) -> String {
@@ -138,6 +204,38 @@ fn native_resize_reaches_console_and_close_kills_descendants() {
     );
 }
 
+#[test]
+fn terminal_job_accepts_only_live_member_peers() {
+    let (child, events) = fixture();
+    let member =
+        crate::workspace::windows_process_identity::PinnedProcess::open_peer(child.process_id())
+            .unwrap();
+    let outside =
+        crate::workspace::windows_process_identity::PinnedProcess::open_peer(std::process::id())
+            .unwrap();
+    assert!(child.contains_live_peer(&member).unwrap());
+    assert!(!child.contains_live_peer(&outside).unwrap());
+    assert!(child.write(b"nested\r".to_vec()));
+    let output = read_until(&events, "NESTED ");
+    let pid = output
+        .split("NESTED ")
+        .nth(1)
+        .unwrap()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse::<u32>()
+        .unwrap();
+    let nested = crate::workspace::windows_process_identity::PinnedProcess::open_peer(pid).unwrap();
+    assert!(child.contains_live_peer(&nested).unwrap());
+    assert!(child.write(b"exit\r".to_vec()));
+    while !matches!(
+        events.recv_timeout(Duration::from_secs(10)).unwrap(),
+        PtyEvent::Exited(_)
+    ) {}
+    assert!(!child.contains_live_peer(&member).unwrap());
+}
+
 fn native_shell(arguments: &[&str]) -> (Pty, mpsc::Receiver<PtyEvent>) {
     let (sender, receiver) = mpsc::channel();
     let child = Pty::spawn(
@@ -176,6 +274,96 @@ fn native_shell_drains_unicode_output_before_exit() {
         String::from_utf8_lossy(&output)
     );
     assert_eq!(child.finished(), Some(Some(7)));
+}
+
+#[test]
+fn installed_windows_powershell_starts_from_an_extended_executable_path() {
+    let root = crate::test_support::TestRuntimeRoot::new("powershell-console").unwrap();
+    let program = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe")
+        .canonicalize()
+        .unwrap();
+    let (sender, events) = mpsc::channel();
+    let child = Pty::spawn(
+        program.as_os_str(),
+        &[
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            "[Console]::Write('RUNYTE_POWERSHELL_STARTED'); exit 0".into(),
+        ],
+        root.path(),
+        120,
+        24,
+        move |event| {
+            let _ = sender.send(event);
+        },
+    )
+    .unwrap();
+    let cleanup = child.cleanup_waiter();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut output = Vec::new();
+    loop {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&output)))
+        {
+            PtyEvent::Output(bytes) => {
+                assert!(output.len() + bytes.len() <= 64 * 1024);
+                output.extend(bytes);
+            }
+            PtyEvent::Exited(code) => {
+                assert_eq!(code, Some(0), "{}", String::from_utf8_lossy(&output));
+                break;
+            }
+        }
+    }
+    assert!(
+        String::from_utf8_lossy(&output).contains("RUNYTE_POWERSHELL_STARTED"),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+    drop(child);
+    cleanup();
+}
+
+#[test]
+fn executable_spelling_preserves_identity_and_required_extended_paths() {
+    let compiled = std::env::current_exe().unwrap();
+    let root = crate::test_support::TestRuntimeRoot::new_in(
+        "executable-spelling",
+        compiled.parent().unwrap(),
+    )
+    .unwrap();
+    let short = root.join("native helper.exe");
+    std::fs::hard_link(&compiled, &short).unwrap();
+    let ordinary = executable_path(&short).unwrap();
+    assert!(!ordinary.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    assert_eq!(
+        crate::windows_fs::Identity::read(&ordinary).unwrap(),
+        crate::windows_fs::Identity::read(&short).unwrap()
+    );
+
+    let special = root.join("native helper.exe.");
+    std::fs::hard_link(&compiled, &special).unwrap();
+    assert_eq!(
+        executable_path(&special).unwrap(),
+        special.canonicalize().unwrap()
+    );
+
+    let mut long = root.path().to_path_buf();
+    while long.as_os_str().encode_wide().count() < 270 {
+        long.push("long-executable-directory");
+    }
+    std::fs::create_dir_all(&long).unwrap();
+    long.push("native helper.exe");
+    std::fs::hard_link(&compiled, &long).unwrap();
+    assert_eq!(
+        executable_path(&long).unwrap(),
+        long.canonicalize().unwrap()
+    );
+    assert!(executable_path(&root.join("missing.exe")).is_err());
 }
 
 #[test]
@@ -250,6 +438,7 @@ fn failed_setup_owns_and_terminates_suspended_child() {
             &std::env::temp_dir(),
             80,
             24,
+            None,
             |_| {},
             |current, pid| {
                 if current != stage {
@@ -267,12 +456,91 @@ fn failed_setup_owns_and_terminates_suspended_child() {
                 );
                 Err(io::Error::other("injected setup failure"))
             },
+            None,
         );
         assert!(result.is_err());
         let process = process.into_inner().unwrap().unwrap();
         assert_eq!(
             unsafe { WaitForSingleObject(process.as_raw_handle(), 5000) },
             WAIT_OBJECT_0
+        );
+    }
+}
+
+#[test]
+fn gated_partial_setup_retains_lease_until_conpty_cleanup_finishes() {
+    struct Lease {
+        process: Arc<Mutex<Option<OwnedHandle>>>,
+        settled: mpsc::Sender<bool>,
+    }
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            let stopped = self
+                .process
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|process| unsafe {
+                    WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_OBJECT_0
+                });
+            let _ = self.settled.send(stopped);
+        }
+    }
+
+    for failed in [
+        SpawnCheckpoint::ChildOwned,
+        SpawnCheckpoint::ReaderStarted,
+        SpawnCheckpoint::WriterStarted,
+        SpawnCheckpoint::LifecycleStarted,
+    ] {
+        let process = Arc::new(Mutex::new(None));
+        let observed = process.clone();
+        let (settled, completion) = mpsc::channel();
+        let (cancelled, cancellation) = mpsc::channel();
+        let result = Pty::spawn_checked(
+            std::env::current_exe().unwrap().as_os_str(),
+            &[
+                "--exact".into(),
+                FIXTURE.into(),
+                "--ignored".into(),
+                "--nocapture".into(),
+            ],
+            &std::env::temp_dir(),
+            80,
+            24,
+            None,
+            |_| {},
+            move |checkpoint, pid| {
+                if checkpoint == SpawnCheckpoint::ChildOwned {
+                    *observed.lock().unwrap() = Some(owned(unsafe {
+                        OpenProcess(
+                            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                            0,
+                            pid,
+                        )
+                    })?);
+                }
+                if checkpoint == failed {
+                    return Err(io::Error::other("injected gated setup failure"));
+                }
+                Ok(())
+            },
+            Some(PendingActivation {
+                wait: Arc::new(|| false),
+                cancel: Arc::new(move || {
+                    let _ = cancelled.send(());
+                }),
+                lifetime: Arc::new(Lease {
+                    process: process.clone(),
+                    settled,
+                }),
+            }),
+        );
+        assert!(result.is_err(), "{failed:?}");
+        cancellation.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            completion.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "{failed:?}"
         );
     }
 }

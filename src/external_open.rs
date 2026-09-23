@@ -12,15 +12,20 @@
 //! predicate over bytes, the cache is a list of strings on disk, and launching
 //! is one process spawn.
 
+#[cfg(not(windows))]
+use std::process::{Command, Stdio};
 use std::{
     fs,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    sync::mpsc,
+    time::Instant,
 };
 
 use anyhow::{Context, Result};
 pub mod system;
+#[cfg(windows)]
+mod windows;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -46,6 +51,7 @@ const DEFAULT_FILE: &str = "default-program";
 enum OpenPlatform {
     Linux,
     MacOs,
+    Windows,
     Unsupported,
 }
 
@@ -54,7 +60,9 @@ impl OpenPlatform {
     const CURRENT: Self = Self::Linux;
     #[cfg(target_os = "macos")]
     const CURRENT: Self = Self::MacOs;
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    const CURRENT: Self = Self::Windows;
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     const CURRENT: Self = Self::Unsupported;
 }
 
@@ -62,15 +70,19 @@ fn system_default_program_for(platform: OpenPlatform) -> Option<&'static str> {
     match platform {
         OpenPlatform::Linux => Some("xdg-open"),
         OpenPlatform::MacOs => Some("open"),
+        OpenPlatform::Windows => Some("System default"),
         OpenPlatform::Unsupported => None,
     }
 }
 
-/// The command that asks this platform to use the file's preferred app.
+/// The default-opener choice shown in the program picker. Windows uses a
+/// display label: selecting this row supplies an empty launch value, not an
+/// executable named `System default`.
 pub fn system_default_program() -> Option<&'static str> {
     system_default_program_for(OpenPlatform::CURRENT)
 }
 
+#[cfg(any(not(windows), test))]
 fn launch_program_for(program: &str, platform: OpenPlatform) -> Result<&str> {
     let explicit = program.trim();
     if !explicit.is_empty() {
@@ -130,24 +142,28 @@ pub fn looks_binary(path: &Path) -> bool {
 /// An explicit `XDG_CACHE_HOME` wins on every platform. Otherwise Linux and
 /// other Unix systems use `<account-home>/.cache/runyte`, macOS uses
 /// `<account-home>/Library/Caches/runyte`, and Windows uses
-/// `%LOCALAPPDATA%/runyte/cache`. Unix account home comes from the effective
-/// user's account record rather than inherited `$HOME`, so a privileged
-/// invocation cannot leave its files in another user's default cache.
+/// `<account-local-app-data>/runyte/cache`. Account defaults come from the
+/// operating system rather than inherited `$HOME` or `%LOCALAPPDATA%`, so a
+/// privileged invocation cannot select another user's default cache.
 pub fn cache_root() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
     let environment_home = std::env::var_os("HOME").map(PathBuf::from);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let account_home = crate::user_paths::system_home_directory();
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let account_home = None;
+    #[cfg(windows)]
+    let local_app_data = crate::user_paths::system_local_app_data_directory();
+    #[cfg(not(windows))]
+    let local_app_data = None;
     cache_root_for(
         CachePlatform::CURRENT,
         std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
         environment_home,
         account_home,
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        local_app_data,
     )
 }
 
@@ -334,7 +350,103 @@ impl ProgramCache {
 /// Opens a web URL through the desktop's default handler, independent of the
 /// remembered binary-file program. The URL remains one literal argument.
 pub fn launch_browser(url: &str) -> Result<()> {
-    launch("", Path::new(url))
+    finish_dispatch(dispatch_browser(url)?)
+}
+
+/// An accepted handoff, or a bounded asynchronous launch still in progress.
+pub enum Dispatch {
+    Accepted,
+    Pending(LaunchTicket),
+}
+
+/// Observes one authorized launch. Dropping or timing out this ticket never
+/// cancels an operation whose native outcome may still become successful.
+pub struct LaunchTicket {
+    receiver: mpsc::Receiver<Result<()>>,
+    deadline: Instant,
+    completed: bool,
+}
+
+impl LaunchTicket {
+    #[cfg(any(windows, test))]
+    pub(crate) fn channel(deadline: Instant) -> (mpsc::SyncSender<Result<()>>, Self) {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        (
+            sender,
+            Self {
+                receiver,
+                deadline,
+                completed: false,
+            },
+        )
+    }
+
+    /// Delivers at most one outcome observed before the deadline. Even a
+    /// queued result observed after the deadline is conservatively unknown;
+    /// the channel does not establish when the native operation completed.
+    /// An unknown outcome must not trigger an automatic retry.
+    pub fn poll(&mut self, now: Instant) -> Option<Result<()>> {
+        if self.completed {
+            return None;
+        }
+        if now >= self.deadline {
+            self.completed = true;
+            return Some(Err(system::Error::OutcomeUnknown.into()));
+        }
+        let result = match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(Err(system::Error::OutcomeUnknown.into()))
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+        };
+        self.completed = result.is_some();
+        result
+    }
+
+    fn wait(self) -> Result<()> {
+        let result = self
+            .receiver
+            .recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|_| Err(system::Error::OutcomeUnknown.into()));
+        if Instant::now() >= self.deadline {
+            Err(system::Error::OutcomeUnknown.into())
+        } else {
+            result
+        }
+    }
+}
+
+fn finish_dispatch(dispatch: Dispatch) -> Result<()> {
+    match dispatch {
+        Dispatch::Accepted => Ok(()),
+        Dispatch::Pending(ticket) => ticket.wait(),
+    }
+}
+
+/// Schedules native Windows launching without blocking the editor. Unix keeps
+/// its existing immediate spawn behavior and returns `Accepted`.
+pub fn dispatch(program: &str, path: &Path) -> Result<Dispatch> {
+    #[cfg(windows)]
+    {
+        windows::dispatch(program, path).map(Dispatch::Pending)
+    }
+    #[cfg(not(windows))]
+    {
+        launch(program, path).map(|()| Dispatch::Accepted)
+    }
+}
+
+/// Opens a URL independently of the remembered binary-file program.
+pub fn dispatch_browser(url: &str) -> Result<Dispatch> {
+    #[cfg(windows)]
+    {
+        windows::dispatch_browser(url).map(Dispatch::Pending)
+    }
+    #[cfg(not(windows))]
+    {
+        launch("", Path::new(url)).map(|()| Dispatch::Accepted)
+    }
 }
 
 /// Hands `path` to `program` and returns without waiting for it.
@@ -349,39 +461,112 @@ pub fn launch_browser(url: &str) -> Result<()> {
 /// program may carry arguments, split on whitespace, so `feh` and `code -w`
 /// are both spellable. The path is always passed as one final argument.
 pub fn launch(program: &str, path: &Path) -> Result<()> {
-    anyhow::ensure!(
-        !cfg!(windows),
-        "External file opening is unavailable in Windows Phase 1"
-    );
-    let program = launch_program_for(program, OpenPlatform::CURRENT)?;
-    let mut words = program.split_whitespace();
-    let executable = words.next().context("no program was given")?;
-    let mut command = Command::new(executable);
-    command
-        .args(words)
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    command.process_group(0);
-    let child = command
-        .spawn()
-        .with_context(|| format!("failed to run {executable}"))?;
-    // Reaped on a thread of its own. Nothing waits on the exit status — the
-    // whole point is not to block the editor — but a child nobody waits for
-    // stays in the process table until Runyte itself exits, and a session
-    // spent opening images should not accumulate one zombie per image.
-    std::thread::spawn(move || {
-        let mut child = child;
-        let _ = child.wait();
-    });
-    Ok(())
+    #[cfg(windows)]
+    return finish_dispatch(dispatch(program, path)?);
+    #[cfg(not(windows))]
+    {
+        let program = launch_program_for(program, OpenPlatform::CURRENT)?;
+        let mut words = program.split_whitespace();
+        let executable = words.next().context("no program was given")?;
+        let mut command = Command::new(executable);
+        command
+            .args(words)
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        command.process_group(0);
+        let child = command
+            .spawn()
+            .with_context(|| format!("failed to run {executable}"))?;
+        // Reaped on a thread of its own. Nothing waits on the exit status — the
+        // whole point is not to block the editor — but a child nobody waits for
+        // stays in the process table until Runyte itself exits, and a session
+        // spent opening images should not accumulate one zombie per image.
+        std::thread::spawn(move || {
+            let mut child = child;
+            let _ = child.wait();
+        });
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_tickets_deliver_once_and_keep_failure_types() {
+        let now = Instant::now();
+        let (sender, mut ticket) = LaunchTicket::channel(now + std::time::Duration::from_secs(1));
+        assert!(ticket.poll(now).is_none());
+        sender.send(Ok(())).unwrap();
+        assert!(ticket.poll(now).unwrap().is_ok());
+        assert!(ticket.poll(now).is_none());
+        let (sender, mut ticket) = LaunchTicket::channel(now + std::time::Duration::from_secs(1));
+        sender.send(Err(system::Error::Unavailable.into())).unwrap();
+        assert_eq!(
+            ticket
+                .poll(now)
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<system::Error>(),
+            Some(&system::Error::Unavailable)
+        );
+    }
+
+    #[test]
+    fn expired_or_disconnected_launch_tickets_are_unknown_even_with_queued_success() {
+        let now = Instant::now();
+        for queued in [false, true] {
+            let (sender, mut ticket) = LaunchTicket::channel(now);
+            if queued {
+                sender.send(Ok(())).unwrap();
+            }
+            assert_eq!(
+                ticket
+                    .poll(now)
+                    .unwrap()
+                    .unwrap_err()
+                    .downcast_ref::<system::Error>(),
+                Some(&system::Error::OutcomeUnknown)
+            );
+            assert!(ticket.poll(now).is_none());
+        }
+        let (sender, mut ticket) = LaunchTicket::channel(now + std::time::Duration::from_secs(1));
+        drop(sender);
+        assert_eq!(
+            ticket
+                .poll(now)
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<system::Error>(),
+            Some(&system::Error::OutcomeUnknown)
+        );
+    }
+
+    #[test]
+    fn blocking_handoff_wait_preserves_the_observation_deadline() {
+        let (sender, ticket) =
+            LaunchTicket::channel(Instant::now() + std::time::Duration::from_secs(1));
+        sender.send(Ok(())).unwrap();
+        finish_dispatch(Dispatch::Pending(ticket)).unwrap();
+        finish_dispatch(Dispatch::Accepted).unwrap();
+        let (sender, ticket) = LaunchTicket::channel(Instant::now());
+        sender.send(Ok(())).unwrap();
+        assert_eq!(
+            ticket.wait().unwrap_err().downcast_ref::<system::Error>(),
+            Some(&system::Error::OutcomeUnknown)
+        );
+        let (sender, ticket) =
+            LaunchTicket::channel(Instant::now() + std::time::Duration::from_secs(1));
+        drop(sender);
+        assert_eq!(
+            ticket.wait().unwrap_err().downcast_ref::<system::Error>(),
+            Some(&system::Error::OutcomeUnknown)
+        );
+    }
 
     #[test]
     fn system_default_openers_follow_desktop_platform_conventions() {
@@ -392,6 +577,10 @@ mod tests {
         assert_eq!(
             system_default_program_for(OpenPlatform::MacOs),
             Some("open")
+        );
+        assert_eq!(
+            system_default_program_for(OpenPlatform::Windows),
+            Some("System default")
         );
         assert_eq!(system_default_program_for(OpenPlatform::Unsupported), None);
     }
@@ -459,6 +648,38 @@ mod tests {
                 None,
             ),
             Some(PathBuf::from("/custom/cache/runyte"))
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_cache_defaults_use_account_local_data_and_explicit_xdg_only() {
+        let account_local = PathBuf::from(r"C:\Users\account\RedirectedLocalData");
+        let inherited_home = PathBuf::from(r"C:\Users\invoking");
+        let resolve = |xdg, local| {
+            cache_root_for(
+                CachePlatform::Windows,
+                xdg,
+                Some(inherited_home.clone()),
+                None,
+                local,
+            )
+        };
+        assert_eq!(
+            resolve(None, Some(account_local.clone())),
+            Some(account_local.join("runyte/cache"))
+        );
+        assert_eq!(resolve(None, None), None);
+        assert_eq!(resolve(Some(PathBuf::from("relative")), None), None);
+        let explicit = PathBuf::from(r"D:\explicit-cache");
+        assert_eq!(
+            resolve(Some(explicit.clone()), None),
+            Some(explicit.join("runyte"))
+        );
+        assert_eq!(
+            cache_root(),
+            None,
+            "unit tests cannot use the actual account cache"
         );
     }
 

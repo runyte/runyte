@@ -596,12 +596,12 @@ pub struct GitServiceHandle {
     ordered_with_worktrees: bool,
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 pub(crate) struct PausedGitService {
     requests: Receiver<Request>,
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 impl PausedGitService {
     pub(crate) fn next_operation(&self) -> GitOperation {
         self.requests
@@ -613,7 +613,6 @@ impl PausedGitService {
 
 impl GitServiceHandle {
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
         let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
         let (operations, recorded) = channel();
@@ -636,7 +635,6 @@ impl GitServiceHandle {
     }
 
     #[cfg(test)]
-    #[cfg(not(windows))]
     pub(crate) fn saturated_for_test() -> (Self, PausedGitService) {
         let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
         let handle = Self {

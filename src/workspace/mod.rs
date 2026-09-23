@@ -9,16 +9,66 @@
 mod buffers;
 #[cfg(unix)]
 mod catalog;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))] // Native catalog callers follow host acceptance.
+mod catalog_values;
 pub mod context;
 mod host;
 mod identity;
 #[cfg(unix)]
 pub mod lifecycle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod parent;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))] // Catalog wiring follows native history acceptance.
+mod recent_history;
 mod service;
+#[cfg(any(unix, windows))]
+mod session_name;
 #[cfg(unix)]
 pub mod transport;
+// Shared bounded framing and native/Unix adapter support.
+#[cfg(any(unix, windows))]
+mod transport_shared;
+#[cfg(windows)]
+pub mod windows_catalog;
+#[cfg(windows)]
+pub mod windows_control;
+#[cfg(windows)]
+pub mod windows_endpoint;
+#[cfg(windows)]
+pub mod windows_lifecycle;
+#[cfg(windows)]
+pub mod windows_location;
+#[cfg(windows)]
+pub mod windows_parent_identity;
+#[cfg(windows)]
+pub mod windows_pipe;
+#[cfg(windows)]
+mod windows_process_exit;
+#[cfg(windows)]
+pub struct NativeHostExit(windows_process_exit::ProcessExitWatcher);
+
+#[cfg(windows)]
+impl NativeHostExit {
+    pub fn new(
+        peer: std::sync::Arc<windows_process_identity::PinnedProcess>,
+    ) -> std::io::Result<Self> {
+        windows_process_exit::ProcessExitWatcher::new(peer).map(Self)
+    }
+
+    pub async fn wait(&self) {
+        self.0.wait().await;
+    }
+}
+#[cfg(windows)]
+pub mod windows_process_identity;
+#[cfg(windows)]
+pub mod windows_service;
+#[cfg(windows)]
+pub mod windows_startup;
+#[cfg(windows)]
+pub mod windows_transport;
 
 pub use buffers::{
     BufferContents, BufferId, BufferMetadata, BufferRevision, WaitStatus, WaitToken,
@@ -32,6 +82,10 @@ pub use catalog::{
     record_workspace_activity, recorded_workspace_number, rename_known_workspace,
     resolve_known_workspace, resolve_known_workspace_from_directory,
 };
+#[cfg(any(unix, windows))]
+pub use catalog_values::{PublicationKey, WorkspaceSelection};
+#[cfg(windows)]
+pub use catalog_values::{WorkspaceEvent, WorkspaceRow};
 pub use host::{
     BufferRequestError, FrameId, HostCommand, HostEvent, HostFrame, HostInputOutcome,
     HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,
@@ -43,3 +97,7 @@ pub use service::{
     ServiceProgress, ServiceRequestId, ServiceStateError, ServiceSubmitError, ServiceUpdate,
     ServiceWorker,
 };
+#[cfg(any(unix, windows))]
+pub use session_name::normalize_session_name;
+#[cfg(windows)]
+pub use windows_service::WorkspaceServiceHandle;

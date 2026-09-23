@@ -24,6 +24,7 @@ include = [
     "/src/**",
     "!/src/app/tests/**",
     "/docs/**",
+    "/contrib/**",
     "/licenses/**",
     "/logo/ascii/logo.txt",
     "/README.md",
@@ -104,7 +105,10 @@ unicode-segmentation = "1.13"
 unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+png = "0.18"
 windows-sys = { version = "0.61", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Globalization",
@@ -113,11 +117,14 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
+    "Win32_System_Com",
     "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Memory",
     "Win32_System_JobObjects",
     "Win32_System_IO",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
@@ -128,3 +135,13 @@ windows-sys = { version = "0.61", features = [
 [profile.release]
 lto = true
 strip = true
+
+[[test]]
+name = "lsp_windows_transport"
+path = "tests/lsp_windows_transport.rs"
+harness = false
+
+[[test]]
+name = "plugin_windows_worker"
+path = "tests/plugin_windows_worker.rs"
+harness = false

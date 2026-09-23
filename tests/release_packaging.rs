@@ -315,44 +315,26 @@ fn cwd_file_option_still_works_though_undocumented() {
     // Isolate the process from the real XDG runtime/cache directories, as
     // tests/persistent_host.rs does, so this never touches the person's own
     // workspace registry.
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!(
-        "runyte-cwd-file-help-test-{}-{unique}",
-        std::process::id()
-    ));
-    let runtime_dir = temp_dir.join("runtime");
-    let cache_dir = temp_dir.join("cache");
-    let cwd_file = temp_dir.join("cwd");
-    fs::create_dir_all(&runtime_dir).unwrap();
-    fs::create_dir_all(&cache_dir).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&runtime_dir, fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    let root = runyte::test_support::TestRuntimeRoot::new("cwd-file-help").unwrap();
+    let runtime_dir = root.create_private_dir("runtime").unwrap();
+    let cache_dir = root.create_private_dir("cache").unwrap();
+    let config_dir = root.create_private_dir("config").unwrap();
+    let cwd_file = root.join("cwd");
 
     let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["--cwd-file", cwd_file.to_str().unwrap(), "--session-list"])
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("XDG_CACHE_HOME", &cache_dir)
-        .env("XDG_CONFIG_HOME", &cache_dir)
+        .env("XDG_CONFIG_HOME", &config_dir)
         .output()
         .unwrap();
-    assert_eq!(
+    assert!(
         output.status.success(),
-        !cfg!(windows),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    #[cfg(windows)]
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not yet supported"));
     // --session-list never writes to the handoff file.
     assert!(!cwd_file.exists() || fs::read(&cwd_file).unwrap().is_empty());
-
-    fs::remove_dir_all(&temp_dir).ok();
 }
 
 #[test]

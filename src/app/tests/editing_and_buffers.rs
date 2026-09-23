@@ -997,7 +997,6 @@ impl ImageClipboard {
         }
     }
 
-    #[cfg(not(windows))]
     fn text(text: &str) -> Self {
         Self {
             image: None,
@@ -1031,12 +1030,10 @@ fn png(tail: &str) -> Vec<u8> {
     bytes
 }
 
-/// `Ctrl-v` is the only way a picture reaches a document, and what it writes
-/// is an ordinary Markdown link: the bytes go into the workspace under a name
-/// taken from their own content, and the document gets a numbered reference to
-/// that file.
+/// Clipboard image paste writes an ordinary Markdown link: the bytes go into
+/// the workspace under a name taken from their own content, and the document
+/// gets a numbered reference to that file.
 #[test]
-#[cfg(not(windows))]
 fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
     let fixture = temporary("clipboard-image-paste");
     let project = fixture.join("project");
@@ -1099,11 +1096,153 @@ fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
     fs::remove_dir_all(fixture).unwrap();
 }
 
+#[test]
+fn alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v() {
+    let fixture = temporary("alternate-clipboard-image-paste");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    let bytes = png("alternate");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&bytes)));
+
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Char('v'), Modifiers::ALT);
+
+    let name = crate::pasted_image::file_name(&bytes, crate::pasted_image::ImageFormat::Png);
+    assert_eq!(
+        text(&app),
+        format!("[Image 1](.runyte/cache/images/{name})"),
+        "status: {}; mode: {:?}; kind: {:?}",
+        app.status,
+        app.mode,
+        app.active_buffer().kind
+    );
+    assert_eq!(
+        fs::read(project.join(".runyte/cache/images").join(name)).unwrap(),
+        bytes
+    );
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    let second = png("alternate in Normal mode");
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&second)));
+    key(&mut app, KeyCode::Char('v'), Modifiers::ALT);
+    assert!(text(&app).contains("[Image 2](.runyte/cache/images/"));
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_ignores_pending_key_sequences_and_operands() {
+    let fixture = temporary("semantic-clipboard-image-paste");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "abc").unwrap();
+    let mut baseline =
+        App::new_in_project(Config::default(), Some(notes.clone()), &project).unwrap();
+    baseline.set_system_clipboard(Box::new(ImageClipboard::holding(&png("pending"))));
+    baseline.handle_input(InputEvent::ClipboardPaste).unwrap();
+    let expected = text(&baseline);
+
+    for prefix in [KeyStroke::ctrl('w'), KeyStroke::char('r')] {
+        let mut app =
+            App::new_in_project(Config::default(), Some(notes.clone()), &project).unwrap();
+        app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("pending"))));
+        app.handle_input(InputEvent::Key(prefix)).unwrap();
+        if prefix == KeyStroke::ctrl('w') {
+            assert!(!app.pending_sequence().is_empty());
+        }
+
+        app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+        assert!(app.pending_sequence().is_empty());
+        assert_eq!(app.panes.len(), 1, "paste completed a split sequence");
+        assert_eq!(text(&app), expected, "pending key changed paste behavior");
+    }
+
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_respects_overlay_and_terminal_ownership() {
+    let fixture = temporary("semantic-image-paste-ownership");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "unchanged").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("owned"))));
+
+    app.open_buffer_picker();
+    assert!(app.has_input_overlay());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+    assert_eq!(text(&app), "unchanged");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    app.open_terminal_at(Some(terminal_fixture_command()), project.clone());
+    assert!(app.active_terminal().is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+    app.leave_terminal();
+    assert_eq!(text(&app), "unchanged");
+    assert!(!project.join(".runyte/cache/images").exists());
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_cancels_live_goto_word_labels() {
+    let fixture = temporary("semantic-image-paste-jump-labels");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(&notes, "alpha beta").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.active_mut().wrap_width = 80;
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("jump"))));
+
+    press(&mut app, 'g');
+    press(&mut app, 'w');
+    assert!(app.jump.is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+    assert!(app.jump.is_none());
+    assert_eq!(text(&app), "alpha beta");
+    assert!(!project.join(".runyte/cache/images").exists());
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
+fn semantic_image_paste_dismisses_insert_completion_before_editing() {
+    let fixture = temporary("semantic-image-paste-completion");
+    let project = fixture.join("project");
+    let notes = project.join("notes.md");
+    fs::create_dir_all(project.join("docs")).unwrap();
+    fs::write(project.join("docs/target.txt"), "").unwrap();
+    fs::write(&notes, "").unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+    app.set_system_clipboard(Box::new(ImageClipboard::holding(&png("completion"))));
+
+    press(&mut app, 'i');
+    type_text(&mut app, "docs/ta");
+    assert!(app.completion.is_some());
+    app.handle_input(InputEvent::ClipboardPaste).unwrap();
+
+    assert!(app.completion.is_none());
+    let pasted = text(&app);
+    assert!(pasted.contains("[Image 1](.runyte/cache/images/"));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(
+        text(&app).contains(&pasted),
+        "Tab replaced the pasted image"
+    );
+    fs::remove_dir_all(fixture).unwrap();
+}
+
 /// Numbering continues from the document rather than from a counter the
 /// editor keeps, so a file reopened in a later session does not restart at
 /// one.
 #[test]
-#[cfg(not(windows))]
 fn image_numbering_continues_from_what_the_document_already_holds() {
     let fixture = temporary("clipboard-image-numbering");
     let project = fixture.join("project");
@@ -1193,7 +1332,6 @@ fn an_explorer_refuses_a_pasted_image() {
 
 /// In Normal mode, an image reference is pasted after a bare caret.
 #[test]
-#[cfg(not(windows))]
 fn a_normal_mode_image_paste_lands_after_a_bare_caret() {
     let fixture = temporary("clipboard-image-modal");
     let project = fixture.join("project");

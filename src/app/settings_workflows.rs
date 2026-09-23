@@ -137,12 +137,7 @@ impl App {
 
         let buffer_id = self.active().buffer;
         let language = self.language_of(buffer_id);
-        let (lsp_state, lsp_detail) = if cfg!(windows) {
-            (
-                ServiceState::Unavailable,
-                "LSP is unavailable in Windows Phase 1".to_owned(),
-            )
-        } else if !self.config.lsp.enable {
+        let (lsp_state, lsp_detail) = if !self.config.lsp.enable {
             (ServiceState::Disabled, "disabled in settings".to_owned())
         } else if !self.lsp_workspace_allowed {
             (
@@ -918,6 +913,11 @@ impl App {
                 return;
             }
         };
+        #[cfg(windows)]
+        if let Err(error) = crate::cwd_handoff::ordinary_directory(&directory) {
+            self.action_failed(format!("cannot quit here: {error}"));
+            return;
+        }
         self.working_directory = directory.clone();
         self.quit_directory = Some(directory);
         self.persistent_exit_request = Some(super::PersistentExitRequest::Quit { force });

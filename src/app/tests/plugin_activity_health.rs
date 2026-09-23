@@ -73,11 +73,6 @@ fn activity_health_protects_every_global_quit_and_force_discard_spelling() {
                 );
                 assert!(app.persistent_exit_request.is_none());
                 assert!(app.quit_directory.is_none());
-                if cfg!(windows) && (command.starts_with("quit-here") || command.starts_with("qh"))
-                {
-                    assert!(app.status.contains("unavailable"), "{}", app.status);
-                    continue;
-                }
                 assert!(app.status.contains("activity leases"), "{}", app.status);
                 assert!(
                     app.status.contains("stop its owner in :plugins"),
@@ -185,6 +180,7 @@ fn active_plugin_jobs_share_the_standalone_quit_guard() {
 #[test]
 fn activity_health_session_status_and_preview_keep_protected_owners_visible() {
     let mut row = WorkspaceRow {
+        publication_key: None,
         id: "test".into(),
         name: None,
         number: None,

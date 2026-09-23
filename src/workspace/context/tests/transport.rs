@@ -3,6 +3,12 @@
 use super::*;
 use crate::test_support::TestRuntimeRoot;
 use serde_json::json;
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::UnixStream,
+    sync::mpsc,
+};
 
 #[tokio::test]
 async fn revocation_discards_a_reply_waiting_for_publication() {

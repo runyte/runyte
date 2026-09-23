@@ -21,7 +21,7 @@ use super::{
     push_matching_words, response_name, row_is_not_before, to_lsp_position, word_bounds,
     word_token_before, workspace_edit_path_identity,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::{SessionAction, SessionActionMenu};
 
 #[derive(Debug)]
@@ -1640,6 +1640,8 @@ impl App {
         } = tracked;
         match (pending, response) {
             (PendingRequest::Goto { label }, Response::Locations(locations)) => {
+                #[cfg(windows)]
+                let locations = self.resolve_open_lsp_locations(locations);
                 match locations.len() {
                     0 => self.status(format!("no {label} found")),
                     1 => {
@@ -1861,6 +1863,35 @@ impl App {
         self.completion
             .as_ref()
             .is_some_and(|state| state.source == CompletionSource::Path)
+    }
+
+    /// Resolve server path spellings while accepting the response. Picker
+    /// construction and preview rendering continue to read only live buffers.
+    #[cfg(windows)]
+    fn resolve_open_lsp_locations(
+        &self,
+        mut locations: Vec<crate::lsp::Location>,
+    ) -> Vec<crate::lsp::Location> {
+        let open: HashMap<_, _> = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !self.closed_buffers.contains(index))
+            .filter_map(|(_, buffer)| buffer.path.as_ref())
+            .filter_map(|path| {
+                workspace_edit_path_identity(path)
+                    .ok()
+                    .map(|identity| (identity, path))
+            })
+            .collect();
+        for location in &mut locations {
+            if let Ok(identity) = workspace_edit_path_identity(&location.path)
+                && let Some(path) = open.get(&identity)
+            {
+                location.path = (*path).clone();
+            }
+        }
+        locations
     }
 
     fn open_location_picker(&mut self, label: &'static str, locations: Vec<crate::lsp::Location>) {
@@ -2564,13 +2595,39 @@ impl App {
         if self.terminal_action_menu.is_some() {
             return self.handle_terminal_action_key(key);
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.session_action_menu.is_some() {
             return self.handle_session_action_key(key);
+        }
+        #[cfg(windows)]
+        if self.session_manager_selection_lost
+            && self
+                .list
+                .as_ref()
+                .is_some_and(|list| list.title.starts_with("Sessions"))
+        {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
+                self.action_failed("selected session changed; select a session again");
+                return Ok(());
+            }
+            if matches!(
+                key.code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::BackTab
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+                    | KeyCode::Home
+                    | KeyCode::End
+            ) || matches!(key.code, KeyCode::Char('n' | 'p' | 'd' | 'u') if key.modifiers.contains(Modifiers::CONTROL))
+            {
+                self.session_manager_selection_lost = false;
+            }
         }
         if self.buffer_action_menu.is_some() {
             return self.handle_buffer_action_key(key);
         }
+        #[cfg(unix)]
         if self
             .list
             .as_ref()
@@ -2650,7 +2707,7 @@ impl App {
                     self.open_navigator_actions(destination);
                     return Ok(());
                 }
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 if matches!(self.selected_list_action(), Some(ListAction::Workspace(_))) {
                     self.open_session_actions();
                     return Ok(());
@@ -2730,7 +2787,7 @@ impl App {
         }
         if preview_changed {
             self.preview_selected_setting_value();
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             self.request_selected_workspace_preview();
         }
         Ok(())
@@ -2752,11 +2809,18 @@ impl App {
             .is_some_and(|list| list.title.starts_with("Sessions") && list.filter.is_empty())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn open_session_actions(&mut self) {
         let Some(ListAction::Workspace(row)) = self.selected_list_action() else {
             return;
         };
+        let Some(selection) = self.workspace_rows.get(row).map(|entry| entry.selection()) else {
+            return;
+        };
+        if self.workspace_row_index(&selection) != Ok(Some(row)) {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
         let Some(entry) = self.workspace_rows.get(row) else {
             return;
         };
@@ -2764,7 +2828,19 @@ impl App {
         // belong to a running session, forgetting the history record to a
         // stopped one. A stopped session holds no digit to change, so offering
         // to set one would be an answer nothing in the manager could show.
-        let actions = if entry.running {
+        let actions = if cfg!(windows) {
+            if entry.running && entry.incompatible_protocol.is_some() {
+                vec![SessionAction::ForceClose]
+            } else if entry.running {
+                vec![
+                    SessionAction::Rename,
+                    SessionAction::Close,
+                    SessionAction::ForceClose,
+                ]
+            } else {
+                vec![SessionAction::Rename]
+            }
+        } else if entry.running {
             vec![
                 SessionAction::Open,
                 SessionAction::Rename,
@@ -2780,14 +2856,14 @@ impl App {
             ]
         };
         self.session_action_menu = Some(SessionActionMenu {
-            row,
+            selection,
             actions,
             selected: 0,
             force_armed: false,
         });
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn handle_session_action_key(&mut self, key: KeyStroke) -> Result<()> {
         let control = key.modifiers.contains(Modifiers::CONTROL);
         match (key.code, control) {
@@ -2809,69 +2885,100 @@ impl App {
                 }
             }
             (KeyCode::Enter, _) => {
-                if self.session_action_menu.as_ref().is_some_and(|menu| {
-                    menu.selected_action() == Some(SessionAction::ForceClose) && !menu.force_armed
-                }) && self.session_action_menu.as_ref().is_some_and(|menu| {
-                    self.workspace_rows
-                        .get(menu.row)
-                        .is_some_and(|row| row.running)
-                }) {
+                let chosen = self.session_action_menu.as_ref().and_then(|menu| {
+                    let action = menu.selected_action()?;
+                    let index = self.workspace_row_index(&menu.selection).ok().flatten()?;
+                    let row = self.workspace_rows.get(index)?;
+                    Some((
+                        menu.selection.clone(),
+                        row.name.clone(),
+                        row.running,
+                        action,
+                    ))
+                });
+                let Some((selection, name, running, action)) = chosen else {
+                    self.session_action_menu = None;
+                    self.action_failed("selected session changed; choose it again");
+                    return Ok(());
+                };
+                if action == SessionAction::ForceClose
+                    && running
+                    && self
+                        .session_action_menu
+                        .as_ref()
+                        .is_some_and(|menu| !menu.force_armed)
+                {
                     self.session_action_menu.as_mut().unwrap().force_armed = true;
                     self.status(
                         "force close discards protected buffers, waiters, and live terminals; press Enter again to confirm",
                     );
                     return Ok(());
                 }
-                let chosen = self.session_action_menu.as_ref().and_then(|menu| {
-                    let action = menu.selected_action()?;
-                    let row = self.workspace_rows.get(menu.row)?;
-                    Some((
-                        row.project_root.clone(),
-                        row.name.clone(),
-                        row.running,
-                        action,
-                    ))
-                });
-                match chosen {
-                    Some((_, _, _, SessionAction::Open)) => {
-                        self.session_action_menu = None;
-                        self.activate_list_selection()?;
+                match (running, action) {
+                    (_, SessionAction::Open) => {
+                        #[cfg(windows)]
+                        {
+                            self.action_failed("attaching sessions is unavailable on Windows");
+                            return Ok(());
+                        }
+                        #[cfg(unix)]
+                        {
+                            if !self.restore_workspace_selection(&selection) {
+                                self.session_action_menu = None;
+                                self.action_failed("selected session changed; choose it again");
+                                return Ok(());
+                            }
+                            self.session_action_menu = None;
+                            self.activate_list_selection()?;
+                        }
                     }
-                    Some((selector, name, _, SessionAction::Rename)) => {
+                    (_, SessionAction::Rename) => {
                         self.list = None;
                         self.session_action_menu = None;
-                        self.session_rename_target = Some(selector);
+                        self.session_rename_target = Some(selection);
+                        #[cfg(windows)]
+                        {
+                            self.session_manager_return_target = self.session_rename_target.clone();
+                        }
                         self.open_prompt(PromptKind::SessionRename);
                         self.command = name.unwrap_or_default();
                         self.command_cursor = self.command.chars().count();
                     }
-                    Some((selector, _, true, SessionAction::Number)) => {
-                        self.list = None;
-                        self.session_action_menu = None;
-                        self.session_number_target = Some(selector.clone());
-                        self.session_manager_return_target = Some(selector);
-                        self.open_prompt(PromptKind::SessionNumber);
+                    (true, SessionAction::Number) => {
+                        #[cfg(windows)]
+                        {
+                            self.action_failed("session numbers are unavailable on Windows");
+                            return Ok(());
+                        }
+                        #[cfg(unix)]
+                        {
+                            self.list = None;
+                            self.session_action_menu = None;
+                            self.session_number_target = Some(selection.clone());
+                            self.session_manager_return_target = Some(selection);
+                            self.open_prompt(PromptKind::SessionNumber);
+                        }
                     }
-                    Some((_, _, false, SessionAction::Number)) => {
+                    (false, SessionAction::Number) => {
                         self.status("this session is already stopped")
                     }
-                    Some((selector, _, true, SessionAction::Close)) => self.stop_session(selector),
-                    Some((_, _, false, SessionAction::Close)) => {
+                    (true, SessionAction::Close) => self.stop_selected_session(selection, false),
+                    (false, SessionAction::Close) => self.status("this session is already stopped"),
+                    (true, SessionAction::ForceClose) => {
+                        self.stop_selected_session(selection, true)
+                    }
+                    (false, SessionAction::ForceClose) => {
                         self.status("this session is already stopped")
                     }
-                    Some((selector, _, true, SessionAction::ForceClose)) => {
-                        self.stop_session_force(selector)
+                    (false, SessionAction::Forget) => {
+                        #[cfg(unix)]
+                        let _ = self.forget_workspace(selection.project_root().to_path_buf());
+                        #[cfg(windows)]
+                        self.action_failed("use :session-clean to clean verified stopped history");
                     }
-                    Some((_, _, false, SessionAction::ForceClose)) => {
-                        self.status("this session is already stopped")
-                    }
-                    Some((selector, _, false, SessionAction::Forget)) => {
-                        let _ = self.forget_workspace(selector);
-                    }
-                    Some((_, _, true, SessionAction::Forget)) => {
+                    (true, SessionAction::Forget) => {
                         self.status("stop this session before forgetting it")
                     }
-                    None => {}
                 }
             }
             _ => {}
@@ -3772,10 +3879,30 @@ impl App {
             self.choose_tutorial_motion_hints(hints);
             return Ok(());
         }
+        #[cfg(windows)]
+        if matches!(chosen, Some(ListAction::Workspace(_))) {
+            self.action_failed(
+                "use Tab for session controls; attachment is unavailable on Windows",
+            );
+            return Ok(());
+        }
         #[cfg(unix)]
         if matches!(chosen, Some(ListAction::Workspace(_))) && !self.persistent_session {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return Ok(());
+        }
+        #[cfg(unix)]
+        if let Some(ListAction::Workspace(index)) = &chosen {
+            let Some(selection) = self.workspace_rows.get(*index).map(|row| row.selection()) else {
+                self.action_failed("selected session changed; choose it again");
+                return Ok(());
+            };
+            if selection.publication_key().is_some()
+                || self.workspace_row_index(&selection) != Ok(Some(*index))
+            {
+                self.action_failed("selected session cannot be attached here");
+                return Ok(());
+            }
         }
         self.list = None;
         self.buffer_action_menu = None;
@@ -3839,14 +3966,18 @@ impl App {
             }
             #[cfg(unix)]
             Some(ListAction::Workspace(row)) => {
-                if let Some(path) = self
+                if let Some(selection) = self
                     .workspace_rows
                     .get(row)
-                    .map(|workspace| workspace.project_root.clone())
-                    && self.request_workspace_switch(path)
+                    .map(crate::workspace::WorkspaceRow::selection)
+                    && self.request_selected_workspace_switch(selection)
                 {
                     self.should_quit = true;
                 }
+            }
+            #[cfg(windows)]
+            Some(ListAction::Workspace(_)) => {
+                unreachable!("native session rows return before attachment")
             }
             Some(ListAction::SettingValue { .. }) | Some(ListAction::ExplorerSetting { .. }) => {
                 unreachable!("settings actions return before closing the shared picker")

@@ -2,6 +2,7 @@
 
 //! Fixture-owned temporary storage; Windows tests do not need Unix socket limits.
 use std::{
+    ffi::OsStr,
     fs, io,
     ops::Deref,
     path::{Component, Path, PathBuf},
@@ -32,7 +33,7 @@ impl TestRuntimeRoot {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             );
             let path = base.join(format!("ryt-{label}-{owner}"));
-            match fs::create_dir(&path) {
+            match crate::windows_fs::create_private_directory(&path) {
                 Ok(()) => {
                     fs::write(path.join(".runyte-test-owner"), &owner)?;
                     return Ok(Self { path, owner });
@@ -61,8 +62,24 @@ impl TestRuntimeRoot {
             ));
         }
         let path = self.path.join(relative);
-        fs::create_dir(&path)?;
+        crate::windows_fs::create_private_directory(&path)?;
         Ok(path)
+    }
+    /// Writes fixture metadata through the same protected directory owner as
+    /// native endpoint records. The target must stay inside this test root.
+    pub fn atomic_write_private(
+        &self,
+        directory: &Path,
+        name: &OsStr,
+        bytes: &[u8],
+    ) -> io::Result<()> {
+        if !directory.starts_with(&self.path) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "private fixture target is outside its test root",
+            ));
+        }
+        crate::private_storage::Directory::open(directory, true)?.atomic_write(name, bytes)
     }
     pub fn cleanup_if_owned(&self) {
         if fs::read_to_string(self.path.join(".runyte-test-owner"))

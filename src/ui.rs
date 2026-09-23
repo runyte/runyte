@@ -7069,6 +7069,7 @@ mod tests {
         app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
             generation: 1,
             result: Ok(vec![crate::workspace::WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 number: None,
@@ -7141,6 +7142,7 @@ mod tests {
         app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
             generation: 1,
             result: Ok(vec![crate::workspace::WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 number: Some(1),
@@ -7229,6 +7231,7 @@ mod tests {
             generation: 1,
             result: Ok(vec![
                 crate::workspace::WorkspaceRow {
+                    publication_key: None,
                     unread_terminals: None,
                     terminal_bell: None,
                     number: None,
@@ -7258,6 +7261,7 @@ mod tests {
                     missing_directory: false,
                 },
                 crate::workspace::WorkspaceRow {
+                    publication_key: None,
                     unread_terminals: None,
                     terminal_bell: None,
                     number: None,
@@ -7323,6 +7327,7 @@ mod tests {
             generation: 1,
             result: Ok(vec![
                 crate::workspace::WorkspaceRow {
+                    publication_key: None,
                     unread_terminals: None,
                     terminal_bell: None,
                     number: None,
@@ -7346,6 +7351,7 @@ mod tests {
                     missing_directory: false,
                 },
                 crate::workspace::WorkspaceRow {
+                    publication_key: None,
                     unread_terminals: None,
                     terminal_bell: None,
                     number: None,

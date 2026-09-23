@@ -129,6 +129,7 @@ impl WorkspaceHost {
             },
         );
         let root = self.app.state_root.clone();
+        let anchor = self.app.plugin_state_anchor.clone();
         let worker_identity = identity.clone();
         let permit = Arc::new(permit);
         let worker_permit = permit.clone();
@@ -136,7 +137,12 @@ impl WorkspaceHost {
             // Runtime teardown may drop the waiter while OS IO continues.
             // Both sides retain the same one shared service slot.
             let _permit = worker_permit;
-            state::run(&root, &worker_identity, task, &control)
+            match anchor.as_deref() {
+                Some(anchor) => {
+                    state::run_with_anchor(&root, Some(anchor), &worker_identity, task, &control)
+                }
+                None => state::run(&root, &worker_identity, task, &control),
+            }
         });
         let request = request.to_owned();
         runtime.spawn(async move {

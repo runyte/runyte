@@ -213,6 +213,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
                 | crate::command::CommandCapability::GitRefresh,
             ) => " no Git",
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
+            Some(crate::command::CommandCapability::SessionControls) => " session controls",
             None => " unavailable",
         },
         (_, BindingAvailability::Implemented) => "",
@@ -814,6 +815,9 @@ mod tests {
             persistent_session: CommandAvailability::Unavailable(
                 "needs workspace.mode: persistent".to_owned(),
             ),
+            session_controls: CommandAvailability::Unavailable(
+                "needs workspace.mode: persistent".to_owned(),
+            ),
         };
         let assert_fits = |row: &KeyHintRow| {
             let description = key_hint_description(row);
@@ -841,7 +845,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 322, "the command inventory changed");
+        assert_eq!(targets.len(), 323, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
@@ -980,6 +984,7 @@ mod tests {
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Available,
+            session_controls: CommandAvailability::Available,
         };
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());
@@ -1005,35 +1010,30 @@ mod tests {
             .iter()
             .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::LspStatus)))
             .expect("the Language namespace lists LSP status");
-        assert_eq!(
-            status.unavailable_reason.as_deref(),
-            cfg!(windows).then_some("LSP is unavailable in Windows Phase 1")
-        );
+        assert_eq!(status.unavailable_reason.as_deref(), None);
         let completion = children
             .iter()
             .find(|row| row.target == Some(BindingTarget::Editor(EditorCommand::TriggerCompletion)))
             .expect("the Language namespace lists completion");
         assert_eq!(
             completion.unavailable_reason.as_deref(),
-            Some(if cfg!(windows) {
-                "LSP is unavailable in Windows Phase 1"
-            } else {
-                "the active file is not attached"
-            })
+            Some("the active file is not attached")
         );
     }
 
     /// `Space Space` is an exact binding with no namespace of its own, so its
-    /// availability has to come from the command it targets. Standalone mode
-    /// must grey it out the way a missing language server greys `Space l`.
+    /// availability has to come from the command it targets. Unix standalone
+    /// mode and a missing Windows catalog service grey it out like a missing
+    /// language server greys `Space l`.
     #[test]
     fn the_session_manager_greys_out_in_standalone_mode() {
-        let snapshot = |persistent_session| AppCapabilitySnapshot {
+        let snapshot = |persistent_session: CommandAvailability| AppCapabilitySnapshot {
             syntax: CommandAvailability::Available,
             lsp_manager: CommandAvailability::Available,
             lsp_document: CommandAvailability::Available,
             git_project: CommandAvailability::Available,
             git_refresh: CommandAvailability::Available,
+            session_controls: persistent_session.clone(),
             persistent_session,
         };
         let manager_row = |capabilities: &AppCapabilitySnapshot| {
@@ -1054,17 +1054,13 @@ mod tests {
             )))
             .unavailable_reason
             .as_deref(),
-            Some(if cfg!(windows) {
-                crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
-            } else {
-                crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
-            })
+            Some(crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON)
         );
         assert_eq!(
             manager_row(&snapshot(CommandAvailability::Available))
                 .unavailable_reason
                 .as_deref(),
-            cfg!(windows).then_some(crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON)
+            None
         );
     }
 

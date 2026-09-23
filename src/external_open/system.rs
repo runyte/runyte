@@ -4,15 +4,19 @@
 //! Prepare and launch run off the editor loop; neither consults the program cache.
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(any(not(windows), test))]
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
+    process::{Command, Stdio},
+    sync::mpsc,
+};
+use std::{
+    ffi::OsString,
     fmt,
     path::Path,
-    process::{Command, Stdio},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
-        mpsc,
     },
 };
 
@@ -49,6 +53,8 @@ impl std::error::Error for Error {}
 /// before consuming it; preparing a target does not authorize a launch.
 pub struct Prepared {
     argument: OsString,
+    #[cfg(windows)]
+    is_url: bool,
 }
 impl fmt::Debug for Prepared {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -62,6 +68,8 @@ impl fmt::Debug for Prepared {
 /// Validates a URL or resolves an existing regular file inside the workspace.
 /// Filesystem calls belong on a worker, including canonicalizing the root.
 pub fn prepare(root: &Path, target: Target) -> Result<Prepared, Error> {
+    #[cfg(windows)]
+    let is_url = matches!(&target, Target::Url(_));
     let argument = match target {
         Target::Url(text) => {
             validate_url(&text)?;
@@ -82,7 +90,11 @@ pub fn prepare(root: &Path, target: Target) -> Result<Prepared, Error> {
             file.into_os_string()
         }
     };
-    Ok(Prepared { argument })
+    Ok(Prepared {
+        argument,
+        #[cfg(windows)]
+        is_url,
+    })
 }
 fn safe_target(text: &str) -> bool {
     !text.is_empty() && text.len() <= MAX_TARGET_BYTES && !text.chars().any(char::is_control)
@@ -90,7 +102,7 @@ fn safe_target(text: &str) -> bool {
 
 /// The URL parser checks host/port/IP syntax; raw checks also refuse ambiguous
 /// whitespace, backslashes, and empty user-info that normalization could erase.
-fn validate_url(text: &str) -> Result<(), Error> {
+pub(super) fn validate_url(text: &str) -> Result<(), Error> {
     if !safe_target(text) || text.chars().any(char::is_whitespace) || text.contains('\\') {
         return Err(Error::InvalidTarget);
     }
@@ -119,9 +131,23 @@ impl Prepared {
     /// The child has independent stdio/process-group ownership and is reaped
     /// without being stopped when an application or editor handle disappears.
     pub fn launch(self) -> Result<(), Error> {
-        let executable =
-            platform_handler(super::OpenPlatform::CURRENT).ok_or(Error::Unavailable)?;
-        launch_with(self, OsStr::new(executable), active_openers())
+        #[cfg(windows)]
+        {
+            super::windows::dispatch_target(self.argument, self.is_url)
+                .and_then(super::LaunchTicket::wait)
+                .map_err(|error| {
+                    error
+                        .downcast_ref::<Error>()
+                        .copied()
+                        .unwrap_or(Error::Unavailable)
+                })
+        }
+        #[cfg(not(windows))]
+        {
+            let executable =
+                platform_handler(super::OpenPlatform::CURRENT).ok_or(Error::Unavailable)?;
+            launch_with(self, OsStr::new(executable), active_openers())
+        }
     }
 
     #[cfg(test)]
@@ -131,21 +157,22 @@ impl Prepared {
     }
 }
 
-fn active_openers() -> Arc<AtomicUsize> {
+pub(super) fn active_openers() -> Arc<AtomicUsize> {
     static ACTIVE: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
     ACTIVE.get_or_init(|| Arc::new(AtomicUsize::new(0))).clone()
 }
+#[cfg(not(windows))]
 fn platform_handler(platform: super::OpenPlatform) -> Option<&'static str> {
     match platform {
         super::OpenPlatform::Linux => Some("xdg-open"),
         super::OpenPlatform::MacOs => Some("/usr/bin/open"),
-        super::OpenPlatform::Unsupported => None,
+        super::OpenPlatform::Unsupported | super::OpenPlatform::Windows => None,
     }
 }
 
-struct Slot(Arc<AtomicUsize>);
+pub(super) struct Slot(Arc<AtomicUsize>);
 impl Slot {
-    fn reserve(active: Arc<AtomicUsize>) -> Result<Self, Error> {
+    pub(super) fn reserve(active: Arc<AtomicUsize>) -> Result<Self, Error> {
         active
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < MAX_OPENERS).then_some(count + 1)
@@ -160,6 +187,7 @@ impl Drop for Slot {
     }
 }
 
+#[cfg(any(not(windows), test))]
 fn launch_with(
     prepared: Prepared,
     executable: &OsStr,
@@ -173,7 +201,9 @@ fn launch_with(
     })
 }
 
+#[cfg(any(not(windows), test))]
 type ReapWork = Box<dyn FnOnce() + Send>;
+#[cfg(any(not(windows), test))]
 fn launch_using(
     prepared: Prepared,
     executable: &OsStr,

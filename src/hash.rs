@@ -100,7 +100,7 @@ fn hex_digit(value: u8) -> char {
     char::from_digit(u32::from(value), 16).unwrap_or('0')
 }
 
-fn sha256(bytes: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
     let mut state = INITIAL_STATE;
     let mut block = [0u8; 64];
 

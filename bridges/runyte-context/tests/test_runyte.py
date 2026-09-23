@@ -20,16 +20,24 @@ import time
 import unittest
 
 from test_bridge import MCPClient, PACKAGE, REPO
-from native_pty import spawn as spawn_pty
+from workspace_readiness import wait_for_workspaces
 from runyte_context.client import FRAME_BYTES, decode, encode
 from runyte_context.server import PROTOCOL
 
-sys.path.insert(0, str(REPO / 'benchmarks'))
-import ptybench
+UNIX_PTY = os.name != 'nt'
+if UNIX_PTY:
+    from native_pty import spawn as spawn_pty
+
+    sys.path.insert(0, str(REPO / 'benchmarks'))
+    import ptybench
 
 BINARY = os.environ.get('RUNYTE_CONTEXT_TEST_BINARY')
 SCOPES = ['terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose']
 CONTROL = re.compile(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)')
+
+
+def compact_presentation(value):
+    return b''.join(CONTROL.sub(b'', value).split())
 
 
 def private_json(path, value):
@@ -45,6 +53,24 @@ def seed_identity(root, name, projects):
         path = os.fsencode(project.resolve())
         key = hashlib.sha256(path + b'\0' + identity.encode()).hexdigest()
         private_json(root / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'scopes': SCOPES})
+
+
+def terminal_command(marker, stop):
+    # The prompt renders the command before the child starts. Forced adjacent
+    # quotes keep this argv short while leaving shell syntax between marker
+    # halves even when terminal cursor movement omits blank cells.
+    def quoted(value):
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+
+    split = len(marker) // 2
+    assert 0 < split < len(marker)
+    marker_word = quoted(marker[:split]) + quoted(marker[split:])
+    script = 'printf "%s\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
+    prefix = ['/bin/sh', '-c', script, 'context-fixture']
+    command = ('terminal ' + ' '.join(shlex.quote(value) for value in prefix)
+               + ' ' + marker_word + ' ' + shlex.quote(str(stop)))
+    assert marker not in command
+    return command
 
 
 class NativeEditor:
@@ -138,11 +164,13 @@ class NativeEditor:
         except Exception as error:
             self.errors.append(type(error).__name__)
 
-    def wait_output(self, marker, seconds=15):
-        deadline = time.monotonic() + seconds
+    def wait_output(self, marker, seconds=15, *, deadline=None, compact=False):
+        deadline = time.monotonic() + seconds if deadline is None else deadline
         while time.monotonic() < deadline:
             with self.lock:
-                if marker.encode() in CONTROL.sub(b'', bytes(self.output)):
+                output = bytes(self.output)
+                rendered = compact_presentation(output) if compact else CONTROL.sub(b'', output)
+                if marker.encode() in rendered:
                     return
             if self.errors:
                 raise AssertionError('Native PTY reader failed: ' + self.errors[0])
@@ -174,16 +202,19 @@ class NativeEditor:
         time.sleep(.15)
 
     def terminal(self, name, marker):
+        deadline = time.monotonic() + 15
         self.terminal_number += 1
         stop = self.project / ('terminal-stop-' + str(self.terminal_number))
         self.stop_files.append(stop)
         # A data file ends the checked system shell. Nothing executable is written.
-        script = 'printf "%s\\n" "$1"; while [ ! -f "$2" ]; do /bin/sleep 0.05; done'
-        arguments = ['/bin/sh', '-c', script, 'context-fixture', marker, str(stop)]
-        self.command('terminal ' + ' '.join(shlex.quote(value) for value in arguments))
+        self.command(terminal_command(marker, stop))
         self.terminal_input = True
-        self.wait_output(marker)
-        self.command('terminal-rename ' + name)
+        self.wait_output(marker, deadline=deadline)
+        rename_command = 'terminal-rename ' + name
+        rename_marker = 'named' + name
+        assert rename_marker.encode() not in compact_presentation(rename_command.encode())
+        self.command(rename_command)
+        self.wait_output(rename_marker, deadline=deadline, compact=True)
 
     def detach(self):
         self.command('detach')
@@ -257,11 +288,11 @@ class RealMCPClient(MCPClient):
             self.close()
             raise
 
-    def rpc(self, method, params):
+    def rpc(self, method, params, *, seconds=10):
         self.counter += 1
         self.process.stdin.write(encode({'jsonrpc': '2.0', 'id': self.counter, 'method': method, 'params': params}))
         self.process.stdin.flush()
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + seconds
         with selectors.DefaultSelector() as poll:
             poll.register(self.process.stdout, selectors.EVENT_READ)
             while True:
@@ -285,15 +316,74 @@ class RealMCPClient(MCPClient):
                     raise AssertionError('Real MCP bridge exited early')
                 self.buffer.extend(chunk)
 
-    def data(self, name, **arguments):
-        result = self.tool(name, **arguments)
+    def data(self, name, *, response_seconds=10, **arguments):
+        result = self.rpc('tools/call', {'name': name, 'arguments': arguments},
+                          seconds=response_seconds)['result']
         if result.get('isError'):
             raise AssertionError('Real MCP tool failed: ' + name)
         structured = result['structuredContent']
         return structured if name == 'list_workspaces' else structured['data']
 
 
-@unittest.skipUnless(BINARY, 'set RUNYTE_CONTEXT_TEST_BINARY to run real editor/bridge integration')
+@unittest.skipUnless(UNIX_PTY, 'Unix PTY fixture')
+class NativeFixtureSynchronizationTests(unittest.TestCase):
+    def test_terminal_marker_is_child_output_and_absent_from_typed_command(self):
+        with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
+            stop = Path(directory) / 'stop'
+            stop.touch()
+            for marker in ('CLAUDE_LIVE_MARKER', "é' MARKER"):
+                command = terminal_command(marker, stop)
+                self.assertNotIn(marker, command)
+                child = subprocess.run(shlex.split(command.removeprefix('terminal ')),
+                                       capture_output=True, encoding='utf-8', timeout=5, check=True)
+                self.assertEqual(child.stdout, marker + '\n')
+
+    def test_omitted_prompt_gaps_cannot_reconstruct_a_child_marker(self):
+        marker = 'CLAUDE_LIVE_MARKER'
+        split = len(marker) // 2
+        old_prompt = (marker[:split] + ' ' + marker[split:]).encode()
+        self.assertEqual(CONTROL.sub(b'', old_prompt.replace(b' ', b'\x1b[2D')), marker.encode())
+        command = terminal_command(marker, Path('/fixture/stop'))
+        # The PTY reader removes cursor controls; a terminal can also omit
+        # blank cells that separated the old literal marker halves.
+        rendered = command.encode().replace(b' ', b'\x1b[2D')
+        self.assertNotIn(marker.encode(), CONTROL.sub(b'', rendered))
+
+    def test_compact_rename_status_survives_cursor_moved_gaps_but_command_cannot_match(self):
+        marker = b'namedClaude'
+        status = b'terminal 1 named\x1b[2D Claude'
+        self.assertIn(marker, compact_presentation(status))
+        self.assertNotIn(marker, compact_presentation(b'terminal-rename Claude'))
+
+    def test_terminal_waits_for_child_output_and_rename_acknowledgement(self):
+        with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
+            editor = NativeEditor.__new__(NativeEditor)
+            editor.project = Path(directory)
+            editor.terminal_number = 0
+            editor.stop_files = []
+            editor.terminal_input = False
+            events = []
+            editor.command = lambda command: events.append(('command', command))
+            editor.wait_output = lambda marker, **kwargs: events.append(
+                ('output', marker, kwargs['deadline'], kwargs))
+            editor.terminal('Claude', 'CLAUDE_LIVE_MARKER')
+            self.assertEqual([event[:2] for event in events if event[0] == 'output'], [
+                ('output', 'CLAUDE_LIVE_MARKER'),
+                ('output', 'namedClaude'),
+            ])
+            self.assertEqual(events[1][2], events[3][2])
+            self.assertNotIn('compact', events[1][3])
+            self.assertTrue(events[3][3]['compact'])
+            self.assertEqual([event[:2] for event in events], [
+                ('command', terminal_command('CLAUDE_LIVE_MARKER', editor.stop_files[0])),
+                ('output', 'CLAUDE_LIVE_MARKER'),
+                ('command', 'terminal-rename Claude'),
+                ('output', 'namedClaude'),
+            ])
+
+
+@unittest.skipUnless(UNIX_PTY and BINARY,
+                     'set RUNYTE_CONTEXT_TEST_BINARY on Unix to run real editor/bridge integration')
 class RealRunyteTests(unittest.TestCase):
     def setUp(self):
         self.binary = Path(BINARY).resolve(strict=True)
@@ -328,9 +418,15 @@ class RealRunyteTests(unittest.TestCase):
         self.addCleanup(client.close)
         return client
 
-    def workspaces(self, client):
-        rows = client.data('list_workspaces')['workspaces']
-        self.assertEqual(len(rows), 2)
+    def workspaces(self, client, projects=None):
+        projects = self.projects if projects is None else projects
+        # The first standalone frame precedes optional host services. Wait for
+        # successful live discovery and grants, not merely rendered file text.
+        inventory = wait_for_workspaces(
+            lambda seconds: client.data('list_workspaces', response_seconds=min(10, seconds)), projects)
+        rows = inventory['workspaces']
+        self.assertEqual({Path(row['root']) for row in rows}, set(projects))
+        self.assertEqual(len(rows), len(projects))
         self.assertTrue(all(row['readable'] for row in rows))
         return {Path(row['root']).name: row['workspace'] for row in rows}
 
@@ -393,8 +489,7 @@ class RealRunyteTests(unittest.TestCase):
         codex, claude = self.client('codex'), self.client('claude')
         targets = []
         for client in (codex, claude):
-            rows = client.data('list_workspaces')['workspaces']
-            workspace = next(row['workspace'] for row in rows if Path(row['root']).name == 'one')
+            workspace = self.workspaces(client, [self.projects[0]])['one']
             buffers = client.data('list_buffers', workspace=workspace)['buffers']
             targets.append((client, workspace, next(row for row in buffers if row['name'].endswith('note.txt'))))
         errors, results = [], [[], []]

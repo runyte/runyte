@@ -870,6 +870,7 @@ pub struct Invocation {
 #[derive(Clone)]
 pub(crate) struct CapturedContext {
     pub foreground_allowed: bool,
+    pub native_handoff_allowed: bool,
     pub action: Option<u64>,
     pub pane: usize,
     pub buffer: usize,

@@ -122,6 +122,7 @@ impl From<FrameGeometry> for CoreFrameGeometry {
 pub enum InputEvent {
     Key(KeyStroke),
     Text(String),
+    ClipboardPaste,
     Pointer(PointerEvent),
 }
 
@@ -130,6 +131,7 @@ impl From<CoreInputEvent> for InputEvent {
         match value {
             CoreInputEvent::Key(key) => Self::Key(key.into()),
             CoreInputEvent::Text(text) => Self::Text(text),
+            CoreInputEvent::ClipboardPaste => Self::ClipboardPaste,
             CoreInputEvent::Pointer(pointer) => Self::Pointer(pointer.into()),
         }
     }
@@ -140,6 +142,7 @@ impl From<InputEvent> for CoreInputEvent {
         match value {
             InputEvent::Key(key) => Self::Key(key.into()),
             InputEvent::Text(text) => Self::Text(text),
+            InputEvent::ClipboardPaste => Self::ClipboardPaste,
             InputEvent::Pointer(pointer) => Self::Pointer(pointer.into()),
         }
     }

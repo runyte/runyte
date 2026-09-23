@@ -7,19 +7,16 @@
 //! picker never performs filesystem or transport work on the render path.
 
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Read as _},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
-use crate::git::{WorkspaceGitFacts, read_workspace_git_facts};
+use crate::git::read_workspace_git_facts;
+use crate::project_root;
 use crate::protocol::{ClientRequest, HostResponse};
-use crate::{external_open, project_root};
 
 use super::{
     SessionPreview,
@@ -29,125 +26,38 @@ use super::{
         resolve_workspace_endpoint_with_runtime, shutdown_host, terminate_incompatible_host,
     },
     transport::{
-        LocalEndpoint, MAX_HOST_NAME_BYTES, MAX_PERSISTED_PATH_BYTES, RegisteredHost,
-        all_registry_roots, decode_path, encode_path, registered_hosts_in, registry_roots,
-        validate_host_name, workspace_id,
+        LocalEndpoint, RegisteredHost, all_registry_roots, registered_hosts_in, registry_roots,
+        workspace_id,
     },
 };
+
+use super::catalog_values::WorkspaceSelection;
+pub use super::catalog_values::{
+    ABBREVIATED_WORKSPACE_ID, DestinationInventory, WorkspaceEvent, WorkspaceRow,
+    abbreviated_id_width,
+};
+use super::catalog_values::{
+    apply_recent_activity, apply_recent_names, assign_running_workspace_numbers,
+    merge_assigned_numbers, order_workspace_rows, validate_destination_inventory,
+};
+use super::recent_history::*;
+pub use super::recent_history::{
+    MAX_WORKSPACE_NUMBER, RecentEntry, RecordedWorkspace, ensure_recent_workspace,
+    record_recent_workspace, record_workspace_activity, recorded_workspace_number,
+};
+#[cfg(test)]
+use super::session_name::MAX_HOST_NAME_BYTES;
+use super::session_name::{normalize_session_name, validate_host_name};
+#[cfg(test)]
+use crate::native_path::encode_path;
+#[cfg(test)]
+use std::{fs, io};
 
 const REQUEST_CAPACITY: usize = 16;
 const EVENT_CAPACITY: usize = 16;
 const CONTROL_TIMEOUT: Duration = Duration::from_millis(500);
-const RECENT_LIMIT: usize = 256;
-const MAX_RECENTS_BYTES: usize = 8 * 1024 * 1024;
-
-/// The number of workspace-ID characters a listing shows by default.
-///
-/// A workspace ID is already a truncation of a hash of its project root, and
-/// every selector that takes one resolves a prefix, so the full string is only
-/// ever read to be shortened again by whoever types it. Six hex digits tell
-/// apart far more workspaces than one person keeps, and they cost the listing
-/// twenty-six fewer columns on a narrow terminal. Git abbreviates object IDs
-/// for the same reason, and Runyte's own Git log already follows it.
-pub const ABBREVIATED_WORKSPACE_ID: usize = 6;
-
-/// The narrowest ID prefix that still tells `ids` apart.
-///
-/// Never below `ABBREVIATED_WORKSPACE_ID`, and above it only when two listed
-/// workspaces genuinely share that many characters, so every ID a listing
-/// prints stays a selector that resolves to exactly the row it was read from.
-///
-/// That holds for the listing it was computed from. A later command resolves
-/// against whatever is registered then, so a workspace first recorded after
-/// the listing was read could in principle share an abbreviation with a row it
-/// showed. Doing so needs two project roots whose hashes agree over this many
-/// hex digits, and both prefix resolvers answer more than one match by
-/// reporting the selector as ambiguous, so the cost of the collision is an
-/// error rather than reaching the wrong workspace.
-pub fn abbreviated_id_width<'a>(ids: impl IntoIterator<Item = &'a str>) -> usize {
-    let ids = ids.into_iter().collect::<Vec<_>>();
-    let longest = ids.iter().map(|id| id.len()).max().unwrap_or(0);
-    let mut prefixes = Vec::with_capacity(ids.len());
-    for width in ABBREVIATED_WORKSPACE_ID..longest {
-        prefixes.clear();
-        prefixes.extend(ids.iter().map(|id| &id[..width.min(id.len())]));
-        prefixes.sort_unstable();
-        let before = prefixes.len();
-        prefixes.dedup();
-        if prefixes.len() == before {
-            return width;
-        }
-    }
-    longest.max(ABBREVIATED_WORKSPACE_ID)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkspaceRow {
-    pub unread_terminals: Option<usize>,
-    pub terminal_bell: Option<bool>,
-    pub id: String,
-    pub name: Option<String>,
-    /// The digit that selects this workspace in the session manager, when it
-    /// has one. Per-user history rather than host state: a running host does
-    /// not answer it, and the same project numbered on one machine is
-    /// unnumbered on another.
-    pub number: Option<u8>,
-    /// The latest wall-clock second at which this workspace was visited.
-    /// Per-user history like `number`, and absent for catalog entries written
-    /// before activity timestamps were introduced until they are visited.
-    pub last_active_unix_seconds: Option<u64>,
-    pub project_root: PathBuf,
-    pub running: bool,
-    /// The protocol of a running host this build cannot speak to. Such a
-    /// workspace can be listed and stopped but never attached to, and it is
-    /// worth naming rather than hiding: a host left over from another version
-    /// keeps holding the endpoint every client resolves, so a workspace that
-    /// looked stopped was the reason attaching to it failed.
-    pub incompatible_protocol: Option<u32>,
-    pub unsaved_buffers: Option<usize>,
-    /// Every buffer the host holds open, unsaved or not.
-    pub open_buffers: Option<usize>,
-    pub pending_wait_requests: Option<usize>,
-    pub plugin_jobs: Option<usize>,
-    pub activity_leases: Option<usize>,
-    pub activities: Vec<crate::service_health::ActivityLeaseHealth>,
-    pub live_terminals: Option<usize>,
-    pub terminal_sessions: Option<usize>,
-    /// Latest creation/completed-line baseline among the host's live terminal
-    /// sessions. Host-owned and never persisted in recent history.
-    pub terminal_line_activity_unix_seconds: Option<u64>,
-    pub interactive_attached: Option<bool>,
-    /// What this workspace's own directory says about its Git checkout, when
-    /// it is one. Read from files rather than answered by the host, because a
-    /// stopped session has no host and its branch is worth listing anyway.
-    pub git: Option<WorkspaceGitFacts>,
-    /// Whether the project root has gone from disk while a host still runs in
-    /// it. Such a row keeps its number and its place so it can be found and
-    /// closed, rather than quietly becoming an unnumbered mystery.
-    pub missing_directory: bool,
-}
-
-impl WorkspaceRow {
-    /// The one wording for a workspace's state, so the CLI listing and the
-    /// editor's picker cannot describe the same row differently.
-    pub fn state_label(&self) -> String {
-        match (self.running, self.incompatible_protocol) {
-            (true, Some(protocol)) => format!("running (protocol {protocol})"),
-            (true, None) => "running".to_owned(),
-            (false, _) => "stopped".to_owned(),
-        }
-    }
-
-    pub fn display_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| {
-            self.project_root
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| self.project_root.display().to_string())
-        })
-    }
-}
+const NATIVE_SELECTION_UNAVAILABLE: &str =
+    "native publication selection is unavailable in the Unix session service";
 
 #[derive(Debug)]
 enum WorkspaceRequest {
@@ -164,7 +74,7 @@ enum WorkspaceRequest {
     },
     Inventory {
         generation: u64,
-        path: PathBuf,
+        selection: WorkspaceSelection,
     },
     Inspect {
         generation: u64,
@@ -172,7 +82,7 @@ enum WorkspaceRequest {
     },
     Stop {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         force: bool,
     },
@@ -182,86 +92,33 @@ enum WorkspaceRequest {
     },
     Rename {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         name: String,
     },
     Number {
         generation: u64,
-        selector: PathBuf,
+        target: WorkspaceRequestTarget,
         working_directory: PathBuf,
         number: Option<u8>,
     },
 }
 
 #[derive(Debug)]
-pub enum WorkspaceEvent {
-    DirectoryWorktrees {
-        generation: u64,
-        result: Result<Vec<PathBuf>, String>,
-    },
-    Inventory {
-        generation: u64,
-        path: PathBuf,
-        result: Result<DestinationInventory, String>,
-    },
-    Observed {
-        result: Result<Vec<WorkspaceRow>, String>,
-    },
-    Refreshed {
-        generation: u64,
-        result: Result<Vec<WorkspaceRow>, String>,
-    },
-    /// A silent manager-owned refresh used only while the overlay remains
-    /// open, so host terminal activity can cross its display threshold.
-    Polled {
-        result: Result<Vec<WorkspaceRow>, String>,
-    },
-    Inspected {
-        generation: u64,
-        path: PathBuf,
-        result: Box<Result<Option<WorkspaceRow>, String>>,
-    },
-    Previewed {
-        generation: u64,
-        path: PathBuf,
-        result: Result<SessionPreview, String>,
-    },
-    Stopped {
-        generation: u64,
-        selector: PathBuf,
-        result: Result<(), String>,
-    },
-    /// A workspace was dropped from the visited history. `recorded` is whether
-    /// there was an entry to drop, so a row that came from the running registry
-    /// rather than from history can say so instead of claiming a removal.
-    Forgotten {
-        generation: u64,
-        path: PathBuf,
-        result: Result<bool, String>,
-    },
-    Renamed {
-        generation: u64,
-        path: PathBuf,
-        name: String,
-        result: Result<(), String>,
-    },
-    /// A workspace's number changed. `displaced` names the workspace that gave
-    /// the number up, when assigning it swapped a pair, so the editor can say
-    /// where the old shortcut went.
-    Numbered {
-        generation: u64,
-        path: PathBuf,
-        number: Option<u8>,
-        result: Result<Option<PathBuf>, String>,
-    },
+enum WorkspaceRequestTarget {
+    UserSelector(PathBuf),
+    SelectedRow(WorkspaceSelection),
 }
 
-#[derive(Clone, Debug)]
-pub struct DestinationInventory {
-    pub incarnation: String,
-    pub entries: Vec<crate::protocol::OpenDestinationEntry>,
-    pub truncated: bool,
+impl WorkspaceRequestTarget {
+    fn into_parts(self) -> (PathBuf, Option<WorkspaceSelection>) {
+        match self {
+            Self::UserSelector(selector) => (selector, None),
+            Self::SelectedRow(selection) => {
+                (selection.project_root().to_path_buf(), Some(selection))
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -273,7 +130,7 @@ pub struct WorkspaceServiceHandle {
 #[derive(Clone, Debug)]
 struct WorkspacePreviewRequest {
     generation: u64,
-    path: PathBuf,
+    selection: WorkspaceSelection,
 }
 
 impl WorkspaceServiceHandle {
@@ -287,9 +144,16 @@ impl WorkspaceServiceHandle {
             .map_err(|_| "session service is unavailable or busy")
     }
 
-    pub fn try_inventory(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+    pub fn try_inventory(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
         self.requests
-            .try_send(WorkspaceRequest::Inventory { generation, path })
+            .try_send(WorkspaceRequest::Inventory {
+                generation,
+                selection,
+            })
             .map_err(|_| "session service is unavailable or busy")
     }
 
@@ -333,9 +197,16 @@ impl WorkspaceServiceHandle {
     /// Requests the selected session's live overview. A watch slot retains
     /// only the newest selection while an earlier host is answering, so fast
     /// picker movement cannot build a queue of stale socket round trips.
-    pub fn try_preview(&self, generation: u64, path: PathBuf) -> Result<(), &'static str> {
+    pub fn try_preview(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
         self.previews
-            .send(Some(WorkspacePreviewRequest { generation, path }))
+            .send(Some(WorkspacePreviewRequest {
+                generation,
+                selection,
+            }))
             .map_err(|_| "session preview service is unavailable")
     }
 
@@ -349,7 +220,27 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Stop {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                force,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_stop_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        force: bool,
+    ) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Stop {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 force,
             })
@@ -379,7 +270,28 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Rename {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                name,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_rename_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        name: String,
+    ) -> Result<(), &'static str> {
+        let name = normalize_session_name(&name);
+        self.requests
+            .try_send(WorkspaceRequest::Rename {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 name,
             })
@@ -399,7 +311,27 @@ impl WorkspaceServiceHandle {
         self.requests
             .try_send(WorkspaceRequest::Number {
                 generation,
-                selector,
+                target: WorkspaceRequestTarget::UserSelector(selector),
+                working_directory,
+                number,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => "session service queue is full",
+                mpsc::error::TrySendError::Closed(_) => "session service is unavailable",
+            })
+    }
+
+    pub fn try_number_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        working_directory: PathBuf,
+        number: Option<u8>,
+    ) -> Result<(), &'static str> {
+        self.requests
+            .try_send(WorkspaceRequest::Number {
+                generation,
+                target: WorkspaceRequestTarget::SelectedRow(selection),
                 working_directory,
                 number,
             })
@@ -435,16 +367,26 @@ impl WorkspaceService {
         tokio::spawn(async move {
             while preview_rx.changed().await.is_ok() {
                 let request = preview_rx.borrow_and_update().clone();
-                let Some(WorkspacePreviewRequest { generation, path }) = request else {
+                let Some(WorkspacePreviewRequest {
+                    generation,
+                    selection,
+                }) = request
+                else {
                     continue;
                 };
-                let result = preview_session(&path, &preview_state)
-                    .await
-                    .map_err(|error| format!("{error:#}"));
+                let path = selection.project_root().to_path_buf();
+                let result = if selection.publication_key().is_some() {
+                    Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                } else {
+                    preview_session(&path, &preview_state)
+                        .await
+                        .map_err(|error| format!("{error:#}"))
+                };
                 if preview_events
                     .send(WorkspaceEvent::Previewed {
                         generation,
                         path,
+                        selection,
                         result,
                     })
                     .await
@@ -486,13 +428,22 @@ impl WorkspaceService {
                         .and_then(|result| result);
                         WorkspaceEvent::DirectoryWorktrees { generation, result }
                     }
-                    WorkspaceRequest::Inventory { generation, path } => {
-                        let result = read_destination_inventory(&path, &state, runtime.as_deref())
-                            .await
-                            .map_err(|error| format!("{error:#}"));
+                    WorkspaceRequest::Inventory {
+                        generation,
+                        selection,
+                    } => {
+                        let path = selection.project_root().to_path_buf();
+                        let result = if selection.publication_key().is_some() {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            read_destination_inventory(&path, &state, runtime.as_deref())
+                                .await
+                                .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Inventory {
                             generation,
                             path,
+                            selection,
                             result,
                         }
                     }
@@ -540,24 +491,33 @@ impl WorkspaceService {
                     }
                     WorkspaceRequest::Stop {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         force,
                     } => {
-                        let result = stop(
-                            &roots,
-                            &selector,
-                            &working_directory,
-                            &state,
-                            config.as_deref(),
-                            runtime.as_deref(),
-                            force,
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            stop(
+                                &roots,
+                                &selector,
+                                &working_directory,
+                                &state,
+                                config.as_deref(),
+                                runtime.as_deref(),
+                                force,
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Stopped {
                             generation,
                             selector,
+                            selection,
                             result,
                         }
                     }
@@ -578,47 +538,65 @@ impl WorkspaceService {
                     }
                     WorkspaceRequest::Rename {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         name,
                     } => {
-                        let result = rename(
-                            &roots,
-                            recents.as_deref(),
-                            &selector,
-                            &working_directory,
-                            &name,
-                            &state,
-                            config.as_deref(),
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            rename(
+                                &roots,
+                                recents.as_deref(),
+                                &selector,
+                                &working_directory,
+                                &name,
+                                &state,
+                                config.as_deref(),
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Renamed {
                             generation,
                             path: selector,
+                            selection,
                             name,
                             result,
                         }
                     }
                     WorkspaceRequest::Number {
                         generation,
-                        selector,
+                        target,
                         working_directory,
                         number,
                     } => {
-                        let result = number_workspace(
-                            &roots,
-                            recents.as_deref(),
-                            &selector,
-                            &working_directory,
-                            number,
-                            &state,
-                        )
-                        .await
-                        .map_err(|error| format!("{error:#}"));
+                        let (selector, selection) = target.into_parts();
+                        let result = if selection
+                            .as_ref()
+                            .is_some_and(|selection| selection.publication_key().is_some())
+                        {
+                            Err(NATIVE_SELECTION_UNAVAILABLE.to_owned())
+                        } else {
+                            number_workspace(
+                                &roots,
+                                recents.as_deref(),
+                                &selector,
+                                &working_directory,
+                                number,
+                                &state,
+                            )
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                        };
                         WorkspaceEvent::Numbered {
                             generation,
                             path: selector,
+                            selection,
                             number,
                             result,
                         }
@@ -870,6 +848,7 @@ async fn refresh_options(
             continue;
         }
         rows.push(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id,
@@ -940,118 +919,6 @@ async fn refresh_options(
     Ok(rows)
 }
 
-/// Supplies catalog names to running hosts which have never been explicitly
-/// renamed. An explicit host name remains authoritative and is merged back
-/// into recents after inspection.
-fn apply_recent_names(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
-    for row in rows.iter_mut().filter(|row| row.name.is_none()) {
-        row.name = recent_entries
-            .iter()
-            .find(|entry| entry.project_root == row.project_root)
-            .and_then(|entry| entry.name.clone());
-    }
-}
-
-/// Gives every running session a digit, and no stopped or declining one.
-///
-/// The digit is a shortcut that attaches, so it belongs to a session somebody
-/// can reach right now: a stopped session releases the one it held rather than
-/// reserving one of the nine against the sessions that are actually up.
-/// Explicitly renumbered running sessions reserve their chosen digits first;
-/// automatic assignments then compact into the lowest remaining digits while
-/// preserving their previous relative order. A new fourth running session is
-/// therefore 4 even when stopped history used to hold that number.
-///
-/// A workspace whose record declines a digit is left alone. Taking one away is
-/// a decision, and handing the row the lowest free digit on the next listing
-/// would undo it before it could be seen.
-///
-/// A number is per-user history rather than host state, so a running host never
-/// answers one and the catalog is the only place a preference can come from.
-fn assign_running_workspace_numbers(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
-    let record = |row: &WorkspaceRow| {
-        recent_entries
-            .iter()
-            .find(|entry| entry.project_root == row.project_root)
-    };
-    let mut taken = [false; MAX_WORKSPACE_NUMBER as usize];
-    let mut wanted = Vec::with_capacity(rows.len());
-    for row in rows.iter_mut() {
-        row.number = None;
-        let entry = record(row);
-        let declined = entry.is_some_and(|entry| entry.number_declined);
-        wanted.push(row.running && !declined);
-        if !row.running || declined {
-            continue;
-        }
-        let preferred = entry
-            .filter(|entry| entry.number_pinned)
-            .and_then(|entry| entry.number)
-            .filter(|number| {
-                (1..=MAX_WORKSPACE_NUMBER).contains(number) && !taken[usize::from(number - 1)]
-            });
-        if let Some(number) = preferred {
-            taken[usize::from(number - 1)] = true;
-            row.number = Some(number);
-        }
-    }
-    let mut automatic = rows
-        .iter()
-        .enumerate()
-        .filter(|(index, row)| wanted[*index] && row.number.is_none())
-        .map(|(index, row)| {
-            let previous = record(row).and_then(|entry| entry.number);
-            (index, previous)
-        })
-        .collect::<Vec<_>>();
-    automatic.sort_by_key(|(index, previous)| (previous.is_none(), previous.unwrap_or(0), *index));
-    for (index, _) in automatic {
-        let row = &mut rows[index];
-        if row.number.is_some() {
-            continue;
-        }
-        let free = (1..=MAX_WORKSPACE_NUMBER).find(|candidate| !taken[usize::from(candidate - 1)]);
-        if let Some(number) = free {
-            taken[usize::from(number - 1)] = true;
-            row.number = Some(number);
-        }
-    }
-}
-
-/// Puts the rows in the order the manager and `--session-list` show them.
-///
-/// A digit pins its session: numbered sessions lead the listing in digit order,
-/// so the shortcut also says where the row is and the top of the list stops
-/// reshuffling as sessions are visited. Everything else follows by the same
-/// value the `Last active` column shows, least recently visited first, with a
-/// session nothing has ever attached to last: `-` there is unknown rather than
-/// old. Rows that tie in all of it are ordered by path so a listing does not
-/// move between two refreshes that found the same sessions.
-fn order_workspace_rows(rows: &mut [WorkspaceRow]) {
-    rows.sort_by_cached_key(|row| {
-        (
-            row.number.is_none(),
-            row.number.unwrap_or(0),
-            row.last_active_unix_seconds.is_none(),
-            row.last_active_unix_seconds.unwrap_or(0),
-            row.project_root.clone(),
-        )
-    });
-}
-
-/// Supplies the per-user visit time to every row, including running hosts.
-///
-/// Hosts do not own this value: it describes when this client was in the
-/// workspace, so the recent-workspace catalog remains its single source.
-fn apply_recent_activity(rows: &mut [WorkspaceRow], recent_entries: &[RecentEntry]) {
-    for row in rows.iter_mut() {
-        row.last_active_unix_seconds = recent_entries
-            .iter()
-            .find(|entry| entry.project_root == row.project_root)
-            .and_then(|entry| entry.last_active_unix_seconds);
-    }
-}
-
 /// Describes the host a project root publishes, when one is there and the
 /// registry did not already account for it.
 async fn published_row(
@@ -1064,6 +931,7 @@ async fn published_row(
     let host = endpoint.published_host().ok().flatten()?;
     if !host.speaks_current_protocol() {
         return Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -1092,6 +960,7 @@ async fn published_row(
     }
     let inspection = inspect_endpoint(&endpoint).await;
     Some(WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: host.id,
@@ -1157,6 +1026,7 @@ async fn inspect_workspace_target(
         .and_then(|entry| entry.number);
     if !host.speaks_current_protocol() {
         return Ok(Some(WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -1182,6 +1052,7 @@ async fn inspect_workspace_target(
     }
     let inspection = inspect_endpoint_strict(&endpoint).await?;
     Ok(Some(WorkspaceRow {
+        publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
         id: host.id,
@@ -1204,43 +1075,6 @@ async fn inspect_workspace_target(
         git: None,
         missing_directory: false,
     }))
-}
-
-fn validate_destination_inventory(
-    incarnation: String,
-    entries: Vec<crate::protocol::OpenDestinationEntry>,
-    truncated: bool,
-) -> Result<DestinationInventory> {
-    use crate::protocol::{MAX_DESTINATION_LABEL_BYTES, MAX_DESTINATIONS, OpenDestination};
-    anyhow::ensure!(
-        incarnation.len() == 64 && incarnation.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "invalid host incarnation in destination inventory"
-    );
-    anyhow::ensure!(
-        entries.len() <= MAX_DESTINATIONS,
-        "destination inventory exceeds its entry limit"
-    );
-    let mut identities = std::collections::BTreeSet::new();
-    for entry in &entries {
-        anyhow::ensure!(
-            entry.label.len() <= MAX_DESTINATION_LABEL_BYTES
-                && entry.detail.len() <= MAX_DESTINATION_LABEL_BYTES,
-            "destination inventory label exceeds its byte limit"
-        );
-        let identity = match entry.destination {
-            OpenDestination::Buffer(id) => (0, id),
-            OpenDestination::Terminal(id) => (1, id),
-        };
-        anyhow::ensure!(
-            identity.1 > 0 && identities.insert(identity),
-            "destination inventory contains an invalid or duplicate resource identity"
-        );
-    }
-    Ok(DestinationInventory {
-        incarnation,
-        entries,
-        truncated,
-    })
 }
 
 async fn read_destination_inventory(
@@ -1288,6 +1122,7 @@ fn published_endpoint(
 async fn inspect_host_with_attention(host: RegisteredHost, attention: bool) -> WorkspaceRow {
     if !host.speaks_current_protocol() {
         return WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: host.id,
@@ -1317,6 +1152,7 @@ async fn inspect_host_with_attention(host: RegisteredHost, attention: bool) -> W
         HostInspection::default()
     };
     WorkspaceRow {
+        publication_key: None,
         unread_terminals: inspection.unread_terminals,
         terminal_bell: inspection.terminal_bell,
         id: host.id,
@@ -1614,14 +1450,6 @@ async fn rename(
     }
 }
 
-/// Normalizes a person-supplied session name without changing any other
-/// identity characters. Spaces at the edges are discarded; spaces that carry
-/// meaning between words become hyphens. Persisted historical names remain
-/// readable even if they predate this input rule.
-fn normalize_session_name(name: &str) -> String {
-    name.trim_matches(' ').replace(' ', "-")
-}
-
 /// Gives one workspace a number shortcut, or clears it.
 ///
 /// Unlike a name, a number is never host state: it is this user's shortcut for
@@ -1704,42 +1532,106 @@ mod tests {
             assert_eq!(result, Err("session service is unavailable"));
         }
         assert_eq!(
-            closed.try_preview(7, path),
+            closed.try_preview(7, WorkspaceSelection::project_only(path)),
             Err("session preview service is unavailable")
         );
     }
 
-    #[test]
-    fn abbreviated_ids_stay_six_characters_while_they_tell_workspaces_apart() {
-        let ids = [
-            "658471a65ca7c48244bef5867d3e80bc",
-            "fe973e03d42260785cd4cb9386a8168d",
-            "b98d692c4574a80e508cf6fa38e6f27a",
-            "3ab49e5b3d4fc8cc6600e204dd5a571e",
-        ];
+    #[tokio::test]
+    async fn unix_worker_rejects_native_selected_keys_before_path_resolution() {
+        let root = TestRuntimeRoot::new("selected-native-key").unwrap();
+        let mut row = numbering_row(&root.join("project"), true);
+        row.publication_key = Some(crate::workspace::PublicationKey::for_test(b"native-key"));
+        let selection = row.selection();
+        let (service, mut events) =
+            WorkspaceService::spawn_with(Vec::new(), None, root.join("state"), None, None);
+        service.try_preview(1, selection.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Previewed {
+            selection: returned,
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key preview should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
 
-        assert_eq!(abbreviated_id_width(ids), ABBREVIATED_WORKSPACE_ID);
-    }
+        service.try_inventory(2, selection.clone()).unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Inventory {
+            selection: returned,
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key inventory should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
 
-    #[test]
-    fn abbreviated_ids_grow_only_far_enough_to_separate_a_shared_prefix() {
-        let ids = [
-            "aaaaaaaa1111111111111111111111ff",
-            "aaaaaaaa2222222222222222222222ff",
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        ];
+        service
+            .try_stop_selected(3, selection.clone(), root.to_path_buf(), true)
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Stopped {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key stop should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
 
-        assert_eq!(abbreviated_id_width(ids), 9);
-    }
+        service
+            .try_rename_selected(4, selection.clone(), root.to_path_buf(), "new".to_owned())
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Renamed {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key rename should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
 
-    #[test]
-    fn ids_that_never_separate_abbreviate_to_their_whole_length() {
-        assert_eq!(abbreviated_id_width(["abcdef0123", "abcdef0123"]), 10);
-        assert_eq!(
-            abbreviated_id_width(["abc", "abc"]),
-            ABBREVIATED_WORKSPACE_ID
-        );
-        assert_eq!(abbreviated_id_width([]), ABBREVIATED_WORKSPACE_ID);
+        service
+            .try_number_selected(5, selection.clone(), root.to_path_buf(), Some(1))
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let WorkspaceEvent::Numbered {
+            selection: Some(returned),
+            result: Err(error),
+            ..
+        } = event
+        else {
+            panic!("native-key number should be refused")
+        };
+        assert_eq!(returned, selection);
+        assert_eq!(error, NATIVE_SELECTION_UNAVAILABLE);
+        assert!(!root.join("state").exists());
+        assert!(!root.join("project").exists());
     }
 
     #[test]
@@ -1752,6 +1644,7 @@ mod tests {
         let rows = ids
             .iter()
             .map(|id| WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: (*id).to_owned(),
@@ -1966,6 +1859,7 @@ mod tests {
         let Some(WorkspaceEvent::Stopped {
             generation,
             selector,
+            selection: None,
             result,
         }) = events.recv().await
         else {
@@ -2657,6 +2551,7 @@ mod tests {
             let Some(WorkspaceEvent::Renamed {
                 generation: completed,
                 path,
+                selection: None,
                 name: completed_name,
                 result,
             }) = events.recv().await
@@ -2812,71 +2707,6 @@ mod tests {
     }
 
     #[test]
-    fn recent_names_fill_unnamed_running_rows_without_overriding_explicit_names() {
-        let unnamed_root = PathBuf::from("/workspace/unnamed");
-        let explicit_root = PathBuf::from("/workspace/explicit");
-        let mut rows = vec![
-            WorkspaceRow {
-                unread_terminals: None,
-                terminal_bell: None,
-                id: "11111111111111111111111111111111".to_owned(),
-                name: None,
-                number: None,
-                last_active_unix_seconds: None,
-                project_root: unnamed_root.clone(),
-                running: true,
-                incompatible_protocol: None,
-                unsaved_buffers: Some(0),
-                pending_wait_requests: None,
-                plugin_jobs: None,
-                activity_leases: None,
-                activities: Vec::new(),
-                live_terminals: None,
-                terminal_sessions: None,
-                terminal_line_activity_unix_seconds: None,
-                interactive_attached: Some(false),
-                open_buffers: None,
-                git: None,
-                missing_directory: false,
-            },
-            WorkspaceRow {
-                unread_terminals: None,
-                terminal_bell: None,
-                id: "22222222222222222222222222222222".to_owned(),
-                name: Some("chosen".to_owned()),
-                number: None,
-                last_active_unix_seconds: None,
-                project_root: explicit_root.clone(),
-                running: true,
-                incompatible_protocol: None,
-                unsaved_buffers: Some(0),
-                pending_wait_requests: None,
-                plugin_jobs: None,
-                activity_leases: None,
-                activities: Vec::new(),
-                live_terminals: None,
-                terminal_sessions: None,
-                terminal_line_activity_unix_seconds: None,
-                interactive_attached: Some(false),
-                open_buffers: None,
-                git: None,
-                missing_directory: false,
-            },
-        ];
-
-        apply_recent_names(
-            &mut rows,
-            &[
-                entry(unnamed_root, Some("default".to_owned())),
-                entry(explicit_root, Some("stale-default".to_owned())),
-            ],
-        );
-
-        assert_eq!(rows[0].name.as_deref(), Some("default"));
-        assert_eq!(rows[1].name.as_deref(), Some("chosen"));
-    }
-
-    #[test]
     fn default_names_are_valid_bounded_host_names() {
         assert_eq!(
             unique_default_workspace_name(Path::new("/workspace/ \n "), &[]),
@@ -2929,6 +2759,7 @@ mod tests {
         let id_target = id_target.canonicalize().unwrap();
         let rows = vec![
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "11111111111111111111111111111111".to_owned(),
@@ -2952,6 +2783,7 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "22222222222222222222222222222222".to_owned(),
@@ -2975,6 +2807,7 @@ mod tests {
                 missing_directory: false,
             },
             WorkspaceRow {
+                publication_key: None,
                 unread_terminals: None,
                 terminal_bell: None,
                 id: "abcdef0123456789abcdef0123456789".to_owned(),
@@ -3043,6 +2876,7 @@ mod tests {
         let first = first.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
@@ -3094,6 +2928,7 @@ mod tests {
         let workspace = workspace.canonicalize().unwrap();
         let snapshot = read_recents(Some(&path)).unwrap();
         let stale_rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "11111111111111111111111111111111".to_owned(),
@@ -3376,6 +3211,7 @@ mod tests {
         // while a stopped row with nothing left to open stays out of one.
         let entries = read_recents(Some(&path)).unwrap();
         let mut rows = vec![WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -3445,6 +3281,7 @@ mod tests {
     /// One listing row, in whatever running state the numbering is about.
     fn numbering_row(project_root: &Path, running: bool) -> WorkspaceRow {
         WorkspaceRow {
+            publication_key: None,
             unread_terminals: None,
             terminal_bell: None,
             id: "aaaaaaaaaaaaaaaa".to_owned(),
@@ -3467,107 +3304,6 @@ mod tests {
             git: None,
             missing_directory: false,
         }
-    }
-
-    #[test]
-    fn automatic_running_numbers_compact_after_a_stopped_session_releases_its_digit() {
-        let stopped = PathBuf::from("/w/stopped");
-        let running = PathBuf::from("/w/running");
-        let started = PathBuf::from("/w/started");
-        let entries = vec![
-            RecentEntry::new(stopped.clone(), None, Some(1), None),
-            RecentEntry::new(running.clone(), None, Some(2), None),
-            RecentEntry::new(started.clone(), None, None, None),
-        ];
-        let mut rows = vec![
-            numbering_row(&stopped, false),
-            numbering_row(&running, true),
-            numbering_row(&started, true),
-        ];
-
-        assign_running_workspace_numbers(&mut rows, &entries);
-
-        assert_eq!(rows[0].number, None, "a stopped session holds no digit");
-        assert_eq!(
-            rows[1].number,
-            Some(1),
-            "the first automatic running assignment closes the gap"
-        );
-        assert_eq!(
-            rows[2].number,
-            Some(2),
-            "the next running session follows it in order"
-        );
-    }
-
-    #[test]
-    fn an_automatic_session_does_not_retain_its_old_number_after_a_stop() {
-        let restarted = PathBuf::from("/w/restarted");
-        let entries = vec![RecentEntry::new(restarted.clone(), None, Some(4), None)];
-        let mut rows = vec![numbering_row(&restarted, true)];
-
-        assign_running_workspace_numbers(&mut rows, &entries);
-
-        assert_eq!(rows[0].number, Some(1));
-    }
-
-    #[test]
-    fn an_explicitly_renumbered_running_session_keeps_its_chosen_digit() {
-        let workspace = PathBuf::from("/w/pinned");
-        let mut entry = RecentEntry::new(workspace.clone(), None, Some(4), None);
-        entry.number_pinned = true;
-        let mut rows = vec![numbering_row(&workspace, true)];
-
-        assign_running_workspace_numbers(&mut rows, &[entry]);
-
-        assert_eq!(rows[0].number, Some(4));
-    }
-
-    /// Records are unique while Runyte writes them, so this is the safety net
-    /// for a catalog edited by hand: the listing still hands one digit to one
-    /// session, and the more recently visited row keeps it.
-    #[test]
-    fn a_digit_two_records_claim_goes_to_the_row_the_listing_shows_first() {
-        let first = PathBuf::from("/w/first");
-        let second = PathBuf::from("/w/second");
-        let entries = vec![
-            RecentEntry::new(first.clone(), None, Some(1), None),
-            RecentEntry::new(second.clone(), None, Some(1), None),
-        ];
-        let mut rows = vec![numbering_row(&first, true), numbering_row(&second, true)];
-
-        assign_running_workspace_numbers(&mut rows, &entries);
-
-        assert_eq!(rows[0].number, Some(1));
-        assert_eq!(rows[1].number, Some(2));
-    }
-
-    #[test]
-    fn numbered_sessions_lead_the_listing_and_the_rest_follow_by_visit() {
-        let mut rows = Vec::new();
-        for (path, number, last_active) in [
-            ("/w/never", None, None),
-            ("/w/recent", None, Some(9_000)),
-            ("/w/second", Some(2), Some(1)),
-            ("/w/old", None, Some(1_000)),
-            ("/w/first", Some(1), None),
-        ] {
-            let mut row = numbering_row(Path::new(path), number.is_some());
-            row.number = number;
-            row.last_active_unix_seconds = last_active;
-            rows.push(row);
-        }
-
-        order_workspace_rows(&mut rows);
-
-        assert_eq!(
-            rows.iter()
-                .map(|row| row.project_root.display().to_string())
-                .collect::<Vec<_>>(),
-            vec!["/w/first", "/w/second", "/w/old", "/w/recent", "/w/never"],
-            "digits lead in order, then the least recently visited, then the \
-             sessions nothing has ever attached to"
-        );
     }
 
     #[test]
@@ -3961,556 +3697,6 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct RecentWorkspace {
-    project_root_bytes: Vec<u8>,
-    #[serde(default)]
-    name: Option<String>,
-    /// Absent in catalogs written before workspaces were numbered, which is
-    /// why it defaults rather than failing the whole file: an older history
-    /// stays readable and is numbered on the next listing.
-    #[serde(default)]
-    number: Option<u8>,
-    /// Absent in catalogs written before the session manager showed activity.
-    #[serde(default)]
-    last_active_unix_seconds: Option<u64>,
-    /// Absent in catalogs written before a digit could be declined, which is
-    /// the same as never having declined one.
-    #[serde(default)]
-    number_declined: bool,
-    /// Whether `number` was chosen explicitly through Renumber.
-    ///
-    /// Older catalogs omit this and therefore treat their assignments as
-    /// automatic, which lets the first refresh close any gaps left by stopped
-    /// sessions.
-    #[serde(default)]
-    number_pinned: bool,
-}
-
-/// The largest number a workspace can carry.
-///
-/// A number is a shortcut pressed as one key in the session manager, so the
-/// range is exactly the digits `1`-`9`. A tenth remembered workspace is
-/// reached by name or path instead of by number.
-pub const MAX_WORKSPACE_NUMBER: u8 = 9;
-
-/// One remembered workspace: where it is, what it is called, and the digit
-/// metadata used to order automatic assignments while it is running.
-///
-/// The recents file is ordered most-recently-visited first, so an entry's
-/// position is deliberately not its automatic order. Explicit Renumber pins
-/// the current digit while the session runs; a refresh clears every numbering
-/// field once it observes that session stopped.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecentEntry {
-    pub project_root: PathBuf,
-    pub name: Option<String>,
-    /// `1` through [`MAX_WORKSPACE_NUMBER`], or `None` when every number was
-    /// already taken as this workspace was first recorded.
-    pub number: Option<u8>,
-    /// Whole Unix seconds make the regenerable catalog portable across
-    /// processes while keeping elapsed-time presentation out of persistence.
-    pub last_active_unix_seconds: Option<u64>,
-    /// Somebody took this workspace's digit away.
-    ///
-    /// Clearing a number is an answer rather than an absence, so it is
-    /// remembered: a running session is otherwise given the lowest free digit
-    /// again on the next listing, and the manager would undo the decision
-    /// before it could be seen. Numbering the workspace again ends it.
-    pub number_declined: bool,
-    /// The current number was explicitly chosen and must not be compacted
-    /// while this session remains running.
-    pub number_pinned: bool,
-}
-
-impl RecentEntry {
-    /// A workspace that has not declined a digit, which every producer of a
-    /// record but the reader means.
-    fn new(
-        project_root: PathBuf,
-        name: Option<String>,
-        number: Option<u8>,
-        last_active_unix_seconds: Option<u64>,
-    ) -> Self {
-        Self {
-            project_root,
-            name,
-            number,
-            last_active_unix_seconds,
-            number_declined: false,
-            number_pinned: false,
-        }
-    }
-}
-
-fn recent_file() -> Option<PathBuf> {
-    recent_file_in(external_open::cache_root())
-}
-
-/// Finds usable optional storage for stopped-workspace history.
-///
-/// Running-host discovery has its own runtime registry fallback and must not
-/// become unavailable merely because the regenerable cache root cannot be
-/// created. Once a cache directory is usable, errors from the recents file
-/// itself remain observable so malformed history is never silently erased.
-fn recent_file_in(cache_root: Option<PathBuf>) -> Option<PathBuf> {
-    let root = cache_root?;
-    prepare_recents_parent(&root).ok()?;
-    Some(root.join("workspaces.json"))
-}
-
-/// Remembers a workspace after startup so stopped hosts remain discoverable.
-pub fn record_recent_workspace(project_root: &Path) -> Result<Option<RecordedWorkspace>> {
-    let Some(path) = recent_file() else {
-        return Ok(None);
-    };
-    record_recent_workspace_name_in(&path, project_root)
-}
-
-/// Ensures lifecycle and host-startup metadata exists without claiming a
-/// workspace was visited or changing an existing entry's recency.
-pub fn ensure_recent_workspace(project_root: &Path) -> Result<Option<RecordedWorkspace>> {
-    let Some(path) = recent_file() else {
-        return Ok(None);
-    };
-    ensure_recent_workspace_in(&path, project_root).map(Some)
-}
-
-/// Records the beginning or end of a successful interactive attachment.
-///
-/// Catalog discovery and lifecycle commands also remember workspace names and
-/// ordering, but they must not claim the person entered a session. Keeping the
-/// activity write separate makes the successful attachment handshake the only
-/// producer of this timestamp.
-pub fn record_workspace_activity(project_root: &Path) -> Result<()> {
-    let Some(path) = recent_file() else {
-        return Ok(());
-    };
-    record_workspace_activity_in(&path, project_root)
-}
-
-/// The number the catalog currently records for one workspace, if any.
-///
-/// A direct read rather than a listing: the status line needs this before any
-/// refresh has run, and asking for the whole inventory to learn one digit
-/// would make drawing the first frame wait on scanning every workspace.
-pub fn recorded_workspace_number(project_root: &Path) -> Option<u8> {
-    let path = recent_file()?;
-    let canonical = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
-    read_recents(Some(&path))
-        .ok()?
-        .into_iter()
-        .find(|entry| entry.project_root == canonical)
-        .and_then(|entry| entry.number)
-}
-
-/// Gives one workspace a number shortcut, or takes its number away.
-///
-/// A number identifies exactly one workspace, so assigning one that another
-/// workspace already holds swaps the pair rather than leaving a duplicate or
-/// quietly unnumbering the other. Both keep a shortcut, and the returned path
-/// lets the caller say where the old one went instead of leaving somebody to
-/// discover it by pressing the key.
-///
-/// Taking a number away is remembered as a decision, so the workspace stays
-/// unnumbered instead of being handed the lowest free digit by the next
-/// listing. Giving it one again ends that.
-fn set_recent_workspace_number_in(
-    path: Option<&Path>,
-    project_root: &Path,
-    number: Option<u8>,
-) -> Result<Option<PathBuf>> {
-    if let Some(number) = number {
-        anyhow::ensure!(
-            (1..=MAX_WORKSPACE_NUMBER).contains(&number),
-            "a session number must be between 1 and {MAX_WORKSPACE_NUMBER}"
-        );
-    }
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let canonical = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
-    let mut displaced = None;
-    update_recents_result(path, |paths| {
-        assign_missing_default_workspace_names(paths);
-        assign_missing_default_workspace_numbers(paths);
-        let Some(index) = paths
-            .iter()
-            .position(|entry| entry.project_root == canonical)
-        else {
-            anyhow::bail!("that workspace is not in the visited history")
-        };
-        let vacated = paths[index].number;
-        if let Some(number) = number
-            && let Some(holder) = paths
-                .iter()
-                .position(|entry| entry.number == Some(number) && entry.project_root != canonical)
-        {
-            // The swap hands the asking workspace's old number over, which is
-            // why an unnumbered one leaves the other without a number rather
-            // than duplicating the one it just gave away.
-            paths[holder].number = vacated;
-            if vacated.is_none() {
-                paths[holder].number_pinned = false;
-            }
-            // The displaced workspace did not ask to lose its digit, so it is
-            // left open to being given another one; only the workspace that
-            // was cleared on purpose declines.
-            displaced = Some(paths[holder].project_root.clone());
-        }
-        paths[index].number = number;
-        paths[index].number_declined = number.is_none();
-        paths[index].number_pinned = number.is_some();
-        Ok(())
-    })?;
-    Ok(displaced)
-}
-
-#[cfg(test)]
-fn record_recent_workspace_in(path: &Path, project_root: &Path) -> Result<()> {
-    record_recent_workspace_name_in(path, project_root).map(drop)
-}
-
-fn record_recent_workspace_name_in(
-    path: &Path,
-    project_root: &Path,
-) -> Result<Option<RecordedWorkspace>> {
-    let canonical = project_root.canonicalize()?;
-    let mut recorded = None;
-    update_recents(path, |paths| {
-        // Older catalogs predate automatic names and numbers. Claim both for
-        // those rows before inserting a new workspace so an established
-        // directory keeps the unsuffixed form and the low number, and the
-        // newcomer receives `-2` and the next number up.
-        assign_missing_default_workspace_names(paths);
-        assign_missing_default_workspace_numbers(paths);
-        let previous = paths
-            .iter()
-            .find(|entry| entry.project_root == canonical)
-            .map(|entry| {
-                (
-                    entry.name.clone(),
-                    entry.number,
-                    entry.last_active_unix_seconds,
-                    entry.number_declined,
-                    entry.number_pinned,
-                )
-            });
-        paths.retain(|entry| entry.project_root != canonical);
-        let declined = previous
-            .as_ref()
-            .is_some_and(|(_, _, _, declined, _)| *declined);
-        let (previous_name, previous_number, last_active_unix_seconds, number_pinned) = previous
-            .map_or(
-                (None, None, None, false),
-                |(name, number, active, _, pinned)| (name, Some(number), active, pinned),
-            );
-        let name = previous_name
-            .unwrap_or_else(|| unique_default_workspace_name(&canonical, paths.as_slice()));
-        // Revisiting keeps the number this workspace already answered to.
-        // Only a genuinely new record claims one, which is what makes the
-        // default assignment order the order workspaces were created in, and a
-        // workspace whose digit was taken away keeps none.
-        let number = if declined {
-            None
-        } else {
-            previous_number
-                .flatten()
-                .or_else(|| lowest_free_workspace_number(paths))
-        };
-        recorded = Some(RecordedWorkspace {
-            name: name.clone(),
-            number,
-        });
-        let mut entry = RecentEntry::new(canonical, Some(name), number, last_active_unix_seconds);
-        entry.number_declined = declined;
-        entry.number_pinned = number_pinned;
-        paths.insert(0, entry);
-        // Truncation drops the least recently visited tail, which can free a
-        // number. The next new workspace claims it; the survivors keep theirs.
-        paths.truncate(RECENT_LIMIT);
-    })?;
-    Ok(recorded)
-}
-
-fn ensure_recent_workspace_in(path: &Path, project_root: &Path) -> Result<RecordedWorkspace> {
-    let canonical = project_root.canonicalize()?;
-    let mut recorded = None;
-    update_recents(path, |entries| {
-        assign_missing_default_workspace_names(entries);
-        assign_missing_default_workspace_numbers(entries);
-        if let Some(entry) = entries.iter().find(|entry| entry.project_root == canonical) {
-            recorded = Some(RecordedWorkspace {
-                name: entry.name.clone().unwrap_or_else(|| {
-                    unique_default_workspace_name(&canonical, entries.as_slice())
-                }),
-                number: entry.number,
-            });
-            return;
-        }
-        let name = unique_default_workspace_name(&canonical, entries.as_slice());
-        let number = lowest_free_workspace_number(entries);
-        recorded = Some(RecordedWorkspace {
-            name: name.clone(),
-            number,
-        });
-        entries.insert(0, RecentEntry::new(canonical, Some(name), number, None));
-        entries.truncate(RECENT_LIMIT);
-    })?;
-    recorded.context("workspace metadata was not recorded")
-}
-
-fn record_workspace_activity_in(path: &Path, project_root: &Path) -> Result<()> {
-    // Successful attachment is also a genuine visit for recency ordering. It
-    // normally already has an entry from startup or session discovery, but
-    // recreating a concurrently removed cache must not lose the activity.
-    record_recent_workspace_name_in(path, project_root)?;
-    let canonical = project_root.canonicalize()?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs());
-    update_recents(path, |entries| {
-        if let Some(entry) = entries
-            .iter_mut()
-            .find(|entry| entry.project_root == canonical)
-        {
-            entry.last_active_unix_seconds = now;
-        }
-    })
-}
-
-/// What recording a visit settled about a workspace.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecordedWorkspace {
-    pub name: String,
-    pub number: Option<u8>,
-}
-
-fn assign_missing_default_workspace_names(paths: &mut [RecentEntry]) {
-    for index in 0..paths.len() {
-        if paths[index].name.is_some() {
-            continue;
-        }
-        let project_root = paths[index].project_root.clone();
-        paths[index].name = Some(unique_default_workspace_name(&project_root, paths));
-    }
-}
-
-/// Claims the lowest free number for every remembered workspace without one.
-///
-/// Older catalogs predate numbering entirely, and a workspace recorded while
-/// all nine were taken carries none. Both are answered here, on the way to a
-/// listing, so numbering never depends on having been present for a
-/// particular release.
-///
-/// Numbers are meant to follow the order workspaces were created, and a new
-/// record claims its number at exactly that moment. A catalog written before
-/// numbering existed has no creation order to recover -- it is ordered by
-/// recency and nothing else -- so this one-time backfill numbers those rows
-/// most-recently-visited first and says so rather than inventing a history.
-///
-/// A workspace whose digit was taken away on purpose is not missing one.
-fn assign_missing_default_workspace_numbers(paths: &mut [RecentEntry]) {
-    for index in 0..paths.len() {
-        if paths[index].number.is_some() || paths[index].number_declined {
-            continue;
-        }
-        paths[index].number = lowest_free_workspace_number(paths);
-    }
-}
-
-/// The smallest number no remembered workspace holds, if any is left.
-fn lowest_free_workspace_number(paths: &[RecentEntry]) -> Option<u8> {
-    (1..=MAX_WORKSPACE_NUMBER)
-        .find(|candidate| paths.iter().all(|entry| entry.number != Some(*candidate)))
-}
-
-/// Derives a stable catalog name from the workspace directory and adds the
-/// first free numeric suffix when another recorded workspace already owns it.
-fn unique_default_workspace_name(project_root: &Path, paths: &[RecentEntry]) -> String {
-    let raw_base = project_root
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| project_root.display().to_string());
-    let sanitized = raw_base
-        .trim()
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                '-'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let sanitized = normalize_session_name(&sanitized);
-    let sanitized = if sanitized.is_empty() {
-        "workspace"
-    } else {
-        sanitized.as_str()
-    };
-    let base = truncate_utf8(sanitized, MAX_HOST_NAME_BYTES).to_owned();
-    let available = |candidate: &str| {
-        paths
-            .iter()
-            .all(|entry| entry.name.as_deref() != Some(candidate))
-    };
-    if available(&base) {
-        return base;
-    }
-    (2_u64..)
-        .map(|suffix| {
-            let suffix = format!("-{suffix}");
-            let prefix = truncate_utf8(&base, MAX_HOST_NAME_BYTES - suffix.len());
-            format!("{prefix}{suffix}")
-        })
-        .find(|candidate| available(candidate))
-        .expect("an unbounded numeric suffix has an available value")
-}
-
-fn truncate_utf8(value: &str, maximum_bytes: usize) -> &str {
-    let mut end = value.len().min(maximum_bytes);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    &value[..end]
-}
-
-/// Drops a workspace from the visited history, so a stopped one stops being
-/// listed. Answers whether history held it at all.
-///
-/// Only the per-user recents record is removed. Nothing under the project's own
-/// state root is touched, so a workspace cleared here is exactly as reachable as
-/// one that was never opened: naming it starts a host there again.
-fn forget_recent_workspace_in(path: Option<&Path>, project_root: &Path) -> Result<bool> {
-    let Some(path) = path else {
-        return Ok(false);
-    };
-    let canonical = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
-    let mut removed = false;
-    update_recents(path, |paths| {
-        let before = paths.len();
-        paths.retain(|entry| entry.project_root != canonical);
-        removed = paths.len() != before;
-    })?;
-    Ok(removed)
-}
-
-/// Removes exactly the named stopped rows from recent history in one locked
-/// update. A workspace recorded concurrently at another path is preserved.
-fn clear_recent_workspaces_in(path: Option<&Path>, stopped: &[PathBuf]) -> Result<usize> {
-    let Some(path) = path else {
-        return Ok(0);
-    };
-    let stopped = stopped
-        .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
-        .collect::<Vec<_>>();
-    let mut removed = 0;
-    update_recents(path, |paths| {
-        let before = paths.len();
-        paths.retain(|entry| !stopped.contains(&entry.project_root));
-        removed = before - paths.len();
-    })?;
-    Ok(removed)
-}
-
-fn rename_recent_workspace_in(path: &Path, project_root: &Path, name: &str) -> Result<()> {
-    validate_host_name(name)?;
-    let canonical = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
-    update_recents_result(path, |paths| {
-        anyhow::ensure!(
-            paths.iter().all(|entry| entry.project_root == canonical
-                || entry.name.as_deref() != Some(name)),
-            "session name {name:?} is already in use"
-        );
-        let entry = paths
-            .iter_mut()
-            .find(|entry| entry.project_root == canonical)
-            .with_context(|| {
-                format!(
-                    "workspace {} is not in recent history",
-                    project_root.display()
-                )
-            })?;
-        entry.name = Some(name.to_owned());
-        Ok(())
-    })
-}
-
-/// Applies names learned from running hosts to the current recents catalog.
-///
-/// The rows may have taken several control timeouts to inspect. Re-reading
-/// under the writer lock is therefore essential: their original recents
-/// snapshot is stale by construction and must not restore old ordering or
-/// discard a workspace recorded while inspection was in flight. A name is
-/// updated only when the current value still matches that snapshot, so an
-/// inspection result cannot overwrite a newer name from another refresh.
-/// Records the digit each running session was just given and clears numbering
-/// state from stopped sessions.
-///
-/// The listing decides the numbers, so this is where automatic assignments
-/// catch up after a gap closes. A stopped session retains neither an assigned
-/// digit, an explicit pin, nor an explicit decision to stay unnumbered; if it
-/// starts again, it joins the running sessions as a new automatic assignment.
-/// Writing the answer back is also what lets the status line name this
-/// session's digit without listing every workspace.
-///
-/// A record that changed while the listing was being gathered is not written,
-/// for the same reason a concurrently renamed one is not: the person who
-/// changed it answered more recently than this refresh read.
-fn merge_assigned_numbers(
-    paths: &mut [RecentEntry],
-    snapshot: &[RecentEntry],
-    rows: &[WorkspaceRow],
-) {
-    for entry in paths {
-        // These digits were decided against the catalog as the refresh found
-        // it. A record that has changed since then holds somebody else's newer
-        // answer -- a renumber, or a digit taken away, from another process --
-        // so it is left alone rather than overwritten from a stale read. The
-        // next listing resolves the numbers against what that answer left.
-        let Some(snapshot_entry) = snapshot
-            .iter()
-            .find(|candidate| candidate.project_root == entry.project_root)
-        else {
-            continue;
-        };
-        if snapshot_entry.number != entry.number
-            || snapshot_entry.number_declined != entry.number_declined
-            || snapshot_entry.number_pinned != entry.number_pinned
-        {
-            continue;
-        }
-        let Some(row) = rows
-            .iter()
-            .find(|row| row.project_root == entry.project_root)
-        else {
-            continue;
-        };
-        if !row.running {
-            entry.number = None;
-            entry.number_declined = false;
-            entry.number_pinned = false;
-        } else if !entry.number_declined {
-            entry.number = row.number;
-            if row.number.is_none() {
-                entry.number_pinned = false;
-            }
-        }
-    }
-}
-
 fn merge_refreshed_rows(
     path: &Path,
     snapshot: &[RecentEntry],
@@ -4540,269 +3726,9 @@ fn merge_refreshed_rows(
     })
 }
 
-fn update_recents(path: &Path, update: impl FnOnce(&mut Vec<RecentEntry>)) -> Result<()> {
-    update_recents_result(path, |paths| {
-        update(paths);
-        Ok(())
-    })
-}
-
-fn update_recents_result(
-    path: &Path,
-    update: impl FnOnce(&mut Vec<RecentEntry>) -> Result<()>,
-) -> Result<()> {
-    let lock = RecentFileLock::acquire(path)?;
-    let mut paths = read_recents(Some(path))?;
-    update(&mut paths)?;
-    write_recents(path, &paths, &lock)
-}
-
-/// A dedicated advisory lock for the recents file, not for the cache or user
-/// directory around it. The kernel releases `flock` when this descriptor is
-/// closed, including process exit after a crash; the persistent lock file is
-/// inert and can safely be reused by the next process.
-struct RecentFileLock(fs::File);
-
-impl RecentFileLock {
-    fn acquire(recents: &Path) -> Result<Self> {
-        Self::acquire_with_operation(recents, libc::LOCK_EX)?.ok_or_else(|| {
-            anyhow::anyhow!("blocking workspace recents lock unexpectedly was unavailable")
-        })
-    }
-
-    fn acquire_with_operation(recents: &Path, operation: libc::c_int) -> Result<Option<Self>> {
-        use std::os::{
-            fd::AsRawFd,
-            unix::fs::{OpenOptionsExt, PermissionsExt},
-        };
-
-        let Some(parent) = recents.parent() else {
-            anyhow::bail!("workspace recents path has no parent")
-        };
-        prepare_recents_parent(parent)?;
-        let path = recents.with_extension("lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)
-            .with_context(|| format!("cannot open workspace recents lock {}", path.display()))?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("cannot secure workspace recents lock {}", path.display()))?;
-        loop {
-            if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
-                return Ok(Some(Self(file)));
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            if operation & libc::LOCK_NB != 0 && error.kind() == io::ErrorKind::WouldBlock {
-                return Ok(None);
-            }
-            return Err(error)
-                .with_context(|| format!("cannot lock workspace recents file {}", path.display()));
-        }
-    }
-
-    #[cfg(test)]
-    fn try_acquire(recents: &Path) -> Result<Option<Self>> {
-        Self::acquire_with_operation(recents, libc::LOCK_EX | libc::LOCK_NB)
-    }
-}
-
-impl Drop for RecentFileLock {
-    fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-
-        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
-    }
-}
-
-fn prepare_recents_parent(parent: &Path) -> Result<()> {
-    fs::create_dir_all(parent)?;
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-
-fn write_recents(path: &Path, paths: &[RecentEntry], _lock: &RecentFileLock) -> Result<()> {
-    anyhow::ensure!(
-        paths.len() <= RECENT_LIMIT,
-        "workspace recents contain more than {RECENT_LIMIT} entries"
-    );
-    for entry in paths {
-        validate_recent_entry(entry)?;
-    }
-    let entries = paths
-        .iter()
-        .map(|entry| RecentWorkspace {
-            project_root_bytes: encode_path(&entry.project_root),
-            name: entry.name.clone(),
-            number: entry.number,
-            last_active_unix_seconds: entry.last_active_unix_seconds,
-            number_declined: entry.number_declined,
-            number_pinned: entry.number_pinned,
-        })
-        .collect::<Vec<_>>();
-    let Some(parent) = path.parent() else {
-        anyhow::bail!("workspace recents path has no parent")
-    };
-    prepare_recents_parent(parent)?;
-    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(&entries)?;
-    anyhow::ensure!(
-        bytes.len() <= MAX_RECENTS_BYTES,
-        "workspace recents exceed {MAX_RECENTS_BYTES} bytes"
-    );
-    fs::write(&temporary, bytes)?;
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-    fs::rename(temporary, path)?;
-    Ok(())
-}
-
-/// The remembered workspaces worth showing: those whose directory is still
-/// there, plus any a running host is using.
-///
-/// A stopped workspace whose directory is gone has nothing left to open, so it
-/// stays out of the listing. Its record survives in the file, because the
-/// directory may come back — an unmounted volume or a detached external disk.
-fn listable_recents(entries: Vec<RecentEntry>) -> Vec<RecentEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| entry.project_root.is_dir())
-        .collect()
-}
-
-/// Reads the remembered workspaces exactly as the file holds them.
-///
-/// A directory that has gone from disk is deliberately still returned. Every
-/// write goes back through this reader, so filtering here would erase the
-/// record the first time anything touched the file after the directory
-/// disappeared, including for a host still running in it.
-/// [`listable_recents`] drops those rows on the way to a listing instead,
-/// which is the only place the distinction matters.
-fn read_recents(path: Option<&Path>) -> Result<Vec<RecentEntry>> {
-    let Some(path) = path else {
-        return Ok(Vec::new());
-    };
-    let bytes = match read_bounded_recents(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let entries: Vec<RecentWorkspace> = serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(
-        entries.len() <= RECENT_LIMIT,
-        "workspace recents contain more than {RECENT_LIMIT} entries"
-    );
-    for entry in &entries {
-        validate_recent_workspace(entry)?;
-    }
-    let mut entries = entries
-        .into_iter()
-        .map(|entry| RecentEntry {
-            project_root: decode_path(entry.project_root_bytes),
-            name: entry.name,
-            number: entry.number,
-            last_active_unix_seconds: entry.last_active_unix_seconds,
-            number_declined: entry.number_declined,
-            number_pinned: entry.number_pinned,
-        })
-        .collect::<Vec<_>>();
-    // A number identifies one workspace, so a file hand-edited into holding a
-    // duplicate is repaired on the way in rather than reaching a listing where
-    // one digit would select whichever row happened to be first.
-    let mut claimed = Vec::new();
-    for entry in &mut entries {
-        match entry.number {
-            Some(number) if claimed.contains(&number) => {
-                entry.number = None;
-                entry.number_pinned = false;
-            }
-            Some(number) => claimed.push(number),
-            None => {}
-        }
-    }
-    Ok(entries)
-}
-
-fn read_bounded_recents(path: &Path) -> io::Result<Vec<u8>> {
-    let file = fs::File::open(path)?;
-    let mut bytes = Vec::new();
-    file.take(MAX_RECENTS_BYTES.saturating_add(1) as u64)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_RECENTS_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("workspace recents exceed {MAX_RECENTS_BYTES} bytes"),
-        ));
-    }
-    Ok(bytes)
-}
-
-fn validate_recent_workspace(entry: &RecentWorkspace) -> Result<()> {
-    validate_persisted_path(
-        &entry.project_root_bytes,
-        "recent workspace project directory",
-    )?;
-    let project_root = decode_path(entry.project_root_bytes.clone());
-    anyhow::ensure!(
-        project_root.is_absolute(),
-        "recent workspace project directory is not absolute"
-    );
-    if let Some(name) = entry.name.as_deref() {
-        validate_host_name(name)?;
-    }
-    if let Some(number) = entry.number {
-        anyhow::ensure!(
-            (1..=MAX_WORKSPACE_NUMBER).contains(&number),
-            "recent workspace number must be between 1 and {MAX_WORKSPACE_NUMBER}"
-        );
-    }
-    Ok(())
-}
-
-fn validate_recent_entry(entry: &RecentEntry) -> Result<()> {
-    validate_persisted_path(
-        &encode_path(&entry.project_root),
-        "recent workspace project directory",
-    )?;
-    anyhow::ensure!(
-        entry.project_root.is_absolute(),
-        "recent workspace project directory is not absolute"
-    );
-    if let Some(name) = entry.name.as_deref() {
-        validate_host_name(name)?;
-    }
-    if let Some(number) = entry.number {
-        anyhow::ensure!(
-            (1..=MAX_WORKSPACE_NUMBER).contains(&number),
-            "recent workspace number must be between 1 and {MAX_WORKSPACE_NUMBER}"
-        );
-    }
-    Ok(())
-}
-
-fn validate_persisted_path(bytes: &[u8], description: &str) -> Result<()> {
-    anyhow::ensure!(!bytes.is_empty(), "{description} is empty");
-    anyhow::ensure!(
-        bytes.len() <= MAX_PERSISTED_PATH_BYTES,
-        "{description} exceeds {MAX_PERSISTED_PATH_BYTES} bytes"
-    );
-    anyhow::ensure!(!bytes.contains(&0), "{description} contains a null byte");
-    Ok(())
-}
-
 #[cfg(test)]
 mod destination_inventory_tests {
     use super::*;
-    use crate::protocol::{
-        MAX_DESTINATION_LABEL_BYTES, MAX_DESTINATIONS, OpenDestination, OpenDestinationEntry,
-    };
 
     #[tokio::test]
     async fn reattachment_replaces_an_observation_started_before_it() {
@@ -4868,46 +3794,15 @@ mod destination_inventory_tests {
         assert!(
             matches!(event,WorkspaceEvent::DirectoryWorktrees {generation:7,result:Ok(rows)} if rows.is_empty())
         );
-        service.try_inventory(8, project.clone()).unwrap();
+        service
+            .try_inventory(8, WorkspaceSelection::project_only(project.clone()))
+            .unwrap();
         let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
             .await
             .unwrap()
             .unwrap();
         assert!(
-            matches!(event,WorkspaceEvent::Inventory {generation:8,path,result:Err(_)} if path==project)
+            matches!(event,WorkspaceEvent::Inventory {generation:8,path,result:Err(_), ..} if path==project)
         );
-    }
-
-    #[test]
-    fn received_inventory_rejects_invalid_and_duplicate_identities_and_oversized_rows() {
-        let entry = OpenDestinationEntry {
-            destination: OpenDestination::Buffer(1),
-            label: "notes".to_owned(),
-            detail: String::new(),
-        };
-        assert!(validate_destination_inventory("a".repeat(64), vec![entry.clone()], false).is_ok());
-        assert!(validate_destination_inventory("a".repeat(63), vec![], false).is_err());
-        assert!(
-            validate_destination_inventory(
-                "a".repeat(64),
-                vec![entry.clone(), entry.clone()],
-                false
-            )
-            .is_err()
-        );
-        assert!(
-            validate_destination_inventory(
-                "a".repeat(64),
-                vec![entry.clone(); MAX_DESTINATIONS + 1],
-                true
-            )
-            .is_err()
-        );
-        let mut zero = entry.clone();
-        zero.destination = OpenDestination::Buffer(0);
-        assert!(validate_destination_inventory("a".repeat(64), vec![zero], false).is_err());
-        let mut oversized = entry;
-        oversized.detail = "x".repeat(MAX_DESTINATION_LABEL_BYTES + 1);
-        assert!(validate_destination_inventory("a".repeat(64), vec![oversized], false).is_err());
     }
 }

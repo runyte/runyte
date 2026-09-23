@@ -238,12 +238,41 @@ parent wait lifecycle without changing ordinary CLI file-opening semantics.
 
 ## Windows ConPTY boundary
 
+The native frontend requests Windows keyboard reporting (`CSI ? 9001 h`)
+after enabling VT input and mouse handling. It restores reporting on normal
+exit and unwind. This preserves Ctrl+h/j identity separately from Backspace
+and Enter while retaining bracketed paste. A bounded wire decoder unwraps
+native records once before semantic key/paste decoding; encoded frames never
+use a legacy Escape timeout, and raw paste payload remains literal.
+
+`console_control_key_transport` in `src/tui/windows_console_acceptance.rs`
+injects native key packets through real ConPTY, verifies decoded controls and
+paste, and checks normal/panic restoration using a subsequent VT-only reader.
+The unit regressions in `src/tui/windows_input/tests.rs` cover fragmented paste,
+frame-looking payload, native ranges/repeats/Unicode, and explorer pane moves
+with fast keys on/off and a configured alias. This is native transport
+acceptance, not a capture of the original reporter's physical keyboard.
+Reporting support belongs to the Windows 11 24H2+ target below; ignored
+negotiation on older console hosts is not a supported fallback.
+The protocol follows [Microsoft's native keyboard specification](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md).
+
 The Phase-1 port uses `src/terminal/pty_windows.rs` for independent native
 consoles on Windows 11 x86_64 MSVC. The default shell is `COMSPEC` or `cmd.exe`;
 no Unix utility is required. `windows_command.rs` preserves native quoted
 arguments, resolves PATH/PATHEXT without an implicit workspace lookup, and
 requires an explicit shell for batch files. Standalone terminals mark parent
 routing unavailable in their environment.
+
+Executable launch prefers an ordinary local or UNC spelling only after its
+native file identity matches the canonical path. Windows PowerShell 5.1 fails
+initialization when launched with the canonical extended executable spelling
+(`\\?\...`), so blindly passing that spelling breaks an installed shell.
+Executables whose names or lengths require extended syntax retain that spelling;
+this does not relax the separate ordinary working-directory requirement.
+`installed_windows_powershell_starts_from_an_extended_executable_path` and
+`executable_spelling_preserves_identity_and_required_extended_paths` in
+`src/terminal/tests/pty_windows.rs` cover native PowerShell startup and the
+identity-preserving choice, including long and trailing-dot executable names.
 
 Native tests in `src/terminal/tests/pty_windows.rs` exercise actual cmd.exe and
 the compiled test executable: Unicode output before exit, independent input,
