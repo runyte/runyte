@@ -30,6 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+use windows_sys::Win32::System::{JobObjects::IsProcessInJob, Threading::GetCurrentProcess};
 
 const BIN: &str = env!("CARGO_BIN_EXE_runyte");
 
@@ -51,6 +52,50 @@ impl Drop for CliChild {
             let _ = child.wait();
         }
     }
+}
+
+/// A restarted host is detached from the fixture's child handle. Keep an
+/// independent stop owner until assertions and fixture storage are finished.
+struct RestartCleanup<'a> {
+    root: &'a TestRuntimeRoot,
+    cwd: &'a Path,
+    selector: &'a str,
+    armed: bool,
+}
+
+impl Drop for RestartCleanup<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut command = Command::new(BIN);
+        command
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["--session-stop", "--force", self.selector])
+            .current_dir(self.cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        private_environment(&mut command, self.root);
+        let Ok(mut child) = command.spawn() else {
+            return;
+        };
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+fn running_in_job() -> bool {
+    let mut member = 0;
+    assert_ne!(
+        unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut member) },
+        0
+    );
+    member != 0
 }
 
 fn private_environment(command: &mut Command, root: &TestRuntimeRoot) {
@@ -89,12 +134,13 @@ fn start_host_in(
     cache: &Path,
     config: Option<&Path>,
 ) -> Host {
-    let diagnostics = fs::File::create(root.join(format!(
-        "host-{}-{}.log",
+    let diagnostic_path = root.join(format!(
+        "host-{}-{}-{}.log",
         layout.project_root().file_name().unwrap().to_string_lossy(),
+        layout.state_root().file_name().unwrap().to_string_lossy(),
         cache.file_name().unwrap().to_string_lossy()
-    )))
-    .unwrap();
+    ));
+    let diagnostics = fs::File::create(&diagnostic_path).unwrap();
     let mut command = Command::new(BIN);
     command
         .creation_flags(CREATE_NO_WINDOW)
@@ -116,10 +162,12 @@ fn start_host_in(
         if location.read_ready().unwrap().is_some() {
             return host;
         }
-        assert!(
-            host.0.try_wait().unwrap().is_none(),
-            "native host exited before publishing readiness"
-        );
+        if let Some(status) = host.0.try_wait().unwrap() {
+            panic!(
+                "native host exited before publishing readiness: {status}; diagnostic: {}",
+                fs::read_to_string(&diagnostic_path).unwrap_or_default()
+            );
+        }
         assert!(
             Instant::now() < deadline,
             "native host did not become ready"
@@ -139,7 +187,12 @@ fn cli(root: &TestRuntimeRoot, cwd: &Path, args: &[&str]) -> Output {
         .stderr(Stdio::piped());
     private_environment(&mut command, root);
     let mut child = CliChild(Some(command.spawn().unwrap()));
-    let deadline = Instant::now() + Duration::from_secs(12);
+    let deadline = Instant::now()
+        + if args.contains(&"--session-restart") {
+            Duration::from_secs(25)
+        } else {
+            Duration::from_secs(12)
+        };
     while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
         if Instant::now() >= deadline {
             panic!("session CLI did not finish: {args:?}");
@@ -235,7 +288,64 @@ fn empty_listing_from_nonproject_directory_creates_no_project() {
     );
     let restart = cli(&root, &outside, &["--session-restart", "project"]);
     assert!(!restart.status.success());
-    assert!(text(&restart).1.contains("not yet supported on Windows"));
+    assert!(text(&restart).1.contains("no session matches project"));
+    assert!(!outside.join(".runyte").exists());
+}
+
+#[test]
+fn restart_preflights_detached_policy_and_replaces_only_confirmed_real_host() {
+    let root = TestRuntimeRoot::new("native-cli-restart").unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let layout = layout(&root, "project");
+    let mut original = start_host(&root, &layout);
+    let location = layout.publication_location().unwrap();
+    let before = location.read_ready().unwrap().unwrap();
+    let project = layout.project_root().to_str().unwrap();
+    let mut cleanup = RestartCleanup {
+        root: &root,
+        cwd: &outside,
+        selector: project,
+        armed: true,
+    };
+
+    let first = cli(&root, &outside, &["--session-restart", project]);
+    if !first.status.success() {
+        let failure = text(&first).1;
+        assert!(
+            running_in_job()
+                && failure.contains("detached host preflight was denied")
+                && failure
+                    .contains("CreateProcessW could not create the detached inheritance parent")
+                && failure.contains("(os error 5)"),
+            "unexpected restart refusal: {failure}"
+        );
+        assert!(original.0.try_wait().unwrap().is_none());
+        assert_eq!(location.read_ready().unwrap().unwrap(), before);
+        return;
+    }
+    assert!(original.0.try_wait().unwrap().is_some());
+    let running = location.read_ready().unwrap().unwrap();
+    assert_ne!(running.process, before.process);
+    assert_eq!(running.project_root().unwrap(), layout.project_root());
+
+    let file = layout.project_root().join("note.txt");
+    fs::write(&file, "original").unwrap();
+    let (_runtime, control) = make_unsaved(&layout, &file);
+    let refused = cli(&root, &outside, &["--session-restart", project]);
+    assert!(!refused.status.success());
+    assert!(text(&refused).1.contains("unsaved"), "{:?}", text(&refused));
+    assert_eq!(location.read_ready().unwrap().unwrap(), running);
+
+    let forced = cli(&root, &outside, &["--session-restart", "--force", project]);
+    assert!(forced.status.success(), "{:?}", text(&forced));
+    drop(control);
+    let replaced = location.read_ready().unwrap().unwrap();
+    assert_ne!(replaced.process, running.process);
+    assert_eq!(fs::read_to_string(file).unwrap(), "original");
+    let stopped = cli(&root, &outside, &["--session-stop", project]);
+    assert!(stopped.status.success(), "{:?}", text(&stopped));
+    cleanup.armed = false;
 }
 
 #[test]
@@ -473,6 +583,76 @@ fn hidden_isolated_publications_of_one_project_remain_two_live_rows() {
     assert!(first.0.try_wait().unwrap().is_some());
     assert!(second.0.try_wait().unwrap().is_some());
     assert!(!outside.join(".runyte").exists());
+}
+
+#[test]
+fn restart_refuses_ambiguous_live_id_prefix() {
+    let root = TestRuntimeRoot::new("native-cli-restart-ambiguous").unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    // Seventeen distinct roots guarantee two SHA-256 workspace IDs have the
+    // same first hex digit; only those two roots are started as real hosts.
+    let layouts = (0..17)
+        .map(|index| layout(&root, &format!("project-{index}")))
+        .collect::<Vec<_>>();
+    let ids = layouts
+        .iter()
+        .map(|layout| workspace_id(layout.project_root()))
+        .collect::<Vec<_>>();
+    let (first_index, second_index) = (0..ids.len())
+        .find_map(|second| {
+            (0..second)
+                .find(|first| ids[*first][..1] == ids[second][..1])
+                .map(|first| (first, second))
+        })
+        .unwrap();
+    let first_layout = &layouts[first_index];
+    let second_layout = &layouts[second_index];
+    let prefix = &ids[first_index][..1];
+    let mut first = start_host(&root, first_layout);
+    let mut second = start_host(&root, second_layout);
+    let listing = cli(&root, &outside, &["--session-list"]);
+    assert!(listing.status.success(), "{:?}", text(&listing));
+    assert!(
+        text(&listing)
+            .0
+            .contains(first_layout.project_root().to_str().unwrap())
+    );
+    assert!(
+        text(&listing)
+            .0
+            .contains(second_layout.project_root().to_str().unwrap())
+    );
+
+    let ambiguous = cli(&root, &outside, &["--session-restart", prefix]);
+    assert!(!ambiguous.status.success());
+    assert!(
+        text(&ambiguous)
+            .1
+            .contains("matches multiple native publications or history entries"),
+        "{:?}",
+        text(&ambiguous)
+    );
+    assert!(first.0.try_wait().unwrap().is_none());
+    assert!(second.0.try_wait().unwrap().is_none());
+    for layout in [first_layout, second_layout] {
+        assert!(
+            layout
+                .publication_location()
+                .unwrap()
+                .read_ready()
+                .unwrap()
+                .is_some()
+        );
+        let stopped = cli(
+            &root,
+            &outside,
+            &["--session-stop", layout.project_root().to_str().unwrap()],
+        );
+        assert!(stopped.status.success(), "{:?}", text(&stopped));
+    }
+    assert!(first.0.try_wait().unwrap().is_some());
+    assert!(second.0.try_wait().unwrap().is_some());
 }
 
 fn manager_key(app: &mut App, code: KeyCode) {

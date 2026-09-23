@@ -1471,12 +1471,12 @@ does not bundle that runtime.
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
 | Editor wait | `--wait FILE...` opens a new standalone editor and returns when that editor quits |
 | Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
-| Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
+| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
 | Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
-| Deferred | Persistent wait, workspace switching, manager visits, numbered sessions, session restart and directory handoff |
+| Deferred | Persistent wait, workspace switching, manager visits, numbered sessions and directory handoff |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1489,8 +1489,7 @@ With `workspace.mode: persistent`, a bare Windows `runyte` attaches to its
 discovered project. It refuses without creating a workspace when no project is
 discoverable; use explicit `-a` to initialize the current directory or
 `--init` for an exact standalone workspace. `--standalone`, file and directory
-targets, and `--wait` retain standalone behavior. Session restart remains
-unavailable.
+targets, and `--wait` retain standalone behavior.
 Plugins with a required `processes` capability are refused at registration on
 Windows; an optional `processes` capability is left ungranted.
 Use `:notifications`
@@ -1504,7 +1503,14 @@ Native session controls work from a directory outside any project. The CLI
 uses captured cache/runtime settings and a complete session catalog; an
 unavailable catalog fails the command instead of showing an empty list.
 `--session-stop` requires an explicit workspace ID, name, or path on Windows.
-Normal stop respects protected editor state, and `--force` requests its loss.
+Normal stop and restart respect protected editor state, and `--force` requests
+its loss. `--session-restart [WORKSPACE]` selects one running session, confirms
+its stop and starts its replacement without attaching. Without a selector it
+uses a discoverable current project; it never creates a project. On Windows,
+restart first checks that the current process can create a detached host and
+leaves the selected host running if the inherited job policy denies that
+preflight. A later replacement startup can still fail after a confirmed stop;
+the command reports that failure and does not claim a running replacement.
 `--include-hidden` with listing or stop-all includes separately published
 hosts from isolated environments. If two live Windows publications have the
 same project path and ID, both remain visible; selecting by that path or ID
@@ -1520,8 +1526,8 @@ name or path must resolve unambiguously; a live selection retains its exact
 publication, while a stopped or new workspace starts a host before attaching.
 Omitting `WORKSPACE` discovers the current project or initializes the current
 directory as one. A second TUI cannot take over an occupied attachment.
-`:detach` leaves the host and its editor state running. Session restart and
-editor session navigation remain unavailable.
+`:detach` leaves the host and its editor state running. Editor session
+navigation remains unavailable.
 The configured bare launch also attaches to a discoverable project; without
 one it reports the missing project and creates no workspace. Explicit `-a`
 retains its exact-current-directory initialization behavior.
@@ -3946,18 +3952,17 @@ retained in `:notifications` as well as the standing failure in
 `:service-health`.
 
 In persistent mode, verbosity and destination are properties of host startup.
-`--serve`, `--session-restart` on Unix, and the launch that creates a missing
+`--serve`, `--session-restart`, and the launch that creates a missing
 host pass them to that host. Attaching to an already-running host does not
 change its logger; supplying `-v` or `--log` there reports that the session
-kept its own configuration. On Unix, restart it to change logging:
+kept its own configuration. Restart it to change logging:
 
 ```sh
 runyte --session-restart -vv     # the only way to change a running host's logging
 ```
 
-On Windows, stop the persistent session, then relaunch it with explicit `-a`
-and the new logging options. Normal stop refuses unsaved work; save it first or
-decide explicitly whether to use `--force`.
+Normal restart refuses unsaved work; save it first or decide explicitly whether
+to use `--force`.
 
 There is no runtime log-level command and no protocol message for logging.
 

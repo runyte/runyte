@@ -177,7 +177,8 @@ use runyte::workspace::{
     normalize_session_name,
     windows_catalog::{HistoryTarget, WorkspaceRow, abbreviated_id_width},
     windows_control::{ControlSnapshot, StopAllReport, UserSelector},
-    windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
+    windows_endpoint::EndpointLocation,
+    windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope, ResolvedLayout},
     windows_parent_identity::ForegroundParentSupervisor,
     windows_startup::{self, HostStartup as NativeHostStartup},
 };
@@ -1216,11 +1217,6 @@ async fn run(
         return Ok(());
     }
 
-    #[cfg(windows)]
-    if arguments.mode == LaunchMode::RestartSession {
-        anyhow::bail!("session restart is not yet supported on Windows");
-    }
-
     // Capture a foreground host's natural parent before configuration or App
     // startup. Detached hosts have a disposable inheritance parent and never
     // turn that process into a supervisor.
@@ -1435,15 +1431,18 @@ async fn run(
         }
         #[cfg(windows)]
         {
-            return run_native_control_cli(&arguments, startup).await;
+            return run_native_control_cli(&arguments, startup, native_termination).await;
         }
         #[cfg(all(not(unix), not(windows)))]
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
 
     #[cfg(windows)]
-    if arguments.mode == LaunchMode::StopSession {
-        return run_native_control_cli(&arguments, startup).await;
+    if matches!(
+        arguments.mode,
+        LaunchMode::StopSession | LaunchMode::RestartSession
+    ) {
+        return run_native_control_cli(&arguments, startup, native_termination).await;
     }
 
     #[cfg(windows)]
@@ -4934,24 +4933,13 @@ async fn run_native_persistent(
             startup.config = config_path;
             startup.verbosity = arguments.verbosity;
             startup.log = arguments.log.clone();
-            const CANCELLATION: &str = "persistent attachment cancelled during native host startup";
-            let mut cancelled = None;
-            let started =
-                windows_startup::start_detached_host_cancellable(&location, startup, async {
-                    cancelled = Some(termination.recv().await);
-                    CANCELLATION
-                })
-                .await;
-            if let Some(event) = cancelled {
-                let cancellation = terminated(event);
-                return match started {
-                    Err(error) if error.to_string() != CANCELLATION => {
-                        Err(cancellation.context(error))
-                    }
-                    _ => Err(cancellation),
-                };
-            }
-            let started = started?;
+            let started = start_native_host_with_termination(
+                &location,
+                startup,
+                termination,
+                "persistent attachment cancelled during native host startup",
+            )
+            .await?;
             if started.disposition() == windows_startup::StartDisposition::ExistingWinner {
                 report_retained_host_logging(arguments);
             }
@@ -4963,9 +4951,33 @@ async fn run_native_persistent(
 }
 
 #[cfg(windows)]
+async fn start_native_host_with_termination(
+    location: &EndpointLocation,
+    startup: NativeHostStartup,
+    termination: &mut TerminationSignals,
+    reason: &'static str,
+) -> Result<windows_startup::StartedHost> {
+    let mut cancelled = None;
+    let started = windows_startup::start_detached_host_cancellable(location, startup, async {
+        cancelled = Some(termination.recv().await);
+        reason
+    })
+    .await;
+    if let Some(event) = cancelled {
+        let cancellation = terminated(event);
+        return match started {
+            Err(error) if error.to_string() != reason => Err(cancellation.context(error)),
+            _ => Err(cancellation),
+        };
+    }
+    started
+}
+
+#[cfg(windows)]
 async fn run_native_control_cli(
     arguments: &LaunchArguments,
     startup: &mut StartupTrace,
+    termination: &mut TerminationSignals,
 ) -> Result<()> {
     anyhow::ensure!(
         arguments.project_root.is_none(),
@@ -5045,6 +5057,82 @@ async fn run_native_control_cli(
                 eprintln!(
                     "session name changed, but recent history could not be refreshed: {issue}"
                 );
+            }
+        }
+        LaunchMode::RestartSession => {
+            let discovered = if arguments.workspace_selector.is_none() {
+                let directory = launch_directory.as_deref().context(
+                    "--session-restart requires a workspace selector or current project",
+                )?;
+                Some(project_root::discover(directory, &config.workspace.state)?.context(
+                    "--session-restart requires a workspace selector or discoverable current project",
+                )?)
+            } else {
+                None
+            };
+            let selector = arguments
+                .workspace_selector
+                .as_deref()
+                .or(discovered.as_deref())
+                .expect("restart has a selector or discovered project");
+            let selected = controls.select(UserSelector {
+                selector,
+                working_directory: launch_directory.as_deref(),
+            })?;
+            let Some(HistoryTarget::Live { publication, .. }) = controls.history().target(selected)
+            else {
+                anyhow::bail!("selected persistent session is already stopped");
+            };
+            let original = publication.metadata().clone();
+            let project = original.project_root()?;
+            let state = project_root::resolve_state_root(&project, &config.workspace.state);
+            let layout = ResolvedLayout::from_scope(scope.clone(), &project, state)?;
+            let location = layout.publication_location()?;
+            let mut replacement = NativeHostStartup::new(std::env::current_exe()?);
+            replacement.working_directory = Some(project);
+            replacement.config = config_path;
+            replacement.verbosity = arguments.verbosity;
+            replacement.log = arguments.log.clone();
+            windows_startup::preflight_detached_host(&location, &replacement).await?;
+            if let Some(event) = termination.pending_event().await {
+                return Err(terminated(event));
+            }
+            let ready = location.observe_ready()?.context(
+                "selected publication is no longer ready at its configured restart location",
+            )?;
+            anyhow::ensure!(
+                ready.metadata() == &original,
+                "selected publication changed or belongs to another native namespace; restart refused"
+            );
+            let stopped = controls.stop(selected, arguments.force).await.context(
+                "restart did not start a replacement because selected stop was not confirmed",
+            )?;
+            if original.protocol != runyte::protocol::VERSION {
+                eprintln!(
+                    "force-stopped persistent session process {} (protocol {}); its protected live state was discarded",
+                    original.process.pid, original.protocol
+                );
+            }
+            for issue in stopped.cleanup_issues {
+                eprintln!("session stopped; observation cleanup is incomplete: {issue}");
+            }
+            if let Some(event) = termination.pending_event().await {
+                return Err(terminated(event)
+                    .context("selected persistent session stopped; replacement was not started"));
+            }
+            let started = start_native_host_with_termination(
+                &location,
+                replacement,
+                termination,
+                "persistent session restart cancelled during native host startup",
+            )
+            .await
+            .context("selected persistent session stopped; replacement did not become ready")?;
+            if started.disposition() == windows_startup::StartDisposition::ExistingWinner {
+                eprintln!(
+                    "selected persistent session stopped; another native host won its configured publication"
+                );
+                report_retained_host_logging(arguments);
             }
         }
         LaunchMode::StopSession => {
@@ -6330,12 +6418,6 @@ fn report_retained_logging(verbosity: u8, log: Option<&Path>) {
     if verbosity == 0 && log.is_none() {
         return;
     }
-    #[cfg(windows)]
-    eprintln!(
-        "runyte: the running session kept its own log level and destination; \
-stop it with --session-stop and launch -a again to change them"
-    );
-    #[cfg(not(windows))]
     eprintln!(
         "runyte: the running session kept its own log level and destination; \
 restart it with --session-restart to change them"
@@ -6451,10 +6533,12 @@ PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
     associated with one workspace. CLI listing also works from standalone mode;
     session commands inside the editor need workspace.mode: persistent.
-    Windows supports list, rename, selected stop, stop-all and clean for native
-    persistent sessions, including through the standalone session manager.
-    Stop requires WORKSPACE there. Foreground --serve follows its launching
-    process; direct attachment is available, while restart remains unavailable.
+    Windows CLI supports list, rename, selected stop, stop-all, clean and restart
+    for native persistent sessions. The standalone session manager provides
+    list, rename and stop controls. Stop requires WORKSPACE on the Windows CLI.
+    Foreground --serve follows its launching process; direct attachment is
+    available. Restart checks detached-launch capability before stopping its
+    selected session.
 
     WORKSPACE selects a session by ID, unambiguous ID prefix, persistent name,
     or directory, so a session is reachable from anywhere.

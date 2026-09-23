@@ -268,6 +268,58 @@ pub async fn start_detached_host(
     prepare_detached_host(location, startup).await?.accept()
 }
 
+/// Exercises the same detached child/job creation policy before a restart
+/// retires its selected host. `--version` exits before workspace or runtime
+/// initialization. Successful return proves the probe process has exited and
+/// its private job is empty; later startup can still fail independently.
+pub async fn preflight_detached_host(
+    location: &EndpointLocation,
+    startup: &HostStartup,
+) -> Result<()> {
+    let planned = startup.command(location)?;
+    let mut probe = Command::new(planned.get_program());
+    probe.arg("--version");
+    if let Some(directory) = planned.get_current_dir() {
+        probe.current_dir(directory);
+    }
+    for (key, value) in planned.get_envs() {
+        if let Some(value) = value {
+            probe.env(key, value);
+        } else {
+            probe.env_remove(key);
+        }
+    }
+    let child = StartupChild::spawn(&probe)
+        .context("detached host preflight was denied; selected session was not stopped")?;
+    let deadline = Instant::now() + READINESS_BUDGET;
+    let outcome = loop {
+        match child.exit_status() {
+            Ok(Some(status)) => {
+                break if status.success() {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!(
+                        "detached host preflight exited with {status}"
+                    ))
+                };
+            }
+            Ok(None) => {}
+            Err(error) => break Err(error.into()),
+        }
+        if Instant::now() >= deadline {
+            break Err(anyhow::anyhow!(
+                "detached host preflight did not exit in time"
+            ));
+        }
+        sleep_until(deadline.min(Instant::now() + RETRY_INTERVAL)).await;
+    };
+    let cleanup = stop_provisional(&child)
+        .await
+        .context("detached host preflight job did not settle; selected session was not stopped");
+    cleanup?;
+    outcome
+}
+
 /// Starts a public attachment host while retaining the provisional job through
 /// launch cancellation. A cancelled launch settles only its own new process;
 /// an existing authenticated winner remains untouched.
