@@ -18,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Elixir language support](completed/PLAN_ELIXIR_LANGUAGE_SUPPORT.md): a statically
+  linked grammar, local scope repairs, Markdown injection, and explicit limits
+  on dedicated structural features;
 - [Windows Phase 1](completed/PLAN_WINDOWS_PHASE1.md): native standalone editing,
   file management, console input, text clipboard and ConPTY terminal sessions,
   with native Windows CI and Linux/macOS regression acceptance;

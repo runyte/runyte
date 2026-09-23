@@ -3051,6 +3051,7 @@ fn every_bundled_grammar_loads_without_error() {
         "hcl",
         "ruby",
         "php",
+        "elixir",
     ] {
         let id = registry
             .language_for_name(language)
@@ -3064,6 +3065,243 @@ fn every_bundled_grammar_loads_without_error() {
         registry.errors().is_empty(),
         "grammar load errors: {:?}",
         registry.errors()
+    );
+}
+
+#[test]
+fn elixir_greeting_highlights_language_constructs() {
+    let source = "defmodule Example do\n  # Return greetings for the supplied names.\n  def greet(names) when is_list(names) do\n    names\n    |> Enum.map(fn name -> {:ok, \"Hello, #{name}!\"} end)\n  end\nend\n";
+    let highlighted = scopes(source, "elixir");
+    for (text, scope) in [
+        ("defmodule", "keyword"),
+        ("def", "keyword"),
+        ("when", "keyword"),
+        ("fn", "keyword"),
+        ("do", "keyword"),
+        ("end", "keyword"),
+        ("Example", "namespace"),
+        ("Enum", "namespace"),
+        ("greet", "function"),
+        ("is_list", "function"),
+        ("map", "function"),
+        (":ok", "constant"),
+        ("|>", "operator"),
+        ("->", "operator"),
+        ("\"Hello, ", "string"),
+        ("#{", "punctuation"),
+        ("name", "variable"),
+        ("}", "punctuation"),
+        ("!\"", "string"),
+        ("# Return greetings for the supplied names.", "comment"),
+    ] {
+        assert_scope(&highlighted, text, scope);
+    }
+    let (registry, text, syntax) = parse(source, "elixir");
+    let spans = spans_of(&syntax, &text, &registry);
+    let interpolation = char_offset(source, "#{name}");
+    for (from, to, expected) in [
+        (interpolation, interpolation + 2, "punctuation"),
+        (interpolation + 2, interpolation + 6, "variable"),
+        (interpolation + 6, interpolation + 7, "punctuation"),
+    ] {
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.from == from && span.to == to && span.scope.name() == expected),
+            "missing interpolation span {from}..{to} {expected}: {spans:?}"
+        );
+    }
+    assert!(registry.errors().is_empty());
+}
+
+#[test]
+fn elixir_file_detection_and_capabilities() {
+    let registry = Registry::new();
+    let id = registry.language_for_name("elixir").unwrap();
+    assert_eq!(registry.line_comment(id), Some("#"));
+    for path in [
+        "example.ex",
+        "example.exs",
+        "example.EX",
+        "example.EXS",
+        "mix.exs",
+        "config.exs",
+        ".formatter.exs",
+    ] {
+        assert_eq!(
+            registry.language_for_path(Path::new(path)),
+            Some(id),
+            "{path}"
+        );
+    }
+    for path in ["template.eex", "template.heex"] {
+        assert_eq!(registry.language_for_path(Path::new(path)), None, "{path}");
+    }
+    let source = "defmodule Example do\n  def greet(), do: :ok\nend\n";
+    let (registry, text, syntax) = parse(source, "elixir");
+    for object in [
+        SyntaxObject::Function,
+        SyntaxObject::Class,
+        SyntaxObject::Parameter,
+    ] {
+        assert!(matches!(
+            syntax.text_object_captures(
+                &text,
+                &registry,
+                object,
+                SyntaxObjectPart::Around,
+                SyntaxRange::new(0, text.len_chars()).unwrap()
+            ),
+            Err(SyntaxError::UnsupportedTextObject { .. })
+        ));
+    }
+    assert!(matches!(
+        syntax.outline(&text, &registry),
+        Err(SyntaxError::UnsupportedOutline { .. })
+    ));
+    assert!(matches!(
+        syntax.newline_indent(&text, &registry, char_offset(source, "\n")),
+        Err(SyntaxError::UnsupportedIndentation { .. })
+    ));
+    assert!(matches!(
+        syntax.folds(&text, &registry),
+        Err(SyntaxError::UnsupportedFolds { .. })
+    ));
+    let start = char_offset(source, "greet");
+    let expanded = expansion_sequence(
+        &syntax,
+        &text,
+        &registry,
+        SyntaxRange::new(start, start + 1).unwrap(),
+    );
+    assert!(expanded.len() > 2);
+}
+
+#[test]
+fn elixir_additional_literals_attributes_and_unicode() {
+    let source = "# café\ndefmodule Example do\n  @limit 3\n  @doc \"héllo\"\n  def zero() do :ok end\n  def parse(α) do\n    ^value = α\n    options = [count: 42, ratio: 1.5]\n    IO.puts \"ready\"\n    ~r/é+/\n    ~s(世界)\n    \"\"\"\n    multi\n    line\n    \"\"\"\n  end\nend\n";
+    let highlighted = scopes(source, "elixir");
+    for (text, scope) in [
+        ("Example", "namespace"),
+        ("@limit", "attribute"),
+        ("@doc", "comment"),
+        ("\"héllo\"", "comment"),
+        ("zero", "function"),
+        (":ok", "constant"),
+        ("count: ", "constant"),
+        ("IO", "namespace"),
+        ("puts", "function"),
+        ("42", "number"),
+        ("1.5", "number"),
+        ("~r/é+/", "string"),
+        ("~s(世界)", "string"),
+    ] {
+        assert_scope(&highlighted, text, scope);
+    }
+    assert!(
+        highlighted
+            .iter()
+            .any(|(text, scope)| text.contains("multi") && *scope == "string")
+    );
+    assert!(
+        highlighted
+            .iter()
+            .any(|(text, scope)| text == "^" && *scope == "operator")
+    );
+    assert!(
+        highlighted
+            .iter()
+            .any(|(text, scope)| text == "=" && *scope == "operator")
+    );
+}
+
+#[test]
+fn elixir_incremental_reparse_matches_fresh_through_incomplete_code() {
+    let (registry, mut text, mut syntax) = parse(
+        "# café\ndefmodule Example do\n  def greet(name), do: \"Hello #{name}\"\nend\n",
+        "elixir",
+    );
+    for (start, end, replacement) in [
+        ("}", "}", ""),
+        ("name", "name", "α"),
+        ("\"\nend", "\"\nend", "}\"\nend"),
+    ] {
+        let source = text.to_string();
+        let from = char_offset(&source, start);
+        let to = from + end.chars().count();
+        let before = text.clone();
+        let transaction = Transaction::change(from, to, replacement);
+        text.apply(&transaction);
+        assert!(syntax.update(&before, &text, &transaction, &registry));
+        let fresh = DocumentSyntax::new(&text, syntax.language(), &registry).unwrap();
+        let spans = spans_of(&syntax, &text, &registry);
+        assert_eq!(spans, spans_of(&fresh, &text, &registry));
+        assert!(spans.iter().all(|span| span.to <= text.len_chars()));
+        assert!(
+            spans
+                .iter()
+                .any(|span| text.slice_string(span.from, span.to) == "defmodule")
+        );
+        assert!(registry.errors().is_empty());
+    }
+}
+
+#[test]
+fn elixir_markdown_fence_uses_bounded_injection() {
+    let source = "# Notes\n\n```elixir\ndefmodule Example do\n  def ok, do: :ok\nend\n```\n";
+    let (registry, mut text, mut syntax) = parse(source, "markdown");
+    let check = |text: &Text, syntax: &DocumentSyntax| {
+        let spans = spans_of(syntax, text, &registry);
+        let source = text.to_string();
+        let node = syntax
+            .node_at(text, &registry, char_offset(&source, "defmodule"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(registry.language_name(node.language), "elixir");
+        assert!(
+            spans
+                .iter()
+                .any(|span| text.slice_string(span.from, span.to) == "defmodule"
+                    && span.scope.name() == "keyword")
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|span| text.slice_string(span.from, span.to) == "Notes"
+                    && span.scope.name() == "markup.heading")
+        );
+    };
+    check(&text, &syntax);
+    let before = text.clone();
+    let transaction = Transaction::insert(char_offset(source, ":ok"), "é");
+    text.apply(&transaction);
+    assert!(syntax.update(&before, &text, &transaction, &registry));
+    check(&text, &syntax);
+    let fresh = DocumentSyntax::new(&text, syntax.language(), &registry).unwrap();
+    assert_eq!(
+        spans_of(&syntax, &text, &registry),
+        spans_of(&fresh, &text, &registry)
+    );
+    let large = format!("{}{}", "ordinary prose\n\n".repeat(9_000), source);
+    assert!(large.len() > 128 * 1024);
+    let (registry, text, syntax) = parse(&large, "markdown");
+    let spans = spans_of(&syntax, &text, &registry);
+    assert!(
+        spans
+            .iter()
+            .any(|span| text.slice_string(span.from, span.to) == "Notes"
+                && span.scope.name() == "markup.heading")
+    );
+    let node = syntax
+        .node_at(&text, &registry, char_offset(&large, "defmodule"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(registry.language_name(node.language), "markdown");
+    assert!(
+        !spans
+            .iter()
+            .any(|span| text.slice_string(span.from, span.to) == "defmodule"
+                && span.scope.name() == "keyword")
     );
 }
 

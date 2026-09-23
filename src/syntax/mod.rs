@@ -3709,6 +3709,7 @@ mod tests {
             ("hcl", Some("#")),
             ("ruby", Some("#")),
             ("php", Some("//")),
+            ("elixir", Some("#")),
             ("go", Some("//")),
             ("html", None),
             ("ini", Some(";")),

@@ -13,7 +13,7 @@ For the project overview and quick start, see the [main README](../README.md).
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
   Protobuf, Make, INI, Markdown, TOML, YAML, JSON, Dockerfile, XML,
-  HCL/Terraform, Ruby, and PHP
+  HCL/Terraform, Ruby, PHP, and Elixir
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
 - Word completion from every open buffer, including the explorer, with no
@@ -94,7 +94,7 @@ within the injection size limit below. Shell highlighting assumes Bash syntax,
 including when a file selects another interpreter with `SHELL`. Dockerfile has
 no dedicated text-object, outline, indentation, or fold queries.
 
-XML, HCL/Terraform, Ruby, and PHP are also bundled:
+XML, HCL/Terraform, Ruby, PHP, and Elixir are also bundled:
 
 | Language name | Detected files include |
 | --- | --- |
@@ -102,6 +102,7 @@ XML, HCL/Terraform, Ruby, and PHP are also bundled:
 | `hcl` | `.hcl`, `.tf`, and `.tfvars`, including `terragrunt.hcl` and `production.auto.tfvars` |
 | `ruby` | `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile`, `Rakefile`, `Guardfile`, `Vagrantfile`, `Brewfile`, `Podfile`, `Fastfile`, `Appfile`, `.irbrc`, and `.pryrc` |
 | `php` | `.php`, `.phtml`, `.php3`, `.php4`, `.php5`, `.php7`, `.php8`, and `.phps` |
+| `elixir` | `.ex` and `.exs`, including `mix.exs`, `config.exs`, and `.formatter.exs` |
 
 Ruby also recognizes `ruby` and `jruby` shebangs; PHP recognizes `php`.
 Terraform's `.tf.json` files retain JSON highlighting. XML uses its own parser
@@ -123,6 +124,13 @@ PHPDoc comments keep ordinary comment highlighting. PHP snippets
 in Markdown fences also need an opening PHP tag; HCL fences can use `hcl` or
 `tf`. These four languages have no dedicated text-object, outline, indentation,
 or fold queries.
+
+Elixir highlights offline without an Elixir runtime or language server. An
+`elixir` Markdown fence uses the same grammar within the injection size limit.
+Ordinary syntax-tree selection works, but dedicated function, class, and
+parameter text objects, outlines, syntax indentation, and folds are unsupported.
+EEx and HEEx templates are not registered as Elixir, and no Elixir language
+server is bundled or configured by default.
 
 Kotlin support recognizes `.kt` and `.kts`, including Kotlin 2 multi-dollar
 strings and guarded `when` branches. The pinned grammar does not yet model

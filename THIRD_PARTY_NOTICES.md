@@ -178,6 +178,7 @@ query because its crate ships none:
 - `tree-sitter-containerfile 0.9.2`;
 - `tree-sitter-cpp 0.23.4`;
 - `tree-sitter-css 0.25.0`;
+- `tree-sitter-elixir 0.3.5`;
 - `tree-sitter-go 0.25.0`;
 - `tree-sitter-hcl 1.1.0`;
 - `tree-sitter-html 0.23.2`;
@@ -202,8 +203,8 @@ query because its crate ships none:
 - `tree-sitter-yaml 0.7.2`; and
 - `tree-sitter-zig 1.1.2`.
 
-Each grammar crate declares the MIT License except `tree-sitter-ini 1.4.0`
-and `tree-sitter-hcl 1.1.0`, which declare Apache-2.0. The supporting
+Each grammar crate declares the MIT License except `tree-sitter-ini 1.4.0`,
+`tree-sitter-hcl 1.1.0`, and `tree-sitter-elixir 0.3.5`, which declare Apache-2.0. The supporting
 `tree-sitter-language 0.1.7` crate declares MIT. Package repositories, exact upstream revisions, Cargo checksums,
 and the query material used by Runyte are recorded in
 `docs/dependency-license-inventory.md`.
@@ -221,7 +222,9 @@ highlighting; indentation queries adapted from `tree-sitter-sequel`, `tree-sitte
 `tree-sitter-cmake` adapted to replace unsupported predicates and unmapped
 editor helper captures. Those files retain the upstream MIT or Apache-2.0 SPDX
 identifier. The complete Apache-2.0 text is preserved in
-`licenses/Apache-2.0.txt`.
+`licenses/Apache-2.0.txt`. The packaged Elixir archive includes the Apache-2.0
+license and no separate NOTICE file; its highlight query is used through the
+crate constant. Runyte's additional Elixir captures are MPL-2.0.
 
 Copyright notices present in the audited crate archives include:
 

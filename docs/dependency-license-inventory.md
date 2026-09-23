@@ -82,6 +82,9 @@ HCL requires a local highlight query, Ruby requires typed local-definition
 captures, and PHP requires a local HTML/heredoc injection query.
 Future grammar upgrades must repeat the query, checksum, revision, archive, and
 license review below rather than arriving through a compatible-version update.
+Elixir support exact-pins `tree-sitter-elixir =0.3.5`. The packaged Rust binding
+exports a `LanguageFn` and the highlight query; the generated C parser uses ABI
+14 and builds with its C scanner. No Elixir runtime or server is involved.
 
 On 2026-08-29, stripped LTO release builds on `x86_64-unknown-linux-gnu`
 measured 34,244,352 bytes at baseline commit `06e859d` and 43,168,320 bytes with
@@ -128,6 +131,7 @@ the package's directory in its upstream repository.
 | `tree-sitter-hcl 1.1.0` | Apache-2.0 | `tree-sitter-grammars/tree-sitter-hcl` at `009def4ae38ec30e5b40beeae26efe93484ab286` | `5a7b2cc3d7121553b84309fab9d11b3ff3d420403eef9ae50f9fd1cd9d9cf012` | Grammar with Runyte-authored highlights; the crate ships no query files |
 | `tree-sitter-ruby 0.23.1` | MIT | `tree-sitter/tree-sitter-ruby` at `71bd32fb7607035768799732addba884a37a6210` | `be0484ea4ef6bb9c575b4fdabde7e31340a8d2dbc7d52b321ac83da703249f95` | Grammar and upstream highlights; local copy of the upstream locals query changes definitions to `@local.definition.variable` for tree-house, isolates method and class/module locals, adds loop/exception/pattern definitions, and keeps explicit method calls out of local-reference highlighting |
 | `tree-sitter-php 0.24.2` | MIT | `tree-sitter/tree-sitter-php` at `5b5627faaa290d89eb3d01b9bf47c3bb9e797dea` | `0d8c17c3ab69052c5eeaa7ff5cd972dd1bc25d1b97ee779fec391ad3b5df5592` | Mixed PHP/HTML grammar and upstream highlights; local injections combine HTML regions, resolve opening heredoc/nowdoc labels, and preserve body children, omitting the unbundled phpdoc injection; PHP-only parser is not registered |
+| `tree-sitter-elixir 0.3.5` | Apache-2.0 | `elixir-lang/tree-sitter-elixir` at `e2d9e6e0e76b0c436fa48a0b8c32a031d0cbdf49` | `66dd064a762ed95bfc29857fa3cb7403bb1e5cb88112de0f6341b7e47284ba40` | ABI 14 grammar, C scanner, packaged `queries/highlights.scm`, and a Runyte-authored fragment mapping aliases and atoms to existing scopes; packaged injections and tags are unused |
 
 Most upstream highlight, injection, and locals query strings named above are
 compiled into their grammar crates and used through crate constants. The
@@ -145,7 +149,7 @@ rather than silently accepting semantics Runyte does not implement. C++
 composes the C indentation/fold base, while TypeScript and TSX compose the
 JavaScript base (and TSX also composes TypeScript additions). Markdown
 intentionally has no root indentation query; 26 languages have conservative
-fold queries. Dockerfile, XML, HCL, Ruby, and PHP currently supply highlighting
+fold queries. Dockerfile, XML, HCL, Ruby, PHP, and Elixir currently supply highlighting
 without dedicated structural queries; Dockerfile and PHP also supply injections.
 
 The Kotlin highlight query has separate Apache-2.0 provenance: its packaged
@@ -158,7 +162,7 @@ terms preserved in `licenses/Apache-2.0.txt` also cover `tree-sitter-ini`, the
 adopted INI fold query, and `tree-sitter-hcl`.
 
 The audited crate archives declare every grammar MIT except
-`tree-sitter-ini` and `tree-sitter-hcl`, which declare Apache-2.0. Thirteen archives
+`tree-sitter-ini`, `tree-sitter-hcl`, and `tree-sitter-elixir`, which declare Apache-2.0. Thirteen archives
 (`tree-sitter-cpp`, `tree-sitter-json`, `tree-sitter-md`, and
 `tree-sitter-toml-ng`, plus `tree-sitter-typescript`, `tree-sitter-html`, and
 `tree-sitter-java`, plus `tree-sitter-sequel`, `tree-sitter-lua`,

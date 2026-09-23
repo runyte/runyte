@@ -1402,6 +1402,33 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         indentation: QuerySource::EMPTY,
         folds: QuerySource::EMPTY,
     },
+    LanguageDefinition {
+        name: "elixir",
+        extensions: &["ex", "exs"],
+        filenames: &[],
+        filename_prefixes: &[],
+        shebangs: &[],
+        line_comment: Some("#"),
+        grammar: tree_sitter_elixir::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[
+                upstream(
+                    tree_sitter_elixir::HIGHLIGHTS_QUERY,
+                    "tree-sitter-elixir 0.3.5 highlights",
+                ),
+                runyte(
+                    include_str!("queries/elixir/highlights.scm"),
+                    "Runyte Elixir scope and precedence repair for tree-sitter-elixir 0.3.5",
+                ),
+            ]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::EMPTY,
+        folds: QuerySource::EMPTY,
+    },
 ];
 
 /// Parser configurations reachable only through an injection marker.
@@ -1493,6 +1520,7 @@ mod tests {
                         "php", "phtml", "php3", "php4", "php5", "php7", "php8", "phps"
                     ][..]
                 ),
+                ("elixir", &["ex", "exs"][..]),
             ]
         );
 
