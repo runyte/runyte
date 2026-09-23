@@ -1473,7 +1473,8 @@ does not bundle that runtime.
 | Session controls | CLI list, rename, selected stop, stop-all and clean; `Space Space` or `:session-list` opens a control-only manager in a standalone editor |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
-| Deferred | Interactive persistent attachment and switching, session restart, and plugins |
+| Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
+| Deferred | Interactive persistent attachment and switching, and session restart |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1482,7 +1483,9 @@ cannot be promised on console close. These console events are separate from
 keys delivered to an integrated ConPTY terminal session.
 
 Deferred commands remain discoverable and report why they are unavailable.
-Existing configuration cannot enable persistent attachment, restart, or plugins.
+Existing configuration cannot enable persistent attachment or session restart.
+Plugins with a required `processes` capability are refused at registration on
+Windows; an optional `processes` capability is left ungranted.
 Use `:notifications`
 and `:service-health` for diagnostics. Git integration is enabled when a native
 `git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
@@ -3723,9 +3726,8 @@ local bridge installations separate grants and revocation controls.
 Context services start with normal Runyte workspace startup on Linux, macOS,
 and Windows. On Windows the bridge discovers live workspaces with
 `runyte.exe --context-list --json` and authenticates over private local named
-pipes; it does not open a TCP listener. This availability does not enable the
-separate Windows plugin system or interactive persistent attachment and
-switching. A foreground or detached Windows host can expose its workspace to
+pipes; it does not open a TCP listener. Interactive persistent attachment and
+switching remain unavailable. A foreground or detached Windows host can expose its workspace to
 the bridge even though attaching another Windows TUI remains unavailable.
 
 The native **Agent context access** overlay starts on **Reject**. Use `1` for

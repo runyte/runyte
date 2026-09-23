@@ -47,11 +47,6 @@ impl WorkspaceHost {
     }
 
     pub(super) fn initialize_plugin_manager(&mut self) {
-        // Phase 1 has no plugin worker on Windows, so no manager is published
-        // and nothing is launched; see `plugin::worker`.
-        if cfg!(windows) {
-            return;
-        }
         if self.refuse_excessive_plugin_configs() {
             return;
         }
@@ -129,7 +124,7 @@ impl WorkspaceHost {
         let hello = HostMessage::Application(plugin::application::HostMessage::Hello {
             version: plugin::application::VERSION,
             host_version: plugin::compatibility::HOST_VERSION,
-            capabilities: plugin::application::CAPABILITIES.to_vec(),
+            capabilities: plugin::application::host_capabilities().to_vec(),
             features: plugin::application::FEATURES.to_vec(),
             limits: Default::default(),
         });
@@ -288,11 +283,6 @@ impl WorkspaceHost {
     /// `:plugin-stop` only bring that forward. Nothing is stopped to make a
     /// reload take effect sooner.
     fn reconcile_plugin_configuration(&mut self) {
-        // Startup publishes no manager on Windows, so a reload has nothing to
-        // reconcile against and must not launch what Phase 1 cannot run.
-        if cfg!(windows) {
-            return;
-        }
         if self.app.config.plugins.len() > plugin::manager::MAX_CONFIGS {
             // Deliberately not the synthetic startup entry: the manager is
             // already published from real records, and replacing it with one

@@ -49,7 +49,7 @@ Project goals:
 Linux and macOS provide the full feature set. Windows is supported in standalone
 mode in this source tree, including editing, `--wait`, file management,
 integrated terminals, clipboard, language services, Git when installed, and the
-optional context bridge. Plugins and interactive persistent mode are not yet
+optional context bridge and configured plugins. Interactive persistent mode is not yet
 supported on Windows. Native session controls and foreground hosts are available,
 but a TUI cannot attach to a Windows host. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).

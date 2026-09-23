@@ -81,19 +81,28 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
 fn public_and_deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
     let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-    for spelling in ["plugins", "session-attach workspace"] {
-        let name = spelling.split_whitespace().next().unwrap();
-        let spec = resolve_command(name).unwrap();
-        let availability = app.command_capabilities().command_availability(spec);
-        let reason = availability
+    let plugins = resolve_command("plugins").unwrap();
+    assert!(plugins.id.platform_unavailable().is_none());
+    assert!(
+        app.command_capabilities()
+            .command_availability(plugins)
             .reason()
-            .expect("deferred command is unavailable");
-        let result = app.execute(parse_colon_command(spelling).unwrap()).unwrap();
-        assert!(
-            matches!(result, CommandOutcome::Unavailable(ref message) if message == reason),
-            "{spelling}: {result:?}"
-        );
-    }
+            .is_none()
+    );
+    assert_eq!(
+        app.execute(parse_colon_command("plugins").unwrap())
+            .unwrap(),
+        CommandOutcome::Completed
+    );
+    let spec = resolve_command("session-attach").unwrap();
+    let availability = app.command_capabilities().command_availability(spec);
+    let reason = availability
+        .reason()
+        .expect("deferred command is unavailable");
+    let result = app
+        .execute(parse_colon_command("session-attach workspace").unwrap())
+        .unwrap();
+    assert!(matches!(result, CommandOutcome::Unavailable(ref message) if message == reason));
     let context = resolve_command("context-access").unwrap();
     assert!(context.id.platform_unavailable().is_none());
     assert!(
@@ -166,7 +175,7 @@ fn context_inventory_is_public_and_missing_storage_stays_noncreating() {
 }
 
 #[test]
-fn enabled_plugins_cannot_start_even_without_a_runtime() {
+fn invalid_plugin_configuration_still_publishes_a_manager_without_a_worker_runtime() {
     let root = TestRuntimeRoot::new("windows-plugins").unwrap();
     let config: Config = serde_yaml::from_str(
         "plugins:\n  - id: example\n    enabled: true\n    executable: cmd.exe\n",
@@ -174,8 +183,14 @@ fn enabled_plugins_cannot_start_even_without_a_runtime() {
     .unwrap();
     let app = App::new_in_project(config, None, root.path()).unwrap();
     let mut host = WorkspaceHost::new(app);
+    assert!(host.start_plugins().is_some());
     assert!(host.start_plugins().is_none());
-    assert!(host.start_plugins().is_none());
+    assert_eq!(
+        host.app_mut()
+            .execute(parse_colon_command("plugins").unwrap())
+            .unwrap(),
+        CommandOutcome::Completed
+    );
 }
 
 #[test]

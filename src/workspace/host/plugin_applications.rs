@@ -96,7 +96,7 @@ impl WorkspaceHost {
                 );
                 let configured_grants = &self.app.plugins.instances[&id].config.capabilities;
                 for cap in &required_capabilities {
-                    if !api::CAPABILITIES.contains(&cap.as_str()) {
+                    if !api::host_capabilities().contains(&cap.as_str()) {
                         return Err(failure(
                             "unsupported_capability",
                             format!("Host does not support required capability {cap}"),
@@ -112,7 +112,8 @@ impl WorkspaceHost {
                 let capabilities = required_capabilities
                     .union(&optional_capabilities)
                     .filter(|cap| {
-                        api::CAPABILITIES.contains(&cap.as_str()) && configured_grants.contains(cap)
+                        api::host_capabilities().contains(&cap.as_str())
+                            && configured_grants.contains(cap)
                     })
                     .cloned()
                     .collect();

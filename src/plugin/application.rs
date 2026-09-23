@@ -1070,6 +1070,27 @@ pub const CAPABILITIES: &[&str] = &[
     "documents",
 ];
 
+/// Capabilities backed by this target's host implementation. Managed helper
+/// processes have no Windows runtime yet, so they cannot be negotiated there.
+pub fn host_capabilities() -> &'static [&'static str] {
+    #[cfg(windows)]
+    {
+        static WINDOWS_CAPABILITIES: std::sync::LazyLock<Vec<&str>> =
+            std::sync::LazyLock::new(|| {
+                CAPABILITIES
+                    .iter()
+                    .copied()
+                    .filter(|capability| *capability != "processes")
+                    .collect()
+            });
+        &WINDOWS_CAPABILITIES
+    }
+    #[cfg(not(windows))]
+    {
+        CAPABILITIES
+    }
+}
+
 /// Validate framing independently of method dispatch so unknown methods receive
 /// `unsupported`, while malformed known requests cannot be interpreted as others.
 pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {

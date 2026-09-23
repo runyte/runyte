@@ -15,6 +15,10 @@ mod native {
         plugin::{
             self, ClientMessage, Event, HostMessage, PluginConfig, application, compatibility,
         },
+        terminal::{
+            emulator::Emulator,
+            pty::{Pty, PtyEvent},
+        },
         test_support::TestRuntimeRoot,
     };
     use std::{
@@ -26,6 +30,7 @@ mod native {
         },
         path::Path,
         process::{Child, Command, Stdio},
+        sync::mpsc as blocking,
         time::{Duration, Instant},
     };
     use tokio::sync::mpsc;
@@ -45,6 +50,7 @@ mod native {
         "cancellation_interrupts_blocked_write",
         "leader_exit_settles_descendant",
         "runtime_shutdown_owns_job",
+        "public_plugin_lifecycle",
     ];
 
     pub fn main() {
@@ -65,6 +71,9 @@ mod native {
                     .args(["--case", case])
                     .arg(root.path())
                     .env("XDG_CONFIG_HOME", root.join("config"))
+                    .env("XDG_CACHE_HOME", root.join("cache"))
+                    .env("XDG_RUNTIME_DIR", root.join("runtime"))
+                    .env("RUNYTE_CONTEXT_HOME", root.join("context"))
                     .creation_flags(CREATE_NO_WINDOW)
                     .stdin(Stdio::null())
                     .stdout(output.try_clone().unwrap())
@@ -120,6 +129,7 @@ mod native {
             }
             "leader_exit_settles_descendant" => runtime().block_on(descendant(root)),
             "runtime_shutdown_owns_job" => runtime_shutdown(root),
+            "public_plugin_lifecycle" => public_lifecycle(root),
             other => panic!("unknown native plugin worker case: {other}"),
         }
     }
@@ -382,11 +392,252 @@ mod native {
         .into_bytes()
     }
 
+    fn public_fixture(mode: &str, root: &Path) {
+        let mut input = std::io::stdin().lock();
+        let mut line = String::new();
+        input.read_line(&mut line).unwrap();
+        let hello: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(hello["type"], "hello");
+        assert!(
+            !hello["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|cap| cap == "processes")
+        );
+        let id = if mode == "public-optional" {
+            "optional"
+        } else {
+            "required"
+        };
+        let pid = std::process::id();
+        fs::write(root.join(format!("{id}-{pid}.started")), "").unwrap();
+        if id == "required" {
+            // Let the parent retain a process handle before this deliberately
+            // rejected registration can be killed and reaped by the host.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !root.join("allow-required").exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "required fixture was not released"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        let registration = serde_json::json!({
+            "type": "register",
+            "version": application::VERSION,
+            "runyte": format!("={}", compatibility::HOST_VERSION),
+            "name": id,
+            "commands": [{"name": "ping", "description": "Exercise plugin registration", "context": "workspace"}],
+            "required_capabilities": if id == "required" { vec!["processes"] } else { vec![] },
+            "optional_capabilities": if id == "optional" { vec!["processes"] } else { vec![] },
+            "required_features": [],
+            "optional_features": []
+        });
+        println!("{registration}");
+        if id == "optional" {
+            line.clear();
+            input.read_line(&mut line).unwrap();
+            let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(answer["type"], "registered");
+            assert!(
+                !answer["capabilities"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|cap| cap == "processes")
+            );
+            fs::write(root.join(format!("{id}-{pid}.answered")), "").unwrap();
+        }
+        while input.read_line(&mut line).unwrap() != 0 {
+            line.clear();
+        }
+    }
+
+    fn public_lifecycle(root: &Path) {
+        let project = root.join("project");
+        fs::create_dir(&project).unwrap();
+        let executable =
+            serde_json::to_string(&std::env::current_exe().unwrap().to_string_lossy()).unwrap();
+        let fixture_root = serde_json::to_string(&root.to_string_lossy()).unwrap();
+        let config = root.join("config/config.yaml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, format!(
+            "lsp:\n  enable: false\nplugins:\n  - id: optional\n    enabled: true\n    api: runyte-1\n    runyte: '={version}'\n    executable: {executable}\n    args: ['--fixture', 'public-optional', {fixture_root}]\n    capabilities: [processes]\n  - id: required\n    enabled: true\n    api: runyte-1\n    runyte: '={version}'\n    executable: {executable}\n    args: ['--fixture', 'public-required', {fixture_root}]\n    capabilities: [processes]\n",
+            version = compatibility::HOST_VERSION,
+        )).unwrap();
+        let (sender, events) = blocking::channel();
+        let args = vec![
+            "--standalone".into(),
+            "--config".into(),
+            config.display().to_string(),
+        ];
+        let editor = Pty::spawn(
+            Path::new(env!("CARGO_BIN_EXE_runyte")).as_os_str(),
+            &args,
+            &project,
+            120,
+            30,
+            move |event| {
+                let _ = sender.send(event);
+            },
+        )
+        .unwrap();
+        let mut console = PublicConsole {
+            editor,
+            events,
+            screen: Emulator::new(120, 30),
+        };
+        console.until_text("Project directory [");
+        console.send("\r");
+        console.until_text("[y/N]:");
+        console.send("y\r");
+        console.until_text("NOR");
+        console.send(":plugins\r");
+        console.until_text("Plugins");
+        let first = console.until_answer(root, "optional", None);
+        let rejected = console.until_marker(root, "required", "started", None);
+        assert_ne!(first, rejected);
+        let first_process = open_process(first);
+        let rejected_process = open_process(rejected);
+        fs::write(root.join("allow-required"), "").unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(rejected_process.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        console.until_text("optional");
+        console.send("\x1b[B");
+        // The manager preview clips long diagnostics at the visible column.
+        console.until_text("Host does not support required capability");
+        console.send("\x1b");
+        console.send(":plugin-stop optional\r");
+        assert_eq!(
+            unsafe { WaitForSingleObject(first_process.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        console.send(":plugin-restart optional\r");
+        let second = console.until_answer(root, "optional", Some(first));
+        assert_ne!(first, second);
+        let second_process = open_process(second);
+        console.send(":quit\r");
+        console.until_exit();
+        assert_eq!(
+            unsafe { WaitForSingleObject(second_process.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+    }
+
+    struct PublicConsole {
+        editor: Pty,
+        events: blocking::Receiver<PtyEvent>,
+        screen: Emulator,
+    }
+    impl PublicConsole {
+        fn send(&self, text: &str) {
+            assert!(self.editor.write(text.as_bytes().to_vec()));
+        }
+        fn pump(&mut self, deadline: Instant, stage: &str) -> bool {
+            match self.events.recv_timeout(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(50)),
+            ) {
+                Ok(PtyEvent::Output(bytes)) => {
+                    self.screen.feed(&bytes);
+                    false
+                }
+                Ok(PtyEvent::Exited(code)) => {
+                    assert_eq!(code, Some(0));
+                    true
+                }
+                event => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "waiting for {stage}: editor event {event:?}; screen: {}",
+                        self.screen_text()
+                    );
+                    false
+                }
+            }
+        }
+        fn screen_text(&self) -> String {
+            (0..self.screen.rows())
+                .filter_map(|row| self.screen.grid().line(row))
+                .map(|line| {
+                    line.iter()
+                        .filter(|cell| cell.width != 0)
+                        .map(|cell| cell.text())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        fn until_text(&mut self, text: &str) {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !self.screen_text().replace('\n', "").contains(text) {
+                assert!(
+                    !self.pump(deadline, text),
+                    "editor exited waiting for {text}"
+                );
+            }
+        }
+        fn until_answer(&mut self, root: &Path, id: &str, exclude: Option<u32>) -> u32 {
+            self.until_marker(root, id, "answered", exclude)
+        }
+        fn until_marker(
+            &mut self,
+            root: &Path,
+            id: &str,
+            suffix: &str,
+            exclude: Option<u32>,
+        ) -> u32 {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                for entry in fs::read_dir(root).unwrap().flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if let Some(pid) = name
+                        .strip_prefix(&format!("{id}-"))
+                        .and_then(|rest| rest.strip_suffix(&format!(".{suffix}")))
+                        .and_then(|pid| pid.parse::<u32>().ok())
+                        && Some(pid) != exclude
+                    {
+                        return pid;
+                    }
+                }
+                assert!(
+                    !self.pump(deadline, id),
+                    "editor exited waiting for {id} registration"
+                );
+            }
+        }
+        fn until_exit(&mut self) {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !self.pump(deadline, "editor exit") {}
+        }
+    }
+
     fn fixture(mode: &str, root: &Path) {
         assert_eq!(
             Path::new(&std::env::var_os("XDG_CONFIG_HOME").unwrap()),
             root.join("config")
         );
+        assert_eq!(
+            Path::new(&std::env::var_os("XDG_CACHE_HOME").unwrap()),
+            root.join("cache")
+        );
+        assert_eq!(
+            Path::new(&std::env::var_os("XDG_RUNTIME_DIR").unwrap()),
+            root.join("runtime")
+        );
+        assert_eq!(
+            Path::new(&std::env::var_os("RUNYTE_CONTEXT_HOME").unwrap()),
+            root.join("context")
+        );
+        if mode.starts_with("public-") {
+            public_fixture(mode, root);
+            return;
+        }
         fs::write(root.join("worker.pid"), std::process::id().to_string()).unwrap();
         let ready = frame("p:1");
         match mode {
