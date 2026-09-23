@@ -20,13 +20,16 @@ import time
 import unittest
 
 from test_bridge import MCPClient, PACKAGE, REPO
-from native_pty import spawn as spawn_pty
 from workspace_readiness import wait_for_workspaces
 from runyte_context.client import FRAME_BYTES, decode, encode
 from runyte_context.server import PROTOCOL
 
-sys.path.insert(0, str(REPO / 'benchmarks'))
-import ptybench
+UNIX_PTY = os.name != 'nt'
+if UNIX_PTY:
+    from native_pty import spawn as spawn_pty
+
+    sys.path.insert(0, str(REPO / 'benchmarks'))
+    import ptybench
 
 BINARY = os.environ.get('RUNYTE_CONTEXT_TEST_BINARY')
 SCOPES = ['terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose']
@@ -322,6 +325,7 @@ class RealMCPClient(MCPClient):
         return structured if name == 'list_workspaces' else structured['data']
 
 
+@unittest.skipUnless(UNIX_PTY, 'Unix PTY fixture')
 class NativeFixtureSynchronizationTests(unittest.TestCase):
     def test_terminal_marker_is_child_output_and_absent_from_typed_command(self):
         with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
@@ -378,7 +382,8 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
             ])
 
 
-@unittest.skipUnless(BINARY, 'set RUNYTE_CONTEXT_TEST_BINARY to run real editor/bridge integration')
+@unittest.skipUnless(UNIX_PTY and BINARY,
+                     'set RUNYTE_CONTEXT_TEST_BINARY on Unix to run real editor/bridge integration')
 class RealRunyteTests(unittest.TestCase):
     def setUp(self):
         self.binary = Path(BINARY).resolve(strict=True)

@@ -47,6 +47,33 @@ jobs:
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
         run: cargo test --locked --no-fail-fast
+      - name: Accept the private Windows context bridge
+        if: ${{ !cancelled() }}
+        run: |
+          $python = (Get-Command python -ErrorAction Stop).Source
+          Push-Location bridges/runyte-context
+          & $python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-python.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          $pythonAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-python.log"
+          foreach ($case in @(
+            'test_bounded_success_returns_exact_bytes_and_status',
+            'test_oversized_output_stops_at_one_byte_past_the_bound',
+            'test_timeout_terminates_the_owned_child_within_the_deadline',
+            'test_descendant_held_stdout_is_cancelled_at_the_same_deadline'
+          )) {
+            if ($pythonAcceptance -notmatch ('(?m)^' + [regex]::Escape($case) + ' \(.+\) \.\.\. ok\r?$')) {
+              throw "Required Windows context adapter acceptance did not run: $case"
+            }
+          }
+          $env:RUNYTE_CONTEXT_TEST_PYTHON = $python
+          $case = 'workspace::host::context::transport_tests::python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation'
+          cargo test --locked --lib $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-native.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nativeAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-native.log"
+          if ($nativeAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
+            throw "Required native Windows context bridge acceptance did not run: $case"
+          }
       - name: Accept isolated native clipboard operations
         if: ${{ !cancelled() }}
         # Named private window stations require administrator privileges;

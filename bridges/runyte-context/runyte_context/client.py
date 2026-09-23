@@ -8,17 +8,21 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import secrets
-import select
 import selectors
-import socket
 import stat
-import struct
 import subprocess
 import sys
 import time
+
+if os.name == "nt":
+    from . import windows as _windows
+else:
+    import pwd
+    import select
+    import socket
+    import struct
 
 FRAME_BYTES = 2 * 1024 * 1024
 FEATURE = "runyte.context.v1"
@@ -96,6 +100,8 @@ def storage_root():
         if not root.is_absolute():
             raise Failure("unavailable", "Context storage override must be absolute")
         return root
+    if os.name == "nt":
+        return _windows.storage_root()
     home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
     return home / ("Library/Caches/runyte/context" if sys.platform == "darwin"
                    else ".cache/runyte/context")
@@ -128,6 +134,8 @@ def private_directory(root):
 
 
 def load_credential(root, name):
+    if os.name == "nt":
+        return _windows.load_credential(root, name)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
         raise Failure("invalid_argument", "Invalid bridge identity name")
     filename = "identity.json" if name == "agent" else f"identity-{name}.json"
@@ -160,11 +168,27 @@ def discover(executable, hidden, timeout):
     argv = [executable, "--context-list", "--json"]
     if hidden:
         argv.append("--include-hidden")
+    if os.name == "nt":
+        try:
+            data, status = _windows.run_discovery(argv, timeout, FRAME_BYTES)
+        except TimeoutError:
+            raise Failure("timeout", "Workspace discovery timed out") from None
+        except OSError:
+            raise Failure("unavailable", "Cannot run workspace discovery") from None
+        if len(data) > FRAME_BYTES:
+            raise Failure("limit_exceeded", "Workspace discovery exceeds limit")
+        if status != 0:
+            raise Failure("unavailable", "Workspace discovery failed")
+        value = decode(data)
+        if (not isinstance(value, dict) or value.get("schema") != "runyte.context.discovery.v1"
+                or not isinstance(value.get("workspaces"), list) or len(value["workspaces"]) > 512):
+            raise Failure("unsupported", "Unsupported workspace discovery schema")
+        return value
     try:
         with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
             try:
-                data = bytearray()
                 deadline = time.monotonic() + timeout
+                data = bytearray()
                 with selectors.DefaultSelector() as poll:
                     poll.register(child.stdout, selectors.EVENT_READ)
                     while True:
@@ -193,7 +217,10 @@ def discover(executable, hidden, timeout):
 
 
 def workspace_key(record):
-    data = json.dumps([record["host_incarnation"], record["endpoint"]], separators=(",", ":"))
+    identity = [record["host_incarnation"], record["endpoint"]]
+    if os.name == "nt":
+        identity.extend([record["pid"], record["creation_time"]])
+    data = json.dumps(identity, separators=(",", ":"))
     return "w:" + hashlib.sha256(data.encode()).hexdigest()
 
 
@@ -203,42 +230,44 @@ class Connection:
         self.token = secrets.token_hex(16)
         self.scopes = set()
         self.counter = 0
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock = (_windows.Pipe(record, timeout) if os.name == "nt" else
+                     socket.socket(socket.AF_UNIX, socket.SOCK_STREAM))
         self.sock.settimeout(timeout)
         self.timeout = timeout
         self.frame_bytes = FRAME_BYTES
         self.handshake_deadline = time.monotonic() + timeout
         self.pending = bytearray()
         try:
-            endpoint = Path(record["endpoint"])
-            # Discovery is a hint. Verify the endpoint before sending a credential.
-            if endpoint.parent.resolve() != Path(root).resolve():
-                raise Failure("unavailable", "Endpoint is outside private context storage")
-            directory = private_directory(endpoint.parent)
-            try:
-                info = os.stat(endpoint.name, dir_fd=directory, follow_symlinks=False)
-                if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid()
-                        or stat.S_IMODE(info.st_mode) & 0o077):
-                    raise Failure("unavailable", "Context endpoint must be owner-private")
-                self.sock.connect(str(endpoint))
-                after = os.stat(endpoint.name, dir_fd=directory, follow_symlinks=False)
-                if (info.st_ino, info.st_dev) != (after.st_ino, after.st_dev):
-                    raise Failure("stale", "Context endpoint changed during connection")
-            finally:
-                os.close(directory)
-            if sys.platform.startswith("linux"):
-                _, uid, _ = struct.unpack("3i", self.sock.getsockopt(socket.SOL_SOCKET,
-                                                                  socket.SO_PEERCRED, 12))
-                if uid != os.geteuid():
-                    raise Failure("unavailable", "Context peer has a different owner")
-            elif sys.platform == "darwin":
-                # LOCAL_PEERCRED: xucred { unsigned version; uid_t uid; ... }.
-                peer = self.sock.getsockopt(0, 1, 84)
-                version, uid = struct.unpack_from("II", peer)
-                if version != 0 or uid != os.geteuid():
-                    raise Failure("unavailable", "Context peer has a different owner")
-            else:
-                raise Failure("unsupported", "Context bridge supports Linux and macOS")
+            if os.name != "nt":
+                endpoint = Path(record["endpoint"])
+                # Discovery is a hint. Verify the endpoint before sending a credential.
+                if endpoint.parent.resolve() != Path(root).resolve():
+                    raise Failure("unavailable", "Endpoint is outside private context storage")
+                directory = private_directory(endpoint.parent)
+                try:
+                    info = os.stat(endpoint.name, dir_fd=directory, follow_symlinks=False)
+                    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid()
+                            or stat.S_IMODE(info.st_mode) & 0o077):
+                        raise Failure("unavailable", "Context endpoint must be owner-private")
+                    self.sock.connect(str(endpoint))
+                    after = os.stat(endpoint.name, dir_fd=directory, follow_symlinks=False)
+                    if (info.st_ino, info.st_dev) != (after.st_ino, after.st_dev):
+                        raise Failure("stale", "Context endpoint changed during connection")
+                finally:
+                    os.close(directory)
+                if sys.platform.startswith("linux"):
+                    _, uid, _ = struct.unpack("3i", self.sock.getsockopt(socket.SOL_SOCKET,
+                                                                      socket.SO_PEERCRED, 12))
+                    if uid != os.geteuid():
+                        raise Failure("unavailable", "Context peer has a different owner")
+                elif sys.platform == "darwin":
+                    # LOCAL_PEERCRED: xucred { unsigned version; uid_t uid; ... }.
+                    peer = self.sock.getsockopt(0, 1, 84)
+                    version, uid = struct.unpack_from("II", peer)
+                    if version != 0 or uid != os.geteuid():
+                        raise Failure("unavailable", "Context peer has a different owner")
+                else:
+                    raise Failure("unsupported", "Context bridge supports Linux and macOS")
             hello = self.exchange({"type": "authenticate", "credential": credential})
             self.check_error(hello)
             if (hello.get("type") != "hello" or hello.get("version") != "runyte-1"
@@ -246,7 +275,10 @@ class Connection:
                     or not isinstance(hello.get("workspace"), dict)
                     or FEATURE not in hello.get("features", [])
                     or any(hello.get("workspace", {}).get(key) != record.get(key)
-                           for key in ("host_incarnation", "endpoint", "workspace_id", "root"))):
+                           for key in (("host_incarnation", "endpoint", "workspace_id", "root",
+                                        "mode", "pid", "creation_time", "environment")
+                                       if os.name == "nt" else
+                                       ("host_incarnation", "endpoint", "workspace_id", "root")))):
                 raise Failure("stale", "Context host identity or protocol changed")
             version = hello.get("host_version")
             if not isinstance(version, str) or not re.fullmatch(r"0\.3\.(0|[1-9][0-9]*)(?:\+[A-Za-z0-9.-]+)?", version):
@@ -289,6 +321,8 @@ class Connection:
     def alive(self):
         # There are no unsolicited host messages in this negotiated profile.
         # Readability while idle therefore means EOF or an invalid extra reply.
+        if os.name == "nt":
+            return not self.pending and self.sock.alive()
         try:
             return not self.pending and not select.select([self.sock], [], [], 0)[0]
         except (OSError, ValueError):
@@ -316,7 +350,12 @@ class Connection:
             raise NotSent(error.code, error.message) from None
         if len(packet) > self.frame_bytes:
             raise NotSent("limit_exceeded", "Request exceeds negotiated frame limit")
-        self.sock.sendall(packet)
+        try:
+            self.sock.sendall(packet)
+        except OSError as error:
+            if os.name == "nt" and isinstance(error, _windows.NotSubmitted):
+                raise NotSent("timeout", "Context request timed out before it was sent") from None
+            raise
         while b"\n" not in self.pending:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -388,6 +427,11 @@ class Bridge:
                     or not isinstance(record.get("root"), str)
                     or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("host_incarnation", "")))):
                 continue
+            if os.name == "nt":
+                try:
+                    _windows.validate_record(record)
+                except OSError:
+                    continue
             records[workspace_key(record)] = record
         for key in list(self.connections):
             if key not in records or not self.connections[key].alive():

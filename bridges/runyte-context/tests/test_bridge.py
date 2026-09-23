@@ -227,6 +227,7 @@ class MCPClient:
         self.process.stderr.close()
 
 
+@unittest.skipUnless(os.name != 'nt', 'independent Unix socket host fixture')
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="rybridge-", dir="/tmp")

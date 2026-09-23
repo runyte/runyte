@@ -1,18 +1,21 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Native PTY launch ownership, also run without a built editor."""
-import fcntl
+"""Unix PTY launch ownership, also run without a built editor."""
 import os
 from pathlib import Path
 import selectors
-import struct
 import sys
 import tempfile
-import termios
 import threading
 import time
 import unittest
 
-from native_pty import spawn
+UNIX_PTY = os.name != 'nt'
+if UNIX_PTY:
+    import fcntl
+    import struct
+    import termios
+
+    from native_pty import spawn
 
 
 def configure(fd):
@@ -43,6 +46,7 @@ def output_from(process, fd):
     return output.decode('utf-8', 'replace')
 
 
+@unittest.skipUnless(UNIX_PTY, 'Unix PTY fixture')
 class NativePtyTests(unittest.TestCase):
     def test_spawn_with_active_thread_has_controlling_terminal_and_initial_geometry(self):
         stopped = threading.Event()
@@ -87,7 +91,7 @@ class NativePtyTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--fixture']:
+    if UNIX_PTY and sys.argv[1:] == ['--fixture']:
         with open('/dev/tty', 'rb', buffering=0) as tty:
             rows, columns, _, _ = struct.unpack('HHHH', fcntl.ioctl(tty, termios.TIOCGWINSZ, b'\0' * 8))
             assert os.tcgetpgrp(tty.fileno()) == os.getpgrp()

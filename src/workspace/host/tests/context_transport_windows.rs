@@ -28,6 +28,13 @@ const CLIENT_ENDPOINT: &str = "RUNYTE_CONTEXT_CLIENT_ENDPOINT";
 const CLIENT_PID: &str = "RUNYTE_CONTEXT_CLIENT_PID";
 const CLIENT_CREATION: &str = "RUNYTE_CONTEXT_CLIENT_CREATION";
 const CLIENT_CREDENTIAL: &str = "RUNYTE_CONTEXT_CLIENT_CREDENTIAL";
+const PYTHON: &str = "RUNYTE_CONTEXT_TEST_PYTHON";
+const PYTHON_RECORD: &str = "RUNYTE_CONTEXT_NATIVE_RECORD";
+const PYTHON_ROOT: &str = "RUNYTE_CONTEXT_NATIVE_ROOT";
+const PYTHON_PREAUTH_READY: &str = "RUNYTE_CONTEXT_NATIVE_PREAUTH_READY";
+const PYTHON_PREAUTH_CONTINUE: &str = "RUNYTE_CONTEXT_NATIVE_PREAUTH_CONTINUE";
+const PYTHON_READY: &str = "RUNYTE_CONTEXT_NATIVE_READY";
+const PYTHON_CONTINUE: &str = "RUNYTE_CONTEXT_NATIVE_CONTINUE";
 
 struct Clipboard;
 impl SystemClipboard for Clipboard {
@@ -277,6 +284,142 @@ async fn compiled_native_client_authenticates_reads_and_exits_before_shutdown() 
         "compiled context client failed: {}",
         std::fs::read_to_string(&output).unwrap()
     );
+    fixture.host.shutdown_context().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires RUNYTE_CONTEXT_TEST_PYTHON and is run by native Windows acceptance"]
+async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation() {
+    use std::os::windows::process::CommandExt;
+
+    let python = std::env::var_os(PYTHON).expect("RUNYTE_CONTEXT_TEST_PYTHON is required");
+    let mut fixture = Fixture::new(
+        "context-host-python-bridge",
+        [Scope::EditorContextRead, Scope::BufferEdit].into(),
+    );
+    fixture
+        .host
+        .app
+        .apply_to_buffer(0, &Transaction::insert(0, "aç界🙂z"));
+    fixture.host.app.buffers[0].commit_undo_group();
+    let storage = fixture.host.context.storage.as_ref().unwrap().clone();
+    storage.identity("attacker").unwrap();
+    storage.identity("linked").unwrap();
+    std::fs::hard_link(
+        storage.root().join("identity-linked.json"),
+        storage.root().join("identity-linked-alias.json"),
+    )
+    .unwrap();
+    let registration = fixture.host.context.registration.clone().unwrap();
+    let preauth_ready = fixture._root.path().join("python-preauth-ready");
+    let preauth_proceed = fixture._root.path().join("python-preauth-continue");
+    let ready = fixture._root.path().join("python-ready");
+    let proceed = fixture._root.path().join("python-continue");
+    let output = fixture._root.path().join("python-output");
+    let config = fixture._root.path().join("config");
+    std::fs::create_dir(&config).unwrap();
+    let stdout = std::fs::File::create(&output).unwrap();
+    let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("bridges")
+        .join("runyte-context");
+    let tests = package.join("tests");
+    let mut child = ChildGuard(
+        Command::new(python)
+            .args([
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                tests.to_str().unwrap(),
+                "-p",
+                "test_windows_native.py",
+                "-v",
+            ])
+            .current_dir(&package)
+            .env("PYTHONPATH", &package)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("XDG_CONFIG_HOME", config)
+            .env(PYTHON_RECORD, serde_json::to_string(&registration).unwrap())
+            .env(PYTHON_ROOT, storage.root())
+            .env(PYTHON_PREAUTH_READY, &preauth_ready)
+            .env(PYTHON_PREAUTH_CONTINUE, &preauth_proceed)
+            .env(PYTHON_READY, &ready)
+            .env(PYTHON_CONTINUE, &proceed)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(stdout.try_clone().unwrap())
+            .stderr(stdout)
+            .spawn()
+            .unwrap(),
+    );
+
+    pump(&mut fixture.host, &mut fixture.events, async {
+        loop {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "Python bridge exited before pre-auth checks: {}",
+                std::fs::read_to_string(&output).unwrap()
+            );
+            if preauth_ready.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(
+        fixture.host.context.readers.is_empty(),
+        "invalid process or hard-linked identity reached host authentication"
+    );
+    std::fs::write(&preauth_proceed, b"continue").unwrap();
+
+    pump(&mut fixture.host, &mut fixture.events, async {
+        loop {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "Python bridge exited before revocation: {}",
+                std::fs::read_to_string(&output).unwrap()
+            );
+            if ready.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+
+    fixture.host.context_revoke("agent");
+    wait_for_retirement(&mut fixture.host, &mut fixture.events).await;
+    assert!(
+        storage
+            .discover(&fixture.environment, true)
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::write(&proceed, b"continue").unwrap();
+    let status = pump(&mut fixture.host, &mut fixture.events, async {
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    let output = std::fs::read_to_string(output).unwrap();
+    assert!(
+        status.success(),
+        "Python bridge acceptance failed:\n{output}"
+    );
+    assert!(
+        output
+            .contains("test_private_windows_mcp_round_trip_security_unicode_reconnect_and_revoke")
+            && output.contains("OK"),
+        "required Python bridge acceptance did not run:\n{output}"
+    );
+    assert_eq!(fixture.host.app.buffers[0].to_string(), "aŻółć🙂z");
+    assert!(fixture.host.app.buffers[0].undo());
+    assert_eq!(fixture.host.app.buffers[0].to_string(), "aç界🙂z");
     fixture.host.shutdown_context().await.unwrap();
 }
 
