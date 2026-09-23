@@ -194,6 +194,30 @@ fn vt_navigation_controls_focus_and_escape() {
     assert!(feed(&mut decoder, "\x1b[999~").is_empty());
 }
 
+#[test]
+fn native_ctrl_backslash_unit_keeps_terminal_mode_switch_identity() {
+    let mut decoder = Decoder::default();
+    let expected = key(KeyCode::Char('\\'), KeyModifiers::CONTROL);
+    assert_eq!(
+        decoder.key(record(0x1c, 0xdc, true, LEFT_CTRL_PRESSED)),
+        vec![expected.clone()]
+    );
+    assert_eq!(
+        convert_event(expected.clone()).unwrap(),
+        Some(InputEvent::Key(crate::input::KeyStroke::ctrl('\\')))
+    );
+    assert_eq!(feed(&mut decoder, "\x1c"), vec![expected]);
+    assert_eq!(
+        decoder.key(record(0x1d, 0xdd, true, LEFT_CTRL_PRESSED)),
+        vec![key(KeyCode::Char('\x1d'), KeyModifiers::CONTROL)]
+    );
+    assert!(feed(&mut decoder, "\x1b[200~").is_empty());
+    assert_eq!(
+        feed(&mut decoder, "\x1c\x1b[201~"),
+        vec![Event::Paste("\x1c".into())]
+    );
+}
+
 fn encoded(text: &str) -> String {
     text.encode_utf16()
         .map(|unit| format!("\x1b[0;0;{unit};1;0;1_"))

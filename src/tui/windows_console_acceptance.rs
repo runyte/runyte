@@ -338,7 +338,7 @@ fn transport_parent() {
             Ok(PtyEvent::Output(bytes)) => {
                 output.extend(bytes);
                 if String::from_utf8_lossy(&output).contains(&format!("READY{sent}")) && sent < 3 {
-                    assert!(child.write(b"\x1b[72;35;8;1;8;1_\x1b[74;36;10;1;8;1_\x1b[8;14;8;1;0;1_\x1b[13;28;13;1;0;1_\x1b[200~hello\r\n\x08\x0a\x1b[201~\x1b[123;88;0;1;0;1_".to_vec()));
+                    assert!(child.write(b"\x1c\x1b[72;35;8;1;8;1_\x1b[74;36;10;1;8;1_\x1b[8;14;8;1;0;1_\x1b[13;28;13;1;0;1_\x1b[200~hello\r\n\x08\x0a\x1b[201~\x1b[123;88;0;1;0;1_".to_vec()));
                     sent += 1;
                 }
             }
@@ -369,6 +369,7 @@ fn transport_capture() {
         std::io::stdout().flush().unwrap();
         runtime.block_on(async {
             for expected in [
+                Event::Key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)),
                 Event::Key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)),
                 Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
                 Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
@@ -433,7 +434,9 @@ fn transport_capture() {
                 }
             }
         }
-        assert!(units.starts_with(&[8, 10, 127, 13]), "{units:?}");
+        // ConPTY exposes a zero-unit key before the raw Ctrl-\ control unit
+        // after the enhanced-keyboard guard has been restored.
+        assert!(units.starts_with(&[0, 28, 8, 10, 127, 13]), "{units:?}");
         drop(mode);
     }
 }

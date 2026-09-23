@@ -342,6 +342,12 @@ impl Decoder {
                 {
                     Some(KeyCode::Char(char::from_u32(u32::from(vk + 32)).unwrap()))
                 }
+                // ConPTY can keep Ctrl-\ as a native key record with its
+                // control unit. Normalize that exact unit just as the VT
+                // byte path does; the terminal mode switch binds Ctrl-\.
+                _ if unit == 0x1c && modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(KeyCode::Char('\\'))
+                }
                 _ if unit != 0 => self.scalar(unit).map(KeyCode::Char),
                 _ => None,
             };
