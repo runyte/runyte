@@ -2,7 +2,8 @@
 
 Checkpoint: 2026-09-23, branch `feat/windows-support`, private native
 ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
-in `140347e`, and private native parent waits are accepted in `fa18a52`. Private
+in `140347e`, private native parent waits are accepted in `fa18a52`, and private
+Windows plugin handoffs are accepted in `8148437`. Private
 exact native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
@@ -18,8 +19,8 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
-native worker and durable-state foundations, with handoffs, approval ownership,
-context access and the bridge still pending. Integrated Git is optional: missing
+native worker, durable-state and private handoff foundations, with context access
+and the bridge still pending. Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
 persistent-session coordinator; separate guarded operations work.
@@ -29,7 +30,8 @@ each package. Incorporate findings and repeat review until none remain before
 advancing. Commit and push accepted checkpoints to `feat/windows-support`.
 The user authorized pushing accepted checkpoints to `feat/windows-support`,
 but not to other branches. The exact push through `d9361e6` to
-`git@github.com:runyte/runyte.git` succeeded; later checkpoints may be pushed
+`git@github.com:runyte/runyte.git` succeeded, and the later push through
+`777dbf3` succeeded; accepted later checkpoints may be pushed
 to that branch after review and local validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
 decision. Do not enable public persistent
@@ -601,19 +603,55 @@ report 2,755 lib tests passed with 24 ignored and 66 bin tests passed with 29
 ignored; every integration target is green, along with seven custom native
 plugin-worker cases and six native LSP transport cases.
 
-## Next packages: private Windows plugin handoffs and remaining 2.6
+CI run [35799397233](https://github.com/runyte/runyte/actions/runs/35799397233)
+for the combined `777dbf3` ParentAttach checkpoint is fully green on Windows,
+Linux and macOS, including both coverage gates, plugin conformance, lifecycle
+stress, MSRV and the release floor.
 
-Implement private Windows `terminal.open` and `external.open` plugin handoffs
-with native physical-frontend approval regression coverage. Keep at most eight
-unpublished terminal admissions and retain each one's four MiB accounting until
-actual ConPTY, job and output cleanup completes; installing a terminal transfers
-that ownership to the editor. After external-open admission crosses an
-irreversible operating-system boundary, cancellation or a lost result is
-`outcome_unknown` rather than a safe refusal or replay opportunity. Approval
-must come from physical input on the current native frontend; no protocol flag
-or plugin assertion may stand in for it. Public plugin startup remains gated.
+## Accepted package: 5c private Windows plugin handoffs
 
-Then continue context transport and grants and the Windows Python MCP bridge.
+`8148437` adds private Windows `terminal.open` and `external.open` for an already
+registered native plugin while leaving public plugin discovery, startup, stop and
+restart gated. Registered commands remain executable because their worker and
+capabilities already exist; no Windows lifecycle command can start a worker.
+Native handoff authority is separate from ordinary plugin foreground authority.
+Only a current, unmodified, nonreplayed physical Enter on the attached frontend
+can grant it, and validated forms retain that grant only with the exact queued
+and in-flight revision and foreground generation. Repeats, later input,
+attachment replacement, plugin restart, stale validation and replay consume or
+invalidate it.
+
+Unpublished terminals have eight slots and four MiB of accounting each. Windows
+starts the ConPTY child suspended, retains setup and cleanup ownership across
+every partial failure, and releases the lease only after the exact child, job,
+reader, writer and lifecycle work settle. Installation resumes the child and
+transfers ownership to the ordinary terminal collection, so the installed
+terminal survives plugin stop. Cancellation drains and discards unpublished
+output off the editor loop. Captured working directories require the exact
+workspace identity and reject parent escape and junction traversal.
+
+External open reuses the native prepared-launch dispatcher and revalidates the
+captured invocation before irreversible admission. A lost or cancelled result
+after that boundary is `outcome_unknown` and cannot be replayed as a safe
+refusal. Source review also accepted attachment and plugin-generation rejection,
+literal arguments, one-shot authority and public-gate preservation.
+
+Independent Astra review found and closed the partial-setup child wait and
+asynchronous validated-form authority gaps; the final review has no findings.
+Focused coverage passes all four native pending-terminal tests, four host handoff
+tests, the four partial ConPTY setup checkpoints, eight simultaneous cleanup
+owners, repeat/form authority cases, install transfer, cwd containment, stale
+attachment/plugin results and external launch. Final validation is green:
+`cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast` all exit zero. Core summaries
+report 2,765 lib tests passed with 24 ignored and 66 bin tests passed with 29
+ignored; every integration target is green, along with seven custom native
+plugin-worker cases and six native LSP transport cases. Native CI acceptance for
+this commit remains pending.
+
+## Next packages: context access and the Windows bridge
+
+Continue context transport and grants and the Windows Python MCP bridge.
 Context identity and grant storage uses its separate LocalAppData policy and
 must not inherit the plugin state anchor. Public persistent attachment and wait
 routes, manager visits, numbered sessions, restart, directory handoff and
@@ -694,16 +732,11 @@ wait without killing an unrelated shared host.
 ## Remaining 2.6
 
 Native plugin worker/process ownership and framing is accepted in `ce888ee`, and
-durable plugin state is accepted in `140347e`. Implement private Windows
-`terminal.open` and `external.open` plugin handoffs and physical-frontend
-approval regression coverage next. Unpublished terminal work has eight slots
-and four MiB of accounting per admission, retained until actual ConPTY, job and
-output cleanup; editor installation transfers that ownership. External launch
-results become uncertain after irreversible admission. Preserve existing
-protocol bounds and require physical input from the current native frontend for
-approval. Public plugin startup remains gated.
+durable plugin state is accepted in `140347e`. Private Windows `terminal.open`
+and `external.open` handoffs and physical-frontend approval are accepted in
+`8148437`. Public plugin startup remains gated.
 
-Follow with context transport/grants and the Windows Python MCP bridge. Keep
+Implement context transport/grants and the Windows Python MCP bridge next. Keep
 context identity and grants on their separate LocalAppData policy. Validate
 immutable and current Node/plugin conformance plus real Windows context clients.
 
