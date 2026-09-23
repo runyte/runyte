@@ -11,7 +11,8 @@ the private Windows Python MCP bridge is accepted in `34f53b6`. Private exact
 native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
-Public Windows context access is accepted in local source commit `a79e765`.
+Public Windows context access is accepted in source commit `a79e765`; Windows
+CI acceptance regressions are repaired in local source commit `05935a6`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
@@ -39,10 +40,11 @@ advancing. Commit and push accepted checkpoints to `feat/windows-support`.
 The user authorized pushing accepted checkpoints to `feat/windows-support`,
 but not to other branches. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
-`777dbf3` succeeded. The remote branch now includes `cbc850e`; local source
-checkpoint `a79e765` and this handoff update still require the separate handoff
-commit, push and CI. Accepted checkpoints may be pushed to that branch after
-review and local validation.
+`777dbf3` succeeded. The exact push through public-context handoff commit
+`46311e7` also succeeded, so the remote branch includes `a79e765` and
+`46311e7`. Only local remediation commit `05935a6` and this updated handoff
+record still require push and replacement CI. Accepted checkpoints may be
+pushed to that branch after review and local validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
 decision. Do not enable public persistent attachment or plugins merely because
 their foundations exist.
@@ -811,17 +813,42 @@ Final Astra review reports no findings. Local validation passes
 `cargo fmt --check`, serialized
 `cargo clippy --all-targets --locked -- -D warnings`, and serialized
 `cargo test --locked --workspace --no-fail-fast`. The focused post-service
-cleanup acceptance also passes. The complete public executable -> production
-discovery -> Python bridge round trip was not runnable locally because this
-machine has no installed Python usable by the unmodified acceptance launcher.
-The isolated `target/python-3.13.15/python.exe` runtime, bootstrapped with an
-explicit `sys.path`, ran the four adapter-only tests but ignores the
-`PYTHONPATH` used by the real executable round trip. Its required Windows CI
-case remains the authority for that route.
+cleanup acceptance also passes.
 
-The source checkpoint is local. `a79e765`, this separate handoff record and the
-resulting checkpoint still require the handoff commit, push to
-`feat/windows-support`, and CI before remote acceptance may be claimed.
+CI run
+[35832182423](https://github.com/runyte/runyte/actions/runs/35832182423) passed
+all 17 non-Windows jobs. Its Windows job exposed five acceptance defects. The
+terminal-job peer fixture used a nested `cmd.exe` that could exit before peer
+identity was pinned; the durable context-storage fixture created its simulated
+interrupted directory without the required private ACL; and a Windows host
+could close a refused pipe before the frontend read the terminal refusal. The
+Python bridge validated a 64-character `workspace_id` even though Runyte
+publishes the stable 32-character workspace identity, so it filtered the real
+registration before probing. Finally, the CI step exited after the private
+bridge failure and did not run the public exact acceptance.
+
+Remediation source commit `05935a6` (`Fix Windows context acceptance
+regressions`) uses a readiness-signalled compiled child for the PTY peer,
+creates the interrupted storage child through private storage, retains refused
+Windows peers through reader release or one deadline, validates the real
+32-character workspace identity, and accumulates the Python, private-host and
+public-executable gate results before failing the CI step. Its focused bridge
+test accepts 32 characters and rejects 31, 33 and 64.
+
+Validation after `05935a6` is green: `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast` all pass. Focused storage,
+PTY, shared transport and native frontend acceptance also pass. The exact
+`public_windows_context_round_trip` and private real-host Python bridge cases
+each selected one test and passed with the isolated
+`target/python-3.13.15/python.exe` runtime under a temporary `.pth`/import
+setup. This is local acceptance evidence; replacement Windows CI remains the
+authority for the installed-Python route.
+
+The public source and its handoff through `46311e7` are already pushed. Local
+remediation `05935a6` and this updated record still require push to
+`feat/windows-support` and replacement CI before remote acceptance may be
+claimed.
 
 ## Next package: public Windows plugin startup and acceptance
 
@@ -915,15 +942,18 @@ durable plugin state is accepted in `140347e`. Private Windows `terminal.open`
 and `external.open` handoffs and physical-frontend approval are accepted in
 `8148437`. The context sequence is accepted from native identity and remembered
 grant storage in `61acb18`, through transport and discovery in `439f4da`, host
-grants in `bbdb12a`, and the Python MCP bridge in `34f53b6`. Local source commit
+grants in `bbdb12a`, and the Python MCP bridge in `34f53b6`. Source commit
 `a79e765` opens normal Windows context startup, `:context-access` and
-`--context-list --json` with the public acceptance described above.
+`--context-list --json` with the public acceptance described above. Local
+remediation `05935a6` corrects the Windows acceptance failures exposed by CI
+run 35832182423.
 
 Public plugin discovery, startup, stop and restart are the remaining 2.6 gate.
 They must preserve the existing worker/process ownership, durable-state,
 physical approval and uncertain-outcome contracts. No public plugin lifecycle
-is accepted by this checkpoint. Remote acceptance for `a79e765` also remains
-pending its handoff commit and authorized push.
+is accepted by this checkpoint. Remote acceptance for the public context
+sequence through `05935a6` remains pending its authorized push and replacement
+CI.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
@@ -962,9 +992,10 @@ never execute a program written by a test. Retain process/job ownership through
 cleanup before deleting fixture storage. Native process checks may require the
 normal token outside the sandbox, as in preceding acceptance runs.
 
-The coordinating agent has no pending local validation command. Source commit
-`a79e765` is local and this handoff record is the only checkpoint work still to
-commit. Push both commits only to `feat/windows-support`, then use the resulting
-CI run as the authority for the public real-Python round trip and overall remote
-acceptance. Inspect Git status and preserve unrelated working-tree edits before
-committing.
+The coordinating agent has no pending local validation command. Public source
+and handoff commits `a79e765` and `46311e7` are already pushed. Remediation
+commit `05935a6` is local, and this updated handoff record is the only checkpoint
+work still to commit. Push those two commits only to `feat/windows-support`,
+then use the replacement CI run as the authority for the installed-Python public
+round trip and overall remote acceptance. Inspect Git status and preserve
+unrelated working-tree edits before committing.
