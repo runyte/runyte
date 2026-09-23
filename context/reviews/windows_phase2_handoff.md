@@ -11,6 +11,7 @@ the private Windows Python MCP bridge is accepted in `34f53b6`. Private exact
 native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
+Public Windows context access is accepted in local source commit `a79e765`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
@@ -22,10 +23,11 @@ before the older chronological progress entries. No previous chat is required.
 
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
-ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
-native worker, durable-state, private handoff, context-grant storage, private
-context transport/discovery foundations, host grants and the private Python MCP
-bridge. Public Windows context enablement and acceptance remain pending.
+ParentAttach paths; interactive public attachment and wait routes remain gated.
+Phase 2.6 has accepted native worker, durable-state, private handoff,
+context-grant storage, context transport/discovery, host grants, the Python MCP
+bridge and public Windows context access. Public Windows plugin startup remains
+pending.
 Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
@@ -37,11 +39,13 @@ advancing. Commit and push accepted checkpoints to `feat/windows-support`.
 The user authorized pushing accepted checkpoints to `feat/windows-support`,
 but not to other branches. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
-`777dbf3` succeeded; accepted later checkpoints may be pushed
-to that branch after review and local validation.
+`777dbf3` succeeded. The remote branch now includes `cbc850e`; local source
+checkpoint `a79e765` and this handoff update still require the separate handoff
+commit, push and CI. Accepted checkpoints may be pushed to that branch after
+review and local validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. Do not enable public persistent
-attachment, plugins, or context access merely because their foundations exist.
+decision. Do not enable public persistent attachment or plugins merely because
+their foundations exist.
 
 ## Accepted implementation and validation
 
@@ -764,24 +768,73 @@ The immutable/frozen and current Node/plugin conformance suites remain separate
 required CI lanes; neither was run or claimed by `34f53b6`. The existing Node
 readiness issue remains open in `context/issues/node_conformance_readiness.md`.
 
-## Next package: public Windows context enablement and acceptance
+## Accepted package: 5g public Windows context access
 
-Open normal Windows context host startup, `:context-access` and
-`--context-list --json` only with their public end-to-end acceptance. Preserve
-the accepted LocalAppData identity boundary, physical grant and terminal-text
-approval rules, exact discovery and process proof, and the private bridge's
-bounded cancellation semantics. Until that package is accepted, all three
-public routes remain gated. Public persistent attachment and wait routes,
-manager visits, numbered sessions, restart, directory handoff and combined Git
-removal remain closed until their own acceptance gates pass.
+Local source commit `a79e765` (`Enable public Windows context access`) starts the
+Windows context service during normal workspace startup and opens the native
+`:context-access [identity]` review and bounded `--context-list --json`
+discovery. Grants, scope changes, remembered access, terminal-text proposals and
+revocation retain the accepted physical-input and exact-identity rules.
+Revocation disconnects the identity and removes its durable grant. This package
+does not open interactive persistent attachment, switching or plugin startup.
 
-Opening remembered grants also opens context service startup earlier in the
-standalone path. Any later second-draw or input-construction failure must run
-the same joined context-host cleanup as an ordinary exit. Public acceptance
-must exercise the complete executable -> `--context-list --json` -> Python
-bridge round trip. Every Windows editor or host subprocess fixture in that
-package must set its own absolute `RUNYTE_CONTEXT_HOME`; `XDG_CONFIG_HOME` does
-not isolate the separate LocalAppData identity and grant store.
+The public acceptance uses the actual Runyte executable in a real ConPTY. It
+physically grants and revokes access, exercises Unicode unsaved reads and
+revision-checked edits, rejects stale and cross-connection handles, restarts a
+remembered grant under a fresh host incarnation, and checks exact publication
+retirement. The production Python bridge discovers through the actual
+`runyte --context-list --json` route rather than injected discovery. A separate
+post-service frontend-failure case pins the published process identity, releases
+the injected failure, waits for natural joined exit, and proves that the exact
+host publication was removed.
+
+Every Windows editor, host and compiled wrapper fixture now receives its own
+absolute `RUNYTE_CONTEXT_HOME` and fixture-owned `XDG_CONFIG_HOME`; the context
+acceptance also pins its cache and runtime environment inputs. Fixtures execute
+the repository binary or an already compiled libtest helper rather than a file
+written by a test, and temporary storage remains owned until the relevant
+process and transport owners have joined. README, the user guide, keymap
+reference and Python bridge documentation describe the public boundary. Windows
+CI requires the Python adapter, private real-host bridge and public real-executable
+acceptance cases to run rather than skip.
+
+CI run
+[35821577813](https://github.com/runyte/runyte/actions/runs/35821577813) for the
+previously pushed `cbc850e` passed every non-Windows job. Its Windows job exposed
+a race after successful discovery output: an overlapped read could first pend,
+then `GetOverlappedResult` returned `ERROR_BROKEN_PIPE` (109) after the child
+exited. `a79e765` fixes both native read completion paths to treat read-side 109
+as EOF while preserving bounds, the absolute deadline and process cleanup. The
+focused four-case Windows Python adapter suite passes after that repair.
+
+Final Astra review reports no findings. Local validation passes
+`cargo fmt --check`, serialized
+`cargo clippy --all-targets --locked -- -D warnings`, and serialized
+`cargo test --locked --workspace --no-fail-fast`. The focused post-service
+cleanup acceptance also passes. The complete public executable -> production
+discovery -> Python bridge round trip was not runnable locally because this
+machine has no installed Python usable by the unmodified acceptance launcher.
+The isolated `target/python-3.13.15/python.exe` runtime, bootstrapped with an
+explicit `sys.path`, ran the four adapter-only tests but ignores the
+`PYTHONPATH` used by the real executable round trip. Its required Windows CI
+case remains the authority for that route.
+
+The source checkpoint is local. `a79e765`, this separate handoff record and the
+resulting checkpoint still require the handoff commit, push to
+`feat/windows-support`, and CI before remote acceptance may be claimed.
+
+## Next package: public Windows plugin startup and acceptance
+
+Public plugin discovery, startup, stop and restart remain gated. Continue from
+the accepted native worker, durable-state and private handoff packages without
+changing the retained plugin protocol or approval boundaries. Opening that gate
+requires its own reviewed public lifecycle and real-process acceptance; this
+handoff does not claim that work is designed or complete.
+
+Interactive Windows persistent attachment and wait routes, manager visits,
+numbered persistent sessions, session restart, directory handoff and combined
+Git branch/worktree removal also remain closed until their own acceptance gates
+pass.
 
 ## Phase 2.5 implementation order
 
@@ -860,36 +913,17 @@ wait without killing an unrelated shared host.
 Native plugin worker/process ownership and framing is accepted in `ce888ee`, and
 durable plugin state is accepted in `140347e`. Private Windows `terminal.open`
 and `external.open` handoffs and physical-frontend approval are accepted in
-`8148437`. Native Windows context identities and remembered grants are accepted
-in `61acb18`: the default store has a fixed OS-resolved LocalAppData anchor,
-explicit overrides require an existing immediate parent, records use pinned
-private storage, native path bytes remain lossless, and fail-fast locking keeps
-the editor thread bounded. Repeated Enter cannot approve context grants or
-terminal proposals; repeated overlay navigation remains live. Private Windows
-context registration, exact publication ownership, named-pipe transport and
-metadata-only discovery are accepted in `439f4da`. Private shared context host
-grants and real native clients are accepted in `bbdb12a`, and the private
-Windows Python MCP bridge and native external client conformance are accepted
-in `34f53b6`. Normal Windows context startup, `:context-access` and
-`--context-list --json` remain gated. Public plugin startup remains gated.
+`8148437`. The context sequence is accepted from native identity and remembered
+grant storage in `61acb18`, through transport and discovery in `439f4da`, host
+grants in `bbdb12a`, and the Python MCP bridge in `34f53b6`. Local source commit
+`a79e765` opens normal Windows context startup, `:context-access` and
+`--context-list --json` with the public acceptance described above.
 
-Implement public Windows context enablement with real end-to-end acceptance for
-normal startup, native grant/revoke and bounded discovery. Include the complete
-executable -> `--context-list --json` -> Python bridge route, joined context
-cleanup after post-service standalone construction failures, and an absolute
-fixture-owned `RUNYTE_CONTEXT_HOME` on every Windows editor or host subprocess.
-Keep context identity and grants on their separate LocalAppData policy, and
-preserve the bridge's exact process, cancellation and mutation-outcome
-boundaries.
-
-Independent Astra review closed repeat-approval, registration-publication scope
-and durable-anchor retry findings, then reported no remaining findings. Final
-validation for `61acb18` passes `cargo fmt --check`, all-target Clippy with
-warnings denied, and `cargo test --locked --workspace --no-fail-fast`. Core
-summaries report 2,775 lib tests passed with 24 ignored and 66 bin tests passed
-with 29 ignored; every integration target is green, including seven native
-plugin-worker and six native LSP transport cases. Native CI acceptance for this
-checkpoint remains pending.
+Public plugin discovery, startup, stop and restart are the remaining 2.6 gate.
+They must preserve the existing worker/process ownership, durable-state,
+physical approval and uncertain-outcome contracts. No public plugin lifecycle
+is accepted by this checkpoint. Remote acceptance for `a79e765` also remains
+pending its handoff commit and authorized push.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
@@ -928,11 +962,9 @@ never execute a program written by a test. Retain process/job ownership through
 cleanup before deleting fixture storage. Native process checks may require the
 normal token outside the sandbox, as in preceding acceptance runs.
 
-The coordinating agent has no pending validation command, and the naming
-author/reviewer have finished. A separate `cargo run --release` was observed
-during the handoff; its ownership is outside this validation work. Leave it alone
-and check for overlapping builds before starting new validation. Closing the chat
-does not require a live agent to finish a transaction. The discovery-scope source
-is included in this checkpoint. Ignored naming-package staging remains local to
-this checkout; a different checkout will need that package transferred or
-reconstructed from the retained contract. Inspect git status before editing.
+The coordinating agent has no pending local validation command. Source commit
+`a79e765` is local and this handoff record is the only checkpoint work still to
+commit. Push both commits only to `feat/windows-support`, then use the resulting
+CI run as the authority for the public real-Python round trip and overall remote
+acceptance. Inspect Git status and preserve unrelated working-tree edits before
+committing.
