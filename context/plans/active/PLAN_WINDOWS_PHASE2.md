@@ -113,6 +113,17 @@ It is pushed as `fc9c324`; remote run `35542444854` passes all jobs.
    worker/process lifecycle, state, and handoffs continue toward public plugin
    startup while the retained plugin contracts remain unchanged.
 
+### Windows binary release follow-up
+
+Include a native x86-64 Windows MSVC ZIP in the next release that contains the
+Windows support work. The binary release workflow already has a Windows build,
+archive, and `SHA256SUMS` path; this task is to verify the exact release tag
+produces and publishes that asset, confirm its packaged executable starts on the
+supported Windows target, and update release notes and download guidance to
+state the standalone-mode scope. The published archive must match its checksum.
+The 0.3.1 release predates Windows support, so it is not a substitute for this
+acceptance. Follow `context/reference/releasing.md` when cutting the release.
+
 Each sub-phase is divided into reviewed work packages. Implement a package,
 request an independent subagent review, incorporate actionable findings, then
 start the next package. Dependency and acceptance details are refined before

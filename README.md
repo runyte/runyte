@@ -46,18 +46,12 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. Work on native Windows support is
-ongoing; basic functionality is already available in this source tree: standalone
-editing (including `--wait`), file management, text and image clipboard,
-PowerShell directory handoff,
-integrated terminals, private diagnostic logs, shell filters, external file/URL
-opening, language services after
-workspace approval, and optional Git integration
-when Git is installed. The optional context bridge is available through native
-approval, private named pipes, and `--context-list --json` discovery. Native
-session listing, rename, selected stop,
-stop-all, and stopped-history cleanup are available for detached hosts;
-interactive attachment, restart, and plugins are still pending. See the
+Linux and macOS provide the full feature set. Windows is supported in standalone
+mode in this source tree, including editing, `--wait`, file management,
+integrated terminals, clipboard, language services, Git when installed, and the
+optional context bridge. Plugins and interactive persistent mode are not yet
+supported on Windows. Native session controls and foreground hosts are available,
+but a TUI cannot attach to a Windows host. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
@@ -134,7 +128,7 @@ Each host serves one workspace. Switching persistent sessions connects the
 client to another host. Persistent sessions survive detaching, but not a host
 shutdown or reboot.
 
-Add `-a` when starting Runyte to run in the persistent mode:
+On Linux and macOS, add `-a` when starting Runyte to run in persistent mode:
 
 ```sh
 runyte -a  # attach to a session or start a new one

@@ -606,6 +606,7 @@ impl Pty {
         let lifecycle_control = control.clone();
         let lifecycle_process = process.clone();
         let lifecycle_job = job.clone();
+        #[cfg(debug_assertions)]
         let lifecycle_pid = info.dwProcessId;
         let lifecycle_retention = setup_retention.clone();
         thread::Builder::new()
