@@ -12,7 +12,8 @@ native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
 Public Windows context access is accepted in source commit `a79e765`; Windows
-CI acceptance regressions are repaired in local source commit `05935a6`.
+CI acceptance regressions are repaired in source commit `05935a6` and remotely
+accepted through handoff commit `d693832`.
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
@@ -40,11 +41,11 @@ advancing. Commit and push accepted checkpoints to `feat/windows-support`.
 The user authorized pushing accepted checkpoints to `feat/windows-support`,
 but not to other branches. The exact push through `d9361e6` to
 `git@github.com:runyte/runyte.git` succeeded, and the later push through
-`777dbf3` succeeded. The exact push through public-context handoff commit
-`46311e7` also succeeded, so the remote branch includes `a79e765` and
-`46311e7`. Only local remediation commit `05935a6` and this updated handoff
-record still require push and replacement CI. Accepted checkpoints may be
-pushed to that branch after review and local validation.
+`777dbf3` succeeded. The exact pushes through public-context handoff commit
+`46311e7` and remediation handoff commit `d693832` also succeeded. The remote
+branch therefore includes `a79e765`, `05935a6` and `d693832`. This final handoff
+update is the only local checkpoint work still to commit and push. Accepted
+checkpoints may be pushed to that branch after review and local validation.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
 decision. Do not enable public persistent attachment or plugins merely because
 their foundations exist.
@@ -845,10 +846,14 @@ each selected one test and passed with the isolated
 setup. This is local acceptance evidence; replacement Windows CI remains the
 authority for the installed-Python route.
 
-The public source and its handoff through `46311e7` are already pushed. Local
-remediation `05935a6` and this updated record still require push to
-`feat/windows-support` and replacement CI before remote acceptance may be
-claimed.
+Replacement CI run
+[35837383495](https://github.com/runyte/runyte/actions/runs/35837383495) at
+`d693832` completed successfully with all 18 jobs green. Native Windows passed,
+including the repaired Python adapter, private real-host bridge and public
+real-executable context acceptance. The public Windows context checkpoint and
+its remediation are pushed and remotely accepted through `d693832`. This final
+handoff update alone remains local pending its record commit and push to
+`feat/windows-support`.
 
 ## Next package: public Windows plugin startup and acceptance
 
@@ -944,16 +949,16 @@ and `external.open` handoffs and physical-frontend approval are accepted in
 grant storage in `61acb18`, through transport and discovery in `439f4da`, host
 grants in `bbdb12a`, and the Python MCP bridge in `34f53b6`. Source commit
 `a79e765` opens normal Windows context startup, `:context-access` and
-`--context-list --json` with the public acceptance described above. Local
-remediation `05935a6` corrects the Windows acceptance failures exposed by CI
-run 35832182423.
+`--context-list --json` with the public acceptance described above. Remediation
+`05935a6` corrects the Windows acceptance failures exposed by CI run
+35832182423, and green replacement CI run 35837383495 remotely accepts the
+context sequence through `d693832`.
 
 Public plugin discovery, startup, stop and restart are the remaining 2.6 gate.
 They must preserve the existing worker/process ownership, durable-state,
 physical approval and uncertain-outcome contracts. No public plugin lifecycle
-is accepted by this checkpoint. Remote acceptance for the public context
-sequence through `05935a6` remains pending its authorized push and replacement
-CI.
+is accepted by this checkpoint. The public context sequence is remotely
+accepted; public plugin lifecycle work remains the next 2.6 gate.
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
@@ -992,10 +997,9 @@ never execute a program written by a test. Retain process/job ownership through
 cleanup before deleting fixture storage. Native process checks may require the
 normal token outside the sandbox, as in preceding acceptance runs.
 
-The coordinating agent has no pending local validation command. Public source
-and handoff commits `a79e765` and `46311e7` are already pushed. Remediation
-commit `05935a6` is local, and this updated handoff record is the only checkpoint
-work still to commit. Push those two commits only to `feat/windows-support`,
-then use the replacement CI run as the authority for the installed-Python public
-round trip and overall remote acceptance. Inspect Git status and preserve
-unrelated working-tree edits before committing.
+The coordinating agent has no pending local validation command. Public source,
+remediation and handoff commits through `d693832` are pushed and accepted by CI
+run 35837383495. This final updated handoff record is the only local checkpoint
+work still to commit and push, and it may be pushed only to
+`feat/windows-support`. Inspect Git status and preserve unrelated working-tree
+edits before committing.
