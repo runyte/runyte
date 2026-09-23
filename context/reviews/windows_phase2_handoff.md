@@ -5,7 +5,8 @@ ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
 in `140347e`, private native parent waits are accepted in `fa18a52`, and private
 Windows plugin handoffs are accepted in `8148437`. Native Windows context
 identity/grant storage and repeat-safe context approval are accepted in
-`61acb18`. Private
+`61acb18`, and private Windows context transport and discovery are accepted in
+`439f4da`. Private
 exact native switching is `11963b1` and the native plugin worker foundation is
 `ce888ee`. Typed switch intent and exact native target preparation are
 `8657281` and `ec33c26`. Private native frontend attachment is `180175d`.
@@ -21,8 +22,9 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths; public availability remains gated. Phase 2.6 has accepted
-native worker, durable-state, private handoff and context-grant storage
-foundations, with context transport/discovery and the bridge still pending.
+native worker, durable-state, private handoff, context-grant storage and private
+context transport/discovery foundations, with host grants and the bridge still
+pending.
 Integrated Git is optional: missing
 Git must leave the integration disabled without failed spawn loops or runtime
 errors. Combined branch/worktree deletion still needs the native
@@ -652,11 +654,41 @@ ignored; every integration target is green, along with seven custom native
 plugin-worker cases and six native LSP transport cases. Native CI acceptance for
 this commit remains pending.
 
+## Accepted package: 5d private Windows context transport
+
+`439f4da` adds private Windows context registration, exact publication ownership,
+named-pipe transport and metadata-only discovery while leaving context host
+startup, grants and public `--context-list` unavailable. Discovery v1 keeps its
+string path fields. Windows registrations add process creation time and reject a
+non-Unicode workspace root before publication. Endpoints use only the strict
+`\\.\pipe\runyte-context-v1-<64 hex>` family.
+
+The pipe uses a private ACL, rejects remote clients, pins the actual same-account
+peer process and limits ownership to eight active or closing streams plus one
+pending instance. Frames are newline-delimited and bounded to two MiB. Shutdown
+and lease revocation cancel queue admission, reply waits and writes. Every owner
+exit signals cancellation, joins peer tasks and retires only its exact
+registration; cancelled shutdown retains the join handle for a later await.
+Discovery opens only an existing private store, probes at most 64 endpoints with
+eight concurrent 250 ms probes and a three-second overall deadline, and accepts
+only the exact registration returned by the authenticated live peer.
+
+Independent Astra review found no remaining findings after connection permits,
+close-event pressure, joined error cleanup, cancellable shutdown and native test
+coverage were corrected. Ten real named-pipe transport tests and three native
+discovery tests pass. Final validation is green: `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings`, and
+`cargo test --locked --workspace --no-fail-fast` all exit zero. Core summaries
+report 2,788 lib tests passed with 24 ignored and 66 bin tests passed with 29
+ignored; every integration target is green, including seven native plugin-worker
+and six native LSP transport cases. Native CI acceptance remains pending.
+
 ## Next packages: context access and the Windows bridge
 
 Context identity/grant storage and repeat-safe physical approval are accepted in
-`61acb18`. Continue authenticated context transport/discovery, host grants with
-real native clients, and the Windows Python MCP bridge.
+`61acb18`. Authenticated private context transport and metadata-only discovery
+are accepted in `439f4da`. Continue host grants with real native clients, then
+the Windows Python MCP bridge.
 Context identity and grant storage uses its separate LocalAppData policy and
 must not inherit the plugin state anchor. Public persistent attachment and wait
 routes, manager visits, numbered sessions, restart, directory handoff and
@@ -744,17 +776,15 @@ in `61acb18`: the default store has a fixed OS-resolved LocalAppData anchor,
 explicit overrides require an existing immediate parent, records use pinned
 private storage, native path bytes remain lossless, and fail-fast locking keeps
 the editor thread bounded. Repeated Enter cannot approve context grants or
-terminal proposals; repeated overlay navigation remains live. Windows context
-registration, endpoint publication, discovery and startup remain gated for the
-named-pipe transport package. Public plugin startup remains gated.
+terminal proposals; repeated overlay navigation remains live. Private Windows
+context registration, exact publication ownership, named-pipe transport and
+metadata-only discovery are accepted in `439f4da`. Context host grants and
+startup remain gated for the next package. Public plugin startup remains gated.
 
-Implement authenticated context transport/discovery and host grants with real
-native clients, then the Windows Python MCP bridge. Preserve discovery v1 string
-paths and introduce only the strict native named-pipe endpoint family; reject a
-non-Unicode workspace root before publication rather than changing the wire
-shape. Keep context identity and grants on their separate LocalAppData policy.
-Validate immutable and current Node/plugin conformance plus real Windows context
-clients.
+Implement context host grants with real native clients, then the Windows Python
+MCP bridge. Keep context identity and grants on their separate LocalAppData
+policy. Validate immutable and current Node/plugin conformance plus real Windows
+context clients.
 
 Independent Astra review closed repeat-approval, registration-publication scope
 and durable-anchor retry findings, then reported no remaining findings. Final
