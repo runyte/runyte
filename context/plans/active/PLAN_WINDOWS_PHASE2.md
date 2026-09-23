@@ -12,10 +12,20 @@ configuration, discovery, startup, stop, restart and reload have passed native
 formatting, all-target Clippy, the full workspace test suite and eight real
 plugin-worker acceptance cases. Required `processes` registration is refused
 and optional `processes` remains ungranted because managed helper processes do
-not yet have a Windows runtime. Remote CI for this checkpoint is pending.
-Phase 2.5 still gates interactive attachment and wait routes, manager visits,
-numbered persistent sessions, session restart, directory handoff and combined
-Git branch/worktree removal.
+not yet have a Windows runtime. All jobs passed in
+[CI run 35875460337](https://github.com/runyte/runyte/actions/runs/35875460337).
+
+Phase 2.5 source checkpoint `2563fba` opens explicit Windows `-a` and
+`--persistent [WORKSPACE]` attachment through the exact native publication,
+starting a missing host when detached process policy permits it. Native format,
+all-target Clippy, the full workspace suite and real-process attachment
+acceptance passed. The local inherited job denies detached creation; acceptance
+verified that specific refusal leaves no publication, then used a foreground
+host to verify interactive attach, occupied refusal, retained edits, explicit
+project-root selection and retained logging notice. Remote CI and push for this
+checkpoint remain pending. Persistent wait, manager visits, numbered sessions,
+session restart, directory handoff, automatic persistent startup and combined
+Git branch/worktree removal remain gated.
 
 ## Checkpoint and next work package
 
@@ -1173,11 +1183,11 @@ must be shared by launcher and child and produce configured endpoint, registry
 and name-store locations from the same inputs. Native catalog refresh initially
 fails closed on incomplete scans or indeterminate peers: retain existing rows,
 report the error and skip history/number cleanup. Actions recheck exact targets.
-Public persistent-session availability remains disabled until attachment,
-switching, persistent wait, foreground supervision and parent-terminal
-authorization pass their later acceptance package. Host rename belongs to the
-server's publication owner; teardown must finish bounded server shutdown before
-retiring its publication, rather than copying the Unix cleanup ordering.
+At this design checkpoint, public persistent-session availability remained
+disabled pending later acceptance of attachment, switching, persistent wait,
+foreground supervision and parent-terminal authorization. Host rename belongs
+to the server's publication owner; teardown must finish bounded server shutdown
+before retiring its publication, rather than copying the Unix cleanup ordering.
 
 The configured-location contract separates creating publication admission from
 read-only listing. A read-only registry view reuses scanning and candidate
