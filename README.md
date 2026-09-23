@@ -50,7 +50,8 @@ Linux and macOS provide the full feature set. Windows support in this source
 tree includes standalone editing, `--wait`, file management,
 integrated terminals, clipboard, language services, Git when installed, and the
 optional context bridge, configured plugins and direct persistent attachment.
-Native session controls and foreground hosts are available. See the
+Configured bare launches attach when a project is discoverable. Native session
+controls and foreground hosts are available. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 

@@ -403,8 +403,9 @@ runyte --persistent   # or runyte -a, for attach
 `workspace.mode: persistent` makes a bare `runyte` do the same; `--standalone`
 overrides that setting. Target-bearing invocations remain standalone so their
 relative paths and `+LINE[:COLUMN]` positions retain ordinary launch semantics.
-`--persistent` reads its argument as a workspace rather than a file; `--wait` is
-how a file reaches a persistent session.
+`--persistent` reads its argument as a workspace rather than a file. On Unix,
+`--wait` is how a file reaches a persistent session; on Windows it opens a
+standalone editor.
 
 `runyte --persistent WORKSPACE` (or `runyte -a WORKSPACE`) attaches to a named
 session from any directory, using the same selector the lifecycle commands
@@ -1484,9 +1485,12 @@ cannot be promised on console close. These console events are separate from
 keys delivered to an integrated ConPTY terminal session.
 
 Deferred commands remain discoverable and report why they are unavailable.
-Existing configuration cannot enable automatic persistent startup through
-`workspace.mode: persistent` or session restart. Use explicit `-a` or
-`--persistent` for Windows attachment.
+With `workspace.mode: persistent`, a bare Windows `runyte` attaches to its
+discovered project. It refuses without creating a workspace when no project is
+discoverable; use explicit `-a` to initialize the current directory or
+`--init` for an exact standalone workspace. `--standalone`, file and directory
+targets, and `--wait` retain standalone behavior. Session restart remains
+unavailable.
 Plugins with a required `processes` capability are refused at registration on
 Windows; an optional `processes` capability is left ungranted.
 Use `:notifications`
@@ -1518,6 +1522,9 @@ Omitting `WORKSPACE` discovers the current project or initializes the current
 directory as one. A second TUI cannot take over an occupied attachment.
 `:detach` leaves the host and its editor state running. Session restart and
 editor session navigation remain unavailable.
+The configured bare launch also attaches to a discoverable project; without
+one it reports the missing project and creates no workspace. Explicit `-a`
+retains its exact-current-directory initialization behavior.
 Starting a missing host requires Windows to permit a detached process outside
 the launcher's inherited job. If that process policy denies the launch, `-a`
 reports the refusal and leaves no new host running. Attaching to an already

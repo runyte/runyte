@@ -39,7 +39,7 @@ fn direct_native_attachment_starts_retains_and_refuses_takeover() {
     let config = config_dir.join("config.yaml");
     fs::write(
         &config,
-        "lsp:\n  enable: false\nworkspace:\n  idle_retirement_minutes: 0\n",
+        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n  idle_retirement_minutes: 0\n",
     )
     .unwrap();
     fs::write(project.join("note.txt"), "original\n").unwrap();
@@ -329,6 +329,26 @@ fn public_persistent_attachment_fixture() {
     first.send("iX\x1b");
     first.until("Xoriginal");
 
+    let standalone = vec![
+        "--standalone".into(),
+        "--config".into(),
+        config.display().to_string(),
+    ];
+    let mut overridden = Console::spawn(&standalone, &project);
+    overridden.until("NOR");
+    overridden.send(":quit\r");
+    overridden.exit(0);
+
+    let target = vec![
+        "note.txt".into(),
+        "--config".into(),
+        config.display().to_string(),
+    ];
+    let mut target_editor = Console::spawn(&target, &project);
+    target_editor.until("original");
+    target_editor.send(":quit\r");
+    target_editor.exit(0);
+
     let occupied = vec![
         "--persistent".into(),
         project.display().to_string(),
@@ -357,6 +377,27 @@ fn public_persistent_attachment_fixture() {
     resumed.until("Xoriginal");
     resumed.send(":detach\r");
     resumed.exit(0);
+
+    let mut automatic =
+        Console::spawn(&["--config".into(), config.display().to_string()], &project);
+    automatic.until("Xoriginal");
+    automatic.send(":detach\r");
+    automatic.exit(0);
+
+    let undiscovered = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .arg("--config")
+        .arg(&config)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(!undiscovered.status.success());
+    assert!(
+        String::from_utf8_lossy(&undiscovered.stderr)
+            .contains("workspace.mode: persistent requires a discoverable project"),
+        "{}",
+        String::from_utf8_lossy(&undiscovered.stderr)
+    );
+    assert!(!root.join(".runyte").exists());
 
     let stop = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["--session-stop", "--force"])

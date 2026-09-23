@@ -1235,16 +1235,51 @@ async fn run(
     }
 
     #[cfg(windows)]
+    let mut native_preloaded_config = None;
+    #[cfg(windows)]
+    let mut automatic_native_persistent = false;
+    #[cfg(windows)]
+    if arguments.mode == LaunchMode::Standalone
+        && !arguments.mode_explicit
+        && arguments.targets.is_empty()
+        && arguments.init.is_none()
+    {
+        let loaded = Config::load(arguments.config.as_deref())?;
+        automatic_native_persistent =
+            uses_automatic_persistent_mode(&arguments, loaded.0.workspace.mode);
+        if automatic_native_persistent {
+            arguments.mode = LaunchMode::Persistent;
+        }
+        native_preloaded_config = Some(loaded);
+    }
+
+    #[cfg(windows)]
     if arguments.mode == LaunchMode::Persistent {
         if let Some(context) = runyte::workspace::parent::ParentContext::from_environment()? {
             let directory = std::env::current_dir()?;
+            let discovered = if automatic_native_persistent && arguments.project_root.is_none() {
+                Some(
+                    project_root::discover(
+                        &directory,
+                        &native_preloaded_config
+                            .as_ref()
+                            .expect("automatic persistent mode loaded configuration")
+                            .0
+                            .workspace
+                            .state,
+                    )?
+                    .context("workspace.mode: persistent requires a discoverable project; use -a to initialize the current directory")?,
+                )
+            } else {
+                None
+            };
             let selector = match (
                 arguments.workspace_selector.as_deref(),
                 arguments.project_root.as_deref(),
             ) {
                 (Some(selector), _) => selector.to_path_buf(),
                 (None, Some(root)) => resolve_requested_project_root(&directory, root)?,
-                (None, None) => directory.clone(),
+                (None, None) => discovered.unwrap_or_else(|| directory.clone()),
             };
             let parent = ForegroundParentSupervisor::capture()?;
             report_retained_host_logging(&arguments);
@@ -1254,7 +1289,14 @@ async fn run(
                 result = runyte::workspace::parent::run_attach(context, selector, directory, &parent) => result,
             };
         }
-        return run_native_persistent(&arguments, startup, native_termination).await;
+        return run_native_persistent(
+            &arguments,
+            startup,
+            native_termination,
+            native_preloaded_config,
+            automatic_native_persistent,
+        )
+        .await;
     }
 
     // Windows initially supports --wait as a foreground standalone editor.
@@ -1404,6 +1446,12 @@ async fn run(
         return run_native_control_cli(&arguments, startup).await;
     }
 
+    #[cfg(windows)]
+    let (config, config_path) = match native_preloaded_config {
+        Some(loaded) => loaded,
+        None => Config::load(arguments.config.as_deref())?,
+    };
+    #[cfg(not(windows))]
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
     let automatic_persistent = uses_automatic_persistent_mode(&arguments, config.workspace.mode);
     if automatic_persistent {
@@ -1411,8 +1459,10 @@ async fn run(
         {
             arguments.mode = LaunchMode::Persistent;
         }
-        #[cfg(not(unix))]
+        #[cfg(all(not(unix), not(windows)))]
         anyhow::bail!("workspace.mode: persistent is not supported on this platform");
+        #[cfg(windows)]
+        unreachable!("automatic Windows persistent launch returned through native attachment");
     }
     startup.mark(StartupPhase::ConfigLoaded);
     let launch_directory = std::env::current_dir()?;
@@ -2268,6 +2318,7 @@ fn uses_automatic_persistent_mode(
     // path unless a future protocol can preserve the complete target.
     !arguments.mode_explicit
         && arguments.targets.is_empty()
+        && arguments.init.is_none()
         && workspace_mode == WorkspaceMode::Persistent
 }
 
@@ -4807,12 +4858,17 @@ async fn run_native_persistent(
     arguments: &LaunchArguments,
     startup_trace: &mut StartupTrace,
     termination: &mut TerminationSignals,
+    preloaded_config: Option<(Config, Option<PathBuf>)>,
+    automatic: bool,
 ) -> Result<()> {
     anyhow::ensure!(
         arguments.targets.is_empty() && arguments.init.is_none(),
         "persistent attachment does not accept file targets or --init"
     );
-    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    let (config, config_path) = match preloaded_config {
+        Some(loaded) => loaded,
+        None => Config::load(arguments.config.as_deref())?,
+    };
     startup_trace.mark(StartupPhase::ConfigLoaded);
     let directory = std::env::current_dir()?;
     let roots = CapturedRoots::capture();
@@ -4831,8 +4887,13 @@ async fn run_native_persistent(
     let current = if arguments.workspace_selector.is_none() {
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
-            None => project_root::discover(&directory, &config.workspace.state)?
-                .unwrap_or(directory.clone()),
+            None => match project_root::discover(&directory, &config.workspace.state)? {
+                Some(root) => root,
+                None if automatic => anyhow::bail!(
+                    "workspace.mode: persistent requires a discoverable project; use -a to initialize the current directory"
+                ),
+                None => directory.clone(),
+            },
         })
     } else {
         None
@@ -7752,6 +7813,7 @@ mod tests {
         let directory = LaunchArguments::parse_from([".".into()]).unwrap();
         let positioned = LaunchArguments::parse_from(["+4:2".into(), "note.txt".into()]).unwrap();
         let explicit_standalone = LaunchArguments::parse_from(["--standalone".into()]).unwrap();
+        let init = LaunchArguments::parse_from(["--init".into(), "project".into()]).unwrap();
 
         assert!(uses_automatic_persistent_mode(
             &bare,
@@ -7771,6 +7833,10 @@ mod tests {
         ));
         assert!(!uses_automatic_persistent_mode(
             &explicit_standalone,
+            WorkspaceMode::Persistent
+        ));
+        assert!(!uses_automatic_persistent_mode(
+            &init,
             WorkspaceMode::Persistent
         ));
         assert!(!uses_automatic_persistent_mode(
