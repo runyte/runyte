@@ -371,6 +371,7 @@ pub(super) async fn run(
     // All response owners drop before the transport's bounded final drain.
     // Observing a rename is cancellable; begun mutation remains worker-owned.
     clients.clear();
+    let context = host.shutdown_context().await.map_err(anyhow::Error::from);
     let plugins = host.shutdown_plugins().await;
     let catalog = match services.as_mut() {
         Some(services) => services.shutdown_native_catalog().await,
@@ -380,19 +381,21 @@ pub(super) async fn run(
         Some(server) => server.shutdown().await,
         None => Ok(()),
     };
-    let result = finish_cleanup(outcome, plugins, catalog, transport);
+    let result = finish_cleanup(outcome, context, plugins, catalog, transport);
     diagnostic_log::flush(diagnostic_log::FLUSH_BUDGET);
     result
 }
 
 fn finish_cleanup(
     outcome: Result<()>,
+    context: Result<()>,
     plugins: Result<()>,
     catalog: Result<()>,
     transport: Result<()>,
 ) -> Result<()> {
     let mut result = outcome;
     for (label, cleanup) in [
+        ("context service shutdown failed", context),
         ("host service shutdown failed", plugins),
         ("native catalog shutdown failed", catalog),
         ("native transport shutdown failed", transport),

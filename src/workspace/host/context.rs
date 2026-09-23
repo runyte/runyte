@@ -27,9 +27,23 @@ type FrameSource = (usize, u64, Option<(TerminalId, u64)>);
 #[derive(Default)]
 pub(super) struct State {
     events: Option<mpsc::Sender<Event>>,
-    storage: Option<Storage>,
+    storage: Option<Arc<Storage>>,
     registration: Option<Registration>,
     server: Option<Server>,
+    #[cfg(windows)]
+    retiring: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    #[cfg(windows)]
+    retirement_permit: Option<mpsc::OwnedPermit<Event>>,
+    #[cfg(windows)]
+    deferred_enable: bool,
+    #[cfg(windows)]
+    enable_failed: bool,
+    #[cfg(windows)]
+    stopping: bool,
+    #[cfg(windows)]
+    location: Option<storage::StorageLocation>,
+    #[cfg(windows)]
+    environment: Option<String>,
     grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
     readers: BTreeMap<u64, Reader>,
     proposals: BTreeMap<String, Proposal>,
@@ -85,6 +99,9 @@ impl Drop for State {
             }
         }
         self.server.take();
+        #[cfg(windows)]
+        self.retiring.take();
+        #[cfg(unix)]
         if let (Some(storage), Some(registration)) = (&self.storage, &self.registration) {
             let _ = storage.unregister(&registration.host_incarnation);
         }
@@ -95,6 +112,7 @@ impl WorkspaceHost {
     pub(super) fn context_enabled(&self) -> bool {
         self.context.server.is_some()
     }
+    #[cfg(unix)]
     pub fn start_context(&mut self, mode: HostMode) -> mpsc::Receiver<Event> {
         let (send, receive) = mpsc::channel(32);
         self.context.events = Some(send);
@@ -123,7 +141,75 @@ impl WorkspaceHost {
         receive
     }
 
+    #[cfg(windows)]
+    pub fn start_context(&mut self, mode: HostMode) -> anyhow::Result<mpsc::Receiver<Event>> {
+        let location = Storage::default_location();
+        let environment = storage::environment_fingerprint();
+        self.start_context_windows(mode, location, environment)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn start_context_windows(
+        &mut self,
+        mode: HostMode,
+        location: Option<storage::StorageLocation>,
+        environment: String,
+    ) -> anyhow::Result<mpsc::Receiver<Event>> {
+        anyhow::ensure!(
+            self.context.events.is_none() && !self.context.stopping,
+            "Context service was already initialized or shut down"
+        );
+        let (send, receive) = mpsc::channel(33);
+        let retirement_permit = send
+            .clone()
+            .try_reserve_owned()
+            .map_err(|_| anyhow::anyhow!("Context lifecycle capacity is unavailable"))?;
+        self.context.events = Some(send);
+        self.context.retirement_permit = Some(retirement_permit);
+        self.context.mode = Some(mode);
+        self.context.location = location.clone();
+        self.context.environment = Some(environment);
+        let Some(location) = location.filter(|location| location.root().exists()) else {
+            return Ok(receive);
+        };
+        let loaded = (|| -> anyhow::Result<()> {
+            self.context_validate_storage_root(location.root())?;
+            let store = Storage::open_existing(location.root().to_owned())?;
+            let mut grants = BTreeMap::new();
+            for identity in store.identities()? {
+                let scopes = store.scopes(&self.app.project_root, &identity)?;
+                if !scopes.is_empty() {
+                    grants.insert(identity.fingerprint(), (identity, scopes));
+                }
+            }
+            if !grants.is_empty() {
+                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+                self.context.grants = grants;
+                self.context_enable()?;
+            }
+            Ok(())
+        })();
+        if loaded.is_err() {
+            self.context.grants.clear();
+            self.context.storage = None;
+            self.context.enable_failed = true;
+            self.report_host_error("Remembered agent context access could not be loaded");
+        }
+        Ok(receive)
+    }
+
+    #[cfg(any(unix, test))]
     fn context_open_storage(&mut self, root: std::path::PathBuf) -> anyhow::Result<()> {
+        self.context_validate_storage_root(&root)?;
+        #[cfg(unix)]
+        let storage = Storage::new(root)?;
+        #[cfg(windows)]
+        let storage = Storage::open_location(storage::StorageLocation::explicit(root)?)?;
+        self.context.storage = Some(Arc::new(storage));
+        Ok(())
+    }
+
+    fn context_validate_storage_root(&self, root: &std::path::Path) -> anyhow::Result<()> {
         let ancestor = root
             .ancestors()
             .find(|path| path.exists())
@@ -136,7 +222,11 @@ impl WorkspaceHost {
                     .any(|part| matches!(part, std::path::Component::ParentDir)),
             "Context storage must be outside the workspace"
         );
-        self.context.storage = Some(Storage::new(root)?);
+        #[cfg(windows)]
+        anyhow::ensure!(
+            self.app.project_root.to_str().is_some() && root.to_str().is_some(),
+            "Windows context publication requires Unicode workspace and storage roots"
+        );
         Ok(())
     }
 
@@ -144,6 +234,24 @@ impl WorkspaceHost {
         if self.context.server.is_some() || self.context.grants.is_empty() {
             return Ok(());
         }
+        #[cfg(windows)]
+        if self.context.retiring.is_some() {
+            self.context.deferred_enable = true;
+            return Ok(());
+        }
+        #[cfg(windows)]
+        if self.context.stopping {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        if self.context.enable_failed {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        anyhow::ensure!(
+            self.context.retirement_permit.is_some(),
+            "Context lifecycle capacity is unavailable"
+        );
         let store = self
             .context
             .storage
@@ -151,6 +259,8 @@ impl WorkspaceHost {
             .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?;
         let incarnation = storage::random_token()?;
         let endpoint = store.socket_path(&incarnation)?;
+        #[cfg(windows)]
+        let process = crate::workspace::windows_process_identity::ProcessIdentity::current()?;
         let registration = Registration {
             root: self.app.project_root.clone(),
             workspace_id: crate::workspace::identity::workspace_id(self.identity.root()),
@@ -158,21 +268,51 @@ impl WorkspaceHost {
             endpoint: endpoint.clone(),
             mode: self.context.mode.unwrap_or(HostMode::Standalone),
             pid: std::process::id(),
+            #[cfg(windows)]
+            creation_time: process.creation_time,
+            #[cfg(unix)]
             environment: storage::environment_fingerprint(),
+            #[cfg(windows)]
+            environment: self
+                .context
+                .environment
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Context environment was not captured"))?,
         };
         let events = self
             .context
             .events
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Context service is not running"))?;
+        #[cfg(unix)]
         let server = Server::bind(endpoint, events)?;
+        #[cfg(windows)]
+        let server = Server::bind(store.clone(), registration.clone(), events)?;
+        #[cfg(unix)]
         store.register(&registration)?;
         self.context.registration = Some(registration);
         self.context.server = Some(server);
+        #[cfg(windows)]
+        {
+            self.context.deferred_enable = false;
+            self.context.enable_failed = false;
+        }
         Ok(())
     }
 
     pub fn sync_context(&mut self) {
+        #[cfg(windows)]
+        {
+            if self.context.events.is_none() {
+                self.app.context_ui.requested_identity = None;
+                self.app.context_ui.decision = None;
+                self.app.context_ui.surface = None;
+                return;
+            }
+            if self.context.stopping {
+                return;
+            }
+        }
         if !self.app.plugins.frontend_attached {
             self.context.frame = None;
             self.app.context_ui.surface = None;
@@ -390,11 +530,20 @@ impl WorkspaceHost {
             } => {
                 wire::validate_scopes(&scopes).map_err(|e| anyhow::anyhow!(e.message))?;
                 if self.context.storage.is_none() {
+                    #[cfg(unix)]
                     self.context_open_storage(
                         Storage::default_root().ok_or_else(|| {
                             anyhow::anyhow!("Private context storage unavailable")
                         })?,
                     )?;
+                    #[cfg(windows)]
+                    {
+                        let location = self.context.location.clone().ok_or_else(|| {
+                            anyhow::anyhow!("Private context storage unavailable")
+                        })?;
+                        self.context_validate_storage_root(location.root())?;
+                        self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+                    }
                 }
                 let store = self.context.storage.as_ref().unwrap();
                 let identity = store.identity(&identity)?;
@@ -409,7 +558,19 @@ impl WorkspaceHost {
                         .grants
                         .insert(identity.fingerprint(), (identity, scopes));
                 }
-                self.context_enable()?;
+                #[cfg(windows)]
+                {
+                    // A fresh physical grant is the explicit retry boundary
+                    // after a deferred bind failure.
+                    self.context.enable_failed = false;
+                }
+                if let Err(error) = self.context_enable() {
+                    #[cfg(windows)]
+                    {
+                        self.context.enable_failed = true;
+                    }
+                    return Err(error);
+                }
             }
             Decision::Revoke(name) => {
                 self.context_revoke(&name);
@@ -477,11 +638,20 @@ impl WorkspaceHost {
             self.context.frame = None;
             self.context.frame_sources.clear();
             self.context.frame_review_sources.clear();
-            self.context.server.take();
-            if let (Some(store), Some(registration)) =
-                (&self.context.storage, self.context.registration.take())
+            #[cfg(unix)]
             {
-                let _ = store.unregister(&registration.host_incarnation);
+                self.context.server.take();
+                if let (Some(store), Some(registration)) =
+                    (&self.context.storage, self.context.registration.take())
+                {
+                    let _ = store.unregister(&registration.host_incarnation);
+                }
+            }
+            #[cfg(windows)]
+            {
+                self.context.registration.take();
+                self.context.deferred_enable = false;
+                self.context_begin_retirement();
             }
         }
     }
@@ -509,19 +679,140 @@ impl WorkspaceHost {
         );
     }
 
+    #[cfg(windows)]
+    fn context_begin_retirement(&mut self) {
+        let Some(mut server) = self.context.server.take() else {
+            return;
+        };
+        debug_assert!(self.context.retiring.is_none());
+        let permit = self
+            .context
+            .retirement_permit
+            .take()
+            .expect("an active context service retains lifecycle capacity");
+        server.stop();
+        self.context.retiring = Some(tokio::spawn(async move {
+            let result = server.shutdown().await;
+            let error = result.as_ref().err().map(ToString::to_string);
+            permit.send(Event::Retired { error });
+            result
+        }));
+    }
+
+    #[cfg(windows)]
+    fn context_retired(&mut self, error: Option<String>) {
+        // Receipt of this event proves that Server::shutdown joined the
+        // transport owner and retired its exact publication. The small outer
+        // task owns no resource after sending it.
+        self.context.retiring.take();
+        let retirement_failed = error.is_some();
+        if let Some(error) = error {
+            self.context.enable_failed = true;
+            self.context.deferred_enable = false;
+            self.report_host_error(format!("Agent context transport shutdown failed: {error}"));
+        }
+        if self.context.stopping {
+            return;
+        }
+        self.context.retirement_permit = self
+            .context
+            .events
+            .as_ref()
+            .cloned()
+            .and_then(|events| events.try_reserve_owned().ok());
+        if self.context.retirement_permit.is_none() {
+            self.context.enable_failed = true;
+            self.report_host_error("Agent context lifecycle capacity was lost");
+        }
+        let enable = !retirement_failed
+            && std::mem::take(&mut self.context.deferred_enable)
+            && !self.context.grants.is_empty()
+            && self.context.retirement_permit.is_some();
+        if enable && let Err(error) = self.context_enable() {
+            self.context.enable_failed = true;
+            self.report_host_error(format!(
+                "Agent context transport could not restart: {error}"
+            ));
+        }
+    }
+
+    #[cfg(windows)]
+    pub async fn shutdown_context(&mut self) -> std::io::Result<()> {
+        if !self.context.stopping {
+            self.context.stopping = true;
+            self.app.context_ui.requested_identity = None;
+            self.app.context_ui.decision = None;
+            self.app.context_ui.surface = None;
+            for reader in self.context.readers.values() {
+                reader.lease.cancel();
+            }
+            self.context.readers.clear();
+            for proposal in self.context.proposals.values() {
+                if let Some(delivery) = &proposal.delivery {
+                    delivery.cancel();
+                }
+            }
+            self.context.proposals.clear();
+            self.context.grants.clear();
+            self.context.frame = None;
+            self.context.frame_sources.clear();
+            self.context.frame_review_sources.clear();
+            self.context.registration.take();
+            self.context.deferred_enable = false;
+            self.context_begin_retirement();
+        }
+        let result = match self.context.retiring.as_mut() {
+            Some(retirement) => match (&mut *retirement).await {
+                Ok(result) => result,
+                Err(error) => Err(std::io::Error::other(format!(
+                    "context retirement task failed: {error}"
+                ))),
+            },
+            None => Ok(()),
+        };
+        self.context.retiring.take();
+        self.context.retirement_permit.take();
+        self.context.events.take();
+        self.context.storage.take();
+        self.app.terminals.set_external_retained_bytes(0);
+        result
+    }
+
     pub fn handle_context_event(&mut self, event: Event) {
         match event {
+            #[cfg(windows)]
+            Event::Retired { error } => {
+                self.context_retired(error);
+            }
             Event::Closed(id) => self.context_disconnect(id),
             Event::Frame {
                 connection,
                 bytes,
                 reply,
             } => {
+                #[cfg(windows)]
+                if self.context.server.is_none() || self.context.stopping {
+                    self.context_disconnect(connection);
+                    let _ = reply.send(failure(Error::new(
+                        Code::Unavailable,
+                        "Context transport is retiring",
+                    )));
+                    return;
+                }
                 if reply.is_closed() {
                     self.context_disconnect(connection);
                     return;
                 }
                 self.sync_context();
+                #[cfg(windows)]
+                if self.context.server.is_none() || self.context.stopping {
+                    self.context_disconnect(connection);
+                    let _ = reply.send(failure(Error::new(
+                        Code::Unavailable,
+                        "Context transport is retiring",
+                    )));
+                    return;
+                }
                 let response = self.context_frame(connection, &bytes);
                 let _ = reply.send(response);
             }
@@ -845,6 +1136,12 @@ impl WorkspaceHost {
     }
 
     pub fn context_delay(&self) -> Option<Duration> {
+        #[cfg(windows)]
+        {
+            if self.context.events.is_none() || self.context.stopping {
+                return None;
+            }
+        }
         if self
             .context
             .proposals
@@ -887,10 +1184,18 @@ fn failure(error: Error) -> Reply {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "tests/context_access.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
+#[path = "tests/context_access_windows.rs"]
+mod tests;
+
+#[cfg(all(test, unix))]
 #[path = "tests/context_transport.rs"]
+mod transport_tests;
+
+#[cfg(all(test, windows))]
+#[path = "tests/context_transport_windows.rs"]
 mod transport_tests;

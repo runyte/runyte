@@ -315,12 +315,14 @@ fn reconcile_pending_console_event(
 #[cfg(windows)]
 fn finish_standalone_native(
     outcome: Result<()>,
+    context: Result<()>,
     catalog: Result<()>,
     plugins: Result<()>,
     event: Option<ConsoleEvent>,
 ) -> Result<()> {
     let mut result = event.map_or(outcome, |event| Err(terminated(event)));
     for (label, cleanup) in [
+        ("context service shutdown failed", context),
         ("native catalog shutdown failed", catalog),
         ("plugin shutdown failed", plugins),
     ] {
@@ -2173,11 +2175,14 @@ async fn run(
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
     services.language_servers.send(LspCommand::Shutdown);
     #[cfg(windows)]
+    let context_shutdown = app.shutdown_context().await.map_err(anyhow::Error::from);
+    #[cfg(windows)]
     let catalog_shutdown = services.shutdown_native_catalog().await;
     let plugins_shutdown = app.shutdown_plugins().await;
     #[cfg(windows)]
     finish_standalone_native(
         interactive_outcome,
+        context_shutdown,
         catalog_shutdown,
         plugins_shutdown,
         received_signal,

@@ -152,6 +152,7 @@ fn pending_close_overrides_startup_or_input_failure_after_joined_cleanup() {
 
     let input = finish_standalone_native(
         Err(anyhow::anyhow!("input failed")),
+        Err(anyhow::anyhow!("context joined with error")),
         Err(anyhow::anyhow!("catalog joined with error")),
         Err(anyhow::anyhow!("plugins joined with error")),
         None,
@@ -161,11 +162,13 @@ fn pending_close_overrides_startup_or_input_failure_after_joined_cleanup() {
     assert!(console_closed(&close));
     let detail = format!("{close:#}");
     assert!(detail.contains("input failed"));
+    assert!(detail.contains("context joined with error"));
     assert!(detail.contains("catalog joined with error"));
     assert!(detail.contains("plugins joined with error"));
 
     let ctrl_c =
-        finish_standalone_native(Ok(()), Ok(()), Ok(()), Some(ConsoleEvent::CtrlC)).unwrap_err();
+        finish_standalone_native(Ok(()), Ok(()), Ok(()), Ok(()), Some(ConsoleEvent::CtrlC))
+            .unwrap_err();
     let later_close =
         prefer_pending_console_close(Err(ctrl_c), Some(ConsoleEvent::Close)).unwrap_err();
     assert!(console_closed(&later_close));

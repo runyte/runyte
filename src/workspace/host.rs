@@ -238,9 +238,9 @@ struct CompletedGitSnapshot {
     mutation: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod context;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod context_reads;
 mod pipe;
 mod plugin_activity;
@@ -271,7 +271,7 @@ mod plugin_validation;
 mod plugins;
 
 pub struct WorkspaceHost {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     context: context::State,
     provider_writes: std::collections::BTreeMap<String, plugin_provider_writes::PendingWrite>,
     provider_uncertain: std::collections::BTreeMap<usize, (String, usize, String)>,
@@ -385,7 +385,7 @@ impl WorkspaceHost {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
         Self {
             identity,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             context: Default::default(),
             provider_writes: Default::default(),
             provider_uncertain: Default::default(),
@@ -1188,7 +1188,7 @@ impl WorkspaceHost {
         self.app
             .note_context_frame(geometry.editor.width, geometry.editor.height, id.0);
         let editor = self.app.snapshot(&view);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.context_enabled() {
             self.context.frame = Some(editor.clone());
             self.context.frame_id = id.0;
@@ -1709,7 +1709,7 @@ impl WorkspaceHost {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl WorkspaceHost {
     pub fn sync_context(&mut self) {}
     pub fn context_delay(&self) -> Option<Duration> {

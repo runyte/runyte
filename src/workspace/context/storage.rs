@@ -147,6 +147,17 @@ impl StorageLocation {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    #[cfg(test)]
+    pub(crate) fn explicit(root: PathBuf) -> io::Result<Self> {
+        let anchor = root
+            .parent()
+            .filter(|parent| parent.is_dir())
+            .ok_or_else(|| invalid("RUNYTE_CONTEXT_HOME parent must already exist"))?
+            .to_owned();
+        Self::anchored(root, anchor)
+            .ok_or_else(|| invalid("context storage requires an absolute child path"))
+    }
 }
 
 #[cfg(windows)]

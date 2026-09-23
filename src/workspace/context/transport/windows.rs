@@ -88,8 +88,12 @@ impl Server {
         self.permits.available_permits()
     }
 
-    pub async fn shutdown(&mut self) -> io::Result<()> {
+    pub(crate) fn stop(&mut self) {
         self.shutdown.send_replace(true);
+    }
+
+    pub async fn shutdown(&mut self) -> io::Result<()> {
+        self.stop();
         let Some(task) = self.task.as_mut() else {
             return Ok(());
         };

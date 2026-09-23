@@ -54,6 +54,10 @@ pub enum Event {
         reply: oneshot::Sender<Reply>,
     },
     Closed(u64),
+    #[cfg(windows)]
+    Retired {
+        error: Option<String>,
+    },
 }
 
 pub(super) async fn revoked(lease: &Option<Arc<Lease>>) {
@@ -71,6 +75,8 @@ mod platform;
 mod platform;
 pub use platform::Server;
 
+#[cfg(all(test, windows))]
+pub(crate) use platform::NativeConnection;
 #[cfg(windows)]
 pub(crate) use platform::connect;
 
