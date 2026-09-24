@@ -26,6 +26,23 @@ PLUGIN_VALIDATOR = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/p
 
 
 class PluginSchemaTests(unittest.TestCase):
+    def test_view_help_shape(self):
+        topic = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/helpTopic'})
+        rows = {'id': 'rows', 'title': 'Rows', 'paragraphs': ['Rows shows one page of a table.']}
+        self.assertTrue(topic.is_valid(rows))
+        for invalid in ({**rows, 'id': 'Rows'}, {**rows, 'title': ''}, {**rows, 'paragraphs': []},
+                        {**rows, 'paragraphs': ['one\ntwo']}, {**rows, 'paragraphs': ['p'] * 17},
+                        {**rows, 'paragraphs': ['p' * 2049]}, {**rows, 'keys': []}):
+            self.assertFalse(topic.is_valid(invalid))
+        for name in ('model', 'viewHeader'):
+            validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': f'#/$defs/{name}'})
+            header = {'title': 'Rows', 'purpose': 'list'}
+            if name == 'model':
+                header['rows'] = []
+            self.assertTrue(validator.is_valid({**header, 'help': 'rows'}))
+            for value in (None, '', 'Rows', 'rows\n'):
+                self.assertFalse(validator.is_valid({**header, 'help': value}))
+
     def test_view_default_binding_shape(self):
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], '$ref': '#/$defs/command'})
         command = {'name': 'back', 'description': 'Return to parent', 'context': 'view'}

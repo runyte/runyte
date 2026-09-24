@@ -10,6 +10,7 @@ pub mod compatibility;
 pub mod editor;
 pub mod filesystem;
 pub mod handoff;
+pub mod help;
 pub mod interaction;
 pub mod json;
 pub(crate) mod manager;

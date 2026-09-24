@@ -57,6 +57,23 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-24 — Plugin contextual help
+
+The Linux x86-64 canonical workspace suite passed at **91.96% total line
+coverage** (128,044 of 139,240 lines), above the unchanged 89% floor, with
+default Cargo and test-thread parallelism. Formatting, all-target Clippy with
+warnings denied, and all 3,929 ordinary tests passed (36 ignored). The public
+plugin schema suite passed all 15 cases.
+
+`src/plugin/tests/help_topics.rs` covers topic bounds and streaming decode
+limits. `src/workspace/host/tests/plugin_help.rs` covers wire-decoded
+registration, `view-help` negotiation and payload charge, topic routing through
+publish and header patch, fallback and plugin stop. It also checks that plugin
+text in the key table stays unstyled. The renderer tests in `src/help.rs` cover
+authored prose, marker escaping and action grouping. The native
+`ru-dbviewer` PTY suite exercised `Space ?` against this build. The Windows
+target was not built locally; its only change is one test literal.
+
 ## 2026-09-22 — Navigator, buffer cleanup and plugin default keys
 
 The Linux x86-64 canonical workspace suite passed with one Cargo job and one

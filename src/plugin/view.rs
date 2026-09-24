@@ -74,6 +74,13 @@ pub struct Model {
         deserialize_with = "decoding::metadata"
     )]
     pub metadata: Option<Vec<Metadata>>,
+    /// Negotiated `view-help`: the registered topic `Space ?` opens here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::presentation::authored"
+    )]
+    pub help: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -182,6 +189,13 @@ pub struct Header {
         deserialize_with = "decoding::metadata"
     )]
     pub metadata: Option<Vec<Metadata>>,
+    /// Negotiated `view-help`: the registered topic `Space ?` opens here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::presentation::authored"
+    )]
+    pub help: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -249,6 +263,7 @@ impl Model {
     pub fn payload_bytes(&self) -> usize {
         self.title.capacity()
             + self.document.as_ref().map_or(0, String::capacity)
+            + self.help.as_ref().map_or(0, String::capacity)
             + std::mem::size_of::<Self>()
             + self.rows.capacity() * std::mem::size_of::<Row>()
             + self
@@ -367,6 +382,13 @@ impl Model {
                     return Err(invalid("Invalid view metadata"));
                 }
             }
+        }
+        if self
+            .help
+            .as_deref()
+            .is_some_and(|topic| !super::valid_name(topic))
+        {
+            return Err(invalid("Invalid view help topic"));
         }
         if let Some(presentations) = &self.action_presentation {
             if presentations.len() > super::application::MAX_COMMANDS {

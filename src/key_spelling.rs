@@ -42,6 +42,26 @@ pub(crate) mod actionable {
     ];
 }
 
+const MARKER_KINDS: [&str; 4] = ["key:", "binding:", "prefix:", "literal-key:"];
+
+/// Makes text from outside Runyte, such as a plugin's help or labels, pass
+/// through [`resolve_with_map`] unchanged. Only a brace that would open a
+/// marker needs doubling; every other brace is already literal.
+pub(crate) fn escape_markers(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for (at, character) in text.char_indices() {
+        if character == '{'
+            && MARKER_KINDS
+                .iter()
+                .any(|kind| text[at + 1..].starts_with(kind))
+        {
+            escaped.push('{');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 pub fn resolve(template: &str, keymap: &Keymap) -> Result<ResolvedText, String> {
     resolve_with_map(template, keymap).map(|(resolved, _)| resolved)
 }
@@ -70,7 +90,7 @@ pub(crate) fn resolve_with_map(
             continue;
         }
         if rest.starts_with('{')
-            && let Some(kind) = ["key:", "binding:", "prefix:", "literal-key:"]
+            && let Some(kind) = MARKER_KINDS
                 .into_iter()
                 .find(|kind| rest[1..].starts_with(kind))
         {
@@ -263,6 +283,25 @@ mod tests {
                 .text,
             "{binding:Space g l}"
         );
+    }
+
+    #[test]
+    fn escaped_text_resolves_to_itself() {
+        for text in [
+            "{key:nope}",
+            "{binding:Space g l}",
+            "{{prefix:x}",
+            "{{{literal-key:Space x}}",
+            "{n,m} {} {",
+            "é{key:ß}",
+            "{key:",
+        ] {
+            let escaped = escape_markers(text);
+            let (resolved, map) = resolve_with_map(&escaped, default_keymap()).unwrap();
+            assert_eq!(resolved.text, text);
+            assert!(resolved.substitutions.is_empty());
+            assert_eq!(map.len(), escaped.chars().count() + 1);
+        }
     }
 
     #[test]

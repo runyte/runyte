@@ -42,7 +42,9 @@ struct ActionPolicy {
     metadata: bool,
     presentation: bool,
     document: bool,
+    help: bool,
     commands: std::collections::BTreeSet<String>,
+    help_topics: std::collections::BTreeSet<String>,
 }
 impl ActionPolicy {
     fn new(state: &api::Instance) -> Self {
@@ -51,6 +53,12 @@ impl ActionPolicy {
             metadata: state.features.contains(api::VIEW_METADATA),
             presentation: state.features.contains(api::VIEW_ACTION_PRESENTATION),
             document: state.features.contains(api::VIEW_DOCUMENT),
+            help: state.features.contains(api::VIEW_HELP),
+            help_topics: state
+                .help
+                .iter()
+                .flat_map(|help| help.topics.keys().cloned())
+                .collect(),
             commands: state
                 .command_contexts
                 .iter()
@@ -89,6 +97,7 @@ impl ActionPolicy {
         &self,
         document: &Option<String>,
         metadata: &Option<Vec<view::Metadata>>,
+        help: &Option<String>,
         presentation: &Option<
             std::collections::BTreeMap<String, plugin::presentation::Presentation>,
         >,
@@ -104,6 +113,20 @@ impl ActionPolicy {
                 Code::Unsupported,
                 "Metadata requires the view-metadata feature",
             ));
+        }
+        if let Some(help) = help {
+            if !self.help {
+                return Err(Error::new(
+                    Code::Unsupported,
+                    "Help requires the view-help feature",
+                ));
+            }
+            if !self.help_topics.contains(help) {
+                return Err(Error::new(
+                    Code::InvalidArgument,
+                    "View help must name a registered help topic",
+                ));
+            }
         }
         if let Some(presentation) = presentation {
             if !self.presentation {
@@ -125,7 +148,12 @@ impl ActionPolicy {
         Ok(())
     }
     fn model(&self, model: &view::Model) -> Result<(), Error> {
-        self.header_features(&model.document, &model.metadata, &model.action_presentation)?;
+        self.header_features(
+            &model.document,
+            &model.metadata,
+            &model.help,
+            &model.action_presentation,
+        )?;
         self.actions(&model.actions)?;
         for row in &model.rows {
             self.row(row)?;
@@ -137,6 +165,7 @@ impl ActionPolicy {
             self.header_features(
                 &header.document,
                 &header.metadata,
+                &header.help,
                 &header.action_presentation,
             )?;
             self.actions(&header.actions)?;

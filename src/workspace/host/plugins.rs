@@ -11,8 +11,19 @@ use crate::{
 use anyhow::{Result, ensure};
 use std::collections::BTreeSet;
 
+/// One validated registration message, committed atomically.
+pub(super) struct Registered {
+    pub name: String,
+    pub commands: Vec<plugin::application::Registration>,
+    pub help_topics: Vec<plugin::help::Topic>,
+    pub capabilities: BTreeSet<String>,
+    pub features: BTreeSet<String>,
+    pub runyte: String,
+}
+
 impl WorkspaceHost {
-    /// Prepare the entire registry before publishing any negotiated state.
+    /// Registers commands alone, as a registration without a name or help.
+    #[cfg(test)]
     pub(super) fn register_plugin_commands(
         &mut self,
         id: usize,
@@ -21,6 +32,33 @@ impl WorkspaceHost {
         features: BTreeSet<String>,
         runyte: String,
     ) -> Result<()> {
+        self.register_plugin_application(
+            id,
+            Registered {
+                name: String::new(),
+                commands,
+                help_topics: Vec::new(),
+                capabilities,
+                features,
+                runyte,
+            },
+        )
+    }
+
+    /// Prepare the entire registry before publishing any negotiated state.
+    pub(super) fn register_plugin_application(
+        &mut self,
+        id: usize,
+        registered: Registered,
+    ) -> Result<()> {
+        let Registered {
+            name,
+            commands,
+            help_topics,
+            capabilities,
+            features,
+            runyte,
+        } = registered;
         let instance = &self.app.plugins.instances[&id];
         ensure!(!instance.registered, "plugin already registered");
         ensure!(
@@ -160,7 +198,12 @@ impl WorkspaceHost {
             .filter(|command| command.plugin == id)
             .filter_map(|command| command.presentation.as_ref())
             .map(plugin::presentation::Presentation::payload_bytes)
-            .sum();
+            .sum::<usize>();
+        let help = plugin::help::Registered::new(name, help_topics);
+        let presentation_bytes = presentation_bytes
+            + help
+                .as_ref()
+                .map_or(0, plugin::help::Registered::payload_bytes);
         self.reserve_application_payload(id, presentation_bytes)
             .map_err(|error| anyhow::anyhow!(error.message))?;
         // Admission cannot await, so this ack and the following state commit are
@@ -179,6 +222,7 @@ impl WorkspaceHost {
         instance.application.capabilities = capabilities;
         instance.application.features = features;
         instance.application.runyte = runyte;
+        instance.application.help = help;
         instance.application.command_contexts = commands
             .iter()
             .map(|c| (c.name.clone(), c.context))

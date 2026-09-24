@@ -447,6 +447,60 @@ the entire array and presentation map; omitted header fields restore their
 absent defaults. Existing `detail` and `preview` blocks retain their original
 placement and headings for older plugins.
 
+### Contextual help
+
+Negotiate `view-help` to replace the generic text overview that `Space ?` opens
+from a plugin view. Registration may then carry `help_topics`, and a model or
+header selects one with `help`:
+
+```json
+{"help_topics":[
+  {"id":"rows","title":"Rows","paragraphs":[
+    "Rows shows one page of the selected table. Enter opens the record under the cursor.",
+    "Paging keeps the current filter; the last page says how many rows it holds."
+  ]},
+  {"id":"record","title":"Record","paragraphs":["A record lists every field of one row."]}
+]}
+```
+
+```json
+{"title":"orders","purpose":"list","help":"rows","rows":[]}
+```
+
+A registration holds at most 16 topics with distinct IDs, following command-name
+grammar. Titles are 1–64 UTF-8 bytes; each topic has 1–16 paragraphs of 1–2,048
+bytes. Neither accepts control characters, and titles plus paragraphs total at
+most 64 KiB. Invalid or duplicate topics reject the complete registration.
+Authored topics, even an empty list, require the feature, and so does `help`;
+`null` is invalid for both. A model or header naming an unregistered topic is
+rejected as `invalid_argument` and keeps the previous model. Header patches
+replace `help` with the rest of the header, so omitting it clears the topic.
+
+`Space ?` renders a snapshot titled `Help · <APPLICATION NAME> · <TOPIC TITLE>`
+for the model the active pane shows. The paragraphs replace only the overview.
+Runyte then adds its own sections: the general-help pointer, mouse gestures, an
+**Application actions** list and the generated key tables. The action list
+comes from the same live registry as Tab, including labels, groups, hidden
+callbacks and row-dependent availability for the selection at the moment help
+opened. Configured and default bindings appear under **Buffer keys** with their
+labels. Topics therefore describe workflows and should not repeat action or key
+tables that could drift from the registry.
+
+Paragraphs are plain text. Visible backticks mark code, as in Runyte's own
+help; nothing else is interpreted, and braces are never key markers. The help
+buffer is the ordinary shared read-only help document: searchable, scrollable
+and splittable. It is rendered when opened and does not follow later
+publications. Reopen it after the view changes.
+
+Topics belong to one registration and count toward the owner's retained payload.
+A model without `help`, an older host or an unnegotiated plugin gets the text
+overview. Running plugins still get the generated action list. After stop, the
+view stays readable but help no longer describes the plugin's actions or quotes
+its prose. A restarted plugin registers its topics again. There is no help
+entry point outside the plugin's own views. The Python client's
+`Application(..., help_topics=[...])` sends topics only when hello advertises
+`view-help`. Check `'view-help' in app.features` before publishing `help`.
+
 ### Complete read-only documents
 
 With `view-document` and capability `views`, a model/header may carry `document`,

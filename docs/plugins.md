@@ -80,6 +80,10 @@ With negotiated `view-default-bindings`, a view command can declare a
 overrides it. Older hosts still require configured bindings. Defaults pass the
 same scope and collision validation as configured bindings.
 
+With negotiated `view-help`, registration supplies bounded workflow topics. A
+view model selects one, and `Space ?` in that view opens it with the view's live
+actions and keys. See [contextual help](plugins/applications.md#contextual-help).
+
 Bindings use physical spellings, at most eight keys, in Normal and Select modes.
 They cannot replace existing commands or grammar controls. Invalid commands,
 arguments, aliases or binding collisions reject the whole registration.

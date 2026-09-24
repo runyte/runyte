@@ -41,6 +41,7 @@ pub const JOB_FEEDBACK: &str = "job-feedback";
 pub const VIEW_DOCUMENT: &str = "view-document";
 pub const VIEW_DEFAULT_BINDINGS: &str = "view-default-bindings";
 pub const INPUT_PATH_COMPLETION: &str = "input-path-completion";
+pub const VIEW_HELP: &str = "view-help";
 pub const FEATURES: &[&str] = &[
     VIEW_ROW_ACTIONS,
     VIEW_ACTION_PRESENTATION,
@@ -49,6 +50,7 @@ pub const FEATURES: &[&str] = &[
     JOB_FEEDBACK,
     INPUT_PATH_COMPLETION,
     VIEW_DEFAULT_BINDINGS,
+    VIEW_HELP,
 ];
 
 #[derive(Clone, Debug, Serialize)]
@@ -148,6 +150,13 @@ pub enum ClientMessage {
         optional_features: BTreeSet<String>,
         name: String,
         commands: Vec<Registration>,
+        /// Negotiated `view-help` prose, referenced by view models.
+        #[serde(
+            default,
+            deserialize_with = "super::help::topics",
+            skip_serializing_if = "Option::is_none"
+        )]
+        help_topics: Option<Vec<super::help::Topic>>,
         #[serde(deserialize_with = "unique_names")]
         required_capabilities: BTreeSet<String>,
         #[serde(deserialize_with = "unique_names")]
@@ -903,6 +912,8 @@ pub(crate) struct Instance {
     pub capabilities: BTreeSet<String>,
     pub features: BTreeSet<String>,
     pub runyte: String,
+    /// Negotiated help topics, fixed for this generation.
+    pub help: Option<super::help::Registered>,
     pub requests: BTreeMap<String, CapturedContext>,
     pub views: BTreeMap<String, super::view::View>,
     pub buffers: BTreeMap<String, usize>,
@@ -954,6 +965,7 @@ impl Default for Instance {
             capabilities: Default::default(),
             features: Default::default(),
             runyte: String::new(),
+            help: None,
             requests: Default::default(),
             views: Default::default(),
             buffers: Default::default(),
@@ -1195,7 +1207,9 @@ pub(crate) fn decode(bytes: &[u8]) -> anyhow::Result<super::ClientMessage> {
         if value.get("type").and_then(|v| v.as_str()) == Some("register") {
             let object = value.as_object().unwrap();
             anyhow::ensure!(
-                object.len() == 9 + usize::from(object.contains_key("settings_schema")),
+                object.len()
+                    == 9 + usize::from(object.contains_key("settings_schema"))
+                        + usize::from(object.contains_key("help_topics")),
                 "invalid registration envelope"
             );
             // Parse the original object, so duplicate registration/command fields

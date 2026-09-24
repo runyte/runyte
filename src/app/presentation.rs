@@ -720,12 +720,14 @@ impl App {
         } else {
             HelpTopic::for_context(self.key_binding_scope())
         };
+        let plugin = self.plugin_help_page();
         let document = crate::help::render_document_with_descriptions(
             topic,
             self.grammar.kind(),
             self.key_binding_scope(),
             self.keymap(),
             self.active_buffer().is_read_only(),
+            plugin.as_ref(),
             |target| self.plugin_binding_description(target).map(str::to_owned),
         );
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
@@ -752,6 +754,17 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         self.mode = Mode::Normal;
+    }
+
+    /// The semantic spans a generated page such as help was rendered with.
+    ///
+    /// Only tests outside this module need it: frontends receive the same
+    /// spans through snapshots, clipped to what is on screen.
+    #[cfg(test)]
+    pub(crate) fn generated_highlights(&self, buffer: usize) -> &[crate::syntax::Span] {
+        self.generated_highlights
+            .get(&buffer)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Opens the general manual and optionally places its requested section at

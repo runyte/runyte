@@ -12,6 +12,7 @@ fn register(schema: Option<Schema>, capabilities: &[&str]) -> api::ClientMessage
         settings_schema: schema,
         version: api::VERSION.into(),
         name: "Settings test".into(),
+        help_topics: None,
         commands: vec![api::Registration {
             default_binding: None,
             presentation: None,

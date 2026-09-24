@@ -381,7 +381,8 @@
         "view-document",
         "job-feedback",
         "input-path-completion",
-        "view-default-bindings"
+        "view-default-bindings",
+        "view-help"
       ]
     }
   },

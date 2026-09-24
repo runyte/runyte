@@ -320,8 +320,9 @@ def _names(values, *, features=False):
 
 
 class Application:
-    def __init__(self, name, commands, capabilities, *, runyte, optional_capabilities=(), required_features=(), optional_features=(), settings_schema=None):
+    def __init__(self, name, commands, capabilities, *, runyte, optional_capabilities=(), required_features=(), optional_features=(), settings_schema=None, help_topics=None):
         self.name, self.commands, self.capabilities = name, commands, capabilities
+        self.help_topics = help_topics
         self.runyte = ReleaseRange(runyte)
         self.optional_capabilities = list(optional_capabilities)
         self.required_features = list(required_features)
@@ -334,6 +335,8 @@ class Application:
             raise ValueError('Overlapping or excessive negotiation sets')
         if any('presentation' in command for command in commands) and 'view-action-presentation' not in features | optional_features:
             raise ValueError('Command presentation requires a feature declaration')
+        if help_topics is not None and 'view-help' not in features | optional_features:
+            raise ValueError('Help topics require a view-help declaration')
         self.host_version = None
         self.granted_capabilities = frozenset()
         self.features = frozenset()
@@ -569,7 +572,7 @@ class Application:
 
     def _model_update(self, view, expected_revision, kind, value, expected_query_revision=None):
         header = value if kind == 'model' else value.get('header', {})
-        for field, feature in (('metadata', 'view-metadata'), ('action_presentation', 'view-action-presentation'), ('document', 'view-document')):
+        for field, feature in (('metadata', 'view-metadata'), ('action_presentation', 'view-action-presentation'), ('document', 'view-document'), ('help', 'view-help')):
             if field in header and feature not in self.features:
                 raise PluginError('unsupported', f'{field} requires {feature}')
         data = json.dumps(value, ensure_ascii=False, allow_nan=False,
@@ -832,6 +835,9 @@ class Application:
                                 'required_features': self.required_features, 'optional_features': self.optional_features}
                 if self.settings_schema is not None:
                     registration['settings_schema'] = self.settings_schema
+                # Older hosts would refuse the field; their views keep generic help.
+                if self.help_topics is not None and 'view-help' in supported_features:
+                    registration['help_topics'] = self.help_topics
                 self._write(registration)
                 registered = self._read()
                 if not isinstance(registered, dict):
@@ -844,6 +850,8 @@ class Application:
                 selected = _names(registered['features'], features=True)
                 if any('presentation' in command for command in registration['commands']) and 'view-action-presentation' not in selected:
                     raise PluginError('invalid_registration', 'Command presentation was not acknowledged')
+                if 'help_topics' in registration and 'view-help' not in selected:
+                    raise PluginError('invalid_registration', 'Help topics were not acknowledged')
                 effective = ReleaseRange(registered['runyte'])
                 if (not set(self.capabilities) <= granted or not granted <= supported
                         or not granted <= set(self.capabilities) | set(self.optional_capabilities)

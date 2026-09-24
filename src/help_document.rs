@@ -104,12 +104,30 @@ impl HelpDocumentWriter {
     pub fn write_prose(&mut self, text: &str) {
         let start = self.roles.len();
         self.write(text);
+        self.mark_backticks(start, self.roles.len());
+    }
+
+    /// Discards every role in `[from, to)` and marks only its backticks.
+    ///
+    /// For prose Runyte did not write: the document-wide passes colour words
+    /// Runyte's own prose uses as keys and headings, and in text from elsewhere
+    /// the same words are usually just words.
+    pub fn reset_to_prose(&mut self, from: usize, to: usize) {
+        let to = to.min(self.roles.len());
+        if from >= to {
+            return;
+        }
+        self.roles[from..to].fill(None);
+        self.mark_backticks(from, to);
+    }
+
+    fn mark_backticks(&mut self, from: usize, to: usize) {
         let mut open = None;
-        for (relative, character) in text.chars().enumerate() {
+        for (relative, character) in self.text.chars().skip(from).take(to - from).enumerate() {
             if character != '`' {
                 continue;
             }
-            let index = start + relative;
+            let index = from + relative;
             self.roles[index] = Some(HelpRole::Delimiter);
             if let Some(from) = open.take() {
                 self.roles[from + 1..index].fill(Some(HelpRole::Code));

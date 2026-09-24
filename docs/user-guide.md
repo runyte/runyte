@@ -1849,7 +1849,9 @@ come apart. The maximized pane's title carries `[zen]` or `[fullscreen]` after
 its `[+]` and `[RO]` markers, so the one pane on screen says which view is
 hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
-type. `:help` and its `:?` alias instead open the general Runyte manual;
+type. In a plugin view it lists the actions Tab offers there. A plugin that
+supplies help topics also explains the view's workflow, such as browsing a
+table's rows or inspecting one record. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
 `:help regex`, `:help search`, `:help mouse`, `:help git`, `:help sessions`,
 or `:help lsp`. Both kinds of help are ordinary read-only buffers, so they

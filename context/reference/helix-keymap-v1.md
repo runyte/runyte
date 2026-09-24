@@ -632,3 +632,8 @@ selection-first editing keys.
 Plugin view commands may supply a physical default binding through negotiated
 `view-default-bindings`. Configured bindings override it; scope, collisions, help
 and hints continue to use the shared registry. No global defaults are added.
+
+`Space ?` in a plugin view keeps its binding and opens the shared contextual help
+buffer. Negotiated `view-help` replaces only that page's overview prose with a
+plugin-authored topic. Its action list and key tables still come from the
+registry that Tab, dispatch and hints read. No binding is added.
