@@ -48,8 +48,7 @@ Project goals:
 
 Linux and macOS provide the full feature set. The Windows version is still
 missing some persistent-mode features; see the
-[Windows scope and requirements](docs/user-guide.md#windows-support). The
-released 0.3.1 packages predate this Windows work.
+[Windows scope and requirements](docs/user-guide.md#windows-support).
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·

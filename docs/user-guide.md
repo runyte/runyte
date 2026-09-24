@@ -1419,9 +1419,8 @@ The active theme is not among them; `Space o t` shows and changes it.
 
 ## Install and run
 
-Linux and macOS provide the full feature set. This source tree also includes
-provisional [native Windows support](#windows-support). The released 0.3.1
-packages predate that work; use a build from this branch to try it.
+Linux and macOS provide the full feature set.
+[Native Windows support](#windows-support) is provisional.
 
 Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
 [GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
