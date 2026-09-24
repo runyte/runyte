@@ -635,8 +635,20 @@ async fn send_or_exit(
             Ok(WireOutcome::HostEnded)
         }
         result = client.send(request) => {
-            result?;
-            Ok(WireOutcome::Sent)
+            let Err(error) = result else {
+                return Ok(WireOutcome::Sent);
+            };
+            // A host that ends this attachment, by detaching it or shutting
+            // down, queues its final reply and closes its end of the pipe
+            // while its process keeps running. A request already in flight
+            // then fails to write ("The pipe is being closed") although the
+            // attachment ended as asked. The reader holds that final reply,
+            // so read it before reporting the write.
+            if drain_after_host_exit(client).await.is_ok() {
+                Ok(WireOutcome::HostEnded)
+            } else {
+                Err(error)
+            }
         }
     }
 }
