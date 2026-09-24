@@ -760,7 +760,7 @@ impl App {
     ///
     /// Only tests outside this module need it: frontends receive the same
     /// spans through snapshots, clipped to what is on screen.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn generated_highlights(&self, buffer: usize) -> &[crate::syntax::Span] {
         self.generated_highlights
             .get(&buffer)

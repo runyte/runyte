@@ -23,7 +23,7 @@ pub(super) struct Registered {
 
 impl WorkspaceHost {
     /// Registers commands alone, as a registration without a name or help.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn register_plugin_commands(
         &mut self,
         id: usize,
