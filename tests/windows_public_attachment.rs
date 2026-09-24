@@ -160,6 +160,7 @@ fn native_manager_visits_selected_live_publication_and_refuses_stale_row() {
     let runtime = root.create_private_dir("runtime").unwrap();
     let cache = root.create_private_dir("cache").unwrap();
     let context = root.create_private_dir("context").unwrap();
+    root.create_private_dir("inventory").unwrap();
     let config = config_dir.join("config.yaml");
     fs::write(
         &config,
@@ -756,6 +757,12 @@ fn start_visit_host(root: &Path, project: &Path, config: &Path, label: &str) -> 
         .stderr(output);
     fixture_environment(&mut command, root);
     let mut host = ForegroundHost(command.spawn().unwrap());
+    let ready = root
+        .join("runtime/runyte")
+        .join(runyte::workspace::workspace_id(
+            &project.canonicalize().unwrap(),
+        ))
+        .join("endpoint.json");
     let deadline = Instant::now() + Duration::from_secs(12);
     loop {
         let mut command = Command::new(env!("CARGO_BIN_EXE_runyte"));
@@ -765,7 +772,14 @@ fn start_visit_host(root: &Path, project: &Path, config: &Path, label: &str) -> 
             .current_dir(project);
         fixture_environment(&mut command, root);
         let listing = command.output().unwrap();
-        if listing.status.success()
+        let own_publication_ready = fs::read(&ready)
+            .ok()
+            .and_then(|bytes| {
+                runyte::workspace::windows_endpoint::EndpointMetadata::from_json(&bytes).ok()
+            })
+            .is_some_and(|metadata| metadata.process.pid == host.0.id());
+        if own_publication_ready
+            && listing.status.success()
             && String::from_utf8_lossy(&listing.stdout).contains("running")
             && String::from_utf8_lossy(&listing.stdout).contains(&*project.to_string_lossy())
         {
@@ -832,7 +846,7 @@ fn public_manager_visit_fixture() {
     source_editor.send("\x1b");
     source_editor.until("NOR");
     source_editor.send(":session-list\r");
-    source_editor.until("Enter visit running");
+    source_editor.until("Enter visit ·");
     source_editor.send("visit-destination\r");
     source_editor.until("DESTINATION_VISIT_MARKER");
     assert!(source_host.0.try_wait().unwrap().is_none());
@@ -843,7 +857,7 @@ fn public_manager_visit_fixture() {
     let mut source_editor = Console::spawn(&args, &source);
     source_editor.until("dirty SOURCE_VISIT_MARKER");
     source_editor.send(":session-list\r");
-    source_editor.until("Enter visit running");
+    source_editor.until("Enter visit ·");
     source_editor.send("visit-destination");
     stop_visit_host(&root, &destination, &config, &mut destination_host);
     let mut replacement = start_visit_host(&root, &destination, &config, "replacement");
@@ -855,7 +869,7 @@ fn public_manager_visit_fixture() {
     source_editor.until_screen_after("manager closes after stale visit", |screen| {
         screen.contains("dirty SOURCE_VISIT_MARKER")
             && screen.contains("NOR")
-            && !screen.contains("Enter visit running")
+            && !screen.contains("Enter visit ·")
     });
     // The interaction line can be replaced by a catalog refresh. The host
     // retains the exact-publication rejection in the notification buffer.

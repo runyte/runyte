@@ -204,7 +204,7 @@ fn activity_health_session_status_and_preview_keep_protected_owners_visible() {
         missing_directory: false,
     };
     assert_eq!(terminal_output_status(&row, 1000), "ACTIVE");
-    let preview = session_picker_preview(&row, None, false, "now");
+    let preview = session_picker_preview(&row, None, false, "now", false);
     assert!(preview.contains("Plugin jobs  2"), "{preview}");
     assert!(preview.contains("Activities  1"), "{preview}");
     assert!(preview.contains("remote-watch · Watch remote changes · active"));

@@ -5,17 +5,20 @@ use super::application::{Error, ErrorCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 mod ring;
 #[cfg(unix)]
 pub(crate) mod runtime;
-#[cfg(not(unix))]
+#[cfg(windows)]
+#[path = "process/runtime/windows.rs"]
+pub(crate) mod runtime;
+#[cfg(not(any(unix, windows)))]
 pub(crate) mod runtime {
     /// No native helper can emit an event on an unsupported platform.
     #[derive(Debug)]
     pub enum Event {}
 }
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 pub(crate) use ring::Ring;
 
 pub const MAX_HANDLES: usize = 4;

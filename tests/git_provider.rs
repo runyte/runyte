@@ -1099,6 +1099,9 @@ fn worktree_preflight_fails_closed_when_its_attached_branch_cannot_be_inspected(
     assert!(destination.exists());
 }
 
+// Native worktree removal requires the private project lease, exercised by
+// the Git service unit test and the real Windows host cascade acceptance.
+#[cfg(not(windows))]
 #[test]
 fn async_worktree_removal_reconciles_worktrees_and_branches() {
     let repository = TempRepository::new("worktree-remove-async");

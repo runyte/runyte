@@ -393,13 +393,21 @@ mod native {
     }
 
     fn public_fixture(mode: &str, root: &Path) {
+        if mode == "public-helper" {
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input).unwrap();
+            std::io::stdout().write_all(b"native-helper:").unwrap();
+            std::io::stdout().write_all(&input).unwrap();
+            std::io::stdout().flush().unwrap();
+            return;
+        }
         let mut input = std::io::stdin().lock();
         let mut line = String::new();
         input.read_line(&mut line).unwrap();
         let hello: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(hello["type"], "hello");
         assert!(
-            !hello["capabilities"]
+            hello["capabilities"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -412,18 +420,6 @@ mod native {
         };
         let pid = std::process::id();
         fs::write(root.join(format!("{id}-{pid}.started")), "").unwrap();
-        if id == "required" {
-            // Let the parent retain a process handle before this deliberately
-            // rejected registration can be killed and reaped by the host.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !root.join("allow-required").exists() {
-                assert!(
-                    Instant::now() < deadline,
-                    "required fixture was not released"
-                );
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
         let registration = serde_json::json!({
             "type": "register",
             "version": application::VERSION,
@@ -436,20 +432,89 @@ mod native {
             "optional_features": []
         });
         println!("{registration}");
-        if id == "optional" {
+        line.clear();
+        input.read_line(&mut line).unwrap();
+        let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(answer["type"], "registered");
+        assert!(
+            answer["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|cap| cap == "processes")
+        );
+        fs::write(root.join(format!("{id}-{pid}.answered")), "").unwrap();
+        let request = serde_json::json!({
+            "type": "request",
+            "id": "p:1",
+            "method": "process.start",
+            "params": {
+                "label": "Native helper acceptance",
+                "executable": std::env::current_exe().unwrap(),
+                "args": ["--fixture", "public-helper", root.to_str().unwrap()],
+                "capture_stderr": false
+            }
+        });
+        println!("{request}");
+        line.clear();
+        input.read_line(&mut line).unwrap();
+        let started: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(started["type"], "response");
+        assert_eq!(started["id"], "p:1");
+        let process = started["result"]["process"].as_str().unwrap();
+        let bytes = b"binary\0\xff";
+        println!(
+            "{}",
+            serde_json::json!({
+                "type":"request", "id":"p:2", "method":"process.write",
+                "params":{"process":process,"data":plugin::process::encode(bytes),"eof":true}
+            })
+        );
+        line.clear();
+        input.read_line(&mut line).unwrap();
+        let written: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(written["id"], "p:2");
+        assert_eq!(written["result"]["written"], bytes.len());
+        let expected = [b"native-helper:".as_slice(), bytes].concat();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut offset = 0;
+        let mut output = Vec::new();
+        for index in 0..128 {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "type":"request", "id":format!("p:{}", index + 3),
+                    "method":"process.read",
+                    "params":{"process":process,"stream":"stdout","offset":offset,"limit":65536}
+                })
+            );
             line.clear();
             input.read_line(&mut line).unwrap();
-            let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
-            assert_eq!(answer["type"], "registered");
-            assert!(
-                !answer["capabilities"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|cap| cap == "processes")
-            );
-            fs::write(root.join(format!("{id}-{pid}.answered")), "").unwrap();
+            let read: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(read["id"], format!("p:{}", index + 3));
+            let result = &read["result"];
+            output.extend(plugin::process::decode(result["data"].as_str().unwrap()).unwrap());
+            offset = result["next"].as_u64().unwrap();
+            if result["eof"] == true {
+                break;
+            }
+            assert!(Instant::now() < deadline, "helper output did not settle");
+            std::thread::sleep(Duration::from_millis(5));
         }
+        assert_eq!(output, expected);
+        println!(
+            "{}",
+            serde_json::json!({
+                "type":"request", "id":"p:131", "method":"process.close",
+                "params":{"process":process}
+            })
+        );
+        line.clear();
+        input.read_line(&mut line).unwrap();
+        let closed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(closed["id"], "p:131");
+        assert!(closed["result"].is_object());
+        fs::write(root.join(format!("{id}-{pid}.helper")), "").unwrap();
         while input.read_line(&mut line).unwrap() != 0 {
             line.clear();
         }
@@ -489,27 +554,34 @@ mod native {
             events,
             screen: Emulator::new(120, 30),
         };
-        console.until_text("Project directory [");
-        console.send("\r");
-        console.until_text("[y/N]:");
-        console.send("y\r");
-        console.until_text("NOR");
+        let startup_deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let screen = console.screen_text();
+            if screen.contains("Project directory [") {
+                console.send("\r");
+                console.until_text("[y/N]:");
+                console.send("y\r");
+                console.until_text("NOR");
+                break;
+            }
+            if screen.contains(" NOR ") {
+                break;
+            }
+            assert!(
+                !console.pump(startup_deadline, "editor startup"),
+                "editor exited before startup"
+            );
+        }
         console.send(":plugins\r");
         console.until_text("Plugins");
         let first = console.until_answer(root, "optional", None);
-        let rejected = console.until_marker(root, "required", "started", None);
-        assert_ne!(first, rejected);
+        let required = console.until_answer(root, "required", None);
+        assert_ne!(first, required);
+        console.until_marker(root, "optional", "helper", None);
+        console.until_marker(root, "required", "helper", None);
         let first_process = open_process(first);
-        let rejected_process = open_process(rejected);
-        fs::write(root.join("allow-required"), "").unwrap();
-        assert_eq!(
-            unsafe { WaitForSingleObject(rejected_process.as_raw_handle(), 5000) },
-            WAIT_OBJECT_0
-        );
+        let required_process = open_process(required);
         console.until_text("optional");
-        console.send("\x1b[B");
-        // The manager preview clips long diagnostics at the visible column.
-        console.until_text("Host does not support required capability");
         console.send("\x1b");
         console.send(":plugin-stop optional\r");
         assert_eq!(
@@ -519,11 +591,16 @@ mod native {
         console.send(":plugin-restart optional\r");
         let second = console.until_answer(root, "optional", Some(first));
         assert_ne!(first, second);
+        console.until_marker(root, "optional", "helper", Some(first));
         let second_process = open_process(second);
         console.send(":quit\r");
         console.until_exit();
         assert_eq!(
             unsafe { WaitForSingleObject(second_process.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0
+        );
+        assert_eq!(
+            unsafe { WaitForSingleObject(required_process.as_raw_handle(), 5000) },
             WAIT_OBJECT_0
         );
     }

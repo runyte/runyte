@@ -32,7 +32,7 @@ fn location(root: &Path) -> EndpointLocation {
     EndpointLocation::new(
         &root.join("project"),
         root.join("endpoint"),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     )
     .unwrap()
 }
@@ -581,7 +581,7 @@ fn incompatible_force_uses_actual_peer_and_cleanup_preserves_replaced_records() 
         // Registry scope is independent; removing ready did not infer or clear
         // any other record merely because its metadata named this project.
         assert_eq!(
-            RegistrySet::open(&[fixture.root.join("registry")])
+            RegistrySet::open_fixture(&[fixture.root.join("registry")])
                 .unwrap()
                 .scan_namespaces()
                 .candidates

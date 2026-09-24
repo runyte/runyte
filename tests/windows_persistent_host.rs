@@ -6,7 +6,7 @@ use runyte::{
     input::{InputEvent, KeyStroke},
     protocol::{
         ClientRequest, FeatureGroup, HostResponse, SnapshotRow, TransportChange, WaitStatus,
-        encode_path,
+        decode_path, encode_path,
     },
     test_support::TestRuntimeRoot,
     workspace::{
@@ -729,7 +729,7 @@ fn native_host_editor_quit_finishes_attached_wait_before_final_reply_and_preserv
             panic!("control wait was not created before interactive attachment")
         };
         let mut attached = BufferedLocalClient::connect_with_handoff(
-            &metadata, FrameGeometry::default(), true,
+            &metadata, FrameGeometry::default(), false,
         ).await.unwrap();
         assert!(matches!(timeout(BUDGET, attached.recv_handshake()).await.unwrap().unwrap(),
             Some(HostResponse::Welcome { .. })));
@@ -749,9 +749,10 @@ fn native_host_editor_quit_finishes_attached_wait_before_final_reply_and_preserv
         let first_quit = buffered_invoke_current(&mut attached, frame, "quit").await;
         assert!(matches!(first_quit, HostResponse::CommandResult { .. }),
             "first quit response: {first_quit:?}");
-        assert!(matches!(buffered_semantic_response(&mut attached, "attached wait completion").await,
+        let attached_completion = buffered_semantic_response(&mut attached, "attached wait completion").await;
+        assert!(matches!(attached_completion,
             HostResponse::WaitState { token, status: WaitStatus::Completed, interactive_attached: false }
-                if token == attached_wait));
+                if token == attached_wait), "attached completion: {attached_completion:?}");
         assert!(matches!(request(&mut control, ClientRequest::WaitStatus { token: control_wait }).await,
             HostResponse::WaitState { status: WaitStatus::Pending { .. }, .. }));
         assert!(matches!(request(&mut control, ClientRequest::Health).await,
@@ -775,6 +776,47 @@ fn native_host_editor_quit_finishes_attached_wait_before_final_reply_and_preserv
             HostResponse::ShuttingDown));
         drop(attached);
         drop(control);
+        fixture.exited(&mut process).await;
+    });
+}
+
+#[test]
+fn native_host_quit_here_reports_directory_only_to_a_capable_attachment() {
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        let (mut process, metadata) = fixture.start().await;
+        let mut attached =
+            BufferedLocalClient::connect_with_handoff(&metadata, FrameGeometry::default(), true)
+                .await
+                .unwrap();
+        assert!(matches!(
+            timeout(BUDGET, attached.recv_handshake())
+                .await
+                .unwrap()
+                .unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        let initial = buffered_frame(&mut attached, "quit-here initial frame").await;
+        assert!(matches!(
+            buffered_invoke_current(&mut attached, initial, "quit-here").await,
+            HostResponse::CommandResult { .. }
+        ));
+        let final_response =
+            buffered_semantic_response(&mut attached, "quit-here final reply").await;
+        let HostResponse::Detached {
+            directory_bytes: Some(directory_bytes),
+        } = final_response
+        else {
+            panic!("quit-here did not report a directory: {final_response:?}");
+        };
+        assert_eq!(
+            decode_path(directory_bytes)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            fixture.project.canonicalize().unwrap()
+        );
+        drop(attached);
         fixture.exited(&mut process).await;
     });
 }

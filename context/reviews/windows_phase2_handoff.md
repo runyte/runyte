@@ -1,6 +1,6 @@
 # Windows Phase 2 continuation
 
-Checkpoint: 2026-09-23, branch `feat/windows-support`, private native
+Checkpoint: 2026-09-24, branch `feat/windows-support`, private native
 ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
 in `140347e`, private native parent waits are accepted in `fa18a52`, and private
 Windows plugin handoffs are accepted in `8148437`. Native Windows context
@@ -36,20 +36,24 @@ before the older chronological progress entries. No previous chat is required.
 Phase 1 is complete. Phase 2.1 through 2.4 and the native Ctrl+h/Ctrl+j
 correction are complete. Phase 2.5 has accepted private ParentWait and
 ParentAttach paths, explicit public `-a`/`--persistent` attachment and configured
-bare attachment. Guarded CLI restart has local refusal acceptance; successful
-stop-to-start acceptance remains gated. Public `--wait` from an authenticated
-persistent integrated terminal is accepted; persistent wait from an ordinary
-shell, numbered navigation, directory handoff and other in-editor switching
-remain gated. The persistent manager can visit a selected compatible running
-publication; the standalone manager remains control-only.
+bare attachment. Guarded CLI restart has local real-process stop-to-start,
+protected-refusal and forced-replacement acceptance. Public `--wait` from an authenticated
+persistent integrated terminal and ordinary-shell persistent `--wait` have
+focused native acceptance. The persistent editor has a session strip, numbered
+and cyclic navigation, Explorer and manager visits, exact destination visits,
+and selected stopped-session startup. PowerShell directory handoff works from a
+persistent attachment after a host switch. The standalone manager remains
+control-only. Native formatting, denied-warning all-target Clippy and the full
+workspace suite pass on the current working tree.
 Phase 2.6 has accepted native worker, durable-state, private handoff,
 context-grant storage, context transport/discovery, host grants, the Python MCP
 bridge, public Windows context access and the public plugin lifecycle. The
-managed plugin helper-process capability remains unavailable on Windows.
-Integrated Git is optional: missing
-Git must leave the integration disabled without failed spawn loops or runtime
-errors. Combined branch/worktree deletion still needs the native
-persistent-session coordinator; separate guarded operations work.
+managed plugin helper-process capability is implemented in this working tree;
+focused native runtime, public plugin acceptance and the full workspace suite pass.
+Integrated Git is optional: missing Git must leave the integration disabled
+without failed spawn loops or runtime errors. Guarded combined branch,
+worktree, and session teardown now have focused real-process Windows acceptance
+and pass the full workspace suite in the working tree.
 
 Continue sequential work packages with an independent subagent review after
 each package. Incorporate findings and repeat review until none remain before
@@ -68,14 +72,14 @@ was cancelled by the next push. Configured bare attachment source commit
 `378a22b` passed all jobs in
 [CI run 35883007224](https://github.com/runyte/runyte/actions/runs/35883007224).
 Restart source commit `8a8987c` passed every job in
-[CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832),
-while successful stop-to-start acceptance still needs a detached-capable
-Windows runner. The `Ctrl-\`, public ParentWait and manager-visit commits remain
+[CI run 35888094832](https://github.com/runyte/runyte/actions/runs/35888094832).
+Later local acceptance exercised successful stop-to-start in an admitted
+nested Windows job. The `Ctrl-\`, public ParentWait and manager-visit commits remain
 local; automatic approval review denied the push, and they have no remote CI
 yet.
 Report completion of the entire Phase 2 or an unexpected blocker requiring a
-decision. Keep ordinary-shell persistent wait, numbered navigation and other
-in-editor switching behind their own acceptance gates.
+decision. Preserve exact-publication authority and the native acceptance gates
+for further session routes.
 
 ## Accepted implementation and validation
 
@@ -1010,15 +1014,15 @@ Clippy and the full workspace suite passed; independent Astra source review is
 clear. The commit is local after automatic approval review denied the push; no
 remote CI result exists for it.
 
-## Next Phase 2.5 gates
+## Current Phase 2.5 acceptance
 
 Successful CLI restart stop-to-start, protected-state refusal and forced
-replacement still need a detached-capable Windows acceptance run. Persistent
-wait into a host from an ordinary shell, numbered and other in-editor
-navigation, directory handoff and combined Git
-branch/worktree removal remain closed until their own acceptance gates pass.
-Keep the native ConPTY job limits and exact publication authority in those
-packages.
+replacement pass in an admitted nested Windows job. The current working tree
+passes focused native acceptance for ordinary-shell persistent wait, numbered
+and other in-editor navigation, directory handoff, and combined Git
+branch/worktree removal. Combined formatting, denied-warning all-target Clippy,
+and the full workspace suite pass locally. Keep the native
+ConPTY job limits and exact publication authority in further packages.
 
 ## Phase 2.5 implementation order
 
@@ -1119,7 +1123,8 @@ At the context checkpoint, public plugin discovery, startup, stop and restart
 were the remaining 2.6 gate. Source commit `9743bd9` has since opened that
 lifecycle with local native acceptance and independent review, preserving worker
 ownership, durable state, physical approval and uncertain-outcome contracts.
-Windows managed helper processes remain unavailable. The public context
+Managed helper processes were unavailable at that checkpoint; their Windows
+runtime and public acceptance are implemented in the current working tree. The public context
 sequence is remotely accepted; the public plugin lifecycle passed every job in
 [CI run 35875460337](https://github.com/runyte/runyte/actions/runs/35875460337).
 
@@ -1177,3 +1182,17 @@ unpushed after automatic approval review blocked the push. No remote CI result
 exists for those commits. Do not retry the denied push
 without explicit approval.
 Inspect Git status and preserve unrelated working-tree edits before committing.
+
+## Uncommitted navigation work in the current workspace
+
+The current working tree extends the native Windows persistent editor with an
+exact-publication session strip and click navigation, Explorer `Tab s`, the
+session manager's selected stopped-row Open, current marker, numbered running
+sessions, and cycle navigation. Focused native two-host acceptance has passed
+for Explorer `Tab s`, stopped-row Open, and number/cycle switching. These are
+working-tree changes; this section records no source commit or remote CI result.
+
+Native destination visits, ordinary-shell wait, guarded Git worktree teardown,
+and persistent PowerShell directory handoff now pass focused real Windows
+acceptance in this working tree. Native formatting, denied-warning all-target
+Clippy and the full workspace suite pass.

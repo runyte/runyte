@@ -2627,7 +2627,7 @@ impl App {
         if self.buffer_action_menu.is_some() {
             return self.handle_buffer_action_key(key);
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self
             .list
             .as_ref()
@@ -2767,13 +2767,13 @@ impl App {
             (KeyCode::Char(character), false)
                 if !key.modifiers.intersects(Modifiers::ALT | Modifiers::SUPER) =>
             {
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 if ('1'..='9').contains(&character) && self.session_number_shortcut_is_armed() {
                     self.attach_numbered_session(character);
                     return Ok(());
                 }
-                // Unix session-number admission above must run before filtering.
-                #[cfg_attr(not(unix), allow(clippy::collapsible_match))]
+                // Session-number admission above must run before filtering.
+                #[cfg_attr(not(any(unix, windows)), allow(clippy::collapsible_match))]
                 if self
                     .list
                     .as_ref()
@@ -2802,7 +2802,7 @@ impl App {
     /// keystroke `Space Space 1` is made of. Clearing the filter arms it again,
     /// so
     /// the rule is the state of the filter rather than a mode to keep track of.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn session_number_shortcut_is_armed(&self) -> bool {
         self.list
             .as_ref()
@@ -2838,12 +2838,18 @@ impl App {
                 }
                 actions.extend([
                     SessionAction::Rename,
+                    SessionAction::Number,
                     SessionAction::Close,
                     SessionAction::ForceClose,
                 ]);
                 actions
             } else {
-                vec![SessionAction::Rename]
+                let mut actions = Vec::new();
+                if self.persistent_session {
+                    actions.push(SessionAction::Open);
+                }
+                actions.extend([SessionAction::Rename, SessionAction::Forget]);
+                actions
             }
         } else if entry.running {
             vec![
@@ -2949,19 +2955,11 @@ impl App {
                         self.command_cursor = self.command.chars().count();
                     }
                     (true, SessionAction::Number) => {
-                        #[cfg(windows)]
-                        {
-                            self.action_failed("session numbers are unavailable on Windows");
-                            return Ok(());
-                        }
-                        #[cfg(unix)]
-                        {
-                            self.list = None;
-                            self.session_action_menu = None;
-                            self.session_number_target = Some(selection.clone());
-                            self.session_manager_return_target = Some(selection);
-                            self.open_prompt(PromptKind::SessionNumber);
-                        }
+                        self.list = None;
+                        self.session_action_menu = None;
+                        self.session_number_target = Some(selection.clone());
+                        self.session_manager_return_target = Some(selection);
+                        self.open_prompt(PromptKind::SessionNumber);
                     }
                     (false, SessionAction::Number) => {
                         self.status("this session is already stopped")
@@ -2978,7 +2976,7 @@ impl App {
                         #[cfg(unix)]
                         let _ = self.forget_workspace(selection.project_root().to_path_buf());
                         #[cfg(windows)]
-                        self.action_failed("use :session-clean to clean verified stopped history");
+                        self.forget_selected_session(selection);
                     }
                     (true, SessionAction::Forget) => {
                         self.status("stop this session before forgetting it")

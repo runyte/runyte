@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Private Windows PowerShell directory handoff for the standalone frontend.
+//! Private Windows PowerShell directory handoff for physical frontends.
 //!
 //! The record is `RNYCWD\x01\0`, a little-endian u32 count, then that many
 //! little-endian UTF-16 code units. There is no BOM, terminator, or newline.

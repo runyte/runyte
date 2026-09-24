@@ -14,7 +14,7 @@ fn fixture(label: &str) -> (TestRuntimeRoot, EndpointLocation, NameStore) {
     let root = TestRuntimeRoot::new(label).unwrap();
     let location = location(
         root.path(),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     );
     let names = NameStore::open(&root.join("configured-state")).unwrap();
     (root, location, names)
@@ -312,11 +312,11 @@ fn shared_secondary_reserves_names_but_owner_inventory_does_not_join_isolated_sc
     let shared = root.join("shared");
     let a = location(
         &root.join("a"),
-        RegistrySet::open(&[root.join("primary-a"), shared.clone()]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("primary-a"), shared.clone()]).unwrap(),
     );
     let b = location(
         &root.join("b"),
-        RegistrySet::open(&[root.join("primary-b"), shared]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("primary-b"), shared]).unwrap(),
     );
     let names = NameStore::open(&root.join("state")).unwrap();
     let first = a
@@ -352,7 +352,7 @@ fn shared_secondary_reserves_names_but_owner_inventory_does_not_join_isolated_sc
 #[test]
 fn initial_publication_and_live_rename_share_namespace_guards() {
     let root = TestRuntimeRoot::new("names-initial-race").unwrap();
-    let registries = RegistrySet::open(&[root.join("registry")]).unwrap();
+    let registries = RegistrySet::open_fixture(&[root.join("registry")]).unwrap();
     let a = location(&root.join("a"), registries.clone());
     let b = location(&root.join("b"), registries);
     let names = NameStore::open(&root.join("state")).unwrap();

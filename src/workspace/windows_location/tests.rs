@@ -16,6 +16,51 @@ fn inputs(root: &TestRuntimeRoot, roots: CapturedRoots) -> LocationInputs {
 }
 
 #[test]
+fn parent_initialization_respects_removal_lease_and_child_root_identity() {
+    let root = TestRuntimeRoot::new("location-init-lease").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let inventory = root.join("inventory");
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: vec![root.join("config")],
+        roots: CapturedRoots {
+            runtime_root: Some(root.create_private_dir("runtime").unwrap()),
+            inventory_override: Some(inventory.clone()),
+            ..CapturedRoots::default()
+        },
+    })
+    .unwrap();
+    let removal = ProjectLease::acquire(&project, &inventory).unwrap();
+    let state = project.join(".runyte");
+    let error = scope
+        .initialize_layout(&project, Path::new(".runyte"))
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<io::Error>().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert!(!state.exists());
+    drop(removal);
+
+    let parent = scope
+        .initialize_layout(&project, Path::new(".runyte"))
+        .unwrap();
+    assert!(state.is_dir());
+    let expected = parent.fingerprint().unwrap();
+    fs::rename(&project, root.join("moved-project")).unwrap();
+    fs::create_dir(&project).unwrap();
+    assert_eq!(
+        parent.acquire_project_lease().unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+    let child = ResolvedLayout::from_scope(scope, &project, state).unwrap();
+    assert!(
+        child
+            .verify_detached_layout(true, Some(OsStr::new(&expected)))
+            .is_err()
+    );
+}
+
+#[test]
 fn runtime_and_cache_select_shared_primary_and_runtime_secondary_without_writes() {
     let root = TestRuntimeRoot::new("location-shared").unwrap();
     let runtime = root.create_private_dir("runtime").unwrap();

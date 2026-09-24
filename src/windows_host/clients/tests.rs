@@ -31,7 +31,8 @@ impl Fixture {
         let location = EndpointLocation::new(
             root.path(),
             root.join("endpoint"),
-            RegistrySet::open(&[root.join("registry")]).unwrap(),
+            RegistrySet::with_inventory(&[root.join("registry")], Some(root.join("inventory")))
+                .unwrap(),
         )
         .unwrap();
         let prepared = location.prepare(Some("initial".into())).unwrap();
@@ -80,6 +81,7 @@ impl Fixture {
                 proof: self.proof.clone(),
                 responses: tx,
                 interactive,
+                directory_handoff: false,
                 geometry: runyte::app::FrameGeometry::default(),
             },
         );
@@ -178,6 +180,28 @@ fn native_switch_abort_preserves_waits_and_commit_cancels_only_source_owned_wait
 }
 
 #[test]
+fn detached_interactive_peer_leaves_external_wait_for_its_owner() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let _owner = fixture.connect(&mut clients, 2);
+    let token = fixture.wait(&mut clients, 2, "external-wait.txt");
+    assert!(clients.peers[&2].subscribed_waits.contains(&token));
+    assert!(!clients.peers[&1].subscribed_waits.contains(&token));
+    clients.disconnected(&mut fixture.host, 1);
+    assert!(matches!(
+        fixture.host.wait_status(token.into()),
+        Some(runyte::workspace::WaitStatus::Pending { .. })
+    ));
+    fixture.host.complete_wait_request(token.into()).unwrap();
+    clients.reconcile(&mut fixture.host);
+    assert!(matches!(
+        fixture.host.wait_status(token.into()),
+        Some(runyte::workspace::WaitStatus::Completed)
+    ));
+}
+
+#[test]
 fn late_native_switch_receipt_cannot_release_a_replacement_owner() {
     let mut fixture = Fixture::new();
     let mut clients = Clients::default();
@@ -273,6 +297,7 @@ fn prepared_response_send_failure_releases_reservation_and_owner() {
         HostResponse::NativeSwitchPrepared {
             receipt: 31,
             candidate: Box::new(candidate),
+            visit: None,
         },
     ));
     assert_eq!(clients.active_id(), None);
@@ -476,6 +501,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
             proof: fixture.proof.clone(),
             responses: tx,
             interactive: true,
+            directory_handoff: false,
             geometry: runyte::app::FrameGeometry::default(),
         },
     );
@@ -488,6 +514,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
             proof: fixture.proof.clone(),
             responses: refused,
             interactive: true,
+            directory_handoff: false,
             geometry: runyte::app::FrameGeometry::default(),
         },
     );
@@ -521,6 +548,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
             proof: fixture.proof.clone(),
             responses: first,
             interactive: true,
+            directory_handoff: false,
             geometry: runyte::app::FrameGeometry::default(),
         },
     );
@@ -538,6 +566,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
             proof: fixture.proof.clone(),
             responses: replacement,
             interactive: true,
+            directory_handoff: false,
             geometry: runyte::app::FrameGeometry::default(),
         },
     );
@@ -764,6 +793,7 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
             proof,
             responses,
             interactive: false,
+            directory_handoff: false,
             geometry: runyte::app::FrameGeometry::default(),
         },
     );

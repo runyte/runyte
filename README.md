@@ -51,7 +51,8 @@ tree includes standalone editing, `--wait`, file management,
 integrated terminals, clipboard, language services, Git when installed, and the
 optional context bridge, configured plugins and direct persistent attachment.
 Configured bare launches attach when a project is discoverable. Native session
-controls and foreground hosts are available. See the
+controls, the session strip, directory and worktree session switching, and foreground hosts
+are available. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
 The released 0.3.1 packages predate this Windows work.
 
@@ -136,9 +137,10 @@ runyte -a  # attach to a session or start a new one
 
 Press `Space Space` to open the session manager in Runyte. On Windows, use
 `runyte -a` for direct attachment; a persistent editor can visit a selected
-running session through its manager. A standalone editor's manager can list,
-preview, rename and stop native sessions without attaching.
-On Unix, press `Shift Left` and `Shift Right` to quickly switch between sessions.
+running or stopped session through its manager, or use Explorer `Tab s` for
+the displayed directory. A standalone editor's manager can list, preview,
+rename and stop native sessions without attaching. In persistent mode,
+`Shift Left` and `Shift Right` cycle through running sessions.
 
 The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
 documents attachment, switching, lifecycle commands, and `--wait`.

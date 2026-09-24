@@ -121,9 +121,9 @@ A text plugin's registration looks like:
 `:plugins` shows configured entries, effective compatibility, grants, activity,
 cleanup and bounded diagnostics. `:plugin-stop <id>` stops an owner;
 `:plugin-restart <id>` waits for cleanup and establishes a fresh connection.
-On Windows, managed helper processes are unavailable. The host omits `processes`
-from hello; a plugin requiring it is refused at registration, and a plugin
-declaring it optional runs without that grant.
+On Windows, `processes` is advertised and negotiated like other host
+capabilities. Native helpers use bounded binary pipes and a private job that
+the host closes with the helper's descendants before acknowledging cleanup.
 There is no automatic restart or replay. Persistent-session detach retains the
 same workers and live resources. Stop removes commands and input surfaces,
 leaves application views readable but unavailable, and preserves dirty provider

@@ -443,16 +443,23 @@ and workspace ID match. A pending menu confirmation or prompt for a replaced
 publication refuses and asks the user to choose again; its path or name cannot
 redirect the action. Unix and stopped rows retain project identity. The Windows
 manager reads rows from its owned native service. In a persistent editor, Enter
-or Tab > Open visits a selected compatible running publication through its exact
-identity. A standalone editor retains a control-only manager. If refresh loses
+or Tab > Open visits a selected compatible running publication or starts the
+selected stopped row through its exact identity. A standalone editor retains a
+control-only manager. If refresh loses
 the selected publication key, the manager requires explicit row movement before
-another action. The menu also offers Rename, Close, and confirmed Force close
-for compatible running rows, only Force close for incompatible running rows, or
-Rename for stopped rows.
-Global `:session-clean` is distinct from selected-row
-actions. Current markers, digit shortcuts, other destinations, the session
-strip, and starting stopped rows through the manager remain unavailable. Direct
-`-a` attachment uses the host's exact publication.
+another action. The menu also offers Rename, Renumber, Close, and confirmed
+Force close for compatible running rows, only Force close for incompatible
+running rows, or Rename and Forget for stopped rows. Global `:session-clean`
+is distinct from selected-row actions. The manager marks the exact current
+publication and accepts digits for numbered running rows while its filter is
+empty. Explorer `Tab s`, the manager
+directory chooser, a terminal's validated reported directory, and Git worktree
+open/create visit or start an exact directory's session through the native
+handoff. Direct `-a`
+attachment uses the host's exact publication. The Windows strip uses the bound
+host's exact publication for current emphasis and click comparison, keeping
+same-project publications distinct. It observes the native catalog asynchronously
+on attachment and while the editor is active.
 
 The **session strip** is one optional global row above the editor area; panes
 and overlays remain inside the editor area and the two bottom global lines

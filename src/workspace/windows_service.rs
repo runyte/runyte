@@ -4,10 +4,13 @@
 //! dedicated thread owns the runtime, complete snapshots and recovery ledger.
 
 use super::{
-    catalog_values::{WorkspaceEvent, WorkspaceRow, WorkspaceSelection},
+    catalog_values::{
+        DestinationInventory, WorkspaceEvent, WorkspaceRow, WorkspaceSelection,
+        validate_destination_inventory,
+    },
     windows_catalog::HistoryTarget,
     windows_control::{ControlSnapshot, UserSelector},
-    windows_endpoint::{EndpointMetadata, MAX_PERSISTED_PATH_BYTES},
+    windows_endpoint::{EndpointMetadata, MAX_PERSISTED_PATH_BYTES, ProjectLease},
     windows_lifecycle::connect_control,
     windows_location::{DiscoveryScope, KnownReadLocation, ResolvedLayout},
     windows_process_identity::PinnedProcess,
@@ -16,6 +19,7 @@ use super::{
 use crate::{
     git::{GitCliProvider, GitProvider},
     protocol::{ClientRequest, HostResponse},
+    workspace::recent_history::{RecentEntry, update_recents_if_changed},
 };
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -33,6 +37,7 @@ const MAX_ERROR_BYTES: usize = 1024;
 const MAX_WARNING_DETAILS: usize = 8;
 const MAX_WARNING_BYTES: usize = 4096;
 const PREVIEW_BUDGET: Duration = Duration::from_secs(2);
+const INVENTORY_BUDGET: Duration = Duration::from_secs(2);
 const PREPARE_BUDGET: Duration = Duration::from_secs(3);
 const PARENT_ATTACH_BUDGET: Duration = Duration::from_secs(12);
 
@@ -86,8 +91,43 @@ enum Request {
         generation: u64,
         path: PathBuf,
     },
+    Inventory {
+        generation: u64,
+        selection: WorkspaceSelection,
+    },
+    Number {
+        generation: u64,
+        selection: WorkspaceSelection,
+        number: Option<u8>,
+    },
+    Forget {
+        generation: u64,
+        selection: WorkspaceSelection,
+    },
+    PrepareWorktreeTeardown {
+        generation: u64,
+        path: PathBuf,
+        reviewed_live: Option<WorkspaceSelection>,
+    },
+    InspectWorktreeTeardown {
+        generation: u64,
+        path: PathBuf,
+    },
+    FinishWorktreeTeardown {
+        generation: u64,
+        path: PathBuf,
+        lease: ProjectLease,
+    },
+    RecordCurrent {
+        activity_at_unix_seconds: Option<u64>,
+    },
     PrepareSelectedLive {
         selection: WorkspaceSelection,
+        reply: oneshot::Sender<Result<PreparedLiveTarget>>,
+    },
+    PrepareSelectedSession {
+        selection: WorkspaceSelection,
+        running_only: bool,
         reply: oneshot::Sender<Result<PreparedLiveTarget>>,
     },
     PrepareParentAttach {
@@ -123,6 +163,33 @@ pub struct PreparedLiveTarget {
     metadata: EndpointMetadata,
     peer: Arc<PinnedProcess>,
     acceptance: Option<oneshot::Sender<StartupAcceptance>>,
+}
+
+/// The native service's completed stop/reobservation result. The App keeps
+/// this lease across the queued Git removal and passes it back for history
+/// cleanup only after Git confirms that the directory was removed.
+#[derive(Debug)]
+pub struct PreparedWorktreeTeardown {
+    lease: ProjectLease,
+    stopped_session: Option<WorkspaceRow>,
+}
+
+impl PreparedWorktreeTeardown {
+    pub fn stopped_session(&self) -> Option<&WorkspaceRow> {
+        self.stopped_session.as_ref()
+    }
+
+    pub fn into_lease(self) -> ProjectLease {
+        self.lease
+    }
+}
+
+#[derive(Clone)]
+struct PendingWorktreeTeardown {
+    generation: u64,
+    path: PathBuf,
+    observed_record: Option<RecentEntry>,
+    history_path: Option<PathBuf>,
 }
 
 impl PreparedLiveTarget {
@@ -312,9 +379,31 @@ pub struct WorkspaceServiceHandle {
     requests: mpsc::Sender<Request>,
     previews: watch::Sender<Option<PreviewRequest>>,
     stop: watch::Receiver<bool>,
+    has_current_layout: bool,
 }
 
 impl WorkspaceServiceHandle {
+    /// Queues the published host's captured layout before catalog observation.
+    /// Recording remains on the service worker and cannot delay editor input.
+    pub fn try_ensure_current_record(&self) -> Result<(), &'static str> {
+        self.record_current(None)
+    }
+
+    /// Queues an accepted interactive attachment using the host's captured
+    /// layout and the attachment time captured by its event loop.
+    pub fn try_record_current_activity(&self, at_unix_seconds: u64) -> Result<(), &'static str> {
+        self.record_current(Some(at_unix_seconds))
+    }
+
+    fn record_current(&self, activity_at_unix_seconds: Option<u64>) -> Result<(), &'static str> {
+        if !self.has_current_layout {
+            return Err("native session service has no current host layout");
+        }
+        self.submit(Request::RecordCurrent {
+            activity_at_unix_seconds,
+        })
+    }
+
     /// Resolves a terminal-authored selector against a fresh complete catalog.
     /// A stopped or previously unseen project is initialized and started by the
     /// parent-side worker, outside the requesting terminal's ConPTY job.
@@ -390,6 +479,49 @@ impl WorkspaceServiceHandle {
         })
         .await
         .context("native session preparation timed out")?
+    }
+
+    /// Prepares a displayed exact selection. A stopped row may start only
+    /// after a fresh complete catalog still contains that same stopped row.
+    /// The returned target retains provisional startup acceptance when needed.
+    pub async fn prepare_selected_session(
+        &self,
+        selection: WorkspaceSelection,
+        running_only: bool,
+    ) -> Result<PreparedLiveTarget> {
+        self.check_open().map_err(anyhow::Error::msg)?;
+        validate_selection(&selection).map_err(anyhow::Error::msg)?;
+        if running_only {
+            ensure!(
+                selection.publication_key().is_some(),
+                "stopped session is not a running target"
+            );
+        }
+        let (reply, result) = oneshot::channel();
+        self.requests
+            .try_send(Request::PrepareSelectedSession {
+                selection,
+                running_only,
+                reply,
+            })
+            .map_err(request_error)?;
+        let mut stop = self.stop.clone();
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        tokio::time::timeout(PARENT_ATTACH_BUDGET, async {
+            tokio::select! {
+                biased;
+                changed = stop.changed() => {
+                    match changed {
+                        Ok(()) => anyhow::bail!("native session service is shutting down"),
+                        Err(_) => anyhow::bail!("native session service is unavailable"),
+                    }
+                }
+                result = result => result
+                    .context("native session service stopped before preparing selection")?,
+            }
+        })
+        .await
+        .context("native selected-session preparation timed out")?
     }
 
     pub fn try_refresh(&self, generation: u64, include_hidden: bool) -> Result<(), &'static str> {
@@ -502,6 +634,110 @@ impl WorkspaceServiceHandle {
             .map_err(|_| "native session preview service is unavailable")
     }
 
+    pub fn try_inventory(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
+        validate_selection(&selection)?;
+        if selection.publication_key().is_none() {
+            return Err("stopped session has no live destinations");
+        }
+        self.submit(Request::Inventory {
+            generation,
+            selection,
+        })
+    }
+
+    pub fn try_number_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+        number: Option<u8>,
+    ) -> Result<(), &'static str> {
+        validate_selection(&selection)?;
+        if selection.publication_key().is_none() {
+            return Err("stopped session cannot be numbered");
+        }
+        if number.is_some_and(|digit| !(1..=9).contains(&digit)) {
+            return Err("a session number must be between 1 and 9");
+        }
+        self.submit(Request::Number {
+            generation,
+            selection,
+            number,
+        })
+    }
+
+    pub fn try_forget_selected(
+        &self,
+        generation: u64,
+        selection: WorkspaceSelection,
+    ) -> Result<(), &'static str> {
+        validate_selection(&selection)?;
+        if selection.publication_key().is_some() {
+            return Err("running session cannot be forgotten");
+        }
+        self.submit(Request::Forget {
+            generation,
+            selection,
+        })
+    }
+
+    /// Begins a worktree-only teardown in the frozen account scope. The
+    /// service acquires the lease, stops an exact live host if safe, and
+    /// reports only after a second complete observation confirms it is gone.
+    pub fn try_inspect_worktree_teardown(
+        &self,
+        generation: u64,
+        path: &Path,
+    ) -> Result<(), &'static str> {
+        validate_path(path)?;
+        if !path.is_absolute() {
+            return Err("worktree teardown requires an absolute project path");
+        }
+        self.submit(Request::InspectWorktreeTeardown {
+            generation,
+            path: path.to_owned(),
+        })
+    }
+
+    pub fn try_prepare_worktree_teardown(
+        &self,
+        generation: u64,
+        path: &Path,
+        reviewed_live: Option<WorkspaceSelection>,
+    ) -> Result<(), &'static str> {
+        validate_path(path)?;
+        if !path.is_absolute() {
+            return Err("worktree teardown requires an absolute project path");
+        }
+        self.submit(Request::PrepareWorktreeTeardown {
+            generation,
+            path: path.to_owned(),
+            reviewed_live,
+        })
+    }
+
+    /// Forgets only the exact record captured before Git removed the path.
+    /// The project lease stays owned by this request through finalization.
+    pub fn try_finish_worktree_teardown(
+        &self,
+        generation: u64,
+        path: &Path,
+        lease: ProjectLease,
+    ) -> Result<(), &'static str> {
+        validate_path(path)?;
+        if path != lease.project_root() {
+            return Err("worktree teardown lease does not cover the project");
+        }
+        self.submit(Request::FinishWorktreeTeardown {
+            generation,
+            path: path.to_owned(),
+            lease,
+        })
+    }
+
     fn submit(&self, request: Request) -> Result<(), &'static str> {
         self.check_open()?;
         self.requests
@@ -584,7 +820,7 @@ impl WorkspaceServiceOwner {
         current: Option<KnownReadLocation>,
         configured_state: PathBuf,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
-        Self::spawn_inner(scope, current, configured_state, None, None)
+        Self::spawn_inner(scope, current, configured_state, None, None, None)
     }
 
     pub fn spawn_with_parent_attach(
@@ -593,7 +829,24 @@ impl WorkspaceServiceOwner {
         configured_state: PathBuf,
         startup: ParentAttachStartup,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
-        Self::spawn_inner(scope, current, configured_state, Some(startup), None)
+        Self::spawn_inner(scope, current, configured_state, Some(startup), None, None)
+    }
+
+    /// A native host captures this layout before publication. The host queues
+    /// its first history record only after publication succeeds.
+    pub fn spawn_with_current_layout(
+        layout: ResolvedLayout,
+        configured_state: PathBuf,
+        startup: ParentAttachStartup,
+    ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
+        Self::spawn_inner(
+            layout.discovery_scope().clone(),
+            Some(layout.read_location()),
+            configured_state,
+            Some(startup),
+            None,
+            Some(layout),
+        )
     }
 
     #[cfg(test)]
@@ -603,7 +856,7 @@ impl WorkspaceServiceOwner {
         configured_state: PathBuf,
         snapshot: Option<ControlSnapshot>,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
-        Self::spawn_inner(scope, current, configured_state, None, snapshot)
+        Self::spawn_inner(scope, current, configured_state, None, snapshot, None)
     }
 
     fn spawn_inner(
@@ -612,8 +865,10 @@ impl WorkspaceServiceOwner {
         configured_state: PathBuf,
         parent_attach: Option<ParentAttachStartup>,
         snapshot: Option<ControlSnapshot>,
+        current_layout: Option<ResolvedLayout>,
     ) -> std::io::Result<(WorkspaceServiceHandle, Self, mpsc::Receiver<WorkspaceEvent>)> {
         validate_path(&configured_state).map_err(std::io::Error::other)?;
+        let has_current_layout = current_layout.is_some();
         let (requests, request_rx) = mpsc::channel(REQUEST_CAPACITY);
         let (previews, preview_rx) = watch::channel(None);
         let (events, event_rx) = mpsc::channel(EVENT_CAPACITY);
@@ -631,9 +886,11 @@ impl WorkspaceServiceOwner {
                             Worker {
                                 scope,
                                 current,
+                                current_layout,
                                 configured_state,
                                 parent_attach,
                                 snapshot,
+                                pending_worktree_teardown: None,
                                 include_hidden: false,
                                 requests: request_rx,
                                 previews: preview_rx,
@@ -651,6 +908,7 @@ impl WorkspaceServiceOwner {
                 requests,
                 previews,
                 stop: stop.subscribe(),
+                has_current_layout,
             },
             Self {
                 stop,
@@ -692,14 +950,52 @@ impl Drop for WorkspaceServiceOwner {
 struct Worker {
     scope: DiscoveryScope,
     current: Option<KnownReadLocation>,
+    current_layout: Option<ResolvedLayout>,
     configured_state: PathBuf,
     parent_attach: Option<ParentAttachStartup>,
     snapshot: Option<ControlSnapshot>,
+    pending_worktree_teardown: Option<PendingWorktreeTeardown>,
     include_hidden: bool,
     requests: mpsc::Receiver<Request>,
     previews: watch::Receiver<Option<PreviewRequest>>,
     events: mpsc::Sender<WorkspaceEvent>,
     stop: watch::Receiver<bool>,
+}
+
+fn reviewed_worktree_live(
+    snapshot: &ControlSnapshot,
+    path: &Path,
+) -> Result<Option<(usize, WorkspaceRow)>> {
+    let matches = snapshot
+        .history()
+        .entries()
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.row().project_root == path)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() <= 1,
+        "worktree has ambiguous native publications"
+    );
+    let Some(index) = matches.first().copied() else {
+        return Ok(None);
+    };
+    let Some(HistoryTarget::Live { row, publication }) = snapshot.history().target(index) else {
+        return Ok(None);
+    };
+    ensure!(
+        publication.metadata().protocol == crate::protocol::VERSION,
+        "worktree session speaks an incompatible protocol"
+    );
+    let unsaved = row
+        .unsaved_buffers
+        .context("cannot verify whether the worktree session has unsaved buffers")?;
+    ensure!(
+        unsaved == 0,
+        "worktree session has {unsaved} unsaved file buffers"
+    );
+    Ok(Some((index, row.clone())))
 }
 
 impl Worker {
@@ -770,6 +1066,46 @@ impl Worker {
         }
     }
 
+    /// The target's exact ready file may exist without a registry or history
+    /// entry. Observe it explicitly in addition to the frozen namespaces and
+    /// inventory before deciding that no host owns the worktree.
+    async fn observe_worktree_cancellable(&self, path: &Path) -> Result<ControlSnapshot> {
+        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let target = self.scope.known_read_location(path, &state)?;
+        let mut stop = self.stop.clone();
+        ensure!(!*stop.borrow(), "native catalog is shutting down");
+        tokio::select! {
+            biased;
+            _ = stop.changed() => anyhow::bail!("native catalog is shutting down"),
+            result = ControlSnapshot::observe_at(
+                &self.scope,
+                Some(&target),
+                &self.configured_state,
+                true,
+            ) => result,
+        }
+    }
+
+    async fn inspect_worktree_teardown(&mut self, path: &Path) -> Result<Option<WorkspaceRow>> {
+        self.recover()?;
+        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let layout = ResolvedLayout::from_scope(self.scope.clone(), path, state)?;
+        ensure!(
+            layout.project_root() == path,
+            "reviewed worktree path changed before teardown"
+        );
+        ensure!(
+            self.current
+                .as_ref()
+                .is_none_or(|current| current.project_root() != path),
+            "cannot remove the worktree this native host is using"
+        );
+        let snapshot = self.observe_worktree_cancellable(path).await?;
+        let live = reviewed_worktree_live(&snapshot, path)?.map(|(_, row)| row);
+        self.snapshot = Some(snapshot);
+        Ok(live)
+    }
+
     fn recover(&mut self) -> Result<()> {
         if let Some(snapshot) = self.snapshot.as_mut() {
             snapshot.retry_name_recovery()?;
@@ -780,6 +1116,10 @@ impl Worker {
     async fn refresh(&mut self, include_hidden: bool) -> Result<Vec<WorkspaceRow>> {
         self.recover()?;
         let snapshot = self.observe_cancellable(include_hidden).await?;
+        // Displayed automatic digits and stopped-row clearing are decisions
+        // made by this complete observation. Commit them before subsequent
+        // explicit Number operations consult the stored history.
+        snapshot.history().persist()?;
         let rows = snapshot
             .history()
             .entries()
@@ -856,6 +1196,185 @@ impl Worker {
         Ok(prepared)
     }
 
+    async fn read_selected_inventory(
+        &mut self,
+        selection: &WorkspaceSelection,
+    ) -> Result<DestinationInventory> {
+        let target = tokio::time::timeout(PREPARE_BUDGET, self.prepare_selected_live(selection))
+            .await
+            .context("native session inventory selection timed out")??;
+        ensure!(target.peer().is_alive()?, "selected session host exited");
+        let result = tokio::time::timeout(INVENTORY_BUDGET, async {
+            let mut client = connect_control(target.metadata()).await?;
+            client.send(&ClientRequest::DestinationInventory).await?;
+            match client.recv().await? {
+                Some(HostResponse::DestinationInventory {
+                    incarnation,
+                    entries,
+                    truncated,
+                }) => validate_destination_inventory(incarnation, entries, truncated),
+                Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                    anyhow::bail!(message)
+                }
+                Some(_) => {
+                    anyhow::bail!("native host returned an unexpected destination inventory")
+                }
+                None => anyhow::bail!("native host disconnected during destination inventory"),
+            }
+        })
+        .await
+        .context("native session destination inventory timed out")??;
+        ensure!(target.peer().is_alive()?, "selected session host exited");
+        Ok(result)
+    }
+
+    async fn select_fresh_history_row(&mut self, selection: &WorkspaceSelection) -> Result<usize> {
+        self.recover()?;
+        let snapshot = self.observe_cancellable(self.include_hidden).await?;
+        let changed = snapshot.history().persist()?;
+        // Persist does not rebase its original history snapshot. Obtain a
+        // second complete observation before guarding an explicit mutation.
+        let snapshot = if changed > 0 {
+            self.observe_cancellable(self.include_hidden).await?
+        } else {
+            snapshot
+        };
+        let index = snapshot
+            .history()
+            .select_selection(selection)?
+            .context("selected session changed; choose it again")?;
+        self.snapshot = Some(snapshot);
+        Ok(index)
+    }
+
+    async fn prepare_worktree_teardown(
+        &mut self,
+        generation: u64,
+        path: &Path,
+        reviewed_live: Option<WorkspaceSelection>,
+    ) -> Result<PreparedWorktreeTeardown> {
+        self.recover()?;
+        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let layout = ResolvedLayout::from_scope(self.scope.clone(), path, state)?;
+        ensure!(
+            layout.project_root() == path,
+            "reviewed worktree path changed before teardown"
+        );
+        ensure!(
+            self.current
+                .as_ref()
+                .is_none_or(|current| current.project_root() != path),
+            "cannot remove the worktree this native host is using"
+        );
+        let lease = layout.acquire_project_lease()?;
+        let history_path = self
+            .scope
+            .cache_root()?
+            .map(|cache| cache.join("workspaces.json"));
+        // Include the owner inventory as well as configured namespaces. An
+        // incomplete or ambiguous observation cannot authorize deletion.
+        let snapshot = self.observe_worktree_cancellable(path).await?;
+        let live = reviewed_worktree_live(&snapshot, path)?;
+        ensure!(
+            live.as_ref().map(|(_, row)| row.selection()) == reviewed_live,
+            "worktree session changed after confirmation; review removal again"
+        );
+        let stopped_session = if let Some((index, row)) = live {
+            let outcome = snapshot.stop(index, false).await?;
+            self.publish_warnings(generation, outcome.cleanup_issues)
+                .await?;
+            Some(row)
+        } else {
+            None
+        };
+        lease.verify_live_identity()?;
+        let after = self.observe_worktree_cancellable(path).await?;
+        ensure!(
+            reviewed_worktree_live(&after, path)?.is_none(),
+            "worktree session remains live after stop"
+        );
+        lease.verify_live_identity()?;
+        let observed_record = after
+            .history()
+            .remembered()
+            .iter()
+            .find(|entry| entry.project_root == path)
+            .cloned();
+        self.snapshot = Some(after);
+        self.pending_worktree_teardown = Some(PendingWorktreeTeardown {
+            generation,
+            path: path.to_owned(),
+            observed_record,
+            history_path,
+        });
+        Ok(PreparedWorktreeTeardown {
+            lease,
+            stopped_session,
+        })
+    }
+
+    async fn finish_worktree_teardown(
+        &mut self,
+        generation: u64,
+        path: &Path,
+        lease: &ProjectLease,
+    ) -> Result<bool> {
+        ensure!(
+            path == lease.project_root(),
+            "worktree teardown lease changed"
+        );
+        let pending = self
+            .pending_worktree_teardown
+            .as_ref()
+            .context("worktree teardown was not prepared")?
+            .clone();
+        ensure!(
+            pending.generation == generation && pending.path == path,
+            "worktree teardown generation or project changed"
+        );
+        match path.metadata() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("worktree deletion is indeterminate"),
+            Ok(_) => anyhow::bail!("worktree directory still exists"),
+        }
+        self.recover()?;
+        let after = self.observe_worktree_cancellable(path).await?;
+        ensure!(
+            reviewed_worktree_live(&after, path)?.is_none(),
+            "worktree session reappeared after Git removal"
+        );
+        self.snapshot = Some(after);
+        let removed = match (
+            pending.history_path.as_deref(),
+            pending.observed_record.as_ref(),
+        ) {
+            (Some(history_path), Some(observed)) => {
+                update_recents_if_changed(history_path, |entries| {
+                    let matching = entries
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, entry)| entry.project_root == path)
+                        .map(|(index, _)| index)
+                        .collect::<Vec<_>>();
+                    ensure!(
+                        matching.len() == 1,
+                        "worktree history record changed after review"
+                    );
+                    let index = matching[0];
+                    ensure!(
+                        entries[index] == *observed,
+                        "worktree history record changed after review"
+                    );
+                    entries.remove(index);
+                    Ok(true)
+                })?
+            }
+            _ => false,
+        };
+        self.pending_worktree_teardown = None;
+        Ok(removed)
+    }
+
     async fn prepare_parent_attach(
         &mut self,
         selector: &Path,
@@ -904,13 +1423,72 @@ impl Worker {
             None => working_directory.join(selector),
         };
         self.snapshot = Some(snapshot);
+        self.prepare_startup_for_project(&project, reply, false)
+            .await
+    }
+
+    async fn prepare_selected_session(
+        &mut self,
+        selection: &WorkspaceSelection,
+        running_only: bool,
+        reply: &mut oneshot::Sender<Result<PreparedLiveTarget>>,
+    ) -> Result<ParentAttachPreparation> {
+        if selection.publication_key().is_some() {
+            return Ok(ParentAttachPreparation {
+                target: self.prepare_selected_live(selection).await?,
+                startup: None,
+            });
+        }
+        ensure!(!running_only, "stopped session is not a running target");
+        self.recover()?;
+        let mut stop = self.stop.clone();
+        ensure!(
+            !reply.is_closed(),
+            "selected session requester disconnected"
+        );
+        ensure!(!*stop.borrow(), "native session service is shutting down");
+        let snapshot = tokio::select! {
+            biased;
+            _ = reply.closed() => anyhow::bail!("selected session requester disconnected"),
+            changed = stop.changed() => {
+                match changed {
+                    Ok(()) => anyhow::bail!("native session service is shutting down"),
+                    Err(_) => anyhow::bail!("native session service is unavailable"),
+                }
+            }
+            result = self.observe(self.include_hidden) => result?,
+        };
+        let index = snapshot
+            .history()
+            .select_selection(selection)?
+            .context("selected session changed; choose it again")?;
+        let HistoryTarget::Stopped { row } = snapshot
+            .history()
+            .target(index)
+            .context("selected session changed; choose it again")?
+        else {
+            anyhow::bail!("selected session changed; choose it again");
+        };
+        let project = row.project_root.clone();
+        self.snapshot = Some(snapshot);
+        self.prepare_startup_for_project(&project, reply, true)
+            .await
+    }
+
+    async fn prepare_startup_for_project(
+        &mut self,
+        project: &Path,
+        reply: &mut oneshot::Sender<Result<PreparedLiveTarget>>,
+        require_new: bool,
+    ) -> Result<ParentAttachPreparation> {
+        let mut stop = self.stop.clone();
         let startup = self
             .parent_attach
             .as_ref()
             .context("native parent attach startup is unavailable")?;
         let layout = self
             .scope
-            .initialize_layout(&project, &self.configured_state)?;
+            .initialize_layout(project, &self.configured_state)?;
         let location = layout.publication_location()?;
         ensure!(!reply.is_closed(), "parent attach requester disconnected");
         ensure!(!*stop.borrow(), "native session service is shutting down");
@@ -931,6 +1509,13 @@ impl Worker {
             cancellation,
         )
         .await?;
+        // A user-authored directory may join a winner that appeared during
+        // startup. A stopped manager row selected no live publication, so a
+        // competing winner cannot inherit that frozen selection.
+        ensure!(
+            !require_new || startup.disposition() == StartDisposition::Started,
+            "selected session changed; choose it again"
+        );
         let target = PreparedLiveTarget {
             metadata: startup.metadata().clone(),
             peer: Arc::clone(startup.peer()),
@@ -942,6 +1527,23 @@ impl Worker {
 
     async fn handle_request(&mut self, request: Request) -> Result<()> {
         let event = match request {
+            Request::RecordCurrent {
+                activity_at_unix_seconds,
+            } => {
+                if let Some(layout) = self.current_layout.as_ref() {
+                    let recorded = match activity_at_unix_seconds {
+                        Some(at) => crate::workspace::windows_catalog::record_activity(layout, at),
+                        None => crate::workspace::windows_catalog::ensure_recorded(layout),
+                    };
+                    if let Err(error) = recorded {
+                        crate::log_warn!(
+                            "session",
+                            "native session history could not be recorded: {error}"
+                        );
+                    }
+                }
+                return Ok(());
+            }
             Request::Refresh {
                 generation,
                 include_hidden,
@@ -1039,6 +1641,108 @@ impl Worker {
                     result: discover_worktrees(git.as_ref(), &path),
                 }
             }
+            Request::Inventory {
+                generation,
+                selection,
+            } => {
+                let path = selection.project_root().to_owned();
+                let result = self
+                    .read_selected_inventory(&selection)
+                    .await
+                    .map_err(error_text);
+                WorkspaceEvent::Inventory {
+                    generation,
+                    path,
+                    selection,
+                    result,
+                }
+            }
+            Request::Number {
+                generation,
+                selection,
+                number,
+            } => {
+                let path = selection.project_root().to_owned();
+                let result = async {
+                    let index = self.select_fresh_history_row(&selection).await?;
+                    self.snapshot
+                        .as_ref()
+                        .expect("fresh complete catalog")
+                        .history()
+                        .set_number(index, number)
+                }
+                .await
+                .map_err(error_text);
+                WorkspaceEvent::Numbered {
+                    generation,
+                    path,
+                    selection: Some(selection),
+                    number,
+                    result,
+                }
+            }
+            Request::Forget {
+                generation,
+                selection,
+            } => {
+                let path = selection.project_root().to_owned();
+                let result = async {
+                    let index = self.select_fresh_history_row(&selection).await?;
+                    self.snapshot
+                        .as_ref()
+                        .expect("fresh complete catalog")
+                        .history()
+                        .forget(index)
+                }
+                .await
+                .map_err(error_text);
+                WorkspaceEvent::Forgotten {
+                    generation,
+                    path,
+                    result,
+                }
+            }
+            Request::InspectWorktreeTeardown { generation, path } => {
+                let result = self
+                    .inspect_worktree_teardown(&path)
+                    .await
+                    .map_err(error_text);
+                WorkspaceEvent::WorktreeInspected {
+                    generation,
+                    path,
+                    result: Box::new(result),
+                }
+            }
+            Request::PrepareWorktreeTeardown {
+                generation,
+                path,
+                reviewed_live,
+            } => {
+                let result = self
+                    .prepare_worktree_teardown(generation, &path, reviewed_live)
+                    .await
+                    .map_err(error_text);
+                WorkspaceEvent::WorktreePrepared {
+                    generation,
+                    path,
+                    result: Box::new(result),
+                }
+            }
+            Request::FinishWorktreeTeardown {
+                generation,
+                path,
+                lease,
+            } => {
+                let result = self
+                    .finish_worktree_teardown(generation, &path, &lease)
+                    .await
+                    .map_err(error_text);
+                WorkspaceEvent::WorktreeFinalized {
+                    generation,
+                    path,
+                    result,
+                }
+            }
             Request::PrepareSelectedLive {
                 selection,
                 mut reply,
@@ -1052,6 +1756,37 @@ impl Worker {
                     result = self.prepare_selected_live(&selection) => result,
                 };
                 let _ = reply.send(result);
+                return Ok(());
+            }
+            Request::PrepareSelectedSession {
+                selection,
+                running_only,
+                mut reply,
+            } => {
+                if reply.is_closed() {
+                    return Ok(());
+                }
+                let result = self
+                    .prepare_selected_session(&selection, running_only, &mut reply)
+                    .await;
+                let mut prepared = match result {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        return Ok(());
+                    }
+                };
+                let Some(startup) = prepared.startup.take() else {
+                    let _ = reply.send(Ok(prepared.target));
+                    return Ok(());
+                };
+                let (acceptance, decision) = oneshot::channel();
+                prepared.target.acceptance = Some(acceptance);
+                if reply.send(Ok(prepared.target)).is_err() {
+                    startup.settle().await?;
+                    return Ok(());
+                }
+                settle_startup_decision(startup, decision, &mut self.stop).await?;
                 return Ok(());
             }
             Request::PrepareParentAttach {

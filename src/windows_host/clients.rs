@@ -9,11 +9,11 @@ use futures_util::stream::FuturesUnordered;
 use runyte::{
     app::FrameGeometry,
     key_hints::KeyHintState,
-    protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken, decode_path},
+    protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken, decode_path, encode_path},
     workspace::{
-        HostCommand, HostInputOutcome, WorkspaceHost, windows_endpoint::EndpointMetadata,
-        windows_pipe::MAX_CONNECTIONS, windows_process_identity::PinnedProcess,
-        windows_transport::ResponseSender,
+        HostCommand, HostInputOutcome, PublicationKey, WorkspaceHost, WorkspaceSelection,
+        windows_endpoint::EndpointMetadata, windows_pipe::MAX_CONNECTIONS,
+        windows_process_identity::PinnedProcess, windows_transport::ResponseSender,
     },
 };
 use std::{
@@ -71,6 +71,7 @@ pub(super) struct ConnectedPeer {
     pub(super) proof: Arc<PinnedProcess>,
     pub(super) responses: ResponseSender,
     pub(super) interactive: bool,
+    pub(super) directory_handoff: bool,
     pub(super) geometry: FrameGeometry,
 }
 
@@ -81,6 +82,8 @@ struct Peer {
     parent_waits: HashSet<WaitToken>,
     subscribed_waits: HashSet<WaitToken>,
     attachment_generation: Option<u64>,
+    previous: Option<WorkspaceSelection>,
+    directory_handoff: bool,
     geometry: Option<FrameGeometry>,
     pending_ready_frames: Option<(runyte::protocol::FrameId, runyte::protocol::FrameId)>,
     renaming: bool,
@@ -127,6 +130,7 @@ impl Clients {
             proof,
             responses,
             interactive,
+            directory_handoff,
             geometry,
         } = connection;
         let attachment_generation = (!interactive).then_some(self.active).flatten();
@@ -172,6 +176,8 @@ impl Clients {
                     parent_waits: HashSet::new(),
                     subscribed_waits: HashSet::new(),
                     attachment_generation,
+                    previous: None,
+                    directory_handoff,
                     geometry: interactive.then_some(geometry),
                     pending_ready_frames: None,
                     renaming: false,
@@ -182,9 +188,9 @@ impl Clients {
             if interactive {
                 self.active = Some(id);
                 self.active_ready = None;
-                // A private wire client cannot grant shell handoff until the
-                // public native frontend owns and validates that operation.
-                host.app_mut().set_quit_directory_handoff(false);
+                // This capability belongs to the accepted physical client,
+                // whose launcher pinned the private handoff parent.
+                host.app_mut().set_quit_directory_handoff(directory_handoff);
                 host.app_mut().note_frontend_attached();
                 host.note_plugin_frontend(true);
                 self.publish_frame(host);
@@ -198,6 +204,18 @@ impl Clients {
 
     pub(super) fn active_id(&self) -> Option<u64> {
         self.active
+    }
+
+    pub(super) fn active_previous(&self) -> Option<WorkspaceSelection> {
+        self.active
+            .and_then(|id| self.peers.get(&id))
+            .and_then(|peer| peer.previous.clone())
+    }
+
+    pub(super) fn active_proof(&self) -> Option<Arc<PinnedProcess>> {
+        self.active
+            .and_then(|id| self.peers.get(&id))
+            .map(|peer| Arc::clone(&peer.proof))
     }
 
     pub(super) fn switch_pending(&self) -> bool {
@@ -498,29 +516,19 @@ impl Clients {
             .map(|peer| peer.subscribed_waits.iter().copied().collect::<Vec<_>>())
             .unwrap_or_default();
         for token in tokens {
-            let status = match host.complete_wait_request(token.into()) {
-                Ok(()) => host
-                    .wait_status(token.into())
-                    .expect("completed wait exists"),
+            match host.complete_wait_request(token.into()) {
+                Ok(()) => {}
                 Err(error) => {
                     let _ = host.cancel_wait(
                         token.into(),
                         format!("attached TUI ended before successful wait completion: {error}"),
                     );
-                    host.wait_status(token.into())
-                        .expect("cancelled wait exists")
                 }
-            };
-            self.send(
-                host,
-                id,
-                HostResponse::WaitState {
-                    token,
-                    status: status.into(),
-                    interactive_attached: false,
-                },
-            );
+            }
         }
+        // A quit can stop the host in this same tick. Send terminal wait
+        // states to the creator control before the transport closes.
+        self.reconcile_with_attachment_status(host, false);
         if let Some(peer) = self.peers.get_mut(&id) {
             peer.waits.clear();
             peer.subscribed_waits.clear();
@@ -558,7 +566,24 @@ impl Clients {
                     self.publish_requested = true;
                     return false;
                 }
-                self.send(host, id, HostResponse::ShuttingDown);
+                let directory_bytes = host
+                    .app()
+                    .quit_directory()
+                    .filter(|_| {
+                        self.peers
+                            .get(&id)
+                            .is_some_and(|peer| peer.directory_handoff)
+                    })
+                    .map(encode_path);
+                self.send(
+                    host,
+                    id,
+                    directory_bytes.map_or(HostResponse::ShuttingDown, |directory_bytes| {
+                        HostResponse::Detached {
+                            directory_bytes: Some(directory_bytes),
+                        }
+                    }),
+                );
                 true
             }
         }
@@ -877,6 +902,32 @@ impl Clients {
                 self.send(host, id, response);
                 false
             }
+            ClientRequest::NativePreviousPublication {
+                project_root_bytes,
+                publication_key,
+            } if interactive => {
+                let path = decode_path(project_root_bytes);
+                match path {
+                    Ok(path) if path.is_absolute() => {
+                        self.peers.get_mut(&id).expect("active peer").previous =
+                            Some(WorkspaceSelection::selected(
+                                path,
+                                PublicationKey::from_bytes(publication_key),
+                            ));
+                        self.send(host, id, HostResponse::NativePreviousPublicationRecorded);
+                    }
+                    _ => {
+                        self.send(
+                            host,
+                            id,
+                            HostResponse::Error {
+                                message: "native previous publication path is invalid".to_owned(),
+                            },
+                        );
+                    }
+                }
+                false
+            }
             ClientRequest::Shutdown => {
                 let protected = host.protected_state();
                 if !protected.is_empty() {
@@ -1071,13 +1122,10 @@ impl Clients {
                 if let HostResponse::WaitCreated { token, .. } = &reply.response {
                     let peer = self.peers.get_mut(&id).expect("admitted peer");
                     peer.waits.insert(*token);
-                    if interactive {
-                        peer.subscribed_waits.insert(*token);
-                    } else if let Some(active) =
-                        self.active.and_then(|active| self.peers.get_mut(&active))
-                    {
-                        active.subscribed_waits.insert(*token);
-                    }
+                    // The creating connection retains completion ownership.
+                    // An unrelated attached TUI may edit its buffers, but its
+                    // detach must leave this wait available to the caller.
+                    peer.subscribed_waits.insert(*token);
                 }
                 self.publish_requested |= reply.publish_frame;
                 self.send(host, id, reply.response);
@@ -1124,6 +1172,14 @@ impl Clients {
     }
 
     pub(super) fn reconcile(&mut self, host: &mut WorkspaceHost) {
+        self.reconcile_with_attachment_status(host, self.attached());
+    }
+
+    fn reconcile_with_attachment_status(
+        &mut self,
+        host: &mut WorkspaceHost,
+        interactive_attached: bool,
+    ) {
         host.reconcile_wait_requests();
         let mut completions = Vec::new();
         for (&id, peer) in &mut self.peers {
@@ -1152,7 +1208,7 @@ impl Clients {
                 HostResponse::WaitState {
                     token,
                     status: status.into(),
-                    interactive_attached: self.attached(),
+                    interactive_attached,
                 },
             );
         }

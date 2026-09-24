@@ -49,7 +49,7 @@ fn location(root: &Path) -> EndpointLocation {
     EndpointLocation::new(
         &root.join("project"),
         root.join("endpoint"),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     )
     .unwrap()
 }

@@ -1,7 +1,11 @@
 # Windows support
 
-Current continuation: Phase 1 and Phase 2.1–2.4 are complete; Phase 2.5 is in
-progress and Phase 2.6 remains pending. The
+Current continuation: Phase 1 and Phase 2.1–2.4 are complete. Phase 2.5 and
+2.6 have local Windows implementations and native acceptance, including
+persistent-session navigation, ordinary-shell wait, PowerShell directory
+handoff, guarded Git worktree teardown, and managed plugin helpers. Native
+formatting, denied-warning all-target Clippy, and the full workspace suite pass.
+Remote acceptance and the Windows release follow-up remain open. The
 [handoff](../reviews/windows_phase2_handoff.md) records the current checkout,
 validation and next package; the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 contains detailed delivery evidence. Earlier investigations below are historical.

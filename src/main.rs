@@ -1324,13 +1324,9 @@ async fn run(
         };
     }
 
-    // Outside an authenticated integrated terminal, --wait keeps its
-    // foreground standalone editor and whole-editor exit requirement.
     #[cfg(windows)]
-    let standalone_wait = arguments.mode == LaunchMode::Wait;
-    #[cfg(windows)]
-    if standalone_wait {
-        arguments.mode = LaunchMode::Standalone;
+    if arguments.mode == LaunchMode::Wait {
+        return run_native_wait(&arguments, startup, native_termination).await;
     }
 
     if arguments.mode == LaunchMode::ListContext {
@@ -1900,6 +1896,7 @@ async fn run(
         Ok(NativeCatalogConfig {
             scope,
             current,
+            current_layout: None,
             configured_state: app.config.workspace.state.clone(),
             parent_attach: None,
         })
@@ -2294,11 +2291,6 @@ async fn run(
     )?;
     #[cfg(not(windows))]
     plugins_shutdown?;
-    #[cfg(windows)]
-    anyhow::ensure!(
-        !standalone_wait || app.should_quit,
-        "standalone --wait ended before the editor was explicitly quit"
-    );
     #[cfg(not(windows))]
     if let (Some(cwd_file), Some(directory)) = (arguments.cwd_file.as_deref(), quit_directory) {
         write_cwd_file(cwd_file, &directory)?;
@@ -4881,6 +4873,380 @@ async fn run_wait(
 }
 
 #[cfg(windows)]
+async fn run_native_wait(
+    arguments: &LaunchArguments,
+    startup_trace: &mut StartupTrace,
+    termination: &mut TerminationSignals,
+) -> Result<()> {
+    use runyte::{
+        protocol::{ClientRequest, HostResponse, encode_path},
+        workspace::windows_lifecycle::connect_control,
+    };
+
+    let parent = ForegroundParentSupervisor::capture()?;
+    parent.ensure_alive()?;
+    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    startup_trace.mark(StartupPhase::ConfigLoaded);
+    let directory = std::env::current_dir()?;
+    let requested = match arguments.project_root.as_deref() {
+        Some(root) => resolve_requested_project_root(&directory, root)?,
+        None => match project_root::discover(&directory, &config.workspace.state)? {
+            Some(root) => root,
+            None => resolve_requested_project_root(&directory, &directory)?,
+        },
+    };
+    let paths = arguments
+        .targets
+        .iter()
+        .map(|target| {
+            if target.path.is_absolute() {
+                target.path.clone()
+            } else {
+                directory.join(&target.path)
+            }
+        })
+        .collect::<Vec<_>>();
+    let roots = CapturedRoots::capture();
+    let mut reserved_user_roots = config_path
+        .as_deref()
+        .map(|path| config::config_root_for(path, &directory))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let Some(cache) = external_open::cache_root() {
+        reserved_user_roots.push(cache);
+    }
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots,
+        roots,
+    })?;
+    let state = project_root::resolve_state_root(&requested, &config.workspace.state);
+    let current = scope.known_read_location(&requested, &state)?;
+    let controls = tokio::select! {
+        biased;
+        event = termination.recv() => return Err(terminated(event)),
+        _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
+        result = ControlSnapshot::observe_at(&scope, Some(&current), &config.workspace.state, false) => result?,
+    };
+    // A directory with two live publications has no implicit winner. Keep
+    // the selected exact publication through the entire wait request.
+    let selected = controls.history().select(&requested, Some(&directory))?;
+    let metadata = match selected {
+        Some(HistoryTarget::Live { publication, .. }) => {
+            anyhow::ensure!(
+                publication.metadata().protocol == runyte::protocol::VERSION,
+                "incompatible persistent session cannot accept --wait"
+            );
+            report_retained_host_logging(arguments);
+            publication.metadata().clone()
+        }
+        target => {
+            let project = match target {
+                Some(HistoryTarget::Stopped { row }) => row.project_root.clone(),
+                None => requested,
+                Some(HistoryTarget::Live { .. }) => unreachable!(),
+            };
+            let layout = scope.initialize_layout(&project, &config.workspace.state)?;
+            let location = layout.publication_location()?;
+            let mut startup = NativeHostStartup::new(std::env::current_exe()?);
+            startup.env = layout.detached_environment()?;
+            startup.working_directory = Some(layout.project_root().to_owned());
+            startup.config = config_path;
+            startup.verbosity = arguments.verbosity;
+            startup.log = arguments.log.clone();
+            let started =
+                start_native_host_with_wait_lifecycle(&location, startup, termination, &parent)
+                    .await?;
+            if started.disposition() == windows_startup::StartDisposition::ExistingWinner {
+                report_retained_host_logging(arguments);
+            }
+            started.metadata().clone()
+        }
+    };
+    startup_trace.mark(StartupPhase::ProjectResolvedAutomatically);
+    let mut client = tokio::select! {
+        biased;
+        event = termination.recv() => return Err(terminated(event)),
+        _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
+        result = connect_control(&metadata) => result?,
+    };
+    let request = ClientRequest::CreateWait {
+        paths: paths.iter().map(|path| encode_path(path)).collect(),
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    tokio::select! {
+        biased;
+        event = termination.recv() => return Err(terminated(event)),
+        _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
+        sent = tokio::time::timeout_at(deadline, client.send(&request)) => {
+            sent.context("persistent wait admission timed out")??;
+        }
+    }
+    let admitted = tokio::select! {
+        biased;
+        event = termination.recv() => return Err(terminated(event)),
+        _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
+        answer = tokio::time::timeout_at(deadline, client.recv()) => {
+            answer.context("persistent wait admission timed out")??
+        }
+    };
+    let token = match admitted {
+        Some(HostResponse::WaitCreated { token, .. }) => token,
+        Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+            anyhow::bail!(message)
+        }
+        other => anyhow::bail!("persistent host did not create a wait request: {other:?}"),
+    };
+    let outcome = run_native_wait_until_complete(
+        &mut client,
+        &metadata,
+        token,
+        config.editor.mouse,
+        termination,
+        &parent,
+    )
+    .await;
+    if outcome.is_err() {
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.send(&ClientRequest::CancelWait { token }),
+        )
+        .await;
+    }
+    outcome
+}
+
+#[cfg(windows)]
+async fn start_native_host_with_wait_lifecycle(
+    location: &EndpointLocation,
+    startup: NativeHostStartup,
+    termination: &mut TerminationSignals,
+    parent: &ForegroundParentSupervisor,
+) -> Result<windows_startup::StartedHost> {
+    let mut cancelled = None;
+    let started = windows_startup::start_detached_host_cancellable(location, startup, async {
+        tokio::select! {
+            biased;
+            event = termination.recv() => cancelled = Some(terminated(event)),
+            _ = parent.wait() => cancelled = Some(anyhow::anyhow!("wait request lost its launching process during host startup")),
+        }
+        "persistent wait startup cancelled"
+    })
+    .await;
+    if let Some(reason) = cancelled {
+        return Err(reason);
+    }
+    started
+}
+
+#[cfg(windows)]
+async fn native_wait_status(
+    client: &mut runyte::workspace::windows_transport::LocalClient,
+    metadata: &runyte::workspace::windows_endpoint::EndpointMetadata,
+    token: runyte::protocol::WaitToken,
+    termination: &mut TerminationSignals,
+    parent: &ForegroundParentSupervisor,
+) -> Result<(runyte::protocol::WaitStatus, bool)> {
+    use runyte::protocol::{ClientRequest, HostResponse};
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // Cancelling a LocalClient send closes its writer. Finish this bounded
+    // write before checking lifecycle loss, so recovery can read its reply.
+    if let Err(error) =
+        tokio::time::timeout_at(deadline, client.send(&ClientRequest::WaitStatus { token }))
+            .await
+            .context("persistent wait status send timed out")
+            .and_then(|result| result)
+    {
+        return recover_native_wait_after_lifecycle_loss(client, metadata, token, error).await;
+    }
+    loop {
+        let response = tokio::select! {
+            biased;
+            event = termination.recv() => return recover_native_wait_after_lifecycle_loss(client, metadata, token, terminated(event)).await,
+            _ = parent.wait() => return recover_native_wait_after_lifecycle_loss(client, metadata, token, anyhow::anyhow!("wait request lost its launching process")).await,
+            answer = tokio::time::timeout_at(deadline, client.recv()) => {
+                match answer.context("persistent host stopped answering the wait request") {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(error)) | Err(error) => return recover_native_wait_after_lifecycle_loss(client, metadata, token, error).await,
+                }
+            },
+        };
+        match response {
+            Some(HostResponse::WaitState {
+                token: received,
+                status,
+                interactive_attached,
+            }) if received == token => {
+                return Ok((status, interactive_attached));
+            }
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                anyhow::bail!(message)
+            }
+            Some(_) => {}
+            None => anyhow::bail!("persistent host disconnected before wait completion"),
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn recover_native_wait_after_lifecycle_loss(
+    client: &mut runyte::workspace::windows_transport::LocalClient,
+    metadata: &runyte::workspace::windows_endpoint::EndpointMetadata,
+    token: runyte::protocol::WaitToken,
+    lifecycle_error: anyhow::Error,
+) -> Result<(runyte::protocol::WaitStatus, bool)> {
+    use runyte::protocol::{ClientRequest, HostResponse, WaitStatus};
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let recovery = async {
+        let first = tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                match client.recv().await? {
+                    Some(HostResponse::WaitState {
+                        token: received,
+                        status,
+                        interactive_attached,
+                    }) if received == token => match status {
+                        WaitStatus::Pending { .. } => {}
+                        WaitStatus::Completed | WaitStatus::Cancelled { .. } => {
+                            return Ok::<_, anyhow::Error>(Some((status, interactive_attached)));
+                        }
+                    },
+                    Some(_) => {}
+                    None => return Ok(None),
+                }
+            }
+        })
+        .await;
+        if let Ok(Ok(Some((status, interactive_attached)))) = first {
+            return Ok(Some((status, interactive_attached)));
+        }
+        // Retain the original owner while a fresh control connection queries
+        // the exact publication. Never retry a possibly partial send on its
+        // poisoned writer.
+        let mut query = runyte::workspace::windows_lifecycle::connect_control(metadata).await?;
+        query.send(&ClientRequest::WaitStatus { token }).await?;
+        loop {
+            match query.recv().await? {
+                Some(HostResponse::WaitState {
+                    token: received,
+                    status,
+                    interactive_attached,
+                }) if received == token => {
+                    return Ok(match status {
+                        WaitStatus::Completed | WaitStatus::Cancelled { .. } => {
+                            Some((status, interactive_attached))
+                        }
+                        WaitStatus::Pending { .. } => None,
+                    });
+                }
+                Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                    anyhow::bail!(message);
+                }
+                Some(_) => {}
+                None => anyhow::bail!("persistent host disconnected before wait recovery"),
+            }
+        }
+    };
+    match tokio::time::timeout_at(deadline, recovery).await {
+        Ok(Ok(Some(status))) => Ok(status),
+        Ok(Ok(None)) => Err(lifecycle_error),
+        Ok(Err(error)) => Err(lifecycle_error.context(error)),
+        Err(_) => Err(lifecycle_error.context("persistent wait status recovery timed out")),
+    }
+}
+
+#[cfg(windows)]
+async fn run_native_wait_until_complete(
+    client: &mut runyte::workspace::windows_transport::LocalClient,
+    metadata: &runyte::workspace::windows_endpoint::EndpointMetadata,
+    token: runyte::protocol::WaitToken,
+    mouse_enabled: bool,
+    termination: &mut TerminationSignals,
+    parent: &ForegroundParentSupervisor,
+) -> Result<()> {
+    use runyte::protocol::{HostResponse, WaitStatus};
+    loop {
+        let (status, interactive_attached) =
+            native_wait_status(client, metadata, token, termination, parent).await?;
+        match status {
+            WaitStatus::Completed => return Ok(()),
+            WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
+            WaitStatus::Pending { .. } if !interactive_attached => {
+                let mut attachment = Box::pin(windows_frontend::attach_exact_for_wait(
+                    metadata,
+                    termination,
+                    mouse_enabled,
+                    token,
+                ));
+                loop {
+                    let next = tokio::select! {
+                        biased;
+                        _ = parent.wait() => Some(Err(anyhow::anyhow!("wait request lost its launching process"))),
+                        response = client.recv() => match response? {
+                            Some(HostResponse::WaitState { token: received, status: WaitStatus::Completed, .. }) if received == token => Some(Ok(())),
+                            Some(HostResponse::WaitState { token: received, status: WaitStatus::Cancelled { reason }, .. }) if received == token => Some(Err(anyhow::anyhow!(reason))),
+                            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => Some(Err(anyhow::anyhow!(message))),
+                            Some(_) => continue,
+                            None => Some(Err(anyhow::anyhow!("persistent host disconnected before wait completion"))),
+                        },
+                        result = &mut attachment => result.err().map(Err),
+                    };
+                    if let Some(result) = next {
+                        drop(attachment);
+                        match result {
+                            Ok(()) => return Ok(()),
+                            Err(error) => {
+                                let (status, _) = recover_native_wait_after_lifecycle_loss(
+                                    client, metadata, token, error,
+                                )
+                                .await?;
+                                return match status {
+                                    WaitStatus::Completed => Ok(()),
+                                    WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
+                                    WaitStatus::Pending { .. } => unreachable!(),
+                                };
+                            }
+                        }
+                    }
+                    break;
+                }
+                drop(attachment);
+                let (status, _) =
+                    native_wait_status(client, metadata, token, termination, parent).await?;
+                match status {
+                    WaitStatus::Completed => return Ok(()),
+                    WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
+                    WaitStatus::Pending { .. } => anyhow::bail!(
+                        "wait editor detached before the requested files were completed"
+                    ),
+                }
+            }
+            WaitStatus::Pending { .. } => {
+                tokio::select! {
+                    biased;
+                    event = termination.recv() => {
+                        let (status, _) = recover_native_wait_after_lifecycle_loss(client, metadata, token, terminated(event)).await?;
+                        return match status {
+                            WaitStatus::Completed => Ok(()),
+                            WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
+                            WaitStatus::Pending { .. } => unreachable!(),
+                        };
+                    },
+                    _ = parent.wait() => {
+                        let (status, _) = recover_native_wait_after_lifecycle_loss(client, metadata, token, anyhow::anyhow!("wait request lost its launching process")).await?;
+                        return match status {
+                            WaitStatus::Completed => Ok(()),
+                            WaitStatus::Cancelled { reason } => anyhow::bail!(reason),
+                            WaitStatus::Pending { .. } => unreachable!(),
+                        };
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {},
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
 async fn run_native_persistent(
     arguments: &LaunchArguments,
     startup_trace: &mut StartupTrace,
@@ -4898,6 +5264,15 @@ async fn run_native_persistent(
     };
     startup_trace.mark(StartupPhase::ConfigLoaded);
     let directory = std::env::current_dir()?;
+    let cwd_file = arguments
+        .cwd_file
+        .as_ref()
+        .map(|path| resolve_cwd_file_path(&directory, path.clone()));
+    let cwd_handoff = cwd_file
+        .as_deref()
+        .map(runyte::cwd_handoff::Prepared::prepare)
+        .transpose()
+        .context("cannot prepare private PowerShell directory handoff")?;
     let roots = CapturedRoots::capture();
     let mut reserved_user_roots = config_path
         .as_deref()
@@ -4919,7 +5294,7 @@ async fn run_native_persistent(
                 None if automatic => anyhow::bail!(
                     "workspace.mode: persistent requires a discoverable project; use -a to initialize the current directory"
                 ),
-                None => directory.clone(),
+                None => resolve_requested_project_root(&directory, &directory)?,
             },
         })
     } else {
@@ -4930,10 +5305,17 @@ async fn run_native_persistent(
         .as_deref()
         .or(current.as_deref())
         .expect("persistent attachment has a selector or current directory");
+    let current_read = current
+        .as_deref()
+        .map(|project| {
+            let state = project_root::resolve_state_root(project, &config.workspace.state);
+            scope.known_read_location(project, &state)
+        })
+        .transpose()?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
-        result = ControlSnapshot::observe(&scope, &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at(&scope, current_read.as_ref(), &config.workspace.state, false) => result?,
     };
     let selected = controls.history().select(selector, Some(&directory))?;
     if let Some(event) = termination.pending_event().await {
@@ -4957,6 +5339,7 @@ async fn run_native_persistent(
             let layout = scope.initialize_layout(&requested, &config.workspace.state)?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
+            startup.env = layout.detached_environment()?;
             startup.working_directory = Some(layout.project_root().to_owned());
             startup.config = config_path;
             startup.verbosity = arguments.verbosity;
@@ -4975,7 +5358,15 @@ async fn run_native_persistent(
         }
     };
     startup_trace.mark(StartupPhase::ProjectResolvedAutomatically);
-    windows_frontend::attach_exact(&metadata, termination, config.editor.mouse).await
+    windows_frontend::attach_exact_with_catalog(
+        &metadata,
+        termination,
+        config.editor.mouse,
+        &scope,
+        &config.workspace.state,
+        cwd_handoff.as_ref(),
+    )
+    .await
 }
 
 #[cfg(windows)]
@@ -5117,6 +5508,7 @@ async fn run_native_control_cli(
             let layout = ResolvedLayout::from_scope(scope.clone(), &project, state)?;
             let location = layout.publication_location()?;
             let mut replacement = NativeHostStartup::new(std::env::current_exe()?);
+            replacement.env = layout.detached_environment()?;
             replacement.working_directory = Some(project);
             replacement.config = config_path;
             replacement.verbosity = arguments.verbosity;
@@ -5766,6 +6158,7 @@ struct HostServices {
 struct NativeCatalogConfig {
     scope: DiscoveryScope,
     current: runyte::workspace::windows_location::KnownReadLocation,
+    current_layout: Option<runyte::workspace::windows_location::ResolvedLayout>,
     configured_state: PathBuf,
     parent_attach: Option<runyte::workspace::windows_service::ParentAttachStartup>,
 }
@@ -5780,6 +6173,7 @@ impl NativeCatalogConfig {
         Self {
             scope: layout.discovery_scope().clone(),
             current: layout.read_location(),
+            current_layout: Some(layout.clone()),
             configured_state,
             parent_attach: Some(parent_attach),
         }
@@ -5839,11 +6233,19 @@ fn start_host_services(
         let NativeCatalogConfig {
             scope,
             current,
+            current_layout,
             configured_state,
             parent_attach,
         } = config;
-        let spawned = match parent_attach {
-            Some(parent_attach) => {
+        let spawned = match (parent_attach, current_layout) {
+            (Some(parent_attach), Some(layout)) => {
+                runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_current_layout(
+                    layout,
+                    configured_state,
+                    parent_attach,
+                )
+            }
+            (Some(parent_attach), None) => {
                 runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_parent_attach(
                     scope,
                     Some(current),
@@ -5851,7 +6253,7 @@ fn start_host_services(
                     parent_attach,
                 )
             }
-            None => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
+            (None, _) => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
                 scope,
                 Some(current),
                 configured_state,
@@ -6542,11 +6944,10 @@ MODES:
     between TUIs. Windows supports explicit -a/--persistent attachment.
 
         --standalone     Use standalone mode, overriding configuration
-        --wait FILE...   Windows: wait in an authenticated integrated parent;
-                         an ordinary shell without parent context uses standalone.
-                         Invalid parent context is refused
-                         Unix: open through persistent mode and wait for
-                         explicit buffer completion
+        --wait FILE...   Open through a persistent session and wait for every
+                         requested buffer to complete. On Windows, an ordinary
+                         shell uses the current project's session; an
+                         authenticated integrated terminal uses its parent
     -a, --persistent [WORKSPACE]
                          Attach to the selected or current session, starting it
                          if needed. If WORKSPACE is omitted, use the workspace
@@ -6627,8 +7028,7 @@ TARGETS:
     position keep their ordinary meaning: workspace.mode: persistent changes
     only a bare runyte, and --persistent reads its argument as a workspace
     rather than a file. Use --init to make a directory the exact standalone
-    workspace root. --wait uses a persistent session on Unix; on Windows it
-    opens a new standalone editor and waits until that editor quits.
+    workspace root. --wait uses a persistent session on Unix and Windows.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.

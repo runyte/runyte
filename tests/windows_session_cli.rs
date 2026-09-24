@@ -6,6 +6,7 @@ use runyte::{
     app::App,
     command::parse_named_command,
     config::Config,
+    git::{DeletionAuthorization, GitCliProvider, GitProvider, WorktreeCreate},
     input::{KeyCode, KeyStroke, Modifiers},
     protocol::{ClientRequest, HostResponse, TransportChange, encode_path},
     test_support::TestRuntimeRoot,
@@ -15,6 +16,7 @@ use runyte::{
         windows_endpoint::NameStore,
         windows_lifecycle::connect_control,
         windows_location::{CapturedRoots, LocationInputs, ResolvedLayout},
+        windows_process_identity::{PinResult, PinnedProcess},
         windows_service::WorkspaceServiceOwner,
         windows_transport::LocalClient,
         workspace_id,
@@ -23,16 +25,29 @@ use runyte::{
 use std::{
     ffi::OsStr,
     fs,
-    os::windows::process::CommandExt,
-    path::Path,
+    mem::size_of,
+    os::windows::{
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        process::CommandExt,
+    },
+    path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
-    thread,
+    ptr, thread,
     time::{Duration, Instant},
 };
-use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-use windows_sys::Win32::System::{JobObjects::IsProcessInJob, Threading::GetCurrentProcess};
+use windows_sys::Win32::System::{
+    JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+    },
+    Threading::{CREATE_NO_WINDOW, GetCurrentProcess},
+};
 
 const BIN: &str = env!("CARGO_BIN_EXE_runyte");
+const RESTART_ROOT_ENV: &str = "RUNYTE_RESTART_ACCEPTANCE_ROOT";
+const RESTART_SUCCESS_FIXTURE: &str = "restart_success_fixture";
+const RESTART_DENIAL_FIXTURE: &str = "restart_denial_fixture";
 
 struct Host(Child);
 
@@ -96,6 +111,95 @@ fn running_in_job() -> bool {
         0
     );
     member != 0
+}
+
+fn restart_fixture_outer_root() -> PathBuf {
+    PathBuf::from(std::env::var_os(RESTART_ROOT_ENV).expect("restart fixture root was passed"))
+}
+
+fn await_restart_fixture_admission(root: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !root.join("fixture-admitted").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "restart fixture was not admitted"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn restart_fixture_job(limit: u32) -> OwnedHandle {
+    let raw = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+    assert!(!raw.is_null(), "{}", std::io::Error::last_os_error());
+    let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = limit;
+    assert_ne!(
+        unsafe {
+            SetInformationJobObject(
+                job.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    job
+}
+
+fn run_restart_fixture(fixture: &str, budget: Duration) {
+    let root = TestRuntimeRoot::new("native-cli-restart-fixture").unwrap();
+    let job = restart_fixture_job(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+    let log = fs::File::create(root.join("restart-fixture.log")).unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", fixture, "--ignored", "--nocapture"])
+        .env(RESTART_ROOT_ENV, root.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().unwrap()))
+        .stderr(Stdio::from(log));
+    private_environment(&mut command, &root);
+    let mut child = CliChild(Some(command.spawn().unwrap()));
+    assert_ne!(
+        unsafe {
+            AssignProcessToJobObject(
+                job.as_raw_handle(),
+                child.0.as_ref().unwrap().as_raw_handle(),
+            )
+        },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    fs::write(root.join("fixture-admitted"), b"ready").unwrap();
+    let deadline = Instant::now() + budget;
+    while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "restart fixture timed out: {fixture}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let status = child.0.take().unwrap().wait().unwrap();
+    assert!(
+        status.success(),
+        "restart fixture {fixture} failed: {}",
+        fs::read_to_string(root.join("restart-fixture.log")).unwrap_or_default()
+    );
+}
+
+fn enter_restart_breakaway_job() -> OwnedHandle {
+    let job = restart_fixture_job(JOB_OBJECT_LIMIT_BREAKAWAY_OK);
+    assert_ne!(
+        unsafe { AssignProcessToJobObject(job.as_raw_handle(), GetCurrentProcess()) },
+        0,
+        "{}",
+        std::io::Error::last_os_error()
+    );
+    job
 }
 
 fn private_environment(command: &mut Command, root: &TestRuntimeRoot) {
@@ -294,7 +398,31 @@ fn empty_listing_from_nonproject_directory_creates_no_project() {
 
 #[test]
 fn restart_preflights_detached_policy_and_replaces_only_confirmed_real_host() {
-    let root = TestRuntimeRoot::new("native-cli-restart").unwrap();
+    run_restart_fixture(RESTART_SUCCESS_FIXTURE, Duration::from_secs(80));
+}
+
+#[test]
+fn restart_refuses_detached_policy_without_breakaway_job() {
+    run_restart_fixture(RESTART_DENIAL_FIXTURE, Duration::from_secs(35));
+}
+
+#[test]
+#[ignore = "reexecuted inside an admitted nested restart job"]
+fn restart_success_fixture() {
+    let outer = restart_fixture_outer_root();
+    await_restart_fixture_admission(&outer);
+    let _breakaway_job = enter_restart_breakaway_job();
+    let root = TestRuntimeRoot::new_in("native-cli-restart", &outer).unwrap();
+    restart_success_body(&root);
+}
+
+#[test]
+#[ignore = "reexecuted inside a job that denies detached startup"]
+fn restart_denial_fixture() {
+    let outer = restart_fixture_outer_root();
+    await_restart_fixture_admission(&outer);
+    assert!(running_in_job());
+    let root = TestRuntimeRoot::new_in("native-cli-restart-denial", &outer).unwrap();
     let outside = root.join("outside");
     fs::create_dir_all(&outside).unwrap();
     let layout = layout(&root, "project");
@@ -302,49 +430,67 @@ fn restart_preflights_detached_policy_and_replaces_only_confirmed_real_host() {
     let location = layout.publication_location().unwrap();
     let before = location.read_ready().unwrap().unwrap();
     let project = layout.project_root().to_str().unwrap();
+    let refused = cli(&root, &outside, &["--session-restart", project]);
+    assert!(!refused.status.success());
+    let failure = text(&refused).1;
+    assert!(
+        failure.contains("detached host preflight was denied")
+            && failure.contains("CreateProcessW could not create the detached inheritance parent"),
+        "unexpected restart refusal: {failure}"
+    );
+    assert!(original.0.try_wait().unwrap().is_none());
+    assert_eq!(location.read_ready().unwrap().unwrap(), before);
+}
+
+fn restart_success_body(root: &TestRuntimeRoot) {
+    let outside = root.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    let layout = layout(root, "project");
+    let mut original = start_host(root, &layout);
+    let location = layout.publication_location().unwrap();
+    let before = location.read_ready().unwrap().unwrap();
+    let before_pin = match PinnedProcess::open(before.process).unwrap() {
+        PinResult::Pinned(process) => process,
+        other => panic!("original host was not alive before restart: {other:?}"),
+    };
+    let project = layout.project_root().to_str().unwrap();
     let mut cleanup = RestartCleanup {
-        root: &root,
+        root,
         cwd: &outside,
         selector: project,
         armed: true,
     };
 
-    let first = cli(&root, &outside, &["--session-restart", project]);
-    if !first.status.success() {
-        let failure = text(&first).1;
-        assert!(
-            running_in_job()
-                && failure.contains("detached host preflight was denied")
-                && failure
-                    .contains("CreateProcessW could not create the detached inheritance parent")
-                && failure.contains("(os error 5)"),
-            "unexpected restart refusal: {failure}"
-        );
-        assert!(original.0.try_wait().unwrap().is_none());
-        assert_eq!(location.read_ready().unwrap().unwrap(), before);
-        return;
-    }
+    let first = cli(root, &outside, &["--session-restart", project]);
+    assert!(first.status.success(), "{:?}", text(&first));
     assert!(original.0.try_wait().unwrap().is_some());
+    assert!(!before_pin.is_alive().unwrap());
     let running = location.read_ready().unwrap().unwrap();
     assert_ne!(running.process, before.process);
     assert_eq!(running.project_root().unwrap(), layout.project_root());
+    let running_pin = match PinnedProcess::open(running.process).unwrap() {
+        PinResult::Pinned(process) => process,
+        other => panic!("middle host was not alive after restart: {other:?}"),
+    };
 
     let file = layout.project_root().join("note.txt");
     fs::write(&file, "original").unwrap();
     let (_runtime, control) = make_unsaved(&layout, &file);
-    let refused = cli(&root, &outside, &["--session-restart", project]);
+    let refused = cli(root, &outside, &["--session-restart", project]);
     assert!(!refused.status.success());
     assert!(text(&refused).1.contains("unsaved"), "{:?}", text(&refused));
     assert_eq!(location.read_ready().unwrap().unwrap(), running);
 
-    let forced = cli(&root, &outside, &["--session-restart", "--force", project]);
+    let forced = cli(root, &outside, &["--session-restart", "--force", project]);
     assert!(forced.status.success(), "{:?}", text(&forced));
     drop(control);
+    assert!(!running_pin.is_alive().unwrap());
     let replaced = location.read_ready().unwrap().unwrap();
     assert_ne!(replaced.process, running.process);
     assert_eq!(fs::read_to_string(file).unwrap(), "original");
-    let stopped = cli(&root, &outside, &["--session-stop", project]);
+    let stopped = cli(root, &outside, &["--session-stop", project]);
     assert!(stopped.status.success(), "{:?}", text(&stopped));
+    assert!(location.read_ready().unwrap().is_none());
     cleanup.armed = false;
 }
 
@@ -402,6 +548,163 @@ fn real_host_list_rename_and_normal_stop_from_nonproject_directory() {
     assert!(forgotten.status.success());
     assert!(!text(&forgotten).0.contains("retired"));
     assert!(!outside.join(".runyte").exists());
+}
+
+#[tokio::test]
+async fn live_worktree_host_stops_before_git_removal_and_exact_history_cleanup() {
+    let root = TestRuntimeRoot::new("native-worktree-host-cascade").unwrap();
+    let main = layout(&root, "main");
+    let main_root = main.project_root();
+    let git = |cwd: &Path, arguments: &[&str]| {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", root.join("empty-gitconfig"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(main_root, &["init", "-q"]);
+    git(main_root, &["config", "core.autocrlf", "false"]);
+    fs::write(main_root.join(".gitignore"), ".runyte/\n").unwrap();
+    fs::write(main_root.join("note.txt"), "base\n").unwrap();
+    git(main_root, &["add", ".gitignore", "note.txt"]);
+    git(
+        main_root,
+        &[
+            "-c",
+            "user.name=Runyte Test",
+            "-c",
+            "user.email=runyte@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+
+    let provider = GitCliProvider::from_environment().expect("Git is installed for this test");
+    let repository = provider.discover(main_root).unwrap().unwrap();
+    let linked_path = root.join("linked");
+    provider
+        .create_worktree(
+            &repository,
+            &WorktreeCreate {
+                destination: linked_path.clone(),
+                start: "HEAD".to_owned(),
+                new_branch: Some("cascaded".to_owned()),
+                upstream: None,
+            },
+        )
+        .unwrap();
+    let linked = layout(&root, "linked");
+    let linked_path = linked.project_root().to_owned();
+    let mut host = start_host(&root, &linked);
+    remember(&linked).unwrap();
+    let branch_plan = provider
+        .prepare_branch_deletion_through(&repository, "cascaded", &linked_path)
+        .unwrap();
+    let removal_plan = provider
+        .prepare_worktree_removal(&repository, &linked_path)
+        .unwrap();
+
+    let (service, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        main.discovery_scope().clone(),
+        Some(main.read_location()),
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    service
+        .try_inspect_worktree_teardown(41, &linked_path)
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(8), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let WorkspaceEvent::WorktreeInspected { result, .. } = event else {
+        panic!("worktree inspection returned {event:?}");
+    };
+    let row = (*result).unwrap().expect("real host must be visible");
+    assert!(row.running);
+    assert_eq!(row.unsaved_buffers, Some(0));
+    service
+        .try_prepare_worktree_teardown(42, &linked_path, Some(row.selection()))
+        .unwrap();
+    let prepared = loop {
+        let event = tokio::time::timeout(Duration::from_secs(12), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event {
+            WorkspaceEvent::WorktreePrepared { result, .. } => break (*result).unwrap(),
+            WorkspaceEvent::ControlWarnings { .. } => {}
+            other => panic!("worktree stop returned {other:?}"),
+        }
+    };
+    assert_eq!(
+        prepared
+            .stopped_session()
+            .map(|row| row.project_root.as_path()),
+        Some(linked_path.as_path())
+    );
+    assert!(
+        host.0.try_wait().unwrap().is_some(),
+        "host still ran after stop"
+    );
+    let lease = prepared.into_lease();
+    lease.verify_live_identity().unwrap();
+    provider
+        .remove_worktree_guarded(&repository, &removal_plan, DeletionAuthorization::Typed)
+        .unwrap();
+    assert!(!linked_path.exists());
+    service
+        .try_finish_worktree_teardown(42, &linked_path, lease)
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(8), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        event,
+        WorkspaceEvent::WorktreeFinalized {
+            generation: 42,
+            result: Ok(true),
+            ..
+        }
+    ));
+    let history_path = linked
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    let history: serde_json::Value =
+        serde_json::from_slice(&fs::read(history_path).unwrap()).unwrap();
+    assert_eq!(history.as_array().unwrap().len(), 0);
+
+    provider
+        .delete_branch_guarded(&repository, &branch_plan, DeletionAuthorization::Typed)
+        .unwrap();
+    assert!(
+        provider
+            .worktrees(&repository)
+            .unwrap()
+            .iter()
+            .all(|worktree| worktree.path != linked_path)
+    );
+    assert!(
+        provider
+            .branches(&repository)
+            .unwrap()
+            .iter()
+            .all(|branch| branch.name != "cascaded")
+    );
+    owner.shutdown().await.unwrap();
 }
 
 #[test]

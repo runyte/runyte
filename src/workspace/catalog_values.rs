@@ -273,6 +273,24 @@ pub enum WorkspaceEvent {
         path: PathBuf,
         result: Result<bool, String>,
     },
+    #[cfg(windows)]
+    WorktreeInspected {
+        generation: u64,
+        path: PathBuf,
+        result: Box<Result<Option<WorkspaceRow>, String>>,
+    },
+    #[cfg(windows)]
+    WorktreePrepared {
+        generation: u64,
+        path: PathBuf,
+        result: Box<Result<crate::workspace::windows_service::PreparedWorktreeTeardown, String>>,
+    },
+    #[cfg(windows)]
+    WorktreeFinalized {
+        generation: u64,
+        path: PathBuf,
+        result: Result<bool, String>,
+    },
     Renamed {
         generation: u64,
         path: PathBuf,

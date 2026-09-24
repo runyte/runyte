@@ -383,8 +383,8 @@ process and is the default. **Persistent** starts a persistent session: a local
 host and retained editor state associated with that workspace. Open and
 unsaved buffers, selections, registers, syntax state, diagnostics, Git
 projections, language-server processes, and terminal sessions then remain
-alive after the TUI detaches. Persistent sessions are currently available only
-on Unix.
+alive after the TUI detaches. Persistent sessions are available on Unix and
+Windows; the Windows feature details are listed below.
 
 Initialize a specific non-Git directory as a workspace with:
 
@@ -411,11 +411,11 @@ runyte --persistent   # or runyte -a, for attach
 `workspace.mode: persistent` makes a bare `runyte` do the same; `--standalone`
 overrides that setting. Target-bearing invocations remain standalone so their
 relative paths and `+LINE[:COLUMN]` positions retain ordinary launch semantics.
-`--persistent` reads its argument as a workspace rather than a file. On Unix,
-`--wait` is how a file reaches a persistent session. On Windows, an
-authenticated integrated-terminal parent routes it to that parent persistent
-session. An ordinary shell with no parent context opens a standalone editor;
-a malformed, copied, stale, or standalone parent marker is refused.
+`--persistent` reads its argument as a workspace rather than a file. `--wait`
+opens requested files in a persistent session on Unix and Windows. On Windows,
+an authenticated integrated-terminal parent routes the request to that parent
+session; an ordinary shell uses the current project's session, starting it if
+needed. A malformed, copied, stale, or standalone parent marker is refused.
 
 `runyte --persistent WORKSPACE` (or `runyte -a WORKSPACE`) attaches to a named
 session from any directory, using the same selector the lifecycle commands
@@ -572,12 +572,15 @@ parent already resolved.
 For tools that need an editor process to stay open, configure
 `runyte --wait`.
 
-On Windows, a launch from an ordinary shell opens a new standalone editor with
-the requested files and waits until that editor quits. It does not complete
-when an individual buffer closes: `:wbc` alone leaves that process running.
-Normal save/discard protection applies, including explicit force quit. Startup
-failure, terminal loss, and termination return nonzero. This standalone route
-works even when `workspace.mode` is configured as persistent.
+On Windows, a launch from an ordinary shell opens the requested files in the
+current project's persistent session, starting that session if needed. If it
+has no attached TUI, the invoking terminal attaches; if another TUI is active,
+the caller waits for its requested buffers there and can take over after that
+TUI detaches. Each requested buffer must complete before the caller resumes.
+`:wbc` saves and closes one buffer; `:q` can finish a clean wait, while
+discard, detach, terminal loss, or loss of the launching process cancels it.
+The selected session is held by its exact publication throughout the request,
+so a second live publication for the same path is refused as ambiguous.
 
 Inside an integrated terminal of a persistent session, Windows `--wait` sends
 the requested files to that parent session instead. Relative files resolve
@@ -879,7 +882,9 @@ into a child is a separate action. Explorer Tab offers **Open persistent session
 here** for its currently browsed directory even when empty. A terminal's action
 menu can open its last validated OSC 7 directory; absent reporting is explained.
 These routes initialize or reuse the exact directory's persistent session and
-retain the source host and terminal processes. Worktree creation is explicit.
+retain the source host and terminal processes. On Windows the chooser accepts
+native drive paths and backslashes; recent-root and worktree shortcuts are
+currently Unix-only. Worktree creation is explicit.
 
 Inside an integrated terminal, `cd ../worktree` followed by `runyte -a` switches
 the outer TUI to that exact working directory. Relative arguments resolve from
@@ -1165,11 +1170,8 @@ Primary-screen inline TUIs may keep a composer or status area fixed while
 scrolling completed output through a top-anchored region; those completed rows
 remain ordinary scrollback, including Codex output when it runs in inline mode.
 
-Known limitations. Windows Phase 1 provides standalone ConPTY terminals.
-Persistent-session parent navigation remains unavailable on Windows. A
-`--wait` launched inside an authenticated persistent integrated terminal waits
-on its parent session; one launched from an ordinary shell opens a standalone
-editor instead. SGR mouse reporting is
+Known limitations. Windows provides standalone and persistent ConPTY terminals.
+SGR mouse reporting is
 forwarded inside terminal pane bodies when a child requests it; borders remain
 Runyte's, and the wheel scrolls review history when the child has not requested
 the pointer. A cell retains up to three combining marks without consuming
@@ -1489,14 +1491,14 @@ does not bundle that runtime.
 | Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
 | Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
 | External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
-| Editor wait | `--wait FILE...` opens a standalone editor from an ordinary shell; inside a persistent integrated terminal it waits on the parent session's requested buffers |
-| Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper |
-| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens a control manager in standalone mode and visits a selected running session in persistent mode |
+| Editor wait | `--wait FILE...` uses the current persistent session from an ordinary shell, starting it if needed; inside an authenticated persistent integrated terminal it waits on the parent session's requested buffers |
+| Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper in standalone and persistent mode, including after a session switch |
+| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens the manager, which can visit running sessions and start selected stopped sessions in persistent mode; the persistent editor shows a clickable session strip with numbered and cyclic navigation |
 | Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
 | Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
 | Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
-| Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes are unavailable |
-| Deferred | Parent navigation, persistent wait from an ordinary shell, other in-editor session navigation, numbered sessions and directory handoff |
+| Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes with bounded binary pipes and process-tree cleanup |
+| Session directory navigation | Explorer `Tab s`, manager Ctrl-o directory chooser, terminal reported directory, and Git worktree open/create can visit or start an exact directory's persistent session |
 
 The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
 or detached-host shutdown. Closing that console follows the same cleanup path,
@@ -1504,14 +1506,14 @@ but Windows may end the process before cleanup finishes; unsaved editor state
 cannot be promised on console close. These console events are separate from
 keys delivered to an integrated ConPTY terminal session.
 
-Deferred commands remain discoverable and report why they are unavailable.
 With `workspace.mode: persistent`, a bare Windows `runyte` attaches to its
 discovered project. It refuses without creating a workspace when no project is
 discoverable; use explicit `-a` to initialize the current directory or
 `--init` for an exact standalone workspace. `--standalone`, file and directory
-targets, and `--wait` retain standalone behavior.
-Plugins with a required `processes` capability are refused at registration on
-Windows; an optional `processes` capability is left ungranted.
+targets retain standalone behavior. `--wait` selects a persistent session
+independently of the bare-launch mode setting.
+Plugins can request the `processes` capability on Windows for managed native
+helpers; required and optional grants follow the same configuration rules.
 Use `:notifications`
 and `:service-health` for diagnostics. Git integration is enabled when a native
 `git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
@@ -1547,8 +1549,8 @@ publication, while a stopped or new workspace starts a host before attaching.
 Omitting `WORKSPACE` discovers the current project or initializes the current
 directory as one. A second TUI cannot take over an occupied attachment.
 `:detach` leaves the host and its editor state running. The persistent editor
-can visit a selected running session through the session manager; other
-in-editor navigation remains unavailable.
+can visit a selected running session through the session manager or visit the
+Explorer's displayed directory with `Tab s`.
 The configured bare launch also attaches to a discoverable project; without
 one it reports the missing project and creates no workspace. Explicit `-a`
 retains its exact-current-directory initialization behavior.
@@ -1559,22 +1561,40 @@ published host remains available under that policy.
 
 On Windows, `Space Space` and `:session-list` show the native catalog. Distinct
 live publications for one project remain separate rows. In a persistent
-editor, Enter visits the selected compatible running publication; Tab also
-offers Open for that row. The visit uses the exact selected publication and
-refuses if it was replaced. In a standalone editor, the manager provides
-controls without attaching. Tab offers exact-row Rename, Close, and Force
-close for a compatible running session, only Force close for an incompatible
-running publication, or Rename for a stopped record; Force close requires a
-second Enter. Stopped and incompatible rows cannot be visited. The manager
-shows no current marker, session number, or digit shortcuts. Preview reads
-only the selected compatible publication.
+editor, Enter or Tab > Open visits the selected compatible running publication
+or starts the selected stopped session. A fresh catalog must still match that
+exact row; a replaced publication or changed stopped record is refused. In a
+standalone editor, the manager provides controls without attaching. Tab offers
+Open, Rename, Renumber, Close, and Force close for a compatible running row;
+Open, Rename, and Forget for a stopped row; and Force close for an incompatible
+running row. Force close requires a second Enter. The manager marks the current
+publication and shows assigned numbers. With an empty filter, `1`–`9` visit
+numbered running sessions. Preview reads only the selected compatible
+publication.
+
+The Windows session strip shows running publications above the editor when
+`workspace.session_strip` is `auto` and more than one is running, or when it is
+`always`. It remains hidden in zen mode or with `hidden`. The current entry is
+identified by the host's exact publication, so two live publications for the
+same directory remain separate. Left-clicking another entry visits that exact
+running publication; replacement before the switch is refused. The strip
+refreshes asynchronously on attachment and while the editor is active.
+Explorer `Tab s` visits the displayed directory's persistent session, starting
+a missing host when detached process policy permits it. The switch keeps the
+source editor attached if directory preparation fails or the destination
+cannot accept the TUI. An unambiguous selection of the current publication is
+a no-op; multiple live publications for one directory require an explicit
+selection in the session manager.
+The manager's Ctrl-o chooser accepts Windows drive paths and backslash
+separators. A terminal action can use its last validated OSC 7 directory; Git
+worktree open and successful creation use the same directory handoff.
 
 `:session-stop WORKSPACE` and `:session-rename WORKSPACE NAME` use a fresh
 complete catalog and require an unambiguous selector; `:session-stop` without
 one refuses on Windows. `:session-clean` cleans only verified stopped history
-and applies to the whole catalog. Starting a stopped session from the manager,
-destination navigation outside that visit, and the session strip remain
-unavailable.
+and applies to the whole catalog. `Space 1`–`Space 9` and `:session-1` through
+`:session-9` visit assigned running sessions; `Shift-Left` and `Shift-Right`
+cycle through running sessions. These shortcuts do not restart stopped rows.
 
 Language servers also use native `.exe` or `.com` executables, specified by an
 absolute path or discovered through absolute `PATH` entries. To run a script,
@@ -1592,9 +1612,9 @@ unsupported working directories report a server launch failure.
 Git working directories and worktree destinations need an equivalent ordinary
 Windows spelling shorter than 260 UTF-16 units. Unsupported paths are refused
 before worktree creation creates a branch. Worktree switching requires persistent
-sessions and remains unavailable. Combined deletion of a branch and its worktree
-is refused without changing either: remove the worktree from `:git-worktrees`,
-then delete the branch from `:git-branches` as two separately reviewed actions.
+sessions. Deleting a branch checked out in a registered worktree uses one
+guarded confirmation for its session, worktree, and branch. The session stops
+first; a failure leaves the remaining levels intact.
 
 Configuration defaults to `%APPDATA%\runyte\config.yaml`; a nonempty
 `XDG_CONFIG_HOME` takes precedence. `--config` selects an explicit file.
@@ -3497,7 +3517,7 @@ applications with task creation, completion, removal and filtering.
 Applications can launch [managed helpers](plugins/applications.md#managed-helpers)
 with bounded binary input and retained output. Their output stays separate from
 the plugin protocol. Closing a helper or stopping its plugin cleans up and reaps
-the owned process group; naturally exited output stays readable until released.
+the owned process tree; naturally exited output stays readable until released.
 The runnable helper controller demonstrates Send, Flood, EOF and Close actions
 without a network service. Enabled idle helpers alone do not prevent persistent
 host retirement. Applications can also publish owner-labelled notifications
@@ -3755,12 +3775,13 @@ acting like plain `:quit`.
 Session-management commands such as `--session-list` accept the option but leave the
 file untouched, so they can be invoked through the same shell function.
 
-On Unix, the wrapper also works against a persistent host. `:quit-here` runs in
+On Unix and Windows, the wrapper also works against a persistent host. `:quit-here` runs in
 the host, which reports the directory it chose while the attached client writes
 the file — so the same wrapper serves both modes, and the directory follows you
 across a workspace switch. Because the capability belongs to the client rather
 than the host, a client launched without the wrapper still gets the usual
-refusal even when an earlier one had it. In persistent mode `:quit-here` stops
+refusal even when an earlier one had it. On Windows, the frontend writes the
+handoff after restoring the terminal. In persistent mode `:quit-here` stops
 the session after the same safety checks as `:quit`; use `:detach` when the host
 should remain running.
 
@@ -3777,9 +3798,9 @@ local bridge installations separate grants and revocation controls.
 Context services start with normal Runyte workspace startup on Linux, macOS,
 and Windows. On Windows the bridge discovers live workspaces with
 `runyte.exe --context-list --json` and authenticates over private local named
-pipes; it does not open a TCP listener. Direct `-a` attachment and selected
-running-session visits through the persistent manager are available; other
-in-editor session navigation remains unavailable. A foreground or detached
+pipes; it does not open a TCP listener. Direct `-a` attachment, the session
+strip, Explorer `Tab s`, manager visits, numbered and cyclic navigation, and
+exact destination visits are available. A foreground or detached
 Windows host can expose its workspace to the bridge while no TUI is attached.
 
 The native **Agent context access** overlay starts on **Reject**. Use `1` for

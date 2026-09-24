@@ -32,7 +32,7 @@ fn fixture() -> (TestRuntimeRoot, EndpointLocation, NameStore, Publication) {
     let location = EndpointLocation::new(
         &project,
         root.join("endpoint"),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     )
     .unwrap();
     let names = NameStore::open(&root.join("state")).unwrap();

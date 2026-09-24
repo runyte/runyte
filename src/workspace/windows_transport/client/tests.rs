@@ -25,7 +25,7 @@ use tokio::{
 fn fixture() -> (TestRuntimeRoot, EndpointLocation) {
     let root = TestRuntimeRoot::new("native-protocol-client").unwrap();
     let project = root.create_private_dir("project").unwrap();
-    let registries = RegistrySet::open(&[root.join("registry")]).unwrap();
+    let registries = RegistrySet::open_fixture(&[root.join("registry")]).unwrap();
     let endpoint = EndpointLocation::new(&project, root.join("endpoint"), registries).unwrap();
     (root, endpoint)
 }

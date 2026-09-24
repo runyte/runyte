@@ -15,7 +15,7 @@ use anyhow::{Result, bail, ensure};
 use regex::{Regex, RegexBuilder};
 use unicode_width::UnicodeWidthChar;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::workspace::MAX_WORKSPACE_NUMBER;
 #[cfg(any(unix, windows))]
 use crate::workspace::{SessionPreview, WorkspaceEvent, WorkspaceRow, WorkspaceServiceHandle};
@@ -1242,6 +1242,8 @@ struct WorktreeRemovalConfirmation {
     plan: WorktreeRemovalPlan,
     /// The running session on this worktree, when there is one.
     session: Option<AttachedSession>,
+    #[cfg(windows)]
+    reviewed_live: Option<crate::workspace::WorkspaceSelection>,
     input: String,
     cursor: usize,
 }
@@ -1332,6 +1334,41 @@ struct WorktreeTeardown {
     stage: WorktreeTeardownStage,
 }
 
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeWorktreeStage {
+    Preparing,
+    Removing,
+    Forgetting,
+    BranchDeleting,
+}
+
+/// A confirmed Windows worktree removal retains the project lease from
+/// native host shutdown through Git and history cleanup. Only its exact
+/// request completions may advance the cascade.
+#[cfg(windows)]
+#[derive(Debug)]
+struct NativeWorktreeTeardown {
+    plan: WorktreeRemovalPlan,
+    authorization: DeletionAuthorization,
+    generation: u64,
+    git_request: Option<GitRequestId>,
+    lease: Option<crate::workspace::windows_endpoint::ProjectLease>,
+    stopped_session: Option<AttachedSession>,
+    branch: Option<BranchDeletionPlan>,
+    stage: NativeWorktreeStage,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Debug)]
+struct PendingNativeWorktreeReview {
+    plan: WorktreeRemovalPlan,
+    branch: Option<BranchDeletionPlan>,
+    generation: u64,
+    source_buffer: usize,
+    interaction_generation: u64,
+}
+
 #[cfg(unix)]
 #[derive(Clone, Debug)]
 struct PendingWorktreeRemovalCheck {
@@ -1385,6 +1422,8 @@ struct BranchCascade {
     worktree: WorktreeRemovalPlan,
     /// The running session on that worktree, when there is one.
     session: Option<AttachedSession>,
+    #[cfg(windows)]
+    reviewed_live: Option<crate::workspace::WorkspaceSelection>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1889,7 +1928,7 @@ impl SessionAction {
 /// Reads a session number from a prompt answer.
 ///
 /// An empty answer clears the number rather than being a mistake.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn parse_session_number(value: &str) -> Result<Option<u8>, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -2930,8 +2969,14 @@ pub struct App {
     /// A confirmed removal partway through taking its session down with it.
     #[cfg(unix)]
     worktree_teardown: Option<WorktreeTeardown>,
+    #[cfg(windows)]
+    native_worktree_teardown: Option<NativeWorktreeTeardown>,
+    #[cfg(windows)]
+    pending_native_worktree_review: Option<PendingNativeWorktreeReview>,
     #[cfg(unix)]
     worktree_removal_generation: u64,
+    #[cfg(windows)]
+    native_worktree_removal_generation: u64,
     git_worktree_start: Option<String>,
     git_worktree_new_branch: Option<String>,
     git_worktree_upstream: Option<String>,
@@ -2947,6 +2992,8 @@ pub struct App {
     /// switches roots. Standalone mode leaves this false because replacing its
     /// process would otherwise lose that text.
     persistent_session: bool,
+    #[cfg(windows)]
+    current_native_publication: Option<crate::workspace::WorkspaceSelection>,
     #[cfg(any(unix, windows))]
     workspace_rows: Vec<WorkspaceRow>,
     /// This workspace's own session number, retained for the owned snapshot.
@@ -2969,6 +3016,8 @@ pub struct App {
     #[cfg(any(unix, windows))]
     workspace_pending_selection: Option<(u64, crate::workspace::WorkspaceSelection)>,
     #[cfg(windows)]
+    workspace_pending_forget: Option<(u64, crate::workspace::WorkspaceSelection)>,
+    #[cfg(windows)]
     workspace_pending_selector: Option<u64>,
     #[cfg(windows)]
     workspace_pending_clean: Option<u64>,
@@ -2978,7 +3027,7 @@ pub struct App {
     /// the terminal list, which does not attach the terminal it acts on, so
     /// the prompt cannot read its subject from the active pane.
     terminal_rename_target: Option<TerminalId>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     session_number_target: Option<crate::workspace::WorkspaceSelection>,
     /// The session-manager row restored after its Renumber prompt closes.
     #[cfg(any(unix, windows))]
@@ -3449,8 +3498,14 @@ impl App {
             pending_worktree_removal: None,
             #[cfg(unix)]
             worktree_teardown: None,
+            #[cfg(windows)]
+            native_worktree_teardown: None,
+            #[cfg(windows)]
+            pending_native_worktree_review: None,
             #[cfg(unix)]
             worktree_removal_generation: 0,
+            #[cfg(windows)]
+            native_worktree_removal_generation: 0,
             git_worktree_start: None,
             git_worktree_new_branch: None,
             git_worktree_upstream: None,
@@ -3463,6 +3518,8 @@ impl App {
             parent_wait_origins: HashMap::new(),
             workspace_switch: None,
             persistent_session: false,
+            #[cfg(windows)]
+            current_native_publication: None,
             #[cfg(any(unix, windows))]
             workspace_rows: Vec::new(),
             workspace_number: None,
@@ -3479,13 +3536,15 @@ impl App {
             #[cfg(any(unix, windows))]
             workspace_pending_selection: None,
             #[cfg(windows)]
+            workspace_pending_forget: None,
+            #[cfg(windows)]
             workspace_pending_selector: None,
             #[cfg(windows)]
             workspace_pending_clean: None,
             #[cfg(any(unix, windows))]
             session_rename_target: None,
             terminal_rename_target: None,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             session_number_target: None,
             #[cfg(any(unix, windows))]
             session_manager_return_target: None,
@@ -3755,6 +3814,7 @@ fn session_picker_preview(
     preview: Option<&Result<SessionPreview, String>>,
     loading: bool,
     active: &str,
+    can_open: bool,
 ) -> String {
     // A successful health reply populates every live field, including
     // confirmed zeroes. A timed-out reply leaves them unknown, and that is a
@@ -3854,7 +3914,7 @@ fn session_picker_preview(
         ));
     } else if !row.running {
         lines.push(String::new());
-        if cfg!(unix) {
+        if can_open {
             lines.push("No live editor state; opening this row starts the session.".to_owned());
         } else {
             lines.push("No live editor state; attachment is unavailable here.".to_owned());
