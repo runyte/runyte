@@ -2673,7 +2673,9 @@ reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
 state directory, symlinks, and `editor.show_hidden_files` apply exactly as
 before. `Space / p` asks for a path first, completing entries as they are
 typed; `~` expands, a relative path resolves against the working directory,
-and `Tab` accepts the selected row. The path need not be inside the workspace.
+and `Tab` accepts the selected row. Enter does too while the typed text does
+not yet name an existing entry; once it does, Enter opens the finder there.
+The path need not be inside the workspace.
 Both scopes survive the `Tab` into content mode, so an ignored file's lines
 are searchable too.
 
@@ -3456,7 +3458,8 @@ that field explicitly opts in. Validation runs without blocking editor input.
 Plugins can also opt text fields into local path completion. Type a directory
 or filename prefix, select with Up/Down, and press Tab to complete. Directory
 suggestions continue into that directory. Shift-Tab returns to the previous
-field, Enter submits, and Escape cancels. Relative paths start at the workspace
+field and Escape cancels. Enter completes the selected suggestion while the
+typed path does not name an existing entry, and submits once it does. Relative paths start at the workspace
 root; spaces and quotes are literal, and `~` or environment variables are not
 expanded. Older hosts retain the plugin's ordinary text field behavior.
 Provider applications can also open version-bound UTF-8 documents with normal
@@ -3568,6 +3571,18 @@ the editable directory explorer. A leading `~` means the user's home directory,
 so paths such as `:open ~/.bashrc` and `:open ~/projects` work without shell
 expansion. Dotfiles are offered when their name begins with `.` or hidden files
 are enabled.
+
+Every path prompt treats Enter the same way: the palette's path arguments, the
+`Space / p` finder path, and plugin fields that complete local paths. While
+hints are showing and the typed path does not name an existing file or
+directory, Enter accepts the selected hint exactly as Tab does. Once the path
+exists, Enter submits it, so `:cd sr` Enter Enter completes to `src/` and then
+changes into it. A new name that is a prefix of an existing one is completed
+too: `:w notes` beside `notes.md` becomes `:w notes.md`. Hints only follow a
+cursor at the end of the line, so press Left and then Enter to submit `notes`
+as typed. Completion in a buffer, of
+words, language-server items, or paths, still takes only Tab; Enter there
+inserts a newline.
 
 ```text
 :cd <path>               change the working directory; retarget an active explorer

@@ -2170,6 +2170,59 @@ fn path_hint_quotes_spaces_and_keeps_the_cursor_inside_directory_quotes() {
 }
 
 #[test]
+fn enter_completes_an_unfinished_path_hint_and_submits_an_existing_path() {
+    let root = temporary("enter-path-hint");
+    let source = root.join("src");
+    fs::create_dir_all(source.join("app")).unwrap();
+    fs::write(root.join("notes.md"), "").unwrap();
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.working_directory = root.clone();
+    press(&mut app, ':');
+    type_text(&mut app, "cd sr");
+    let footer = |app: &App| {
+        app.overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::PathCompletion)
+            .unwrap()
+            .actions
+            .into_iter()
+            .map(|action| action.key_hint)
+            .collect::<Vec<_>>()
+    };
+    assert!(footer(&app).contains(&"Tab/Enter".to_owned()));
+
+    // `sr` names nothing, so Enter finishes it exactly as Tab would.
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.command, format!("cd src{}", std::path::MAIN_SEPARATOR));
+
+    // `src/` exists, so Enter submits it even though its child is offered.
+    assert_eq!(app.matching_path_hints().unwrap().len(), 1);
+    assert!(footer(&app).contains(&"Tab".to_owned()));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.working_directory, source);
+
+    // The documented cost: a new name that prefixes an existing one completes.
+    app.working_directory = root.clone();
+    press(&mut app, ':');
+    type_text(&mut app, "write notes");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.command, "write notes.md");
+    // Hints follow only an end-of-line cursor, so Left then Enter submits as typed.
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, ':');
+    type_text(&mut app, "write notes");
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(root.join("notes").is_file());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn command_palette_searches_categories_descriptions_and_owned_availability() {
     let mut app = App::new(Config::default(), None).unwrap();
     press(&mut app, ':');

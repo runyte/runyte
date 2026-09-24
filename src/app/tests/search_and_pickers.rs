@@ -4777,6 +4777,33 @@ fn the_finder_path_prompt_opens_completes_and_accepts_from_its_keys() {
 }
 
 #[test]
+fn enter_in_the_finder_path_prompt_completes_a_prefix_then_opens_the_directory() {
+    let root = ignored_file_project("finder-path-enter");
+    let mut app = isolated_app(&root);
+    app.working_directory = root.clone();
+
+    press(&mut app, ' ');
+    press(&mut app, '/');
+    press(&mut app, 'p');
+    type_text(&mut app, "bui");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        app.prompt_kind,
+        PromptKind::FinderPath,
+        "a prefix completes"
+    );
+    assert_eq!(app.command, format!("build{}", std::path::MAIN_SEPARATOR));
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal, "an existing path is accepted");
+    assert_eq!(
+        app.picker.as_ref().unwrap().root,
+        root.join("build").canonicalize().unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_empty_or_unusable_finder_path_is_refused_at_the_prompt() {
     let root = ignored_file_project("finder-path-refused");
     let mut app = isolated_app(&root);

@@ -107,6 +107,41 @@ fn local_path_completion_preserves_literal_paths_and_form_submission() {
 }
 
 #[test]
+fn local_path_enter_completes_a_prefix_before_submitting_an_existing_file() {
+    let root = crate::test_support::TestRuntimeRoot::new("plugin-path-enter").unwrap();
+    std::fs::create_dir(root.path().join("resources")).unwrap();
+    std::fs::write(root.path().join("resources/sample.sqlite"), "fixture").unwrap();
+    let mut path = field("path", Kind::Text, false);
+    path.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let mut app = fixture(vec![path]);
+    app.project_root = root.path().to_owned();
+    let footer = |app: &App| {
+        form_snapshot(app)
+            .actions
+            .into_iter()
+            .map(|action| action.key_hint)
+            .collect::<Vec<_>>()
+    };
+
+    type_text(&mut app, "res");
+    assert!(footer(&app).contains(&"Tab/Enter".to_owned()));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    type_text(&mut app, "sam");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.plugins.input_finished.is_empty(), "prefixes complete");
+    let expected = format!("resources{}sample.sqlite", std::path::MAIN_SEPARATOR);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text(expected.clone())
+    );
+
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let (_, _, submission) = app.plugins.input_finished.pop().unwrap();
+    assert!(submission.accepted);
+    assert_eq!(submission.values["path"], Value::Text(expected));
+}
+
+#[test]
 fn local_path_completion_bounds_candidates_and_keeps_navigation_and_validation_current() {
     let root = crate::test_support::TestRuntimeRoot::new("plugin-path-completion").unwrap();
     for name in [

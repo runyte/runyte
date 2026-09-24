@@ -1295,6 +1295,14 @@ impl App {
                 detail_emphasis: Vec::new(),
             }
         }
+        /// Footer for path hints while Enter would finish an unfinished
+        /// path rather than submit it.
+        fn enter_completes_path_actions() -> Vec<OverlayAction> {
+            vec![
+                OverlayAction::new("↑/↓", "select"),
+                OverlayAction::new("Tab/Enter", "complete"),
+            ]
+        }
         /// Rows for a completing prompt's path assistance.
         ///
         /// A row shows the entry's own name, because the base it sits under
@@ -1901,14 +1909,18 @@ impl App {
                         .command
                         .split_once(char::is_whitespace)
                         .map_or("", |(name, _)| name);
-                    overlays.push(bounded(
+                    let mut overlay = bounded(
                         OverlayKind::PathCompletion,
                         format!("Choose path for :{command}"),
                         "",
                         path_hint_rows(&hints),
                         (!hints.is_empty()).then_some(self.command_selection),
                         hints.is_empty().then(|| "No matching paths".to_owned()),
-                    ));
+                    );
+                    if self.palette_enter_accepts_path_hint(&hints) {
+                        overlay.actions = enter_completes_path_actions();
+                    }
+                    overlays.push(overlay);
                 } else {
                     let matches = self.matching_commands();
                     overlays.push(bounded(
@@ -1962,7 +1974,7 @@ impl App {
                 }
             } else if self.prompt_kind == PromptKind::FinderPath {
                 if let Some(hints) = self.finder_path_hints() {
-                    overlays.push(bounded(
+                    let mut overlay = bounded(
                         OverlayKind::PathCompletion,
                         "Choose path for finder",
                         "",
@@ -1970,7 +1982,11 @@ impl App {
                         (!hints.is_empty())
                             .then_some(self.command_selection.min(hints.len().saturating_sub(1))),
                         hints.is_empty().then(|| "No matching paths".to_owned()),
-                    ));
+                    );
+                    if self.finder_enter_accepts_path_hint(&hints) {
+                        overlay.actions = enter_completes_path_actions();
+                    }
+                    overlays.push(overlay);
                 }
             } else if self.prompt_kind == PromptKind::ExternalProgram {
                 let choices = self.matching_program_choices();
@@ -2223,13 +2239,27 @@ impl App {
                     snapshot.total_rows = hints.len();
                     snapshot.selected = Some(surface.completion_selected.min(hints.len() - 1));
                     snapshot.scroll_anchor = snapshot.selected;
-                    snapshot.actions = vec![
-                        OverlayAction::new("Tab", "complete"),
-                        OverlayAction::new("↑/↓", "path"),
-                        OverlayAction::new("Shift-Tab", "field"),
-                        OverlayAction::new("Enter", "submit"),
-                        OverlayAction::new("Esc", "cancel"),
-                    ];
+                    let enter_completes = matches!(
+                        &surface.values[surface.selected],
+                        crate::plugin::interaction::Value::Text(value)
+                            if self.plugin_enter_accepts_path_hint(value)
+                    );
+                    snapshot.actions = if enter_completes {
+                        vec![
+                            OverlayAction::new("Tab/Enter", "complete"),
+                            OverlayAction::new("↑/↓", "path"),
+                            OverlayAction::new("Shift-Tab", "field"),
+                            OverlayAction::new("Esc", "cancel"),
+                        ]
+                    } else {
+                        vec![
+                            OverlayAction::new("Tab", "complete"),
+                            OverlayAction::new("↑/↓", "path"),
+                            OverlayAction::new("Shift-Tab", "field"),
+                            OverlayAction::new("Enter", "submit"),
+                            OverlayAction::new("Esc", "cancel"),
+                        ]
+                    };
                 }
             }
             if surface.confirmation {
