@@ -237,7 +237,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/plugin-schema"
           plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
-          "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt
+          "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt -r benchmarks/requirements.txt
           "$plugin_schema_python" docs/plugins/check_all.py --require-backends
           (cd bridges/runyte-context && "$plugin_schema_python" -m unittest discover -s tests -v)
 
