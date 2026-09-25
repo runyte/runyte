@@ -465,6 +465,84 @@ fn simple_confirmation_uses_native_enter_and_escape_semantics() {
 }
 
 #[test]
+fn frontend_repeat_cannot_approve_confirmation_presented_after_invocation() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["interaction"]);
+    next(&mut output);
+    host.app.note_plugin_frontend(true);
+    invoke(&mut host, "plugin.app-0.open");
+    let api::HostMessage::Request { id, .. } = next(&mut output) else {
+        panic!()
+    };
+
+    // The plugin publishes the confirmation after invocation while Enter is
+    // still held. Every repeat must retain its provenance at the host boundary.
+    request(
+        &mut host,
+        0,
+        1,
+        api::Request::UiConfirm {
+            invocation: id,
+            title: "Review".into(),
+            message: "Continue operation?".into(),
+        },
+    );
+    next(&mut output);
+    let enter = InputEvent::Key(KeyStroke::parse("Enter").unwrap());
+    let generation = host.app.plugins.foreground_generation;
+    for _ in 0..3 {
+        host.execute_frontend_input(enter.clone(), true).unwrap();
+    }
+    assert!(host.app.plugins.foreground_generation > generation);
+    assert!(host.app.plugins.input.is_some());
+    assert!(host.app.plugins.input_finished.is_empty());
+
+    host.execute_frontend_input(enter, false).unwrap();
+    assert!(host.app.plugins.input_finished[0].1.native_handoff_allowed);
+    host.sync_plugin_observers();
+    let api::HostMessage::InputRequest { params, .. } = next(&mut output) else {
+        panic!()
+    };
+    assert!(params.accepted);
+    assert_eq!(params.values["confirmed"], Value::Boolean(true));
+}
+
+#[test]
+fn frontend_repeat_edits_plugin_form_but_waits_for_fresh_enter_to_submit() {
+    let (_root, mut host) = host();
+    let mut output = setup(&mut host, 0, &["interaction"]);
+    next(&mut output);
+    begin(
+        &mut host,
+        &mut output,
+        1,
+        vec![Field::text("name", "Name".into())],
+    );
+    host.execute_frontend_input(InputEvent::Text("ab".into()), true)
+        .unwrap();
+    host.execute_frontend_input(
+        InputEvent::Key(KeyStroke::parse("Backspace").unwrap()),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        host.app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("a".into())
+    );
+    let enter = InputEvent::Key(KeyStroke::parse("Enter").unwrap());
+    host.execute_frontend_input(enter.clone(), true).unwrap();
+    assert!(host.app.plugins.input.is_some());
+    assert!(host.app.plugins.input_finished.is_empty());
+    host.execute_frontend_input(enter, false).unwrap();
+    host.sync_plugin_observers();
+    let api::HostMessage::InputRequest { params, .. } = next(&mut output) else {
+        panic!()
+    };
+    assert!(params.accepted);
+    assert_eq!(params.values["name"], Value::Text("a".into()));
+}
+
+#[test]
 fn input_reserves_shared_payload_and_releases_it_on_acceptance() {
     let (_root, mut host) = host();
     let mut output = setup(&mut host, 0, &["interaction"]);

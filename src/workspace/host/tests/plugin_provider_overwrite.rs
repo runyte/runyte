@@ -5,7 +5,7 @@ use super::provider_writes::{document, finished, upload};
 use super::providers::{reply, resource_request};
 use super::*;
 use crate::{
-    input::{KeyCode, KeyStroke},
+    input::{InputEvent, KeyCode, KeyStroke},
     plugin::provider as wire,
 };
 
@@ -62,6 +62,26 @@ fn enter(host: &mut WorkspaceHost) {
         .handle_key(KeyStroke::plain(KeyCode::Enter))
         .unwrap();
     host.sync_provider_writes();
+}
+
+#[test]
+fn frontend_repeat_keeps_provider_overwrite_pending_until_fresh_enter() {
+    let (_root, mut host) = host();
+    let (_requester, mut provider, _handle, index) = document(&mut host, "base");
+    host.app.buffers[index].apply(&Transaction::insert(0, "local "));
+    weak(&mut host, &mut provider, index, "write");
+    let enter = InputEvent::Key(KeyStroke::plain(KeyCode::Enter));
+    host.execute_frontend_input(enter.clone(), true).unwrap();
+    host.sync_provider_writes();
+    assert!(host.app.plugins.provider_overwrite.is_some());
+    assert!(host.app.plugins.provider_overwrite_decision.is_none());
+    assert_no_resource(&mut provider);
+
+    host.execute_frontend_input(enter, false).unwrap();
+    host.sync_provider_writes();
+    assert!(host.app.plugins.provider_overwrite.is_none());
+    assert!(host.app.plugins.provider_overwrite_decision.is_none());
+    assert!(host.app.plugins.instances[&1].application.provider_requests > 0);
 }
 
 #[test]

@@ -2076,11 +2076,7 @@ async fn run(
                         if hint_result == HintEventResult::Forward {
                             let dispatches = motion_repeat_dispatches(&app, &input, repeated);
                             for _ in 0..dispatches {
-                                let result = if repeated && app.context_overlay_active() {
-                                    app.execute_repeated_input(input.clone())
-                                } else {
-                                    app.execute(HostCommand::Input(input.clone()))
-                                };
+                                let result = app.execute_frontend_input(input.clone(), repeated);
                                 if let Err(error) = result {
                                     app.report_host_error(error.to_string());
                                     break;
@@ -3335,11 +3331,7 @@ fn dispatch_host_key_or_text(
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, repeated);
     for _ in 0..dispatches {
-        let result = if repeated && host.context_overlay_active() {
-            host.execute_repeated_input(input.clone())
-        } else {
-            host.execute(HostCommand::Input(input.clone()))
-        };
+        let result = host.execute_frontend_input(input.clone(), repeated);
         if let Err(error) = result {
             host.report_host_error(error.to_string());
             break;
@@ -3359,7 +3351,7 @@ fn dispatch_host_repeated_key_or_text(
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, true);
     for _ in 0..dispatches {
-        if let Err(error) = host.execute_repeated_input(input.clone()) {
+        if let Err(error) = host.execute_frontend_input(input.clone(), true) {
             host.report_host_error(error.to_string());
             break;
         }
