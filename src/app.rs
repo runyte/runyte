@@ -286,6 +286,7 @@ pub(crate) mod plugin_workflows;
 mod presentation;
 mod prompt_editing;
 mod search_history;
+mod search_preview;
 mod settings_workflows;
 mod syntax_workflows;
 mod terminal_workflows;
@@ -3079,6 +3080,8 @@ pub struct App {
     directory_views: HashMap<PathBuf, DirectoryView>,
     search: SearchQuery,
     search_selection: Option<SearchSelectionPresentation>,
+    /// What an open `s` or `/` prompt would select if accepted now.
+    search_preview: Option<search_preview::SearchPreview>,
     next_pane: usize,
     /// Monotonic pane-history clock used to resolve directional focus when
     /// several panes share the requested edge.
@@ -3575,6 +3578,7 @@ impl App {
             directory_views: HashMap::new(),
             search: SearchQuery::default(),
             search_selection: None,
+            search_preview: None,
             next_pane: 1,
             pane_history_clock: 1,
             pane_opened_at: HashMap::from([(0, 1)]),
@@ -4369,14 +4373,27 @@ fn buffer_matches(
     if pattern.is_empty() {
         return Ok(Vec::new());
     }
+    text_matches(&buffer.to_string(), pattern, mode, region)
+}
+
+/// [`buffer_matches`] over text already flattened out of its buffer, so a
+/// caller searching the same revision repeatedly copies the rope only once.
+fn text_matches(
+    text: &str,
+    pattern: &str,
+    mode: SearchMode,
+    region: Option<&[(Offset, Offset)]>,
+) -> Result<Vec<Range>, regex::Error> {
+    if pattern.is_empty() {
+        return Ok(Vec::new());
+    }
     let matcher = mode.compile(pattern)?;
-    let text = buffer.to_string();
     let mut ranges = Vec::new();
     // Matches arrive in order and never overlap, so one running byte-to-char
     // cursor replaces re-counting the prefix for every match.
     let mut byte_cursor = 0;
     let mut char_cursor = 0;
-    for found in matcher.find_iter(&text) {
+    for found in matcher.find_iter(text) {
         char_cursor += text[byte_cursor..found.start()].chars().count();
         byte_cursor = found.start();
         let start = char_cursor;
@@ -4393,6 +4410,25 @@ fn buffer_matches(
         });
     }
     Ok(ranges)
+}
+
+/// The character spans a search region confines matches to in `buffer`.
+fn region_spans(buffer: &Buffer, region: &SearchRegion) -> Vec<(Offset, Offset)> {
+    region
+        .spans
+        .iter()
+        .map(|range| operative_span(buffer, range))
+        .collect()
+}
+
+/// Which of `matches` a search started from `cursor` leads with: the first at
+/// or after it, so `n` continues from the caret rather than from the top of
+/// the file, or the first of all when every match is behind it.
+fn primary_match(matches: &[Range], cursor: Offset) -> usize {
+    matches
+        .iter()
+        .position(|range| range.from() >= cursor)
+        .unwrap_or(0)
 }
 
 const fn syntax_object_label(object: SyntaxObject) -> &'static str {

@@ -15,7 +15,7 @@ use super::{
     SearchQuery, SearchRegion, SearchSelectionPresentation, Selection, SelectionSemantics,
     Transaction, ViewAlignment, buffer_language, buffer_matches, move_projected_start_backward,
     next_offset, next_visible_row, offsets_after, offsets_before, operative_span, previous_offset,
-    previous_visible_row, word_bounds,
+    previous_visible_row, primary_match, region_spans, word_bounds,
 };
 
 impl App {
@@ -727,13 +727,7 @@ impl App {
             .region
             .as_ref()
             .filter(|region| region.buffer == self.active().buffer)
-            .map(|region| {
-                region
-                    .spans
-                    .iter()
-                    .map(|range| operative_span(buffer, range))
-                    .collect::<Vec<_>>()
-            });
+            .map(|region| region_spans(buffer, region));
         buffer_matches(
             buffer,
             &self.search.pattern,
@@ -749,9 +743,15 @@ impl App {
     /// sitting somewhere". Successive searches narrow, by design: `x x x` then
     /// `s` then `/` walks from three lines to the matches inside them.
     pub(super) fn scoping_region(&self) -> Option<SearchRegion> {
-        let buffer = self.active_buffer();
-        let spans: Vec<Range> = self
-            .active()
+        self.pane_scoping_region(self.active_pane)
+    }
+
+    /// [`Self::scoping_region`] for any pane, so a search preview can follow
+    /// the pane it opened over.
+    pub(super) fn pane_scoping_region(&self, pane_id: usize) -> Option<SearchRegion> {
+        let pane = &self.panes[&pane_id];
+        let buffer = &self.buffers[pane.buffer];
+        let spans: Vec<Range> = pane
             .selection
             .ranges()
             .iter()
@@ -761,8 +761,8 @@ impl App {
             })
             .copied()
             .collect();
-        (!spans.is_empty()).then(|| SearchRegion {
-            buffer: self.active().buffer,
+        (!spans.is_empty()).then_some(SearchRegion {
+            buffer: pane.buffer,
             spans,
         })
     }
@@ -771,8 +771,9 @@ impl App {
     /// the match's first character.
     ///
     /// The query is only committed when it finds something, so a typo does not
-    /// cost the working `n`/`N` the person already had.
-    pub(super) fn commit_search(&mut self, query: SearchQuery) {
+    /// cost the working `n`/`N` the person already had. Returns whether it
+    /// did.
+    pub(super) fn commit_search(&mut self, query: SearchQuery) -> bool {
         let previous = std::mem::replace(&mut self.search, query);
         let matches = match self.search_matches() {
             Ok(matches) => matches,
@@ -782,21 +783,15 @@ impl App {
                     "invalid regular expression: {error} in {}",
                     pattern.pattern
                 ));
-                return;
+                return false;
             }
         };
         if matches.is_empty() {
             let pattern = std::mem::replace(&mut self.search, previous);
             self.search_info(format!("pattern not found: {}", pattern.pattern));
-            return;
+            return false;
         }
-        // The match at or after where the cursor already was becomes primary, so
-        // `n` continues from the caret rather than from the top of the file.
-        let current = self.active().selection.primary().from();
-        let primary = matches
-            .iter()
-            .position(|range| range.from() >= current)
-            .unwrap_or(0);
+        let primary = primary_match(&matches, self.active().selection.primary().from());
         let count = matches.len();
         self.push_jump();
         let pane = self.active_mut();
@@ -813,6 +808,7 @@ impl App {
             primary + 1,
             self.search.pattern
         ));
+        true
     }
 
     /// `n` and `N`: select only the next or previous search match.
