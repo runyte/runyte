@@ -659,6 +659,42 @@ fn live_process_state(pid: u32) -> String {
     state
 }
 
+/// The Git fixture's descendants include the shell used to launch GIT_EDITOR
+/// and the editor-wait process. Keep the search rooted at this
+/// fixture's Git PID and cap both depth and breadth so failure output remains
+/// bounded even if an unrelated process is reparented during diagnostics.
+fn live_process_tree(pid: u32) -> String {
+    let mut states = vec![live_process_state(pid)];
+    let mut parents = vec![pid];
+    for _ in 0..3 {
+        let mut children = Vec::new();
+        for parent in parents {
+            let Ok(output) = Command::new("pgrep")
+                .args(["-P", &parent.to_string()])
+                .output()
+            else {
+                continue;
+            };
+            for child in String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.parse::<u32>().ok())
+                .take(8 - children.len())
+            {
+                states.push(live_process_state(child));
+                children.push(child);
+            }
+            if children.len() == 8 {
+                break;
+            }
+        }
+        if children.is_empty() {
+            break;
+        }
+        parents = children;
+    }
+    states.join("\n")
+}
+
 async fn wait_child(child: &mut Child) -> ExitStatus {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -1046,6 +1082,25 @@ async fn try_connect_control(endpoint: &LocalEndpoint) -> anyhow::Result<LocalCl
         "unexpected control handshake response: {welcome:?}"
     );
     Ok(client)
+}
+
+/// Best-effort state for a timeout report. The host may be the thing that is
+/// stuck, so its diagnostic request must not outlive the original failure.
+async fn bounded_host_health(endpoint: &LocalEndpoint) -> String {
+    let result = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut control = try_connect_control(endpoint).await?;
+        control.send(&ClientRequest::Health).await?;
+        control
+            .recv()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("host disconnected before health reply"))
+    })
+    .await;
+    match result {
+        Ok(Ok(response)) => format!("{response:?}"),
+        Ok(Err(error)) => format!("unavailable: {error}"),
+        Err(_) => "unavailable: host health probe timed out after 2s".to_owned(),
+    }
 }
 
 async fn wait_for_buffer_text(
@@ -2282,7 +2337,9 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         .env("GIT_EDITOR", editor)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir());
-    let (mut commit, _commit_terminal) = spawn_in_pty_without_hangup_signal(&mut commit);
+    let (commit, commit_terminal) = spawn_in_pty_without_hangup_signal(&mut commit);
+    let mut commit = ChildGuard(Some(commit));
+    let commit_output = capture_terminal_output(&commit_terminal);
 
     let mut message = None;
     for _ in 0..200 {
@@ -2301,9 +2358,17 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
+    let message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
+    // ListBuffers establishes that the request exists, but the input below
+    // targets the active pane. Verify its presented buffer before editing.
+    wait_for_frame(
+        &mut interactive,
+        "presenting Git's COMMIT_EDITMSG wait buffer",
+        |frame| frame.active_buffer == message.id,
+    )
+    .await;
     assert!(
-        commit.try_wait().unwrap().is_none(),
+        commit.0.as_mut().unwrap().try_wait().unwrap().is_none(),
         "git commit exited while its editor-owned buffer was still open"
     );
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
@@ -2319,6 +2384,12 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     .await;
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char(':'))).await;
     send_input_expect_frame(&mut interactive, InputEvent::Text("wbc".to_owned())).await;
+    wait_for_frame(
+        &mut interactive,
+        "entering :wbc for Git's commit message",
+        |frame| frame.active_buffer == message.id && frame.editor.status.interaction_line == ":wbc",
+    )
+    .await;
     interactive
         .send(&ClientRequest::Input {
             presented_frame: None,
@@ -2327,11 +2398,53 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::Frame { .. }
-    ));
-    assert!(wait_child(&mut commit).await.success());
+    let after_wbc = resynchronized_frame(&mut interactive, "completing :wbc").await;
+    interactive.send(&ClientRequest::ListBuffers).await.unwrap();
+    let buffers = semantic_response(&mut interactive).await;
+    if !matches!(&buffers, HostResponse::Buffers { buffers } if buffers.iter().any(|buffer| buffer.id == message.id && buffer.closed))
+    {
+        let git_state = live_process_tree(commit.0.as_ref().unwrap().id());
+        let _ = commit.0.as_mut().unwrap().kill();
+        let _ = commit.0.as_mut().unwrap().wait();
+        panic!(
+            ":wbc left the Git commit buffer open: {buffers:?}; interaction line: {:?}; \
+             interaction line error: {}; Git: {git_state}; terminal: {}",
+            after_wbc.editor.status.interaction_line,
+            after_wbc.editor.status.interaction_line_error,
+            captured_terminal_state(Some(&commit_output)),
+        );
+    }
+    let commit_status = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(status) = commit.0.as_mut().unwrap().try_wait().unwrap() {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    let status = match commit_status {
+        Ok(status) => status,
+        Err(_) => {
+            let git_state = live_process_tree(commit.0.as_ref().unwrap().id());
+            let _ = commit.0.as_mut().unwrap().kill();
+            let _ = commit.0.as_mut().unwrap().wait();
+            let host_health = bounded_host_health(&endpoint).await;
+            let message_on_disk = fs::read_to_string(root.join(".git/COMMIT_EDITMSG"))
+                .unwrap_or_else(|error| format!("unavailable: {error}"));
+            panic!(
+                "Git remained alive after :wbc closed its buffer; Git: {git_state}; \
+                 host: {host_health:?}; commit message on disk: {message_on_disk:?}; \
+                 terminal: {}",
+                captured_terminal_state(Some(&commit_output))
+            );
+        }
+    };
+    assert!(
+        status.success(),
+        "git commit exited with {status}; terminal: {}",
+        captured_terminal_state(Some(&commit_output))
+    );
     interactive.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
         semantic_response(&mut interactive).await,
