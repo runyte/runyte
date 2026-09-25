@@ -27,6 +27,18 @@ test fails the job. Pure conversion and worker tests remain in the ordinary
 suite. Fixtures never fall back to a shared window station or user clipboard.
 This privilege requirement belongs to test isolation, not editor clipboard use.
 
+Windows CI also requires exact passing results for
+`restart_success_replaces_host_and_preserves_protected_state` and
+`restart_refuses_detached_policy_without_breakaway_job` in
+`tests/windows_session_cli.rs`. A nested breakaway job provisions successful
+detached creation inside a fixture-owned kill-on-close job; an unsupported
+runner policy fails acceptance. Refusal never counts as replacement evidence.
+`successful_saves_have_complete_contents_after_acknowledgement` in
+`tests/windows_save_visibility.rs` reports concurrent pathname-open errors and
+requires exact contents after each of 128 successful saves. These cases also
+run in the ordinary native suite; their reexecuted helper tests are ignored
+only to prevent running them outside the owning fixture.
+
 The above-95% target applies to the total **Lines** percentage printed by that
 canonical command. It is the only current measure that `cargo-llvm-cov` can
 enforce directly and identically in a local run and in CI. It is a reported

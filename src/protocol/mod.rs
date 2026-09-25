@@ -178,9 +178,11 @@ use crate::workspace::{
 // keys and the private two-phase native switch handoff. Version 57 adds the
 // native frontend's drawn-frame readiness acknowledgment. Version 58 adds the
 // parent-only nonfinal native commit acknowledgment and its original-frontend
-// confirmation. This private bundled frontend version is independent of the
-// stable runyte-1 plugin API.
-pub const VERSION: u32 = 58;
+// confirmation. Version 59 carries exact previous-publication history and a
+// destination visit with prepared native switches, so a drifted frontend
+// cannot commit a switch without visiting the selected resource. This private
+// bundled frontend version is independent of the stable runyte-1 plugin API.
+pub const VERSION: u32 = 59;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -556,6 +558,15 @@ pub enum ClientRequest {
     NativeSwitchAbort {
         receipt: u64,
     },
+    /// The native frontend's immediately preceding authenticated publication.
+    /// It is recorded only on the active interactive connection after a
+    /// successful source commit, so `:session-previous` selects that exact row.
+    #[cfg(windows)]
+    NativePreviousPublication {
+        #[serde(deserialize_with = "deserialize_path")]
+        project_root_bytes: Vec<u8>,
+        publication_key: [u8; 32],
+    },
     Detach,
     Shutdown,
     ForceShutdown,
@@ -886,6 +897,19 @@ impl ClientRequest {
             | Self::NativeSwitchAbort { receipt } => {
                 require(*receipt != 0, "native switch receipt is invalid")
             }
+            #[cfg(windows)]
+            Self::NativePreviousPublication {
+                project_root_bytes,
+                publication_key,
+            } => {
+                require(
+                    !project_root_bytes.is_empty()
+                        && project_root_bytes.len() <= MAX_PATH_BYTES
+                        && *publication_key != [0; 32],
+                    "native previous publication identity is invalid",
+                )?;
+                validate_path_bytes(project_root_bytes)
+            }
             _ => Ok(()),
         }
     }
@@ -1058,8 +1082,12 @@ pub enum HostResponse {
     NativeSwitchPrepared {
         receipt: u64,
         candidate: Box<NativeSwitchCandidate>,
+        #[serde(default)]
+        visit: Option<DestinationVisit>,
     },
     NativeSwitchUnchanged,
+    #[cfg(windows)]
+    NativePreviousPublicationRecorded,
     /// The source host accepted a parent-owned commit but retains the source
     /// reservation and child until the original frontend confirms this reply.
     NativeParentSwitchCommitAccepted {
@@ -1325,6 +1353,7 @@ mod tests {
                     address: r"\\.\pipe\runyte-v1-c".to_owned() + &"c".repeat(63),
                     publication_key: [7; 32],
                 }),
+                visit: None,
             },
             HostResponse::Buffers {
                 buffers: vec![metadata.clone()],
@@ -1436,7 +1465,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 58);
+        assert_eq!(VERSION, 59);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1679,6 +1708,7 @@ mod tests {
                 address: r"\\.\pipe\runyte-v1-c".to_owned() + &"c".repeat(63),
                 publication_key: [9; 32],
             }),
+            visit: None,
         };
         let encoded = serde_json::to_value(&response).unwrap();
         assert_eq!(

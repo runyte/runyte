@@ -41,6 +41,8 @@ impl RegistryView {
                 path: path.clone(),
                 key: locking::file_key(&lock)?,
                 inventory,
+                #[cfg(test)]
+                fixture_lease: false,
             });
         }
         Ok(Self {

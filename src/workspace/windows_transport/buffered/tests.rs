@@ -548,7 +548,7 @@ async fn real_native_buffered_client_authenticates_and_fully_writes_hello_before
     let endpoint = EndpointLocation::new(
         &project,
         root.join("endpoint"),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     )
     .unwrap();
     let mut listener = Listener::bind(endpoint.prepare(None).unwrap()).unwrap();

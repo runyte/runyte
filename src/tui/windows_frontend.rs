@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Native attachment to one already-ready, exact host publication. Direct CLI
-//! attachment is public; in-editor switching and persistent waits stay gated.
+//! Native attachment to one already-ready, exact host publication.
 
 use super::{
     KeyRepeatDetector, TerminalGuard, TerminationSignals, is_passive_pointer, is_wheel_event,
@@ -11,19 +10,28 @@ use anyhow::{Context, Result, anyhow, bail};
 use crossterm::event::Event as CrosstermEvent;
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use runyte::{
+    cwd_handoff::Prepared as PreparedCwdHandoff,
     input::{InputEvent, PointerEvent},
-    protocol::{MAX_POINTER_REPETITIONS, NativeSwitchCandidate, validate_welcome},
+    protocol::{
+        DestinationVisit, MAX_POINTER_REPETITIONS, NativeSwitchCandidate, WaitStatus, WaitToken,
+        decode_path, encode_path, validate_welcome,
+    },
     tui::{input::convert_event, windows_input::EventStream},
     ui::{self, TerminalColorDepth},
     workspace::{
         FrameId, HostFrame, NativeHostExit, PublicationKey, WorkspaceSelection,
+        windows_catalog::HistoryTarget,
+        windows_control::ControlSnapshot,
         windows_endpoint::{EndpointMetadata, PipeAddress},
+        windows_location::DiscoveryScope,
         windows_process_identity::ProcessIdentity,
         windows_transport::{BufferedLocalClient, ClientRequest, HostResponse},
     },
 };
 use std::{
+    collections::VecDeque,
     io::stdout,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -33,11 +41,28 @@ const SWITCH_BUDGET: Duration = Duration::from_secs(10);
 // The response reader may retain 64 semantic messages, one final message and
 // one coalesced visual frame when the process-exit notification arrives.
 const FINAL_DRAIN_MESSAGES: usize = 128;
+const RETURN_HISTORY_LIMIT: usize = 16;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
 enum WireOutcome {
     Sent,
-    HostEnded,
+    HostEnded(HostEnd),
+}
+
+impl WireOutcome {
+    fn ended(&self) -> bool {
+        matches!(self, Self::HostEnded(_))
+    }
+
+    fn attachment_outcome(self) -> Option<AttachmentOutcome> {
+        match self {
+            Self::Sent => None,
+            Self::HostEnded(HostEnd::Detached(None)) => Some(AttachmentOutcome::Detached),
+            Self::HostEnded(HostEnd::Detached(Some(directory))) => {
+                Some(AttachmentOutcome::DirectoryHandoff(directory))
+            }
+            Self::HostEnded(HostEnd::ShuttingDown) => Some(AttachmentOutcome::Stopped),
+        }
+    }
 }
 
 struct Attachment {
@@ -49,11 +74,20 @@ struct Attachment {
 }
 
 enum AttachmentOutcome {
-    Ended,
+    Detached,
+    DirectoryHandoff(PathBuf),
+    Stopped,
     Switch {
         receipt: u64,
-        candidate: NativeSwitchCandidate,
+        candidate: Box<NativeSwitchCandidate>,
+        visit: Option<DestinationVisit>,
     },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum HostEnd {
+    Detached(Option<PathBuf>),
+    ShuttingDown,
 }
 
 enum SwitchReceiptState {
@@ -128,24 +162,87 @@ impl FrontendLoop {
 
 /// Owns one terminal guard for the whole attachment and keeps every joined
 /// input/transport worker inside that guard's lifetime.
+#[cfg(test)]
 pub(super) async fn attach_exact(
     metadata: &EndpointMetadata,
     termination: &mut TerminationSignals,
     mouse_enabled: bool,
 ) -> Result<()> {
+    attach_exact_with_options(metadata, termination, mouse_enabled, None, None, None).await
+}
+
+pub(super) async fn attach_exact_with_catalog(
+    metadata: &EndpointMetadata,
+    termination: &mut TerminationSignals,
+    mouse_enabled: bool,
+    scope: &DiscoveryScope,
+    configured_state: &Path,
+    cwd_handoff: Option<&PreparedCwdHandoff>,
+) -> Result<()> {
+    attach_exact_with_options(
+        metadata,
+        termination,
+        mouse_enabled,
+        None,
+        Some((scope, configured_state)),
+        cwd_handoff,
+    )
+    .await
+}
+
+pub(super) async fn attach_exact_for_wait(
+    metadata: &EndpointMetadata,
+    termination: &mut TerminationSignals,
+    mouse_enabled: bool,
+    token: WaitToken,
+) -> Result<()> {
+    attach_exact_with_options(
+        metadata,
+        termination,
+        mouse_enabled,
+        Some(token),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn attach_exact_with_options(
+    metadata: &EndpointMetadata,
+    termination: &mut TerminationSignals,
+    mouse_enabled: bool,
+    wait_token: Option<WaitToken>,
+    return_catalog: Option<(&DiscoveryScope, &Path)>,
+    cwd_handoff: Option<&PreparedCwdHandoff>,
+) -> Result<()> {
     let depth = terminal_color_depth();
-    let _guard = TerminalGuard::enter(mouse_enabled)?;
+    let guard = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let geometry = ui::frame_geometry(terminal.size()?.into());
     let result = tokio::select! {
         biased;
         event = termination.recv() => Err(terminated(event)),
-        result = run_switching_session(metadata, &mut terminal, depth, geometry) => result,
+        result = run_switching_session(metadata, &mut terminal, depth, geometry, wait_token, return_catalog, cwd_handoff.is_some()) => result,
     };
     // The switching session owns its EventStream and every buffered pipe. Its
     // completion or cancellation drops and joins them before restoration.
     drop(terminal);
-    super::reconcile_pending_console_event(result, termination.pending_event().await)
+    drop(guard);
+    let pending = termination.pending_event().await;
+    let directory = match result {
+        Ok(directory) => {
+            super::reconcile_pending_console_event(Ok(()), pending)?;
+            directory
+        }
+        Err(error) => return super::reconcile_pending_console_event(Err(error), pending),
+    };
+    if let Some(directory) = directory {
+        cwd_handoff
+            .context("native host requested a shell directory without a prepared handoff")?
+            .write(&directory)
+            .context("cannot publish PowerShell directory handoff")?;
+    }
+    Ok(())
 }
 
 async fn run_switching_session(
@@ -153,12 +250,17 @@ async fn run_switching_session(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     depth: TerminalColorDepth,
     geometry: runyte::app::FrameGeometry,
-) -> Result<()> {
+    wait_token: Option<WaitToken>,
+    return_catalog: Option<(&DiscoveryScope, &Path)>,
+    directory_handoff: bool,
+) -> Result<Option<PathBuf>> {
     let startup_deadline = tokio::time::Instant::now() + INITIAL_FRAME_BUDGET;
-    let mut attachment =
-        tokio::time::timeout_at(startup_deadline, connect_attachment(metadata, geometry))
-            .await
-            .context("native workspace attachment timed out before its first frame")??;
+    let mut attachment = tokio::time::timeout_at(
+        startup_deadline,
+        connect_attachment(metadata, geometry, directory_handoff),
+    )
+    .await
+    .context("native workspace attachment timed out before its first frame")??;
     terminal.resize(Rect::new(
         0,
         0,
@@ -169,12 +271,51 @@ async fn run_switching_session(
     tokio::time::timeout_at(startup_deadline, acknowledge_initial_frame(&mut attachment))
         .await
         .context("native workspace attachment timed out acknowledging its first frame")??;
+    if let Some(token) = wait_token {
+        tokio::time::timeout(
+            INITIAL_FRAME_BUDGET,
+            attach_wait(&mut attachment, terminal, depth, token),
+        )
+        .await
+        .context("native wait attachment timed out before token acknowledgement")??;
+    }
     let mut loop_state = FrontendLoop::new(geometry)?;
+    let mut history = VecDeque::new();
 
     loop {
         match run_attachment(&mut attachment, terminal, depth, &mut loop_state).await? {
-            AttachmentOutcome::Ended => return Ok(()),
-            AttachmentOutcome::Switch { receipt, candidate } => {
+            AttachmentOutcome::Detached => return Ok(None),
+            AttachmentOutcome::DirectoryHandoff(directory) => return Ok(Some(directory)),
+            AttachmentOutcome::Stopped => {
+                if let Some((scope, configured_state)) = return_catalog {
+                    tokio::time::timeout(SWITCH_BUDGET, attachment.exit.wait())
+                        .await
+                        .context("stopped workspace host did not finish exiting")?;
+                    let stopped = attachment.identity.clone();
+                    history.retain(|entry| entry != &stopped);
+                    if let Some(returned) = return_from_quit(
+                        (scope, configured_state),
+                        &history,
+                        &stopped,
+                        &loop_state,
+                        terminal,
+                        depth,
+                        directory_handoff,
+                    )
+                    .await?
+                    {
+                        attachment = returned;
+                        loop_state.repeats = KeyRepeatDetector::default();
+                        continue;
+                    }
+                }
+                return Ok(None);
+            }
+            AttachmentOutcome::Switch {
+                receipt,
+                candidate,
+                visit,
+            } => {
                 loop_state.wheels.0 = None;
                 let switch_deadline = tokio::time::Instant::now() + SWITCH_BUDGET;
                 let destination_metadata = match candidate_metadata(&candidate) {
@@ -192,7 +333,7 @@ async fn run_switching_session(
                         drain_after_host_exit(&mut attachment.client).await?;
                         bail!("source workspace host exited during native switch")
                     }
-                    result = connect_attachment(&destination_metadata, loop_state.geometry) => result,
+                    result = connect_attachment(&destination_metadata, loop_state.geometry, directory_handoff) => result,
                 };
                 let mut destination = match destination {
                     Ok(destination) => destination,
@@ -204,6 +345,17 @@ async fn run_switching_session(
                     }
                 };
                 if let Err(error) = ensure_candidate_identity(&candidate, &destination.identity) {
+                    drop(destination);
+                    recover_switch_failure(&mut attachment, receipt, &error, switch_deadline)
+                        .await?;
+                    draw(terminal, &attachment.current, depth)?;
+                    continue;
+                }
+                if let Some(visit) = visit
+                    && let Err(error) =
+                        visit_destination(&mut destination, visit, terminal, depth, switch_deadline)
+                            .await
+                {
                     drop(destination);
                     recover_switch_failure(&mut attachment, receipt, &error, switch_deadline)
                         .await?;
@@ -228,22 +380,328 @@ async fn run_switching_session(
                     }
                 }
                 commit_switch(&mut attachment, receipt, switch_deadline).await?;
+                let previous = attachment.identity.clone();
+                history.retain(|entry| entry != &previous && entry != &destination.identity);
+                history.push_back(previous.clone());
+                if history.len() > RETURN_HISTORY_LIMIT {
+                    history.pop_front();
+                }
                 attachment = destination;
+                record_previous_publication(
+                    &mut attachment,
+                    &previous,
+                    terminal,
+                    depth,
+                    switch_deadline,
+                )
+                .await?;
                 loop_state.repeats = KeyRepeatDetector::default();
             }
         }
     }
 }
 
+async fn attach_wait(
+    attachment: &mut Attachment,
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    depth: TerminalColorDepth,
+    token: WaitToken,
+) -> Result<()> {
+    if send_or_exit(
+        &mut attachment.client,
+        &attachment.exit,
+        &ClientRequest::AttachWait { token },
+    )
+    .await?
+    .ended()
+    {
+        bail!("native workspace host exited before wait attachment");
+    }
+    loop {
+        match attachment.client.recv().await? {
+            Some(HostResponse::WaitState {
+                token: received,
+                status: WaitStatus::Pending { .. },
+                ..
+            }) if received == token => return Ok(()),
+            Some(HostResponse::WaitState {
+                token: received,
+                status: WaitStatus::Completed,
+                ..
+            }) if received == token => return Ok(()),
+            Some(HostResponse::WaitState {
+                token: received,
+                status: WaitStatus::Cancelled { reason },
+                ..
+            }) if received == token => bail!(reason),
+            Some(HostResponse::Frame { frame }) => {
+                attachment.current = (*frame)
+                    .try_into()
+                    .map_err(|error: String| anyhow!(error))?;
+                draw(terminal, &attachment.current, depth)?;
+            }
+            Some(HostResponse::TerminalDamage { damage }) => {
+                if apply_damage(&mut attachment.current, &damage)? {
+                    draw(terminal, &attachment.current, depth)?;
+                } else if send_or_exit(
+                    &mut attachment.client,
+                    &attachment.exit,
+                    &ClientRequest::Resynchronize,
+                )
+                .await?
+                .ended()
+                {
+                    bail!("native workspace host exited before wait attachment");
+                }
+            }
+            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
+                bail!(message)
+            }
+            Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown) | None => {
+                bail!("native workspace host ended before wait attachment");
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+async fn visit_destination(
+    attachment: &mut Attachment,
+    visit: DestinationVisit,
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    depth: TerminalColorDepth,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    let request = ClientRequest::VisitDestination {
+        incarnation: visit.incarnation,
+        destination: visit.destination,
+    };
+    if tokio::time::timeout_at(
+        deadline,
+        send_or_exit(&mut attachment.client, &attachment.exit, &request),
+    )
+    .await
+    .context("native destination visit timed out")??
+    .ended()
+    {
+        bail!("destination workspace host exited before accepting its visit");
+    }
+    loop {
+        let response = tokio::time::timeout_at(deadline, attachment.client.recv())
+            .await
+            .context("destination workspace host did not answer its visit")??;
+        match response {
+            Some(HostResponse::DestinationVisitResult { error: None }) => break,
+            Some(HostResponse::DestinationVisitResult { error: Some(error) }) => bail!(error),
+            Some(HostResponse::Frame { frame }) => {
+                attachment.current = (*frame)
+                    .try_into()
+                    .map_err(|error: String| anyhow!(error))?;
+            }
+            Some(HostResponse::TerminalDamage { damage }) => {
+                let _ = apply_damage(&mut attachment.current, &damage)?;
+            }
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                bail!(message)
+            }
+            Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown) | None => {
+                bail!("destination workspace host ended before accepting its visit")
+            }
+            Some(_) => {}
+        }
+    }
+    // A visit changes the destination's active pane after its initial frame.
+    // Request one complete frame so the source is released only after that
+    // exact accepted resource can be drawn.
+    if tokio::time::timeout_at(
+        deadline,
+        send_or_exit(
+            &mut attachment.client,
+            &attachment.exit,
+            &ClientRequest::Resynchronize,
+        ),
+    )
+    .await
+    .context("native destination frame request timed out")??
+    .ended()
+    {
+        bail!("destination workspace host exited after accepting its visit");
+    }
+    loop {
+        let response = tokio::time::timeout_at(deadline, attachment.client.recv())
+            .await
+            .context("destination workspace host did not show its accepted visit")??;
+        match response {
+            Some(HostResponse::Frame { frame }) => {
+                attachment.current = (*frame)
+                    .try_into()
+                    .map_err(|error: String| anyhow!(error))?;
+                draw(terminal, &attachment.current, depth)?;
+                return Ok(());
+            }
+            Some(HostResponse::TerminalDamage { damage }) => {
+                let _ = apply_damage(&mut attachment.current, &damage)?;
+            }
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                bail!(message)
+            }
+            Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown) | None => {
+                bail!("destination workspace host ended before showing its accepted visit")
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+async fn record_previous_publication(
+    attachment: &mut Attachment,
+    previous: &WorkspaceSelection,
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    depth: TerminalColorDepth,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    let publication_key = previous
+        .publication_key()
+        .context("previous native publication has no exact identity")?
+        .to_bytes();
+    let request = ClientRequest::NativePreviousPublication {
+        project_root_bytes: encode_path(previous.project_root()),
+        publication_key,
+    };
+    if tokio::time::timeout_at(
+        deadline,
+        send_or_exit(&mut attachment.client, &attachment.exit, &request),
+    )
+    .await
+    .context("native previous publication transfer timed out")??
+    .ended()
+    {
+        bail!("destination workspace host exited before previous publication transfer");
+    }
+    loop {
+        let response = tokio::time::timeout_at(deadline, attachment.client.recv())
+            .await
+            .context("destination workspace host did not acknowledge previous publication")??;
+        match response {
+            Some(HostResponse::NativePreviousPublicationRecorded) => return Ok(()),
+            Some(HostResponse::Frame { frame }) => {
+                attachment.current = (*frame)
+                    .try_into()
+                    .map_err(|error: String| anyhow!(error))?;
+                draw(terminal, &attachment.current, depth)?;
+            }
+            Some(HostResponse::TerminalDamage { damage }) => {
+                if apply_damage(&mut attachment.current, &damage)? {
+                    draw(terminal, &attachment.current, depth)?;
+                }
+            }
+            Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                bail!(message)
+            }
+            Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown) | None => {
+                bail!("destination workspace host ended before previous publication transfer")
+            }
+            Some(response) => {
+                bail!("unexpected previous publication acknowledgement: {response:?}")
+            }
+        }
+    }
+}
+
+async fn return_from_quit(
+    catalog_source: (&DiscoveryScope, &Path),
+    history: &VecDeque<WorkspaceSelection>,
+    stopped: &WorkspaceSelection,
+    loop_state: &FrontendLoop,
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    depth: TerminalColorDepth,
+    directory_handoff: bool,
+) -> Result<Option<Attachment>> {
+    let (scope, configured_state) = catalog_source;
+    let deadline = tokio::time::Instant::now() + SWITCH_BUDGET;
+    let snapshot = tokio::time::timeout_at(
+        deadline,
+        ControlSnapshot::observe(scope, configured_state, false),
+    )
+    .await
+    .context("native session return catalog timed out")??;
+    let catalog = snapshot.history();
+    let mut candidates = Vec::new();
+    // The physical frontend's successful attachment history has priority.
+    // Each entry is matched against a fresh exact row before connecting.
+    for selection in history.iter().rev() {
+        if selection == stopped {
+            continue;
+        }
+        if let Some(index) = catalog.select_selection(selection)?
+            && let Some(HistoryTarget::Live { publication, .. }) = catalog.target(index)
+        {
+            candidates.push(publication.metadata().clone());
+        }
+    }
+    // A fresh live session can be visited even if this frontend has never
+    // attached to it. The bounded list excludes the just stopped publication.
+    for index in 0..catalog.entries().len() {
+        let Some(HistoryTarget::Live { publication, row }) = catalog.target(index) else {
+            continue;
+        };
+        if row.selection() == *stopped
+            || candidates
+                .iter()
+                .any(|metadata| metadata == publication.metadata())
+        {
+            continue;
+        }
+        candidates.push(publication.metadata().clone());
+        if candidates.len() >= RETURN_HISTORY_LIMIT {
+            break;
+        }
+    }
+    for metadata in candidates.into_iter().take(RETURN_HISTORY_LIMIT) {
+        if metadata.protocol != runyte::protocol::VERSION {
+            continue;
+        }
+        let candidate = tokio::time::timeout_at(
+            deadline,
+            connect_attachment(&metadata, loop_state.geometry, directory_handoff),
+        )
+        .await;
+        let Ok(Ok(mut candidate)) = candidate else {
+            continue;
+        };
+        if draw(terminal, &candidate.current, depth).is_err() {
+            continue;
+        }
+        if tokio::time::timeout_at(deadline, acknowledge_initial_frame(&mut candidate))
+            .await
+            .map_or(true, |result| result.is_err())
+        {
+            continue;
+        }
+        if let Some(previous) = history
+            .iter()
+            .rev()
+            .find(|selection| *selection != &candidate.identity && *selection != stopped)
+        {
+            record_previous_publication(&mut candidate, previous, terminal, depth, deadline)
+                .await?;
+        }
+        return Ok(Some(candidate));
+    }
+    Ok(None)
+}
+
 async fn connect_attachment(
     metadata: &EndpointMetadata,
     geometry: runyte::app::FrameGeometry,
+    directory_handoff: bool,
 ) -> Result<Attachment> {
     // The same deadline bounds connection, Welcome and the first complete
     // decoded frame. A silent or half-speaking host never strands raw mode.
     let (mut client, current) = tokio::time::timeout(INITIAL_FRAME_BUDGET, async {
         let mut client =
-            BufferedLocalClient::connect_with_handoff(metadata, geometry, false).await?;
+            BufferedLocalClient::connect_with_handoff(metadata, geometry, directory_handoff)
+                .await?;
         match client.recv_handshake().await? {
             Some(response @ HostResponse::Welcome { .. }) => {
                 validate_welcome(&response, true).map_err(anyhow::Error::msg)?;
@@ -292,8 +750,9 @@ async fn acknowledge_initial_frame(attachment: &mut Attachment) -> Result<()> {
     let request = ClientRequest::FrameDrawn {
         frame: attachment.current.id.into(),
     };
-    if send_or_exit(&mut attachment.client, &attachment.exit, &request).await?
-        == WireOutcome::HostEnded
+    if send_or_exit(&mut attachment.client, &attachment.exit, &request)
+        .await?
+        .ended()
     {
         bail!("native workspace host exited before initial-frame acknowledgement")
     }
@@ -322,16 +781,25 @@ async fn run_attachment(
                     Some(HostResponse::TerminalDamage { damage }) => {
                         if apply_damage(current, &damage)? {
                             draw(terminal, current, depth)?;
-                        } else if send_or_exit(client, exit, &ClientRequest::Resynchronize).await?
-                            == WireOutcome::HostEnded
+                        } else if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Resynchronize)
+                            .await?
+                            .attachment_outcome()
                         {
-                            return Ok(AttachmentOutcome::Ended);
+                            return Ok(outcome);
                         }
                     }
-                    Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown) => return Ok(AttachmentOutcome::Ended),
+                    Some(HostResponse::Detached { directory_bytes }) => {
+                        return directory_bytes
+                            .map(decode_path)
+                            .transpose()?
+                            .map_or(Ok(AttachmentOutcome::Detached), |directory| {
+                                Ok(AttachmentOutcome::DirectoryHandoff(directory))
+                            });
+                    }
+                    Some(HostResponse::ShuttingDown) => return Ok(AttachmentOutcome::Stopped),
                     Some(HostResponse::Refused { message } | HostResponse::Error { message }) => bail!(message),
-                    Some(HostResponse::NativeSwitchPrepared { receipt, candidate }) => {
-                        return Ok(AttachmentOutcome::Switch { receipt, candidate: *candidate });
+                    Some(HostResponse::NativeSwitchPrepared { receipt, candidate, visit }) => {
+                        return Ok(AttachmentOutcome::Switch { receipt, candidate, visit });
                     }
                     Some(HostResponse::NativeSwitchUnchanged) => {}
                     Some(HostResponse::SwitchWorkspace { .. } | HostResponse::ParentSwitchWorkspace { .. }) => {
@@ -347,32 +815,42 @@ async fn run_attachment(
                 }
             }
             _ = exit.wait() => {
-                drain_after_host_exit(client).await?;
-                return Ok(AttachmentOutcome::Ended);
+                return match drain_after_host_exit_kind(client).await? {
+                    HostEnd::Detached(None) => Ok(AttachmentOutcome::Detached),
+                    HostEnd::Detached(Some(directory)) => {
+                        Ok(AttachmentOutcome::DirectoryHandoff(directory))
+                    }
+                    HostEnd::ShuttingDown => Ok(AttachmentOutcome::Stopped),
+                };
             }
             event = loop_state.input.next() => {
                 let Some(event) = event.transpose()? else {
-                    if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
-                    if send_or_exit(client, exit, &ClientRequest::Detach).await?
-                        == WireOutcome::HostEnded
-                    {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Detach)
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
-                    await_detach(client).await?;
-                    return Ok(AttachmentOutcome::Ended);
+                    return Ok(WireOutcome::HostEnded(drain_after_host_exit_kind(client).await?)
+                        .attachment_outcome()
+                        .expect("final reply ends the attachment"));
                 };
                 if let CrosstermEvent::Resize(width, height) = event {
                     loop_state.repeats.observe(None, None, Instant::now());
-                    if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
                     loop_state.geometry = ui::frame_geometry(Rect::new(0, 0, width, height));
-                    if send_or_exit(client, exit, &ClientRequest::Resize { geometry: loop_state.geometry.into() }).await?
-                        == WireOutcome::HostEnded
-                    {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Resize { geometry: loop_state.geometry.into() })
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
                     continue;
                 }
@@ -383,13 +861,15 @@ async fn run_attachment(
                 };
                 let repeated = loop_state.repeats.observe(kind, Some(&event), Instant::now());
                 if let Some(message) = rejected_text_input(&event) {
-                    if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
-                    if send_or_exit(client, exit, &ClientRequest::Notify { message }).await?
-                        == WireOutcome::HostEnded
-                    {
-                        return Ok(AttachmentOutcome::Ended);
+                    if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Notify { message })
+                        .await?
+                        .attachment_outcome() {
+                        return Ok(outcome);
                     }
                     continue;
                 }
@@ -399,41 +879,48 @@ async fn run_attachment(
                 match event {
                     InputEvent::Pointer(pointer) if is_wheel_event(pointer.kind) => {
                         if let Some(batch) = loop_state.wheels.push(pointer, current.id)
-                            && send_or_exit(client, exit, &batch.request()).await?
-                                == WireOutcome::HostEnded
+                            && let Some(outcome) = send_or_exit(client, exit, &batch.request())
+                                .await?
+                                .attachment_outcome()
                         {
-                            return Ok(AttachmentOutcome::Ended);
+                            return Ok(outcome);
                         }
                     }
                     InputEvent::Pointer(pointer) => {
-                        if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                            return Ok(AttachmentOutcome::Ended);
+                        if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                            .await?
+                            .attachment_outcome() {
+                            return Ok(outcome);
                         }
-                        if send_or_exit(client, exit, &ClientRequest::Pointer {
+                        if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Pointer {
                             event: pointer.into(),
                             frame: current.id.into(),
                             repetitions: 1,
-                        }).await? == WireOutcome::HostEnded {
-                            return Ok(AttachmentOutcome::Ended);
+                        }).await?.attachment_outcome() {
+                            return Ok(outcome);
                         }
                     }
                     event => {
-                        if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                            return Ok(AttachmentOutcome::Ended);
+                        if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                            .await?
+                            .attachment_outcome() {
+                            return Ok(outcome);
                         }
-                        if send_or_exit(client, exit, &ClientRequest::Input {
+                        if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Input {
                             event: event.into(),
                             repeated,
                             presented_frame: Some(current.id.into()),
-                        }).await? == WireOutcome::HostEnded {
-                            return Ok(AttachmentOutcome::Ended);
+                        }).await?.attachment_outcome() {
+                            return Ok(outcome);
                         }
                     }
                 }
             }
             _ = loop_state.wheel_tick.tick(), if loop_state.wheels.0.is_some() => {
-                if flush_wheel(client, exit, &mut loop_state.wheels).await? == WireOutcome::HostEnded {
-                    return Ok(AttachmentOutcome::Ended);
+                if let Some(outcome) = flush_wheel(client, exit, &mut loop_state.wheels)
+                    .await?
+                    .attachment_outcome() {
+                    return Ok(outcome);
                 }
             }
         }
@@ -485,7 +972,7 @@ async fn abort_switch(
             &ClientRequest::NativeSwitchAbort { receipt },
         )
         .await?
-            == WireOutcome::HostEnded
+        .ended()
         {
             bail!("source workspace host ended before switch abort")
         }
@@ -510,7 +997,7 @@ async fn recover_switch_failure(
             &ClientRequest::Notify { message },
         )
         .await?
-            == WireOutcome::HostEnded
+        .ended()
         {
             bail!("source workspace host ended while reporting switch failure")
         }
@@ -536,7 +1023,7 @@ async fn commit_switch(
     )
     .await
     .context("native switch commit exceeded its whole-operation deadline")??
-        == WireOutcome::HostEnded
+    .ended()
     {
         bail!("source workspace host ended before switch commit")
     }
@@ -577,7 +1064,7 @@ async fn await_switch_receipt(
                 )
                 .await
                 .context("source frontend did not confirm parent switch commit")??;
-                if outcome == WireOutcome::HostEnded {
+                if outcome.ended() {
                     bail!("source workspace host ended before parent switch confirmation")
                 }
                 // The original frontend has now observed the source commit and
@@ -631,25 +1118,33 @@ async fn send_or_exit(
         _ = exit.wait() => {
             // Cancelling a partially written send permanently closes that
             // capability. The independent reader remains owned and usable.
-            drain_after_host_exit(client).await?;
-            Ok(WireOutcome::HostEnded)
+            Ok(WireOutcome::HostEnded(drain_after_host_exit_kind(client).await?))
         }
         result = client.send(request) => {
-            let Err(error) = result else {
-                return Ok(WireOutcome::Sent);
-            };
-            // A host that ends this attachment, by detaching it or shutting
-            // down, queues its final reply and closes its end of the pipe
-            // while its process keeps running. A request already in flight
-            // then fails to write ("The pipe is being closed") although the
-            // attachment ended as asked. The reader holds that final reply,
-            // so read it before reporting the write.
-            if drain_after_host_exit(client).await.is_ok() {
-                Ok(WireOutcome::HostEnded)
-            } else {
-                Err(error)
+            match result {
+                Ok(()) => Ok(WireOutcome::Sent),
+                Err(send_error) => {
+                    // Detach or shutdown can close the pipe while the host
+                    // process is still running and a request is in flight.
+                    // Read its queued final reply before reporting the write
+                    // failure, preserving any :quit-here directory handoff.
+                    let recovered = drain_after_host_exit_kind(client).await;
+                    final_after_send_failure(send_error, recovered)
+                }
             }
         }
+    }
+}
+
+fn final_after_send_failure(
+    send_error: anyhow::Error,
+    recovered: Result<HostEnd>,
+) -> Result<WireOutcome> {
+    match recovered {
+        Ok(end) => Ok(WireOutcome::HostEnded(end)),
+        Err(recovery_error) => Err(send_error.context(format!(
+            "native workspace send failed and no final attachment response arrived: {recovery_error:#}"
+        ))),
     }
 }
 
@@ -697,6 +1192,10 @@ fn apply_damage(
 }
 
 async fn drain_after_host_exit(client: &mut BufferedLocalClient) -> Result<()> {
+    drain_after_host_exit_kind(client).await.map(|_| ())
+}
+
+async fn drain_after_host_exit_kind(client: &mut BufferedLocalClient) -> Result<HostEnd> {
     let deadline = tokio::time::Instant::now() + FINAL_REPLY_BUDGET;
     let mut first_error = None;
     for _ in 0..FINAL_DRAIN_MESSAGES {
@@ -728,38 +1227,27 @@ async fn drain_after_host_exit(client: &mut BufferedLocalClient) -> Result<()> {
 fn observe_exit_response(
     first_error: &mut Option<String>,
     response: HostResponse,
-) -> Option<Result<()>> {
+) -> Option<Result<HostEnd>> {
     match response {
         HostResponse::Error { message } | HostResponse::Refused { message } => {
             first_error.get_or_insert(message);
             None
         }
-        HostResponse::ShuttingDown | HostResponse::Detached { .. } => Some(
+        HostResponse::ShuttingDown => Some(
             first_error
                 .take()
-                .map_or(Ok(()), |message| Err(anyhow!(message))),
+                .map_or(Ok(HostEnd::ShuttingDown), |message| Err(anyhow!(message))),
         ),
+        HostResponse::Detached { directory_bytes } => Some(match first_error.take() {
+            Some(message) => Err(anyhow!(message)),
+            None => directory_bytes
+                .map(decode_path)
+                .transpose()
+                .map(HostEnd::Detached)
+                .map_err(anyhow::Error::from),
+        }),
         _ => None,
     }
-}
-
-async fn await_detach(client: &mut BufferedLocalClient) -> Result<()> {
-    let deadline = tokio::time::Instant::now() + FINAL_REPLY_BUDGET;
-    for _ in 0..FINAL_DRAIN_MESSAGES {
-        match tokio::time::timeout_at(deadline, client.recv()).await {
-            Ok(Ok(Some(HostResponse::Detached { .. } | HostResponse::ShuttingDown))) => {
-                return Ok(());
-            }
-            Ok(Ok(Some(HostResponse::Error { message } | HostResponse::Refused { message }))) => {
-                bail!(message)
-            }
-            Ok(Ok(Some(_))) => {}
-            Ok(Ok(None)) => bail!("native workspace host disconnected before acknowledging detach"),
-            Ok(Err(error)) => return Err(error).context("native workspace detach reply failed"),
-            Err(_) => bail!("native workspace host did not acknowledge detach"),
-        }
-    }
-    bail!("native workspace host did not acknowledge detach")
 }
 
 #[cfg(test)]
@@ -775,7 +1263,8 @@ mod tests {
         let endpoint = EndpointLocation::new(
             root.path(),
             root.join("endpoint"),
-            RegistrySet::open(&[root.join("registry")]).unwrap(),
+            RegistrySet::with_inventory(&[root.join("registry")], Some(root.join("inventory")))
+                .unwrap(),
         )
         .unwrap();
         let prepared = endpoint.prepare(Some("candidate".into())).unwrap();
@@ -846,6 +1335,67 @@ mod tests {
             .unwrap()
             .is_ok()
         );
+    }
+
+    #[test]
+    fn final_directory_handoff_survives_exit_first_drain_but_not_an_earlier_error() {
+        let directory = PathBuf::from(r"C:\selected [café]");
+        let response = || HostResponse::Detached {
+            directory_bytes: Some(encode_path(&directory)),
+        };
+        let mut first_error = None;
+        let result = observe_exit_response(&mut first_error, response())
+            .expect("directory handoff ends the attachment")
+            .unwrap();
+        assert!(matches!(&result, HostEnd::Detached(Some(path)) if path == &directory));
+        let outcome = WireOutcome::HostEnded(result).attachment_outcome();
+        assert!(
+            matches!(outcome, Some(AttachmentOutcome::DirectoryHandoff(path)) if path == directory)
+        );
+
+        let mut first_error = Some("earlier host failure".to_owned());
+        let result = observe_exit_response(&mut first_error, response())
+            .expect("directory handoff ends the attachment");
+        assert_eq!(result.unwrap_err().to_string(), "earlier host failure");
+    }
+
+    #[test]
+    fn failed_send_uses_queued_directory_reply_and_keeps_original_error_without_one() {
+        let directory = PathBuf::from(r"C:\selected [café]");
+        let recovered = final_after_send_failure(
+            anyhow!("broken pipe"),
+            Ok(HostEnd::Detached(Some(directory.clone()))),
+        )
+        .unwrap()
+        .attachment_outcome();
+        assert!(
+            matches!(recovered, Some(AttachmentOutcome::DirectoryHandoff(path)) if path == directory)
+        );
+
+        let error =
+            final_after_send_failure(anyhow!("broken pipe"), Err(anyhow!("no final reply")))
+                .err()
+                .expect("missing final reply retains the send error");
+        assert!(error.to_string().contains("no final reply"));
+        assert_eq!(error.root_cause().to_string(), "broken pipe");
+    }
+
+    #[test]
+    fn input_eof_detach_reply_retains_directory_and_prior_error() {
+        let directory = PathBuf::from(r"C:\selected [café]");
+        let response = HostResponse::Detached {
+            directory_bytes: Some(encode_path(&directory)),
+        };
+        let end = observe_exit_response(&mut None, response.clone())
+            .expect("final reply")
+            .unwrap();
+        assert!(matches!(
+            WireOutcome::HostEnded(end).attachment_outcome(),
+            Some(AttachmentOutcome::DirectoryHandoff(path)) if path == directory
+        ));
+        let result =
+            observe_exit_response(&mut Some("first error".into()), response).expect("final reply");
+        assert_eq!(result.unwrap_err().to_string(), "first error");
     }
 
     #[test]

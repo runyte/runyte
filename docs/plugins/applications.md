@@ -1721,6 +1721,10 @@ close waits. The final drain is at most 64 KiB across both pipes and waits only 
 bounded time for escaped pipe holders; `output_truncated` reports an incomplete
 drain. This final output travels in the reserved terminal event, so filling the
 ordinary output queue cannot prevent reap or terminal-result delivery.
+On Windows, a cleanup attempt that cannot confirm an empty private job returns
+`unavailable` for pending close requests and keeps the process handle in
+`closing` state. The host retains the job and quota while a background reaper
+retries; a later close may be retried after settlement.
 
 The handshake advertises `process_handles`, `process_io_bytes`,
 `process_output_bytes` and `process_write_seconds`.
@@ -1737,7 +1741,9 @@ Linux/macOS cleanup kills the owned process group while its leader remains
 unreaped, then reaps it. The same anchoring rule covers natural exit, explicit
 close, owner stop and abandoned spawn tasks. Descendants that deliberately escape
 the group are outside this guarantee. Exit handling uses child-exit notifications,
-with no per-helper polling timer. The Python SDK's `start_process`, `read_process`
+with no per-helper polling timer. Windows uses a private kill-on-close job and
+confirms that the leader and descendants have settled before a successful close
+reply. Windows exit reports an exit code and a null signal. The Python SDK's `start_process`, `read_process`
 and `write_process` helpers preserve these bounds; reads return decoded bytes,
 and invalid write acknowledgements produce `outcome_unknown` without replay.
 

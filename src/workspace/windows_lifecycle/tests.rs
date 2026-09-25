@@ -32,7 +32,7 @@ fn location(root: &Path) -> EndpointLocation {
     EndpointLocation::new(
         &root.join("project"),
         root.join("endpoint"),
-        RegistrySet::open(&[root.join("registry")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
     )
     .unwrap()
 }
@@ -364,6 +364,63 @@ fn shutdown_timeout_has_no_receipt_and_eof_is_not_proof_of_process_exit() {
     });
 }
 
+#[test]
+fn shutdown_recovers_response_after_native_flush_closure_without_hiding_refusal() {
+    runtime().block_on(async {
+        let closed = || Err(io::Error::from_raw_os_error(232).into());
+        for response in [Some(HostResponse::ShuttingDown), None] {
+            shutdown_response(closed(), std::future::ready(Ok(response)), "shutdown")
+                .await
+                .unwrap();
+        }
+        for response in [
+            HostResponse::Refused {
+                message: "unsaved buffers".into(),
+            },
+            HostResponse::Error {
+                message: "unsaved buffers".into(),
+            },
+        ] {
+            let error =
+                shutdown_response(closed(), std::future::ready(Ok(Some(response))), "shutdown")
+                    .await
+                    .unwrap_err();
+            assert_eq!(error.to_string(), "unsaved buffers");
+        }
+        // A closed read after the request also permits only an exit receipt.
+        shutdown_response(
+            Ok(()),
+            std::future::ready(Err(io::Error::from_raw_os_error(232).into())),
+            "shutdown",
+        )
+        .await
+        .unwrap();
+        // Unrelated send failures must not wait on a reader that never replies.
+        assert!(
+            shutdown_response(
+                Err(io::Error::from_raw_os_error(5).into()),
+                std::future::pending(),
+                "shutdown"
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            shutdown_response(
+                closed(),
+                std::future::ready(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed response"
+                )
+                .into())),
+                "shutdown"
+            )
+            .await
+            .is_err()
+        );
+    });
+}
+
 const HELPER_ROOT: &str = "RUNYTE_CONTROL_FIXTURE_ROOT";
 const HELPER_MODE: &str = "RUNYTE_CONTROL_FIXTURE_MODE";
 const HELPER_NAME: &str = "workspace::windows_lifecycle::tests::native_control_fixture";
@@ -581,7 +638,7 @@ fn incompatible_force_uses_actual_peer_and_cleanup_preserves_replaced_records() 
         // Registry scope is independent; removing ready did not infer or clear
         // any other record merely because its metadata named this project.
         assert_eq!(
-            RegistrySet::open(&[fixture.root.join("registry")])
+            RegistrySet::open_fixture(&[fixture.root.join("registry")])
                 .unwrap()
                 .scan_namespaces()
                 .candidates

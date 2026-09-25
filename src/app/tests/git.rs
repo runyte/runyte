@@ -4,6 +4,254 @@ use super::*;
 use crate::app::git_workflows::RequestedGitViews;
 use crate::git::BaseContent;
 
+#[cfg(windows)]
+fn reviewed_worktree_row(path: &Path) -> crate::workspace::WorkspaceRow {
+    crate::workspace::WorkspaceRow {
+        publication_key: Some(crate::workspace::PublicationKey::for_test(b"reviewed-host")),
+        unread_terminals: None,
+        terminal_bell: None,
+        id: "reviewed".to_owned(),
+        name: Some("reviewed session".to_owned()),
+        number: Some(3),
+        last_active_unix_seconds: None,
+        project_root: path.to_owned(),
+        running: true,
+        incompatible_protocol: None,
+        unsaved_buffers: Some(0),
+        open_buffers: Some(0),
+        pending_wait_requests: Some(0),
+        plugin_jobs: Some(0),
+        activity_leases: Some(0),
+        activities: Vec::new(),
+        live_terminals: Some(0),
+        terminal_sessions: Some(0),
+        terminal_line_activity_unix_seconds: None,
+        interactive_attached: Some(false),
+        git: None,
+        missing_directory: false,
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn native_worktree_review_discloses_exact_live_host_and_requires_typed_confirmation() {
+    let root = temporary("native-worktree-review");
+    let path = root.join("linked");
+    fs::create_dir_all(&path).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.open_git_worktrees_result(
+        vec![Worktree {
+            path: path.clone(),
+            head: Some("a".repeat(40)),
+            branch: Some("refs/heads/feature".to_owned()),
+            detached: false,
+            bare: false,
+            locked: None,
+            prunable: None,
+            missing: false,
+            common_dir: root.join(".git"),
+        }],
+        true,
+    );
+    let plan = WorktreeRemovalPlan {
+        path: path.clone(),
+        head: Some("a".repeat(40)),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    app.pending_native_worktree_review = Some(PendingNativeWorktreeReview {
+        plan,
+        branch: None,
+        generation: 5,
+        source_buffer: app.active().buffer,
+        interaction_generation: app.next_action_id,
+    });
+    let row = reviewed_worktree_row(&path);
+    let selection = row.selection();
+    app.finish_native_worktree_review(4, path.clone(), Ok(Some(row.clone())));
+    assert!(app.git_worktree_removal.is_none());
+    app.finish_native_worktree_review(5, path, Ok(Some(row)));
+    let confirmation = app.git_worktree_removal.as_ref().unwrap();
+    assert_eq!(confirmation.reviewed_live, Some(selection));
+    assert!(confirmation.typed());
+    assert!(
+        confirmation
+            .message()
+            .contains("stops and forgets session 3")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn native_branch_cascade_review_names_the_exact_host_before_confirmation() {
+    use crate::git::MemoryGitProvider;
+
+    let root = temporary("native-branch-review");
+    let linked = root.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["feature", "main"], "main")
+            .with_branch_checkout("feature", linked.clone()),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    press(&mut app, 'k');
+    let plan = WorktreeRemovalPlan {
+        path: linked.clone(),
+        head: Some("a".repeat(40)),
+        branch: Some("feature".to_owned()),
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Enter,
+    };
+    app.pending_native_worktree_review = Some(PendingNativeWorktreeReview {
+        plan,
+        branch: Some(BranchDeletionPlan {
+            branch: "feature".to_owned(),
+            tip: "b".repeat(40),
+            upstream: None,
+            retaining_branches: vec!["main".to_owned()],
+            required_authorization: DeletionAuthorization::Enter,
+        }),
+        generation: 9,
+        source_buffer: app.active().buffer,
+        interaction_generation: app.next_action_id,
+    });
+    let row = reviewed_worktree_row(&linked);
+    let selection = row.selection();
+    app.finish_native_worktree_review(9, linked, Ok(Some(row)));
+    let confirmation = app.git_branch_deletion.as_ref().unwrap();
+    let cascade = confirmation.cascade.as_ref().unwrap();
+    assert_eq!(cascade.reviewed_live, Some(selection));
+    assert!(confirmation.typed());
+    assert!(
+        confirmation
+            .message()
+            .contains("stops and forgets session 3")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn native_worktree_finalization_accepts_only_its_exact_generation_and_path() {
+    let root = temporary("native-worktree-finalization");
+    fs::create_dir_all(&root).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    let path = root.join("reviewed-worktree");
+    let plan = WorktreeRemovalPlan {
+        path: path.clone(),
+        head: None,
+        branch: None,
+        upstream: None,
+        detached_retained: false,
+        required_authorization: DeletionAuthorization::Typed,
+    };
+    app.native_worktree_teardown = Some(NativeWorktreeTeardown {
+        plan,
+        authorization: DeletionAuthorization::Typed,
+        generation: 7,
+        git_request: None,
+        lease: None,
+        stopped_session: None,
+        branch: None,
+        stage: NativeWorktreeStage::Forgetting,
+    });
+    app.finish_native_worktree_finalized(6, path.clone(), Ok(true));
+    assert!(app.native_worktree_teardown.is_some());
+    app.finish_native_worktree_finalized(7, root.join("other"), Ok(true));
+    assert!(app.native_worktree_teardown.is_some());
+    app.finish_native_worktree_finalized(7, path, Ok(true));
+    assert!(app.native_worktree_teardown.is_none());
+    assert!(app.status.contains("removed worktree"));
+}
+
+#[cfg(windows)]
+#[test]
+fn native_branch_cascade_queues_branch_only_after_exact_worktree_finalization() {
+    let root = temporary("native-branch-cascade-order");
+    fs::create_dir_all(&root).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.git.attach(Some(Repository::new(&root)));
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    let path = root.join("reviewed-worktree");
+    app.native_worktree_teardown = Some(NativeWorktreeTeardown {
+        plan: WorktreeRemovalPlan {
+            path: path.clone(),
+            head: None,
+            branch: Some("feature".to_owned()),
+            upstream: None,
+            detached_retained: false,
+            required_authorization: DeletionAuthorization::Typed,
+        },
+        authorization: DeletionAuthorization::Typed,
+        generation: 11,
+        git_request: None,
+        lease: None,
+        stopped_session: None,
+        branch: Some(BranchDeletionPlan {
+            branch: "feature".to_owned(),
+            tip: "a".repeat(40),
+            upstream: None,
+            retaining_branches: Vec::new(),
+            required_authorization: DeletionAuthorization::Typed,
+        }),
+        stage: NativeWorktreeStage::Forgetting,
+    });
+    app.finish_native_worktree_finalized(10, path.clone(), Ok(true));
+    assert!(operations.try_recv().is_err());
+    app.finish_native_worktree_finalized(11, path.clone(), Ok(true));
+    let operation = operations
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    assert!(matches!(
+        operation,
+        GitOperation::Mutate {
+            mutation: GitMutation::DeleteBranch { .. },
+            ..
+        }
+    ));
+    let request = app
+        .native_worktree_teardown
+        .as_ref()
+        .and_then(|teardown| teardown.git_request)
+        .unwrap();
+    app.native_branch_git_completed(None, "feature", true);
+    assert!(app.native_worktree_teardown.is_some());
+    app.native_branch_git_completed(Some(request), "feature", true);
+    assert!(app.native_worktree_teardown.is_none());
+    assert!(app.status.contains("deleted branch feature"));
+}
 fn idle_git_test_terminal() -> String {
     if cfg!(windows) {
         "cmd.exe /d /q"
@@ -486,15 +734,12 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
     app.buffers[file_buffer].apply(&Transaction::insert(0, "unsaved"));
     app.open_selected_worktree();
     assert!(app.take_workspace_switch().is_none());
-    assert!(app.status.contains(if cfg!(windows) {
-        "not supported on this platform"
-    } else {
-        "workspace.mode: persistent"
-    }));
+    assert!(app.status.contains("workspace.mode: persistent"));
+
+    app.enable_persistent_session();
 
     #[cfg(unix)]
     {
-        app.enable_persistent_session();
         app.execute(
             crate::command::parse_named_command(
                 "session-attach",
@@ -528,14 +773,13 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
         Some(linked.as_path())
     );
     app.open_selected_worktree();
-    #[cfg(unix)]
     assert_eq!(
         app.take_workspace_switch()
             .map(|request| switch_target_path(&request).to_path_buf()),
         Some(linked.clone())
     );
     #[cfg(windows)]
-    assert!(app.take_workspace_switch().is_none());
+    assert!(!app.should_quit);
 
     app.open_scratch_buffer();
     app.open_selected_worktree();
@@ -3525,6 +3769,7 @@ fn deleting_a_merged_branch_is_not_forced() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(not(windows))]
 #[test]
 fn branch_deletion_cascades_through_its_checkout_and_asks_for_the_branch_name() {
     use crate::git::{MemoryGitProvider, Repository, Worktree};
@@ -7220,6 +7465,14 @@ fn asynchronous_branch_deletion_preflights_plain_and_checkout_cascade_paths() {
                 state: GitServiceState::Completed,
                 coalesced: false,
             });
+            if cfg!(windows) {
+                assert_eq!(
+                    app.status,
+                    "native session service is unavailable for worktree removal"
+                );
+                assert!(app.git_branch_deletion.is_none());
+                continue;
+            }
             assert!(
                 app.git_branch_deletion
                     .as_ref()

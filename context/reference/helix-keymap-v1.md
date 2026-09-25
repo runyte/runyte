@@ -10,16 +10,16 @@ verified 2026-07-27.
 Status meanings:
 
 The Windows port retains this command inventory. Configured plugins, their
-commands and their lifecycle controls are available on Windows; the managed
-helper-process capability remains unavailable. Direct `-a` attachment and
-selected running-session visits from the persistent manager are available;
-other in-editor session navigation retains its platform limitation.
+commands and their lifecycle controls, including managed helper processes, are
+available on Windows. Direct `-a` attachment, the session strip, Explorer and
+manager visits, and numbered and cyclic navigation are available in persistent
+mode.
 `:context-access` is available on Windows. Syntax
 commands remain independent of LSP. Integrated Git is available when native
 Git is installed;
 missing Git disables its capabilities without starting a worker. Worktree
-switching still requires persistent sessions, and combined branch/worktree
-deletion is refused on Windows; remove the worktree and branch separately.
+switching still requires persistent sessions. Guarded combined branch/worktree
+deletion is available on Windows.
 No default key spelling changes as part of these platform boundaries.
 Private standalone diagnostic logs and `:log-open` are available on local NTFS.
 Language services are available with an installed native server and workspace
@@ -442,12 +442,20 @@ The Unix manager behavior in the table above requires persistent mode. On
 Windows, `Space Space` and `:session-list` open the native catalog manager
 when its owned service is available. Rows for different live publications of
 one project remain distinct. In a persistent editor, Enter or Tab > Open
-visits the selected compatible running publication through its exact identity;
-a replaced row is refused. A standalone editor keeps a control-only manager.
-Tab offers Rename, Close, and confirmed Force close for a compatible running
-row, only Force close for an incompatible running row, or Rename for a stopped
-row. Starting stopped rows, numbers, current markers, other destination
-navigation, and the session strip remain unavailable. `:session-stop` requires
+visits the selected compatible running publication or starts the selected
+stopped row; a fresh catalog refuses a replaced publication or changed record.
+A standalone editor keeps a control-only manager. Tab offers Open, Rename,
+Renumber, Close, and confirmed Force close for a compatible running row; Open,
+Rename, and Forget for a stopped row; and Force close for an incompatible
+running row. The manager marks the exact current publication and accepts
+`1`–`9` for numbered running sessions while its filter is empty. The persistent
+editor's strip uses exact live-publication identities and
+can visit a running entry by click. Explorer `Tab s`, the manager Ctrl-o
+directory chooser, a terminal's validated reported directory, and Git
+worktree open/create visit or start the selected exact directory's session
+through the native catalog. `Space 1`–`Space 9`, `:session-1` through
+`:session-9`, and `Shift-Left`/`Shift-Right` visit running sessions by number
+or cycle order. `:session-stop` requires
 an explicit unambiguous selector on Windows, and `:session-clean` cleans
 verified stopped history globally. The control commands use the
 `SessionControls` capability; visiting a selected live session requires

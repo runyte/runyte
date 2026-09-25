@@ -16,10 +16,82 @@ use crate::workspace::WorkspaceSelection;
 const SESSION_STATUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl App {
+    #[cfg(any(unix, windows))]
+    fn finish_session_inventory(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        selection: WorkspaceSelection,
+        result: Result<crate::workspace::DestinationInventory, String>,
+    ) {
+        if !self
+            .session_navigation
+            .inventory
+            .as_ref()
+            .is_some_and(|inventory| {
+                inventory.generation == generation
+                    && inventory.path == path
+                    && selection == inventory.selection
+            })
+        {
+            return;
+        }
+        match result {
+            Ok(inventory) => {
+                let items = inventory
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        PickerItem::new(entry.label.clone(), entry.detail.clone(), index)
+                    })
+                    .collect();
+                self.list = Some(
+                    ListPicker::fuzzy(
+                        if inventory.truncated {
+                            "Session destinations · first 1024"
+                        } else {
+                            "Session destinations"
+                        },
+                        items,
+                    )
+                    .as_manager("attach and visit", "Escape", "back"),
+                );
+                let state = self.session_navigation.inventory.as_mut().unwrap();
+                state.incarnation = Some(inventory.incarnation);
+                state.entries = inventory.entries;
+                if state.entries.is_empty() {
+                    self.list = Some(
+                        ListPicker::new(
+                            "Session destinations",
+                            vec![PickerItem::new(
+                                "No open destinations",
+                                "Escape returns to sessions",
+                                0,
+                            )],
+                        )
+                        .as_report(),
+                    );
+                }
+            }
+            Err(error) => {
+                self.list = Some(
+                    ListPicker::new(
+                        "Session destinations · unavailable",
+                        vec![PickerItem::new(error, "Escape returns to sessions", 0)],
+                    )
+                    .as_report(),
+                );
+            }
+        }
+    }
+
     /// The native worker and its event receiver remain owned by HostServices.
     #[cfg(windows)]
     pub fn detach_workspace_service(&mut self) {
         self.ports.workspace_service = None;
+        self.session_navigation.observation_pending = false;
+        self.session_navigation.health_unknown = true;
     }
 
     #[cfg(windows)]
@@ -44,15 +116,43 @@ impl App {
                 }
             }
             WorkspaceEvent::Observed { result } => {
-                if self
-                    .list
-                    .as_ref()
-                    .is_some_and(|picker| picker.title.starts_with("Sessions"))
-                    && let Ok(rows) = result
-                {
-                    self.accept_native_workspace_rows(rows);
+                self.session_navigation.observation_pending = false;
+                if std::mem::take(&mut self.session_navigation.observation_invalidated) {
+                    self.observe_session_strip();
+                    return;
+                }
+                match result {
+                    Ok(rows) => {
+                        self.session_navigation.health_unknown = false;
+                        self.accept_native_workspace_rows(rows);
+                        if let Some(next) = self.session_navigation.pending_cycle.take() {
+                            if self
+                                .workspace_rows
+                                .iter()
+                                .any(|row| row.running && row.publication_key.is_some())
+                            {
+                                self.cycle_persistent_session(next);
+                            } else {
+                                self.action_failed("no running sessions are available");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        self.session_navigation.health_unknown = true;
+                        if self.session_navigation.pending_cycle.take().is_some() {
+                            self.action_failed(format!(
+                                "cannot discover running sessions: {error}"
+                            ));
+                        }
+                    }
                 }
             }
+            WorkspaceEvent::Inventory {
+                generation,
+                path,
+                selection,
+                result,
+            } => self.finish_session_inventory(generation, path, selection, result),
             WorkspaceEvent::Previewed {
                 generation,
                 selection,
@@ -115,6 +215,62 @@ impl App {
                     Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
+            WorkspaceEvent::Numbered {
+                generation,
+                path,
+                selection,
+                number,
+                result,
+            } => {
+                if !self.matches_workspace_completion(generation, selection.as_ref()) {
+                    return;
+                }
+                self.session_action_menu = None;
+                match result {
+                    Ok(displaced) => {
+                        let subject = match number {
+                            Some(number) => {
+                                format!("session for {} is now {number}", path.display())
+                            }
+                            None => format!("session for {} has no number", path.display()),
+                        };
+                        match displaced {
+                            Some(displaced) => self.status(format!(
+                                "{subject}; {} took the number it gave up",
+                                displaced.display()
+                            )),
+                            None => self.status(subject),
+                        }
+                        self.request_workspace_refresh();
+                    }
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
+                }
+            }
+            WorkspaceEvent::Forgotten {
+                generation,
+                path,
+                result,
+            } if self
+                .workspace_pending_forget
+                .as_ref()
+                .is_some_and(|(pending, selection)| {
+                    *pending == generation && selection.project_root() == path
+                }) =>
+            {
+                self.workspace_pending_forget = None;
+                self.session_action_menu = None;
+                match result {
+                    Ok(true) => {
+                        self.status(format!("forgot session record for {}", path.display()));
+                        self.request_workspace_refresh();
+                    }
+                    Ok(false) => self.status(format!(
+                        "session for {} was not in the recent list",
+                        path.display()
+                    )),
+                    Err(error) => self.error_from("Host", "Host operation failed", error),
+                }
+            }
             WorkspaceEvent::Cleaned { generation, result }
                 if self.workspace_pending_clean == Some(generation) =>
             {
@@ -127,12 +283,31 @@ impl App {
                     Err(error) => self.error_from("Host", "Host operation failed", error),
                 }
             }
+            WorkspaceEvent::WorktreePrepared {
+                generation,
+                path,
+                result,
+            } => self.finish_native_worktree_prepared(generation, path, *result),
+            WorkspaceEvent::WorktreeInspected {
+                generation,
+                path,
+                result,
+            } => self.finish_native_worktree_review(generation, path, *result),
+            WorkspaceEvent::WorktreeFinalized {
+                generation,
+                path,
+                result,
+            } => self.finish_native_worktree_finalized(generation, path, result),
             WorkspaceEvent::ControlWarnings {
                 generation,
                 details,
                 omitted,
             } if generation == self.workspace_generation
                 || self.workspace_pending_selector == Some(generation)
+                || self
+                    .workspace_pending_forget
+                    .as_ref()
+                    .is_some_and(|(pending, _)| *pending == generation)
                 || self
                     .workspace_pending_selection
                     .as_ref()
@@ -162,6 +337,7 @@ impl App {
             .as_ref()
             .is_some_and(|picker| picker.title.starts_with("Sessions"));
         self.replace_workspace_rows(rows);
+        self.sync_workspace_number_from_rows();
         if manager_open {
             self.rebuild_workspace_picker();
             if let Some(selection) = old {
@@ -193,6 +369,7 @@ impl App {
 
     #[cfg(windows)]
     pub(crate) fn refresh_workspace_activity(&mut self) -> bool {
+        self.observe_session_strip();
         if !self
             .list
             .as_ref()
@@ -235,6 +412,64 @@ impl App {
                 } else {
                     "stopping session…"
                 });
+            }
+            Err(error) => self.action_failed(error),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn number_selected_session(
+        &mut self,
+        selection: WorkspaceSelection,
+        number: Option<u8>,
+    ) {
+        let Ok(Some(index)) = self.workspace_row_index(&selection) else {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        };
+        if !self.workspace_rows[index].running || selection.publication_key().is_none() {
+            self.status("this session is already stopped");
+            return;
+        }
+        self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
+        let generation = self.workspace_generation;
+        let result = self
+            .ports
+            .workspace_service
+            .as_ref()
+            .ok_or("session service is unavailable")
+            .and_then(|service| service.try_number_selected(generation, selection.clone(), number));
+        match result {
+            Ok(()) => {
+                self.workspace_pending_selection = Some((generation, selection));
+                self.status("numbering session…");
+            }
+            Err(error) => self.action_failed(error),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn forget_selected_session(&mut self, selection: WorkspaceSelection) {
+        let Ok(Some(index)) = self.workspace_row_index(&selection) else {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        };
+        if self.workspace_rows[index].running || selection.publication_key().is_some() {
+            self.status("stop this session before forgetting it");
+            return;
+        }
+        self.workspace_generation = self.workspace_generation.wrapping_add(1).max(1);
+        let generation = self.workspace_generation;
+        let result = self
+            .ports
+            .workspace_service
+            .as_ref()
+            .ok_or("session service is unavailable")
+            .and_then(|service| service.try_forget_selected(generation, selection.clone()));
+        match result {
+            Ok(()) => {
+                self.workspace_pending_forget = Some((generation, selection));
+                self.status("forgetting session record…");
             }
             Err(error) => self.action_failed(error),
         }
@@ -459,80 +694,7 @@ impl App {
                 path,
                 selection,
                 result,
-            } => {
-                if !self
-                    .session_navigation
-                    .inventory
-                    .as_ref()
-                    .is_some_and(|inventory| {
-                        inventory.generation == generation
-                            && inventory.path == path
-                            && selection == inventory.selection
-                    })
-                {
-                    return;
-                }
-                match result {
-                    Ok(inventory) => {
-                        let items = inventory
-                            .entries
-                            .iter()
-                            .enumerate()
-                            .map(|(index, entry)| {
-                                super::PickerItem::new(
-                                    entry.label.clone(),
-                                    entry.detail.clone(),
-                                    index,
-                                )
-                            })
-                            .collect();
-                        self.list = Some(
-                            super::ListPicker::fuzzy(
-                                if inventory.truncated {
-                                    "Session destinations · first 1024"
-                                } else {
-                                    "Session destinations"
-                                },
-                                items,
-                            )
-                            .as_manager(
-                                "attach and visit",
-                                "Escape",
-                                "back",
-                            ),
-                        );
-                        let state = self.session_navigation.inventory.as_mut().unwrap();
-                        state.incarnation = Some(inventory.incarnation);
-                        state.entries = inventory.entries;
-                        if state.entries.is_empty() {
-                            self.list = Some(
-                                super::ListPicker::new(
-                                    "Session destinations",
-                                    vec![super::PickerItem::new(
-                                        "No open destinations",
-                                        "Escape returns to sessions",
-                                        0,
-                                    )],
-                                )
-                                .as_report(),
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        self.list = Some(
-                            super::ListPicker::new(
-                                "Session destinations · unavailable",
-                                vec![super::PickerItem::new(
-                                    error,
-                                    "Escape returns to sessions",
-                                    0,
-                                )],
-                            )
-                            .as_report(),
-                        )
-                    }
-                }
-            }
+            } => self.finish_session_inventory(generation, path, selection, result),
             WorkspaceEvent::Observed { result } => {
                 self.session_navigation.observation_pending = false;
                 if std::mem::take(&mut self.session_navigation.observation_invalidated) {
@@ -557,21 +719,19 @@ impl App {
                             .is_some_and(|picker| picker.title.starts_with("Sessions"));
                         if !manager_open && self.session_navigation.inventory.is_none() {
                             self.replace_workspace_rows(rows);
-                            if let Some(row) = self
-                                .workspace_rows
-                                .iter()
-                                .find(|row| row.project_root == self.project_root)
-                            {
-                                self.note_workspace_number(row.number);
-                            }
+                            self.sync_workspace_number_from_rows();
                         }
                         if self.session_directory_chooser_open() {
                             self.refresh_session_directory_chooser();
                         }
-                        if let Some(next) = self.session_navigation.pending_cycle.take()
-                            && self.workspace_rows.iter().any(|row| row.running)
-                        {
-                            self.cycle_persistent_session(next);
+                        if let Some(next) = self.session_navigation.pending_cycle.take() {
+                            if self.workspace_rows.iter().any(|row| {
+                                row.running && (cfg!(unix) || row.publication_key.is_some())
+                            }) {
+                                self.cycle_persistent_session(next);
+                            } else if cfg!(windows) {
+                                self.action_failed("no running sessions are available");
+                            }
                         }
                     }
                     Err(error) => {
@@ -610,14 +770,7 @@ impl App {
                         // workspace can change this one's number without this
                         // host hearing about it, and every listing carries the
                         // catalog's current answer for every row.
-                        if let Some(row) = self
-                            .workspace_rows
-                            .iter()
-                            .find(|row| row.project_root == self.project_root)
-                        {
-                            let number = row.number;
-                            self.note_workspace_number(number);
-                        }
+                        self.sync_workspace_number_from_rows();
                         if manager_open {
                             self.rebuild_workspace_picker();
                             if selected
@@ -645,13 +798,7 @@ impl App {
                 if let Ok(rows) = result {
                     let selected = self.selected_workspace_selection();
                     self.replace_workspace_rows(rows);
-                    if let Some(row) = self
-                        .workspace_rows
-                        .iter()
-                        .find(|row| row.project_root == self.project_root)
-                    {
-                        self.note_workspace_number(row.number);
-                    }
+                    self.sync_workspace_number_from_rows();
                     self.rebuild_workspace_picker();
                     if selected
                         .as_ref()
@@ -843,10 +990,6 @@ impl App {
         }
     }
 
-    pub(super) fn request_workspace_switch(&mut self, path: PathBuf) -> bool {
-        self.request_workspace_switch_for_platform(path, cfg!(unix))
-    }
-
     pub(super) fn request_workspace_switch_for_platform(
         &mut self,
         path: PathBuf,
@@ -873,7 +1016,7 @@ impl App {
         &mut self,
         selection: WorkspaceSelection,
     ) -> bool {
-        if self.reject_unavailable_persistent_session(cfg!(unix), false) {
+        if self.reject_unavailable_persistent_session(cfg!(any(unix, windows)), false) {
             return false;
         }
         if !self.persistent_session {
@@ -889,9 +1032,9 @@ impl App {
         true
     }
 
-    /// Visits only one compatible live publication chosen in the native
-    /// session manager. The selected key stays frozen for host-side proof;
-    /// it is never re-resolved through a path or display name.
+    /// Visits one selected native row. A live publication retains its key;
+    /// a stopped row retains its exact project-only history selection so the
+    /// host can prove it again before starting a replacement.
     #[cfg(windows)]
     pub(super) fn visit_selected_native_session(&mut self, selection: WorkspaceSelection) {
         if self.session_manager_selection_lost {
@@ -907,18 +1050,23 @@ impl App {
             return;
         };
         let row = &self.workspace_rows[index];
-        if !row.running || selection.publication_key().is_none() {
-            self.action_failed("stopped sessions cannot be visited here");
+        if row.running && selection.publication_key().is_none() {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
+        if !row.running && selection.publication_key().is_some() {
+            self.action_failed("selected session changed; choose it again");
             return;
         }
         if row.incompatible_protocol.is_some() {
             self.action_failed("this session uses an unsupported protocol");
             return;
         }
+        let running_only = row.running;
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             target: WorkspaceSwitchTarget::Selected(selection),
             working_directory: self.working_directory.clone(),
-            running_only: true,
+            running_only,
             visit: None,
         });
         self.list = None;
@@ -1035,7 +1183,7 @@ impl App {
             .enumerate()
             .map(
                 |(index, (row, (name, branch, directory, active, status)))| {
-                    let marker = if cfg!(unix) && row.project_root == self.project_root {
+                    let marker = if self.is_current_workspace_row(row) {
                         "* "
                     } else {
                         "  "
@@ -1043,12 +1191,9 @@ impl App {
                     // Two display cells whether or not the row has a number, so
                     // the names stay in one column and a numbered row is found by
                     // where the digit is rather than by reading every line.
-                    let number = if cfg!(unix) {
-                        row.number
-                            .map_or_else(|| "  ".to_owned(), |number| format!("{number} "))
-                    } else {
-                        "  ".to_owned()
-                    };
+                    let number = row
+                        .number
+                        .map_or_else(|| "  ".to_owned(), |number| format!("{number} "));
                     let label = format!(
                         "{number}{marker}{name}{}",
                         " ".repeat(name_width.saturating_sub(name.width()))
@@ -1076,6 +1221,7 @@ impl App {
                             self.workspace_previews.get(&row.selection()),
                             self.workspace_preview_target.as_ref() == Some(&row.selection()),
                             active,
+                            self.persistent_session,
                         ))
                         // A stopped session is still worth listing and still starts
                         // on Enter, so it stays in place rather than being hidden or
@@ -1085,10 +1231,8 @@ impl App {
                 },
             )
             .collect();
-        let title = if cfg!(unix) {
+        let title = if self.persistent_session {
             "Sessions · 1-9 attach · Tab actions"
-        } else if self.persistent_session {
-            "Sessions · Enter visit running · Tab actions"
         } else {
             "Sessions · Tab actions"
         };
@@ -1469,6 +1613,54 @@ impl App {
         self.workspace_number = number;
     }
 
+    #[cfg(any(unix, windows))]
+    fn is_current_workspace_row(&self, row: &crate::workspace::WorkspaceRow) -> bool {
+        #[cfg(unix)]
+        {
+            row.project_root == self.project_root
+        }
+        #[cfg(windows)]
+        {
+            self.current_native_publication
+                .as_ref()
+                .is_some_and(|current| row.selection() == *current)
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    fn is_current_workspace_selection(&self, selection: &WorkspaceSelection) -> bool {
+        #[cfg(unix)]
+        {
+            selection.project_root() == self.project_root
+        }
+        #[cfg(windows)]
+        {
+            self.current_native_publication.as_ref() == Some(selection)
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    fn sync_workspace_number_from_rows(&mut self) {
+        #[cfg(unix)]
+        if let Some(number) = self
+            .workspace_rows
+            .iter()
+            .find(|row| row.project_root == self.project_root)
+            .map(|row| row.number)
+        {
+            self.note_workspace_number(number);
+        }
+        #[cfg(windows)]
+        {
+            let number = self
+                .workspace_rows
+                .iter()
+                .find(|row| self.is_current_workspace_row(row))
+                .and_then(|row| row.number);
+            self.note_workspace_number(number);
+        }
+    }
+
     /// Re-reads this workspace's number from the per-user catalog.
     #[cfg(unix)]
     fn refresh_workspace_number(&mut self) {
@@ -1499,23 +1691,23 @@ pub(super) struct SessionNavigationState {
     next_observation: Option<std::time::Instant>,
     health_unknown: bool,
     directory: Option<SessionDirectoryChooser>,
-    pending_cycle: Option<bool>,
+    pub(super) pending_cycle: Option<bool>,
     generation: u64,
     worktrees: Vec<PathBuf>,
     inventory: Option<SessionInventory>,
 }
 
 struct SessionInventory {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     path: PathBuf,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     selection: WorkspaceSelection,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     generation: u64,
     saved_picker: super::ListPicker,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     incarnation: Option<String>,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     entries: Vec<crate::protocol::OpenDestinationEntry>,
 }
 
@@ -1532,7 +1724,7 @@ impl App {
     }
 
     pub(super) fn open_session_directory_chooser(&mut self) {
-        if self.reject_unavailable_persistent_session(cfg!(unix), true) {
+        if self.reject_unavailable_persistent_session(cfg!(any(unix, windows)), true) {
             return;
         }
         if !self.persistent_session {
@@ -1610,11 +1802,15 @@ impl App {
         let mut root = chooser.root.clone();
         let query = chooser.query.clone();
         let mut filter = query.clone();
-        if query.contains('/') || query.starts_with('~') {
-            let expanded = if query == "~" || query.starts_with("~/") {
+        let contains_separator = query.contains('/') || (cfg!(windows) && query.contains('\\'));
+        if contains_separator || query.starts_with('~') {
+            let expanded = if query == "~"
+                || query.starts_with("~/")
+                || (cfg!(windows) && query.starts_with("~\\"))
+            {
                 self.home_directory
                     .as_ref()
-                    .map(|home| home.join(query.trim_start_matches('~').trim_start_matches('/')))
+                    .map(|home| home.join(home_relative_directory(&query, cfg!(windows))))
                     .unwrap_or_else(|| PathBuf::from(&query))
             } else {
                 PathBuf::from(&query)
@@ -1624,7 +1820,7 @@ impl App {
             } else {
                 root.join(expanded)
             };
-            if query.ends_with('/') || query == "~" {
+            if query.ends_with('/') || (cfg!(windows) && query.ends_with('\\')) || query == "~" {
                 root = absolute;
                 filter.clear();
             } else if let Some(parent) = absolute.parent() {
@@ -1644,7 +1840,7 @@ impl App {
         if let Some(entries) = self.path_listings.borrow_mut().read(&root) {
             for entry in entries.iter().filter(|entry| entry.is_directory) {
                 paths.push(root.join(&entry.name));
-                labels.push(format!("{}/", entry.name));
+                labels.push(format!("{}{}", entry.name, std::path::MAIN_SEPARATOR));
             }
         }
         let children = children_start..paths.len();
@@ -1753,7 +1949,9 @@ impl App {
                         chooser.root = path;
                         chooser.query.clear();
                         self.rebuild_session_directory_chooser();
-                    } else if self.request_workspace_switch(path) {
+                    } else if self
+                        .request_workspace_switch_for_platform(path, cfg!(any(unix, windows)))
+                    {
                         self.session_navigation.directory = None;
                         self.list = None;
                     }
@@ -1788,7 +1986,7 @@ impl App {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return;
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             let Some(number) = digit.to_digit(10).map(|number| number as u8) else {
                 return;
@@ -1796,7 +1994,11 @@ impl App {
             let Some(selection) = self
                 .workspace_rows
                 .iter()
-                .find(|row| row.running && row.number == Some(number))
+                .find(|row| {
+                    row.running
+                        && row.number == Some(number)
+                        && (cfg!(unix) || row.publication_key.is_some())
+                })
                 .map(crate::workspace::WorkspaceRow::selection)
             else {
                 self.action_failed(format!("no session is numbered {number}"));
@@ -1804,17 +2006,23 @@ impl App {
             };
             self.list = None;
             self.session_action_menu = None;
+            #[cfg(windows)]
+            if self.is_current_workspace_selection(&selection) {
+                return;
+            }
             if self.request_selected_workspace_switch(selection) {
                 self.workspace_switch.as_mut().unwrap().running_only = true;
-                self.should_quit = true;
+                if cfg!(unix) {
+                    self.should_quit = true;
+                }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let _ = digit;
     }
 
     pub(super) fn previous_persistent_session(&mut self) {
-        if self.reject_unavailable_persistent_session(cfg!(unix), false) {
+        if self.reject_unavailable_persistent_session(cfg!(any(unix, windows)), false) {
             return;
         }
         if !self.persistent_session {
@@ -1830,7 +2038,7 @@ impl App {
     }
 
     pub(super) fn cycle_persistent_session(&mut self, next: bool) {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             if !self.persistent_session {
                 self.action_failed("session navigation needs workspace.mode: persistent");
@@ -1839,7 +2047,7 @@ impl App {
             let selections = self
                 .workspace_rows
                 .iter()
-                .filter(|row| row.running)
+                .filter(|row| row.running && (cfg!(unix) || row.publication_key.is_some()))
                 .map(crate::workspace::WorkspaceRow::selection)
                 .collect::<Vec<_>>();
             if selections.is_empty() {
@@ -1852,12 +2060,12 @@ impl App {
                 self.observe_session_strip();
                 return;
             }
-            if selections.len() == 1 && selections[0].project_root() == self.project_root {
+            if selections.len() == 1 && self.is_current_workspace_selection(&selections[0]) {
                 return;
             }
             let current = selections
                 .iter()
-                .position(|selection| selection.project_root() == self.project_root);
+                .position(|selection| self.is_current_workspace_selection(selection));
             let index = match (current, next) {
                 (Some(index), true) => (index + 1) % selections.len(),
                 (Some(index), false) => (index + selections.len() - 1) % selections.len(),
@@ -1868,7 +2076,7 @@ impl App {
                 self.workspace_switch.as_mut().unwrap().running_only = true;
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = next;
             self.action_failed("persistent sessions are unavailable on this platform");
@@ -1882,6 +2090,47 @@ impl App {
             self.session_navigation.observation_pending;
         self.next_workspace_status_poll = std::time::Instant::now();
         self.refresh_workspace_activity();
+    }
+
+    /// The host's bound publication is the only current identity on Windows.
+    /// A project root alone may name several live publications.
+    #[cfg(windows)]
+    pub fn note_native_publication(
+        &mut self,
+        metadata: &crate::workspace::windows_endpoint::EndpointMetadata,
+    ) -> anyhow::Result<()> {
+        self.current_native_publication = Some(WorkspaceSelection::selected(
+            metadata.project_root()?,
+            crate::workspace::PublicationKey::from_authenticated_metadata(metadata),
+        ));
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub fn refresh_sessions_on_attachment(&mut self) {
+        self.session_navigation.next_observation = None;
+        self.session_navigation.observation_invalidated =
+            self.session_navigation.observation_pending;
+        self.observe_session_strip();
+    }
+
+    #[cfg(windows)]
+    fn observe_session_strip(&mut self) {
+        let now = std::time::Instant::now();
+        if !self.persistent_session
+            || self.current_native_publication.is_none()
+            || self.session_navigation.observation_pending
+            || self
+                .session_navigation
+                .next_observation
+                .is_some_and(|next| now < next)
+        {
+            return;
+        }
+        self.session_navigation.next_observation = Some(now + std::time::Duration::from_secs(15));
+        if let Some(service) = self.ports.workspace_service.as_ref() {
+            self.session_navigation.observation_pending = service.try_observe().is_ok();
+        }
     }
 
     #[cfg(unix)]
@@ -1923,14 +2172,21 @@ impl App {
                     let mut targets = self
                         .workspace_rows
                         .iter()
-                        .filter(|row| row.running)
+                        .filter(|row| row.running && (cfg!(unix) || row.publication_key.is_some()))
                         .map(crate::workspace::WorkspaceRow::selection)
                         .collect::<Vec<_>>();
+                    #[cfg(unix)]
                     if !targets
                         .iter()
                         .any(|selection| selection.project_root() == self.project_root)
                     {
                         targets.push(WorkspaceSelection::project_only(self.project_root.clone()));
+                    }
+                    #[cfg(windows)]
+                    if let Some(current) = self.current_native_publication.as_ref()
+                        && !targets.contains(current)
+                    {
+                        targets.push(current.clone());
                     }
                     targets
                 };
@@ -1993,10 +2249,71 @@ impl App {
             }
             Some(SessionStripSnapshot { entries })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            use crate::{
+                config::SessionStripVisibility,
+                snapshot::{SessionStripEntry, SessionStripSnapshot},
+            };
+            let current = self.current_native_publication.as_ref()?;
+            if !self.persistent_session
+                || self.config.workspace.session_strip == SessionStripVisibility::Hidden
+                || self
+                    .maximized
+                    .is_some_and(|view| view.view == super::MaximizedView::Zen)
+            {
+                return None;
+            }
+            let mut entries = self
+                .workspace_rows
+                .iter()
+                .filter(|row| row.running && row.publication_key.is_some())
+                .map(|row| SessionStripEntry {
+                    name: row.display_name(),
+                    number: row.number,
+                    current: row.selection() == *current,
+                    unread: row.unread_terminals.is_some_and(|count| count > 0),
+                    bell: row.terminal_bell.unwrap_or(false),
+                    health_unknown: self.session_navigation.health_unknown
+                        || row.incompatible_protocol.is_some()
+                        || row.interactive_attached.is_none(),
+                })
+                .collect::<Vec<_>>();
+            if !entries.iter().any(|entry| entry.current) {
+                entries.push(SessionStripEntry {
+                    name: self.project_root.file_name().map_or_else(
+                        || self.project_root.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    ),
+                    number: self.workspace_number,
+                    current: true,
+                    unread: false,
+                    bell: false,
+                    health_unknown: self.session_navigation.health_unknown,
+                });
+            }
+            if self.config.workspace.session_strip == SessionStripVisibility::Auto
+                && entries.len() < 2
+            {
+                return None;
+            }
+            Some(SessionStripSnapshot { entries })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             None
         }
+    }
+}
+
+/// Keep a backslash after `~/` as a Unix filename character. Windows accepts
+/// either native or slash separators after the home shorthand.
+fn home_relative_directory(query: &str, windows_path_syntax: bool) -> &str {
+    let relative = query.trim_start_matches('~');
+    if windows_path_syntax {
+        relative.trim_start_matches(['/', '\\'])
+    } else {
+        relative.trim_start_matches('/')
     }
 }
 
@@ -2005,7 +2322,7 @@ impl App {
         self.session_navigation.inventory.is_some()
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(all(test, any(unix, windows)))]
     pub(super) fn session_inventory_request(&self) -> Option<(u64, &WorkspaceSelection)> {
         self.session_navigation
             .inventory
@@ -2013,68 +2330,68 @@ impl App {
             .map(|inventory| (inventory.generation, &inventory.selection))
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(super) fn open_session_inventory(&mut self) {
-        #[cfg(unix)]
-        {
-            let Some(ListAction::Workspace(index)) = self.selected_list_action() else {
-                return;
-            };
-            let Some(row) = self.workspace_rows.get(index).cloned() else {
-                return;
-            };
-            if self.workspace_row_index(&row.selection()) != Ok(Some(index)) {
-                self.action_failed("session list contains duplicate selection identity");
-                return;
-            }
-            let Some(saved_picker) = self.list.take() else {
-                return;
-            };
-            self.session_navigation.generation = self.session_navigation.generation.wrapping_add(1);
-            let generation = self.session_navigation.generation;
-            self.session_navigation.inventory = Some(SessionInventory {
-                path: row.project_root.clone(),
-                selection: row.selection(),
-                generation,
-                saved_picker,
-                incarnation: None,
-                entries: Vec::new(),
-            });
-            self.session_action_menu = None;
-            let message = if !row.running {
-                "This session is stopped"
-            } else if row.incompatible_protocol.is_some() {
-                "This host uses an unsupported protocol"
-            } else {
-                "Loading open destinations…"
-            };
-            self.list = Some(
-                ListPicker::new(
-                    "Session destinations",
-                    vec![PickerItem::new(message, "Escape returns to sessions", 0)],
-                )
-                .as_report(),
-            );
-            if row.running && row.incompatible_protocol.is_none() {
-                let result = self
-                    .ports
-                    .workspace_service
-                    .as_ref()
-                    .ok_or("session service is unavailable")
-                    .and_then(|service| service.try_inventory(generation, row.selection()));
-                if let Err(error) = result {
-                    self.list = Some(
-                        ListPicker::new(
-                            "Session destinations · unavailable",
-                            vec![PickerItem::new(error, "Escape returns to sessions", 0)],
-                        )
-                        .as_report(),
-                    );
-                }
+        #[cfg(windows)]
+        if self.session_manager_selection_lost {
+            self.action_failed("selected session changed; choose it again");
+            return;
+        }
+        let Some(ListAction::Workspace(index)) = self.selected_list_action() else {
+            return;
+        };
+        let Some(row) = self.workspace_rows.get(index).cloned() else {
+            return;
+        };
+        if self.workspace_row_index(&row.selection()) != Ok(Some(index)) {
+            self.action_failed("session list contains duplicate selection identity");
+            return;
+        }
+        let Some(saved_picker) = self.list.take() else {
+            return;
+        };
+        self.session_navigation.generation = self.session_navigation.generation.wrapping_add(1);
+        let generation = self.session_navigation.generation;
+        self.session_navigation.inventory = Some(SessionInventory {
+            path: row.project_root.clone(),
+            selection: row.selection(),
+            generation,
+            saved_picker,
+            incarnation: None,
+            entries: Vec::new(),
+        });
+        self.session_action_menu = None;
+        let message = if !row.running {
+            "This session is stopped"
+        } else if row.incompatible_protocol.is_some() {
+            "This host uses an unsupported protocol"
+        } else {
+            "Loading open destinations…"
+        };
+        self.list = Some(
+            ListPicker::new(
+                "Session destinations",
+                vec![PickerItem::new(message, "Escape returns to sessions", 0)],
+            )
+            .as_report(),
+        );
+        if row.running && row.incompatible_protocol.is_none() {
+            let result = self
+                .ports
+                .workspace_service
+                .as_ref()
+                .ok_or("session service is unavailable")
+                .and_then(|service| service.try_inventory(generation, row.selection()));
+            if let Err(error) = result {
+                self.list = Some(
+                    ListPicker::new(
+                        "Session destinations · unavailable",
+                        vec![PickerItem::new(error, "Escape returns to sessions", 0)],
+                    )
+                    .as_report(),
+                );
             }
         }
-        #[cfg(not(unix))]
-        self.action_failed("persistent sessions are unavailable on this platform");
     }
 
     pub(super) fn handle_session_inventory_key(
@@ -2087,10 +2404,15 @@ impl App {
             (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
                 let inventory = self.session_navigation.inventory.take().unwrap();
                 self.list = Some(inventory.saved_picker);
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 {
                     self.rebuild_workspace_picker();
-                    if self.restore_workspace_selection(&inventory.selection) {
+                    let restored = self.restore_workspace_selection(&inventory.selection);
+                    #[cfg(windows)]
+                    {
+                        self.session_manager_selection_lost = !restored;
+                    }
+                    if restored {
                         self.request_selected_workspace_preview();
                     }
                 }
@@ -2125,7 +2447,7 @@ impl App {
                     picker.last();
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             (KeyCode::Enter, _) => {
                 let inventory = self.session_navigation.inventory.as_ref().unwrap();
                 let selected = self
@@ -2187,5 +2509,16 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod home_directory_tests {
+    use super::home_relative_directory;
+
+    #[test]
+    fn unix_home_path_keeps_literal_backslash_after_slash() {
+        assert_eq!(home_relative_directory("~/\\child/", false), "\\child/");
+        assert_eq!(home_relative_directory("~\\child\\", true), "child\\");
     }
 }

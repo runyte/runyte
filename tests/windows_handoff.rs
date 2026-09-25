@@ -27,6 +27,16 @@ struct FixtureChild {
     child: Child,
     job: OwnedHandle,
 }
+
+struct ForegroundHost(Child);
+impl Drop for ForegroundHost {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
 impl FixtureChild {
     fn spawn(command: &mut Command, root: &Path) -> Self {
         let job = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
@@ -86,6 +96,9 @@ fn powershell_wrapper_keeps_literal_paths_and_returns_to_its_caller() {
     assert_eq!(root_path.canonicalize().unwrap(), root.path());
     let temporary = root_path.join("handoff-temp");
     std::fs::create_dir(&temporary).unwrap();
+    for name in ["runtime", "cache", "context", "inventory"] {
+        root.create_private_dir(name).unwrap();
+    }
     let binary = Path::new(env!("CARGO_BIN_EXE_runyte"));
     let mut search_path = vec![binary.parent().unwrap().to_path_buf()];
     if let Some(existing) = std::env::var_os("PATH") {
@@ -97,7 +110,9 @@ fn powershell_wrapper_keeps_literal_paths_and_returns_to_its_caller() {
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
             .env("XDG_CONFIG_HOME", root_path.join("config"))
             .env("XDG_CACHE_HOME", root_path.join("cache"))
+            .env("XDG_RUNTIME_DIR", root_path.join("runtime"))
             .env("RUNYTE_CONTEXT_HOME", root_path.join("context"))
+            .env("RUNYTE_ALL_HOSTS_DIR", root_path.join("inventory"))
             .env("RUNYTE_HANDOFF_ROOT", &root_path)
             .env(
                 "RUNYTE_HANDOFF_WRAPPER",
@@ -139,6 +154,76 @@ fn powershell() -> PathBuf {
         .join("System32/WindowsPowerShell/v1.0/powershell.exe")
 }
 
+fn start_foreground_host(
+    root: &Path,
+    project: &Path,
+    target: &Path,
+    config: &Path,
+    label: &str,
+) -> ForegroundHost {
+    let output = std::fs::File::create(root.join(format!("{label}-host.log"))).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .args(["--serve", "--project-root"])
+        .arg(project)
+        .arg("--config")
+        .arg(config)
+        .arg("--log")
+        .arg(root.join(format!("{label}-runyte.log")))
+        .arg("--")
+        .arg(target)
+        .current_dir(project)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .env_remove("RUNYTE_INTERNAL_WINDOWS_LAYOUT")
+        .stdin(Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .spawn()
+        .unwrap();
+    let mut host = ForegroundHost(child);
+    let canonical = project.canonicalize().unwrap();
+    let ready = root
+        .join("runtime/runyte")
+        .join(runyte::workspace::workspace_id(&canonical))
+        .join("endpoint.json");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Ok(bytes) = std::fs::read(&ready)
+            && let Ok(metadata) =
+                runyte::workspace::windows_endpoint::EndpointMetadata::from_json(&bytes)
+            && metadata.process.pid == host.0.id()
+        {
+            return host;
+        }
+        assert!(
+            host.0.try_wait().is_ok_and(|status| status.is_none()) && Instant::now() < deadline,
+            "{label} persistent host did not publish at {ready:?}; process={:?}; output={}; host log={}; inventory entries={:?}; state entries={:?}; runtime entries={:?}",
+            host.0.try_wait(),
+            std::fs::read_to_string(root.join(format!("{label}-host.log"))).unwrap_or_default(),
+            std::fs::read_to_string(root.join(format!("{label}-runyte.log"))).unwrap_or_default(),
+            std::fs::read_dir(root.join("inventory"))
+                .ok()
+                .map(|entries| entries
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .collect::<Vec<_>>()),
+            std::fs::read_dir(project.join(".runyte"))
+                .ok()
+                .map(|entries| entries
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .collect::<Vec<_>>()),
+            std::fs::read_dir(root.join("runtime/runyte"))
+                .ok()
+                .map(|entries| entries
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .collect::<Vec<_>>()),
+        );
+        std::thread::sleep(Duration::from_millis(15));
+    }
+}
+
 fn script_arguments(mode: &str) -> Vec<String> {
     vec![
         "-NoLogo".into(),
@@ -164,11 +249,11 @@ struct Console {
 }
 
 impl Console {
-    fn spawn(root: &Path) -> Self {
+    fn spawn(root: &Path, mode: &str) -> Self {
         let (sender, events) = mpsc::channel();
         let child = Pty::spawn(
             powershell().as_os_str(),
-            &script_arguments("Editor"),
+            &script_arguments(mode),
             root,
             120,
             30,
@@ -298,7 +383,9 @@ fn native_powershell_handoff_fixture() {
             .args(script_arguments(mode))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))
+            .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
             .env("RUNYTE_HANDOFF_CONFIG", &config)
             .env("RUNYTE_HANDOFF_TARGET", &target)
             .stdin(Stdio::null())
@@ -343,8 +430,8 @@ fn native_powershell_handoff_fixture() {
 
     // ConPTY's environment comes from a second compiled helper, so the editor
     // targets stay fixture-owned without mutating this process's environment.
-    for operation in ["quit", "quit-here", "force"] {
-        let output = Command::new(std::env::current_exe().unwrap())
+    let run_console = |operation: &str| {
+        Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "handoff_console_fixture",
@@ -353,13 +440,18 @@ fn native_powershell_handoff_fixture() {
             ])
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))
+            .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
             .env("RUNYTE_HANDOFF_CONFIG", &config)
             .env("RUNYTE_HANDOFF_TARGET", &target)
             .env("RUNYTE_HANDOFF_OPERATION", operation)
             .stdin(Stdio::null())
             .output()
-            .unwrap();
+            .unwrap()
+    };
+    for operation in ["quit", "quit-here", "force"] {
+        let output = run_console(operation);
         assert!(
             output.status.success(),
             "{}",
@@ -378,6 +470,58 @@ fn native_powershell_handoff_fixture() {
             expected.canonicalize().unwrap()
         );
     }
+
+    // The physical PowerShell caller owns the same private handoff file while
+    // its TUI moves from project A to a separate live project B. The host
+    // reports B's chosen directory; only that caller publishes the record.
+    std::fs::write(project.join("a.txt"), "HANDOFF_A_MARKER\n").unwrap();
+    let mut host_a = start_foreground_host(&root, &project, &project.join("a.txt"), &config, "a");
+    let mut host_b = start_foreground_host(&root, &directory, &target, &config, "b");
+    for operation in [
+        "persistent-detach",
+        "persistent-no-handoff",
+        "persistent-quit-here",
+        "persistent-quit",
+    ] {
+        let output = run_console(operation);
+        assert!(
+            output.status.success(),
+            "{operation}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let completed = result(&root);
+        assert_eq!(completed.code, 0, "{operation}");
+        assert_eq!(completed.remaining, 0, "{operation}");
+        let expected = if operation == "persistent-quit-here" {
+            &directory
+        } else {
+            &project
+        };
+        assert_eq!(
+            completed.directory.canonicalize().unwrap(),
+            expected.canonicalize().unwrap(),
+            "{operation}"
+        );
+        if operation != "persistent-quit" {
+            assert!(
+                host_a.0.try_wait().unwrap().is_none(),
+                "source host A stopped after {operation}"
+            );
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while host_b.0.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "quit-here did not stop host B");
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while host_a.0.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "ordinary quit did not stop host A"
+        );
+        std::thread::sleep(Duration::from_millis(15));
+    }
     assert_eq!(
         std::fs::read_to_string(target).unwrap(),
         "HANDOFF_TARGET_MARKER\n"
@@ -389,10 +533,31 @@ fn native_powershell_handoff_fixture() {
 fn handoff_console_fixture() {
     let root = PathBuf::from(std::env::var_os("RUNYTE_HANDOFF_ROOT").unwrap());
     let operation = std::env::var("RUNYTE_HANDOFF_OPERATION").unwrap();
-    let mut editor = Console::spawn(&root);
-    editor.until("HANDOFF_TARGET_MARKER");
-    editor.until("NOR");
-    if operation == "force" {
+    let mode = if operation == "persistent-no-handoff" {
+        "PersistentDirect"
+    } else if operation.starts_with("persistent") {
+        "Persistent"
+    } else {
+        "Editor"
+    };
+    let mut editor = Console::spawn(&root, mode);
+    if operation.starts_with("persistent") {
+        editor.until("HANDOFF_A_MARKER");
+        editor.until("NOR");
+    }
+    if operation == "persistent-quit-here" {
+        editor.send(":open-session-directory\r");
+        editor.until("Open this directory");
+        let directory = root.join("project/literal [brackets] café ' $tick`");
+        editor.send(&format!("{}\\", directory.display()));
+        editor.until("literal [brackets]");
+        editor.send("\r");
+    }
+    if !operation.starts_with("persistent") || operation == "persistent-quit-here" {
+        editor.until("HANDOFF_TARGET_MARKER");
+        editor.until("NOR");
+    }
+    if operation == "force" || operation == "persistent-quit-here" {
         editor.send("i");
         editor.until("INS");
         editor.send("\x1b[200~discard \x1b[201~");
@@ -402,6 +567,14 @@ fn handoff_console_fixture() {
         editor.send(":qh\r");
         editor.until("unsaved changes");
         editor.send(":qh!\r");
+    } else if operation == "persistent-no-handoff" {
+        editor.send(":qh\r");
+        editor.until("requires the runyte()");
+        editor.send(":detach\r");
+    } else if operation == "persistent-detach" {
+        editor.send(":detach\r");
+    } else if operation == "persistent-quit" {
+        editor.send(":qa\r");
     } else {
         editor.send(&format!(":{operation}\r"));
     }

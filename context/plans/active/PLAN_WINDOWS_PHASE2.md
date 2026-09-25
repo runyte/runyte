@@ -4,7 +4,15 @@ For the current working-tree state, exact next package and reviewed remaining
 designs, start with the [continuation handoff](../../reviews/windows_phase2_handoff.md).
 Phase 2.1–2.4 are complete; 2.5 is in progress. In 2.6, public Windows
 context access and the configured plugin lifecycle are implemented. Managed
-plugin helper processes remain unavailable on Windows.
+plugin helper processes are implemented in the current working tree and have
+passed focused native runtime, public plugin acceptance and the full workspace
+suite.
+The current working tree also passes focused real Windows acceptance for
+ordinary-shell persistent `--wait`, exact session navigation and destination
+visits, selected stopped-session startup, guarded Git worktree/branch teardown,
+and PowerShell `:quit-here` from a persistent attachment after switching hosts.
+Native formatting, denied-warning all-target Clippy and the full workspace
+suite pass on this working tree.
 The chronological entries below retain earlier checkpoint evidence.
 
 The public plugin lifecycle source checkpoint is `9743bd9`. Windows plugin
@@ -69,10 +77,12 @@ name fallback; the standalone manager remains control-only. Native format,
 all-target Clippy, the full workspace suite and real two-host visit and stale
 refusal acceptance passed, with independent source review clear. These newer
 commits remain local: automatic approval review denied the push, and no remote
-CI result exists for them. Persistent wait into a host from an ordinary shell,
-numbered and other in-editor navigation, directory handoff and combined Git
-branch/worktree removal remain gated. Detached-capable restart acceptance also
-remains open.
+CI result exists for them. Later uncommitted work opens ordinary-shell
+persistent wait, numbered and other in-editor navigation, directory handoff,
+and combined Git branch/worktree removal with focused native acceptance;
+native formatting, denied-warning all-target Clippy and the full workspace
+suite pass. Successful restart has local stop-to-start acceptance in an
+admitted nested Windows job.
 
 ## Checkpoint and next work package
 
@@ -180,8 +190,8 @@ It is pushed as `fc9c324`; remote run `35542444854` passes all jobs.
 6. **Plugins and context access.** Native context transport, discovery, storage,
    bridge integration, and approval ownership are public. Configured plugin
    lifecycle, native workers, state and handoffs are public while the retained
-   plugin contracts remain unchanged. Managed helper processes remain unavailable
-   on Windows.
+   plugin contracts remain unchanged. Managed helper processes are implemented
+   on Windows in the current working tree and pass the full workspace suite.
 
 ### Windows binary release follow-up
 
@@ -550,8 +560,11 @@ race, corrected with independent review in `fd1cd7b` and recorded in
 The ConPTY save fixture now waits for the editor's successful write status
 before reading completed contents. A single pre-completion `NotFound` read is
 recorded separately in
-[`windows_save_path_visibility.md`](../../issues/windows_save_path_visibility.md);
-neither a persistent save failure nor its underlying cause is established.
+[`windows_save_path_visibility.md`](../../issues/resolved/windows_save_path_visibility.md).
+Subsequent native characterization at `5295d2e` observed missing-file and sharing
+errors during replacement, with exact bytes after all 128 completed saves.
+Neither a persistent save failure nor the original observation's underlying
+cause is established.
 
 #### Sub-phase 2.4 package 2 contract
 

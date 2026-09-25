@@ -3,6 +3,7 @@
 
 use super::{TerminationSignals, windows_frontend, windows_host};
 use runyte::{
+    config::Config,
     launch::LaunchArguments,
     protocol::{ClientRequest, FeatureGroup, HostResponse as ProtocolHostResponse, WaitStatus},
     startup::StartupTrace,
@@ -14,6 +15,7 @@ use runyte::{
     workspace::{
         windows_endpoint::{EndpointLocation, EndpointMetadata, RegistrySet},
         windows_lifecycle::{await_host_stopped, connect_control, shutdown_host},
+        windows_location::{CapturedRoots, DiscoveryInputs, DiscoveryScope},
         windows_parent_identity::ForegroundParentSupervisor,
         windows_process_identity::PinnedProcess,
         windows_transport::{HostResponse, LocalServer, ServerEvent},
@@ -65,6 +67,7 @@ const SWITCH_FRONTEND: &str = "windows_frontend_acceptance::switch_frontend_fixt
 const SWITCH_BUSY_HOLDER: &str = "windows_frontend_acceptance::switch_busy_holder_fixture";
 const SWITCH_LOST_ACK: &str = "windows_frontend_acceptance::switch_lost_ack_fixture";
 const SWITCH_B_FRONTEND: &str = "windows_frontend_acceptance::switch_b_frontend_fixture";
+const SWITCH_RETURN_FRONTEND: &str = "windows_frontend_acceptance::switch_return_frontend_fixture";
 const PARENT_WAIT_PARENT: &str = "windows_frontend_acceptance::parent_wait_parent_fixture";
 const PARENT_WAIT_FRONTEND: &str = "windows_frontend_acceptance::parent_wait_frontend_fixture";
 const PARENT_WAIT_LAUNCHER: &str = "windows_frontend_acceptance::parent_wait_launcher_fixture";
@@ -795,11 +798,29 @@ fn parent_attach_host_fixture() {
         fs::write(root.join("failed-startup-invoked"), b"1").unwrap();
         return;
     }
-    assert_eq!(
-        project,
-        root.join("attach-destination").canonicalize().unwrap()
-    );
-    fs::write(root.join("parent-side-destination-started"), b"1").unwrap();
+    if project.ends_with("project-cancel") {
+        let identity =
+            runyte::workspace::windows_process_identity::ProcessIdentity::current().unwrap();
+        fs::write(
+            root.join("directory-cancel-process.json"),
+            serde_json::to_vec(&identity).unwrap(),
+        )
+        .unwrap();
+        while root.join("hold-directory-cancel").exists() {
+            thread::sleep(Duration::from_millis(15));
+        }
+        panic!("canceled provisional directory host was released");
+    }
+    if project.ends_with("project-new") {
+        assert_eq!(project, root.join("project-new").canonicalize().unwrap());
+        fs::write(root.join("directory-destination-started"), b"1").unwrap();
+    } else {
+        assert_eq!(
+            project,
+            root.join("attach-destination").canonicalize().unwrap()
+        );
+        fs::write(root.join("parent-side-destination-started"), b"1").unwrap();
+    }
     let args: Vec<OsString> = vec![
         "--serve".into(),
         "--detached-host".into(),
@@ -840,6 +861,7 @@ fn switch_parent_fixture() {
         );
         thread::sleep(Duration::from_millis(10));
     }
+    let _parent_attach_breakaway = enter_parent_attach_breakaway_job();
     assert_eq!(
         std::env::var_os("XDG_CONFIG_HOME"),
         Some(root.join("config").into())
@@ -853,12 +875,18 @@ fn switch_parent_fixture() {
     let a = root.join("project-a");
     let b = root.join("project-b");
     let busy = root.join("project-busy");
+    let newly_started = root.join("project-new");
+    let canceled = root.join("project-cancel");
     fs::create_dir_all(&a).unwrap();
     fs::create_dir_all(&b).unwrap();
     fs::create_dir_all(&busy).unwrap();
+    fs::create_dir_all(&newly_started).unwrap();
+    fs::create_dir_all(&canceled).unwrap();
     fs::write(a.join("note.txt"), "WORKSPACE_A\n").unwrap();
     fs::write(b.join("note.txt"), "WORKSPACE_B\n").unwrap();
+    fs::write(b.join("other.txt"), "WORKSPACE_OTHER\n").unwrap();
     fs::write(busy.join("note.txt"), "WORKSPACE_BUSY\n").unwrap();
+    fs::write(newly_started.join("note.txt"), "WORKSPACE_NEW\n").unwrap();
 
     let spawn_host = |project: &Path, label: &str| {
         let inbox = root.join(format!("switch-inbox-{label}"));
@@ -869,6 +897,7 @@ fn switch_parent_fixture() {
                 .args(["--exact", SWITCH_HOST, "--ignored", "--nocapture"])
                 .env("RUNYTE_SWITCH_PROJECT", project)
                 .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &inbox)
+                .env("RUNYTE_TEST_PARENT_ATTACH_HOST_FIXTURE", PARENT_ATTACH_HOST)
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("RUNYTE_CONTEXT_HOME", root.join("context"))
                 .current_dir(project)
@@ -913,6 +942,50 @@ fn switch_parent_fixture() {
     await_publication(&a, &mut host_a, "a");
     let (mut host_b, inbox_b) = spawn_host(&b, "b");
     await_publication(&b, &mut host_b, "b");
+    let destination_visit = {
+        let metadata =
+            EndpointMetadata::from_json(&fs::read(runtime_ready_record(&root, &b)).unwrap())
+                .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut control = runyte::workspace::windows_lifecycle::connect_control(&metadata)
+                .await
+                .unwrap();
+            control
+                .send(&runyte::protocol::ClientRequest::OpenBuffers {
+                    paths: vec![runyte::protocol::encode_path(&b.join("other.txt"))],
+                    activate: false,
+                })
+                .await
+                .unwrap();
+            match control.recv().await.unwrap() {
+                Some(runyte::protocol::HostResponse::Opened { .. }) => {}
+                other => panic!("hidden destination did not open: {other:?}"),
+            }
+            control
+                .send(&runyte::protocol::ClientRequest::DestinationInventory)
+                .await
+                .unwrap();
+            match control.recv().await.unwrap() {
+                Some(runyte::protocol::HostResponse::DestinationInventory {
+                    incarnation,
+                    entries,
+                    ..
+                }) => runyte::protocol::DestinationVisit {
+                    incarnation,
+                    destination: entries
+                        .into_iter()
+                        .find(|entry| entry.label.contains("other.txt"))
+                        .expect("hidden destination is in inventory")
+                        .destination,
+                },
+                other => panic!("hidden destination inventory unavailable: {other:?}"),
+            }
+        })
+    };
     let (mut host_busy, _) = spawn_host(&busy, "busy");
     await_publication(&busy, &mut host_busy, "busy");
 
@@ -929,6 +1002,23 @@ fn switch_parent_fixture() {
         )
         .unwrap();
         fs::rename(pending, inbox.join("switch-target.json")).unwrap();
+    };
+    let inject_visit =
+        |inbox: &Path, project: &Path, visit: &runyte::protocol::DestinationVisit| {
+            let pending = inbox.join("switch-visit.pending");
+            fs::write(&pending, serde_json::to_vec(visit).unwrap()).unwrap();
+            fs::rename(pending, inbox.join("switch-visit.json")).unwrap();
+            inject(inbox, project);
+        };
+    let inject_directory = |inbox: &Path, project: &Path| {
+        match fs::remove_file(inbox.join("switch-stage")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to clear native directory switch stage: {error}"),
+        }
+        let pending = inbox.join("switch-directory.pending");
+        fs::write(&pending, serde_json::to_vec(project).unwrap()).unwrap();
+        fs::rename(pending, inbox.join("switch-directory.json")).unwrap();
     };
     let await_stage = |inbox: &Path, label: &str, expected: &str| {
         let marker = inbox.join("switch-stage");
@@ -954,16 +1044,48 @@ fn switch_parent_fixture() {
 
     let mut frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
     frontend.until_screen("WORKSPACE_A");
-    inject(&inbox_a, &busy);
+    frontend.until_screen("project-b");
+    assert!(
+        frontend
+            .display()
+            .lines()
+            .next()
+            .unwrap()
+            .contains("project-b"),
+        "the automatic session strip did not appear above the editor"
+    );
+    inject_directory(&inbox_a, &busy);
     await_stage(&inbox_a, "a", "aborted");
     frontend.insert_and_write("RECOVERED ");
-    inject(&inbox_a, &b);
+    let target_column = frontend
+        .display()
+        .lines()
+        .next()
+        .unwrap()
+        .find("project-b")
+        .unwrap()
+        + 1;
+    frontend.send(&format!(
+        "\x1b[<0;{target_column};1M\x1b[<0;{target_column};1m"
+    ));
     frontend.until_screen("WORKSPACE_B");
     frontend.insert_and_write("B_EDIT ");
-    inject(&inbox_b, &a);
+    inject_directory(&inbox_b, &a);
+    frontend.until_screen("WORKSPACE_A");
+    let mut stale_visit = destination_visit.clone();
+    stale_visit.incarnation = "0".repeat(64);
+    inject_visit(&inbox_a, &b, &stale_visit);
+    await_stage(&inbox_a, "a", "aborted");
+    frontend.insert_and_write("AFTER_STALE_VISIT ");
+    inject_visit(&inbox_a, &b, &destination_visit);
+    frontend.until_screen("WORKSPACE_OTHER");
+    frontend.insert_and_write("VISITED ");
+    frontend.send(":open note.txt\r");
+    frontend.until_screen("WORKSPACE_B");
+    inject_directory(&inbox_b, &a);
     frontend.until_screen("WORKSPACE_A");
     frontend.insert_and_write("NOOP_BEFORE ");
-    inject(&inbox_a, &a);
+    inject_directory(&inbox_a, &a);
     let deadline = Instant::now() + TIMEOUT;
     while !inbox_a.join("noop-complete").exists() {
         assert!(
@@ -980,9 +1102,24 @@ fn switch_parent_fixture() {
             .unwrap()
             .contains("B_EDIT")
     );
+    assert!(
+        fs::read_to_string(b.join("other.txt"))
+            .unwrap()
+            .contains("VISITED")
+    );
     let a_text = fs::read_to_string(a.join("note.txt")).unwrap();
-    assert!(a_text.contains("RECOVERED"));
+    assert!(a_text.contains("RECOVERED") && a_text.contains("AFTER_STALE_VISIT"));
     assert!(a_text.contains("NOOP_BEFORE") && a_text.contains("AFTER_NOOP"));
+
+    // Directory startup uses a two-phase source receipt. Losing the final
+    // receipt after the frontend confirmed it must not strand the destination.
+    fs::write(inbox_a.join("drop-commit-ack"), b"1").unwrap();
+    let mut directory_lost_ack = Console::spawn(&a, SWITCH_FRONTEND, 100);
+    directory_lost_ack.until_screen("WORKSPACE_A");
+    inject_directory(&inbox_a, &b);
+    directory_lost_ack.until_screen("WORKSPACE_B");
+    directory_lost_ack.detach();
+    directory_lost_ack.exit("SWITCH_FRONTEND_DONE");
 
     fs::write(inbox_a.join("drop-commit-ack"), b"1").unwrap();
     let mut lost = Console::spawn(&a, SWITCH_LOST_ACK, 100);
@@ -994,9 +1131,110 @@ fn switch_parent_fixture() {
     destination.until_screen("WORKSPACE_B");
     destination.detach();
     destination.exit("SWITCH_B_AVAILABLE");
+
+    fs::write(root.join("hold-directory-cancel"), b"1").unwrap();
+    let mut cancel_frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
+    cancel_frontend.until_screen("WORKSPACE_A");
+    inject_directory(&inbox_a, &canceled);
+    let cancel_identity_path = root.join("directory-cancel-process.json");
+    let cancel_deadline = Instant::now() + TIMEOUT;
+    while !cancel_identity_path.exists() {
+        assert!(
+            Instant::now() < cancel_deadline,
+            "canceled directory startup did not begin"
+        );
+        thread::sleep(Duration::from_millis(15));
+    }
+    let canceled_identity: runyte::workspace::windows_process_identity::ProcessIdentity =
+        serde_json::from_slice(&fs::read(&cancel_identity_path).unwrap()).unwrap();
+    drop(cancel_frontend);
+    let cleanup_deadline = Instant::now() + TIMEOUT;
+    loop {
+        match runyte::workspace::windows_process_identity::PinnedProcess::open(canceled_identity) {
+            Ok(
+                runyte::workspace::windows_process_identity::PinResult::Gone
+                | runyte::workspace::windows_process_identity::PinResult::Reused,
+            ) => break,
+            Ok(runyte::workspace::windows_process_identity::PinResult::Pinned(_)) => {}
+            Err(error) => panic!("cannot inspect canceled directory host: {error}"),
+        }
+        assert!(
+            Instant::now() < cleanup_deadline,
+            "canceled provisional host survived"
+        );
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(!runtime_ready_record(&root, &canceled).exists());
+
+    let mut new_frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
+    new_frontend.until_screen("WORKSPACE_A");
+    inject_directory(&inbox_a, &newly_started);
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        new_frontend.until_screen("WORKSPACE_NEW");
+    }))
+    .is_err()
+    {
+        panic!(
+            "new directory startup diagnostics: helper invoked={}, source stage={:?}, destination ready={}, source log={} ",
+            root.join("directory-destination-started").exists(),
+            fs::read_to_string(inbox_a.join("switch-stage")),
+            runtime_ready_record(&root, &newly_started).exists(),
+            fs::read_to_string(root.join("switch-host-a.log"))
+                .unwrap_or_default()
+                .chars()
+                .take(2_000)
+                .collect::<String>()
+        );
+    }
+    new_frontend.insert_and_write("CREATED ");
+    new_frontend.detach();
+    new_frontend.exit("SWITCH_FRONTEND_DONE");
+    assert!(
+        fs::read_to_string(newly_started.join("note.txt"))
+            .unwrap()
+            .contains("CREATED")
+    );
+
+    // The destination learns the exact previous publication only after the
+    // source switch commits. A clean host quit returns this same TUI to its
+    // prior live publication after the stopping process has settled.
+    let mut returning = Console::spawn(&a, SWITCH_RETURN_FRONTEND, 100);
+    returning.until_screen("WORKSPACE_A");
+    inject_directory(&inbox_a, &newly_started);
+    returning.until_screen("WORKSPACE_NEW");
+    returning.send(":previous-session\r");
+    returning.until_screen("WORKSPACE_A");
+    inject_directory(&inbox_a, &newly_started);
+    returning.until_screen("WORKSPACE_NEW");
+    returning.send(":qa\r");
+    returning.until_screen("WORKSPACE_A");
+    returning.insert_and_write("RETURNED ");
+    returning.detach();
+    returning.exit("SWITCH_RETURN_DONE");
+    assert!(
+        fs::read_to_string(a.join("note.txt"))
+            .unwrap()
+            .contains("RETURNED")
+    );
+
+    // Drive-letter and backslash input passes through the real chooser key
+    // handler before the host's provisional directory acceptance.
+    let mut chooser_frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
+    chooser_frontend.until_screen("WORKSPACE_A");
+    chooser_frontend.send(":open-session-directory");
+    chooser_frontend.until_screen(":open-session-directory");
+    chooser_frontend.send("\r");
+    chooser_frontend.until_screen("Open this directory");
+    chooser_frontend.send(&format!("{}\\", b.display()));
+    chooser_frontend.until_screen("project-b");
+    chooser_frontend.send("\r");
+    chooser_frontend.until_screen("WORKSPACE_B");
+    chooser_frontend.detach();
+    chooser_frontend.exit("SWITCH_FRONTEND_DONE");
+
     drop(busy_holder);
     host_a.0.kill().unwrap();
-    host_b.0.kill().unwrap();
+    let _ = host_b.0.kill();
     host_busy.0.kill().unwrap();
 }
 
@@ -1059,6 +1297,42 @@ fn switch_lost_ack_fixture() {
 #[ignore = "proves the abandoned destination accepts a later frontend"]
 fn switch_b_frontend_fixture() {
     run_switch_frontend("project-b", None, "SWITCH_B_AVAILABLE");
+}
+
+#[test]
+#[ignore = "returns from a stopped native host to a prior exact publication"]
+fn switch_return_frontend_fixture() {
+    use std::io::Write;
+    let root = root();
+    let project = root.join("project-a");
+    let metadata =
+        EndpointMetadata::from_json(&fs::read(runtime_ready_record(&root, &project)).unwrap())
+            .unwrap();
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: vec![root.join("config"), root.join("cache")],
+        roots: CapturedRoots::capture(),
+    })
+    .unwrap();
+    let configured_state = Config::default().workspace.state;
+    let original = input_mode();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut termination = TerminationSignals::new().unwrap();
+    runtime
+        .block_on(windows_frontend::attach_exact_with_catalog(
+            &metadata,
+            &mut termination,
+            true,
+            &scope,
+            &configured_state,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(input_mode(), original);
+    println!("SWITCH_RETURN_DONE");
+    std::io::stdout().flush().unwrap();
 }
 
 fn run_switch_frontend(project: &str, expected_error: Option<&str>, marker: &str) {
@@ -1278,7 +1552,11 @@ fn stall_server_fixture() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let registries = RegistrySet::open(&[root.join("stall-registry")]).unwrap();
+        let registries = RegistrySet::with_inventory(
+            &[root.join("stall-registry")],
+            Some(root.join("stall-inventory")),
+        )
+        .unwrap();
         let endpoint =
             EndpointLocation::new(&project, root.join("stall-endpoint"), registries).unwrap();
         let mut server = LocalServer::bind(endpoint.prepare(None).unwrap()).unwrap();

@@ -1173,6 +1173,8 @@ fn app_with_confirmation(root: &Path, branch: &str, inspect: impl FnOnce(&mut Ap
     .unwrap();
     app.git_worktree_removal = Some(WorktreeRemovalConfirmation {
         session: None,
+        #[cfg(windows)]
+        reviewed_live: None,
         plan: WorktreeRemovalPlan {
             path: root.join("linked"),
             head: Some("1".repeat(40)),
@@ -3907,6 +3909,35 @@ fn session_directory_paste_uses_path_completion_state() {
             .title
             .contains(&child.display().to_string())
     );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn session_directory_home_path_preserves_literal_backslash_filename() {
+    let root = temporary("chooser-home-backslash");
+    // This Unix-only regression deliberately starts a filename with a literal
+    // backslash; it is not a Unix separator. Clippy checks both platforms.
+    #[allow(clippy::join_absolute_paths)]
+    let child = root.join("\\literal");
+    fs::create_dir_all(&child).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.home_directory = Some(root.clone());
+    app.enable_persistent_session();
+    app.open_session_directory_chooser();
+    app.handle_input(InputEvent::Text("~/\\literal/".to_owned()))
+        .unwrap();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(
         switch_target_path(&app.take_workspace_switch().unwrap()),

@@ -41,12 +41,100 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+/// Excludes publication startup from a project-wide operation such as Git
+/// worktree removal. Every configured namespace for the same account uses the
+/// owner inventory, so this lock is keyed only by the canonical project root.
+/// Hold it until publication has either succeeded or failed; a remover holds
+/// it while it checks and stops hosts and removes the worktree.
+#[derive(Clone, Debug)]
+pub struct ProjectLease(Arc<ProjectLeaseInner>);
+
+#[derive(Debug)]
+struct ProjectLeaseInner {
+    project: PathBuf,
+    project_identity: crate::windows_fs::Identity,
+    inventory: PathBuf,
+    inventory_key: locking::FileKey,
+    lock_name: String,
+    lock_key: locking::FileKey,
+    _directory: Directory,
+    _registry_file: File,
+    _lock: locking::Lock,
+}
+
+impl ProjectLease {
+    pub fn acquire(project: &Path, inventory: &Path) -> io::Result<Self> {
+        let project = super::WorkspaceIdentity::resolve(project)?
+            .root()
+            .to_owned();
+        let project_identity = crate::windows_fs::Identity::read(&project)?;
+        metadata::persisted_path(&encode_path(&project))?;
+        let id = crate::workspace::workspace_id(&project);
+        let lock_name = format!(".project-{id}.lock");
+        metadata::persisted_path(&encode_path(&inventory.join(&lock_name)))?;
+        let directory = Directory::open(inventory, true)?;
+        let lock_file = directory.append(OsStr::new(&lock_name))?;
+        let lock_key = locking::file_key(&lock_file)?;
+        let lock = locking::Lock::acquire(lock_file)?;
+        let registry_file = directory.append(OsStr::new(REGISTRY_LOCK))?;
+        let inventory_key = locking::file_key(&registry_file)?;
+        let lease = Self(Arc::new(ProjectLeaseInner {
+            project,
+            project_identity,
+            inventory: inventory.to_owned(),
+            inventory_key,
+            lock_name,
+            lock_key,
+            _directory: directory,
+            _registry_file: registry_file,
+            _lock: lock,
+        }));
+        // A remover may finish between the initial canonicalization and lock
+        // acquisition. Refuse a missing or replaced root and any relocated
+        // inventory lock before startup changes state.
+        lease.verify_live_identity()?;
+        Ok(lease)
+    }
+
+    pub fn project_root(&self) -> &Path {
+        &self.0.project
+    }
+
+    pub(crate) fn project_identity_bytes(&self) -> [u8; 24] {
+        self.0.project_identity.stable_bytes()
+    }
+
+    pub fn verify_live_identity(&self) -> io::Result<()> {
+        if crate::windows_fs::Identity::read(&self.0.project)? != self.0.project_identity {
+            return Err(invalid("project root changed while acquiring its lease"));
+        }
+        let directory = Directory::open_existing(&self.0.inventory, true)?;
+        let registry = directory.open_read(OsStr::new(REGISTRY_LOCK))?;
+        let project_lock = directory.open_read(OsStr::new(&self.0.lock_name))?;
+        if locking::file_key(&registry)? != self.0.inventory_key
+            || locking::file_key(&project_lock)? != self.0.lock_key
+        {
+            return Err(invalid("project lease inventory identity changed"));
+        }
+        Ok(())
+    }
+
+    fn covers(&self, project: &Path, registries: &RegistrySet) -> bool {
+        self.0.project == project
+            && registries
+                .lease_root()
+                .is_ok_and(|root| root.key == self.0.inventory_key)
+    }
+}
+
 #[derive(Debug)]
 struct RegistryRoot {
     directory: Arc<Directory>,
     path: PathBuf,
     key: locking::FileKey,
     inventory: bool,
+    #[cfg(test)]
+    fixture_lease: bool,
 }
 
 /// Explicit roots only. Normal namespaces may supply a primary, secondary and
@@ -57,6 +145,18 @@ pub struct RegistrySet(Arc<Vec<RegistryRoot>>);
 impl RegistrySet {
     pub fn open(paths: &[PathBuf]) -> io::Result<Self> {
         Self::with_inventory(paths, None)
+    }
+
+    /// Tests without an owner inventory explicitly use their private fixture
+    /// namespace for lease coverage. Production publication requires inventory.
+    #[cfg(test)]
+    pub(crate) fn open_fixture(paths: &[PathBuf]) -> io::Result<Self> {
+        let mut set = Self::open(paths)?;
+        Arc::get_mut(&mut set.0)
+            .and_then(|roots| roots.first_mut())
+            .expect("new fixture registry set has a root")
+            .fixture_lease = true;
+        Ok(set)
     }
 
     pub fn with_inventory(paths: &[PathBuf], inventory: Option<PathBuf>) -> io::Result<Self> {
@@ -78,6 +178,8 @@ impl RegistrySet {
                     path: path.clone(),
                     key,
                     inventory,
+                    #[cfg(test)]
+                    fixture_lease: false,
                 })
             })
             .collect::<io::Result<Vec<_>>>()?;
@@ -103,6 +205,23 @@ impl RegistrySet {
         locking::acquire(&self.0, |root| {
             format!(".host-{}.lock", self.record_key(root, id))
         })
+    }
+
+    fn lease_root(&self) -> io::Result<&RegistryRoot> {
+        self.0
+            .iter()
+            .find(|root| root.inventory)
+            .or({
+                #[cfg(test)]
+                {
+                    self.0.iter().find(|root| root.fixture_lease)
+                }
+                #[cfg(not(test))]
+                {
+                    None
+                }
+            })
+            .ok_or_else(|| invalid("publication requires an admitted owner inventory"))
     }
 
     fn registry_locks(&self) -> io::Result<Vec<locking::Lock>> {
@@ -172,6 +291,16 @@ impl EndpointLocation {
         &self.project
     }
 
+    pub(crate) fn verify_project_lease(&self, lease: &ProjectLease) -> io::Result<()> {
+        lease.verify_live_identity()?;
+        if !lease.covers(&self.project, &self.registries) {
+            return Err(invalid(
+                "project lease does not match the admitted inventory identity",
+            ));
+        }
+        Ok(())
+    }
+
     /// Exact configured keys, including this namespace's inventory entry.
     /// Does not enumerate or infer a hidden host's namespace.
     pub fn observe_registrations(&self) -> io::Result<Scan> {
@@ -179,11 +308,21 @@ impl EndpointLocation {
             .observe(&crate::workspace::workspace_id(&self.project))
     }
 
-    /// Acquire identity locks before endpoint-directory preparation. Resource
-    /// classes always order identity first, then registry; each class uses
-    /// native file-identity ordering across every configured registry root.
-    /// All locks remain held through the future caller's bind and publication.
+    /// Acquire the project lease before identity and registry locks. All three
+    /// classes remain held through bind and publication.
     pub fn prepare(&self, name: Option<String>) -> io::Result<PreparedEndpoint> {
+        let lease = ProjectLease::acquire(&self.project, &self.registries.lease_root()?.path)?;
+        self.prepare_with_lease(&lease, name)
+    }
+
+    /// Reuse a parent or host lease already held before other startup state
+    /// changes. The prepared endpoint retains a shared guard through publish.
+    pub fn prepare_with_lease(
+        &self,
+        lease: &ProjectLease,
+        name: Option<String>,
+    ) -> io::Result<PreparedEndpoint> {
+        self.verify_project_lease(lease)?;
         let metadata = EndpointMetadata::new(&self.project, name)?;
         let mut locks = self.registries.identity_locks(&metadata.id)?;
         locks.extend(self.registries.registry_locks()?);
@@ -200,6 +339,7 @@ impl EndpointLocation {
             location: self.clone(),
             directory,
             metadata,
+            project_lease: lease.clone(),
             _locks: locks,
         })
     }
@@ -227,6 +367,7 @@ pub struct PreparedEndpoint {
     directory: Arc<Directory>,
     metadata: EndpointMetadata,
     _locks: Vec<locking::Lock>,
+    project_lease: ProjectLease,
 }
 
 impl PreparedEndpoint {
@@ -247,6 +388,7 @@ impl PreparedEndpoint {
         self,
         before_ready: impl FnOnce() -> io::Result<()>,
     ) -> io::Result<Publication> {
+        self.location.verify_project_lease(&self.project_lease)?;
         let mut issued = Vec::new();
         let record = RegistryRecord {
             host: self.metadata.clone(),

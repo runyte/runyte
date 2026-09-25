@@ -167,6 +167,13 @@ pub(crate) fn validate_relative(path: &Path) -> io::Result<()> {
     Ok(())
 }
 impl Identity {
+    pub(crate) fn stable_bytes(&self) -> [u8; 24] {
+        let mut bytes = [0; 24];
+        bytes[..8].copy_from_slice(&self.volume.to_le_bytes());
+        bytes[8..].copy_from_slice(&self.file);
+        bytes
+    }
+
     pub(crate) fn of(file: &File) -> io::Result<Self> {
         let mut info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
         if unsafe {

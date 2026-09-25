@@ -103,7 +103,7 @@ fn shared_secondary_and_exact_configured_inventory_use_existing_lock_identities(
 fn namespace_aliases_deduplicate_but_inventory_alias_is_refused() {
     let root = TestRuntimeRoot::new("registry-view-alias").unwrap();
     let namespace = root.join("namespace");
-    RegistrySet::open(std::slice::from_ref(&namespace)).unwrap();
+    RegistrySet::open_fixture(std::slice::from_ref(&namespace)).unwrap();
     let alias = namespace.join(".");
     let view = RegistryView::open(&[namespace.clone(), alias.clone()], None).unwrap();
     assert_eq!(view.registries.0.len(), 1);
@@ -114,7 +114,7 @@ fn namespace_aliases_deduplicate_but_inventory_alias_is_refused() {
 fn bounded_scanner_reports_bad_rows_without_rewriting_them() {
     let root = TestRuntimeRoot::new("registry-view-corrupt").unwrap();
     let path = root.join("namespace");
-    RegistrySet::open(std::slice::from_ref(&path)).unwrap();
+    RegistrySet::open_fixture(std::slice::from_ref(&path)).unwrap();
     let name = format!("{}.json", "a".repeat(crate::workspace::WORKSPACE_ID_LENGTH));
     Directory::open_existing(&path, true)
         .unwrap()

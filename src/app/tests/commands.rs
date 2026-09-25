@@ -2277,7 +2277,7 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
             matched.availability.reason(),
             Some(if cfg!(windows) {
                 if name == "session-attach" {
-                    crate::service_health::PERSISTENT_SESSION_UNSUPPORTED_REASON
+                    crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
                 } else {
                     "session service is unavailable"
                 }

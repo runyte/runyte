@@ -1295,6 +1295,28 @@ impl CommandId {
             return None;
         }
         if matches!(
+            self,
+            Self::Colon(ColonCommand::SessionAttach)
+                | Self::Editor(
+                    EditorCommand::OpenExplorerSession
+                        | EditorCommand::OpenSessionDirectory
+                        | EditorCommand::PreviousSession
+                        | EditorCommand::Session1
+                        | EditorCommand::Session2
+                        | EditorCommand::Session3
+                        | EditorCommand::Session4
+                        | EditorCommand::Session5
+                        | EditorCommand::Session6
+                        | EditorCommand::Session7
+                        | EditorCommand::Session8
+                        | EditorCommand::Session9
+                        | EditorCommand::NextRunningSession
+                        | EditorCommand::PreviousRunningSession
+                )
+        ) {
+            return None;
+        }
+        if matches!(
             self.capability(),
             Some(CommandCapability::PersistentSession)
         ) {

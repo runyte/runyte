@@ -294,6 +294,8 @@ fn typed_git_confirmations_reject_controls_without_changing_authorization() {
                         required_authorization: DeletionAuthorization::Typed,
                     },
                     session: None,
+                    #[cfg(windows)]
+                    reviewed_live: None,
                     input: "feat".into(),
                     cursor: 2,
                 })

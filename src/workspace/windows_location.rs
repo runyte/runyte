@@ -7,7 +7,7 @@
 use super::{
     WorkspaceIdentity,
     windows_endpoint::{
-        self, EndpointLocation, MAX_PERSISTED_PATH_BYTES, RegistrySet, RegistryView,
+        self, EndpointLocation, MAX_PERSISTED_PATH_BYTES, ProjectLease, RegistrySet, RegistryView,
     },
 };
 use crate::{native_path::encode_path, private_storage::Directory};
@@ -107,6 +107,7 @@ pub struct DiscoveryScope {
 #[derive(Clone, Debug)]
 pub struct ResolvedLayout {
     project: PathBuf,
+    project_identity: [u8; 24],
     state: PathBuf,
     endpoint: PathBuf,
     names: PathBuf,
@@ -194,9 +195,16 @@ impl DiscoveryScope {
         requested: &Path,
         configured_state: &Path,
     ) -> anyhow::Result<ResolvedLayout> {
-        let project = crate::project_root::initialize(requested, configured_state, &self.reserved)?;
+        let project = WorkspaceIdentity::resolve(requested)?.root().to_owned();
+        let inventory = self.roots.inventory_root()?;
         let state = crate::project_root::resolve_state_root(&project, configured_state);
-        ResolvedLayout::from_scope(self.clone(), &project, state).map_err(Into::into)
+        validate_state_separation(&state, std::slice::from_ref(&inventory))?;
+        let lease = ProjectLease::acquire(&project, &inventory)?;
+        let project = crate::project_root::initialize(&project, configured_state, &self.reserved)?;
+        let state = crate::project_root::resolve_state_root(&project, configured_state);
+        let layout = ResolvedLayout::from_scope(self.clone(), &project, state)?;
+        lease.verify_live_identity()?;
+        Ok(layout)
     }
 
     /// The selected optional history cache. Does not prepare or harden it.
@@ -282,6 +290,7 @@ impl ResolvedLayout {
     }
 
     fn compose(scope: DiscoveryScope, project: PathBuf, state: PathBuf) -> io::Result<Self> {
+        let project_identity = crate::windows_fs::Identity::read(&project)?.stable_bytes();
         validate_state_separation(&state, &scope.reserved)?;
         let endpoint = scope.runtime.as_ref().map_or_else(
             || state.join("host"),
@@ -292,6 +301,7 @@ impl ResolvedLayout {
         validate_path(&names)?;
         Ok(Self {
             project,
+            project_identity,
             state,
             endpoint,
             names,
@@ -359,6 +369,39 @@ impl ResolvedLayout {
         EndpointLocation::new(&self.project, self.endpoint.clone(), registries)
     }
 
+    /// Acquire the account-wide project lease before host logging, App
+    /// construction, or other startup state changes. Git worktree removal uses
+    /// the same lease across every configured namespace in this inventory.
+    pub fn acquire_project_lease(&self) -> io::Result<ProjectLease> {
+        if self.scope.namespaces.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "native host requires a usable namespace root",
+            ));
+        }
+        let inventory = self.scope.roots.inventory_root()?;
+        validate_state_separation(&self.state, std::slice::from_ref(&inventory))?;
+        let lease = ProjectLease::acquire(&self.project, &inventory)?;
+        if lease.project_identity_bytes() != self.project_identity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "project root changed after layout resolution",
+            ));
+        }
+        Ok(lease)
+    }
+
+    /// Match the inventory admitted for publication to the one whose project
+    /// lease the caller holds. A replaced or redirected inventory is refused.
+    pub fn publication_location_with_lease(
+        &self,
+        lease: &ProjectLease,
+    ) -> io::Result<EndpointLocation> {
+        let location = self.publication_location()?;
+        location.verify_project_lease(lease)?;
+        Ok(location)
+    }
+
     /// Bounded, lossless and role/order-sensitive. This detects a changed child
     /// fallback/default before publication; it grants no filesystem authority.
     pub fn fingerprint(&self) -> io::Result<String> {
@@ -373,6 +416,7 @@ impl ResolvedLayout {
         ] {
             fingerprint_path(&mut bytes, role, path)?;
         }
+        bytes.extend_from_slice(&self.project_identity);
         bytes.push(self.scope.namespaces.len() as u8);
         for path in &self.scope.namespaces {
             fingerprint_path(&mut bytes, 6, path)?;

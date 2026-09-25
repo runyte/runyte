@@ -443,9 +443,12 @@ impl App {
             .and_then(|terminal| terminal.reported_directory())
             .map(std::path::Path::to_path_buf);
         if let Some(directory) = directory {
-            if self.request_workspace_switch(directory) {
+            if self.request_workspace_switch_for_platform(directory, cfg!(any(unix, windows))) {
                 self.list = None;
-                self.should_quit = true;
+                #[cfg(unix)]
+                {
+                    self.should_quit = true;
+                }
             }
         } else {
             self.action_failed("terminal has not reported a validated directory (OSC 7)");
@@ -458,9 +461,12 @@ impl App {
             return;
         }
         if let Some(path) = self.buffers[self.active().buffer].path.clone()
-            && self.request_workspace_switch(path)
+            && self.request_workspace_switch_for_platform(path, cfg!(any(unix, windows)))
         {
-            self.should_quit = true;
+            #[cfg(unix)]
+            {
+                self.should_quit = true;
+            }
         }
     }
 

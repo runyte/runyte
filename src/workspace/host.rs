@@ -256,7 +256,7 @@ mod plugin_manager;
 mod plugin_models;
 mod plugin_notifications;
 mod plugin_observations;
-#[cfg_attr(not(unix), path = "host/plugin_processes_unavailable.rs")]
+#[cfg_attr(not(any(unix, windows)), path = "host/plugin_processes_unavailable.rs")]
 mod plugin_processes;
 mod plugin_provider_writes;
 mod plugin_providers;

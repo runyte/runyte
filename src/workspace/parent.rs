@@ -373,7 +373,7 @@ mod tests {
         let location = crate::workspace::windows_endpoint::EndpointLocation::new(
             root.path(),
             root.join("endpoint"),
-            crate::workspace::windows_endpoint::RegistrySet::open(&[root.join("registry")])
+            crate::workspace::windows_endpoint::RegistrySet::open_fixture(&[root.join("registry")])
                 .unwrap(),
         )
         .unwrap();

@@ -102,7 +102,10 @@ fn public_and_deferred_commands_agree_with_palette_availability() {
     let result = app
         .execute(parse_colon_command("session-attach workspace").unwrap())
         .unwrap();
-    assert!(matches!(result, CommandOutcome::Unavailable(ref message) if message == reason));
+    assert!(
+        matches!(result, CommandOutcome::Unavailable(ref message) | CommandOutcome::UserError(ref message) if message == reason),
+        "session-attach outcome disagrees with palette: {result:?} versus {reason}"
+    );
     let context = resolve_command("context-access").unwrap();
     assert!(context.id.platform_unavailable().is_none());
     assert!(

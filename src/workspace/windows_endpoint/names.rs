@@ -198,9 +198,27 @@ impl EndpointLocation {
         names: &NameStore,
         requested: Option<String>,
     ) -> io::Result<PreparedEndpoint> {
-        // prepare owns identity and registry guards; never recursively acquire
-        // them while reading the name store.
-        let mut prepared = self.prepare(requested)?;
+        let prepared = self.prepare(requested)?;
+        self.finish_named_preparation(names, prepared)
+    }
+
+    pub fn prepare_named_with_lease(
+        &self,
+        lease: &ProjectLease,
+        names: &NameStore,
+        requested: Option<String>,
+    ) -> io::Result<PreparedEndpoint> {
+        let prepared = self.prepare_with_lease(lease, requested)?;
+        self.finish_named_preparation(names, prepared)
+    }
+
+    fn finish_named_preparation(
+        &self,
+        names: &NameStore,
+        mut prepared: PreparedEndpoint,
+    ) -> io::Result<PreparedEndpoint> {
+        // Preparation owns project, identity and registry guards; never
+        // recursively acquire them while reading the name store.
         let _store = names.lock()?;
         if prepared.metadata.name.is_none() {
             prepared.metadata.name = names

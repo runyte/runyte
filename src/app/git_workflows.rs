@@ -2,6 +2,8 @@
 
 //! Editor coordination for Git status, history, branches, worktrees, and mutations.
 
+#[cfg(windows)]
+use super::{NativeWorktreeStage, NativeWorktreeTeardown, PendingNativeWorktreeReview};
 #[cfg(unix)]
 use super::{PendingWorktreeRemovalCheck, WorkspaceRow, WorktreeTeardown, WorktreeTeardownStage};
 
@@ -31,6 +33,26 @@ const FILESYSTEM_RECONCILIATION_RETRY_DELAY: Duration = Duration::from_secs(1);
 struct FilesystemReconciliation {
     repository: Repository,
     spec: RefreshSpec,
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn completed_worktree_creation_queues_native_directory_handoff() {
+        let mut app = App::new(crate::config::Config::default(), None).unwrap();
+        app.enable_persistent_session();
+        let destination = std::env::temp_dir().join("runyte-created-worktree-target");
+        app.attach_created_worktree(destination.clone());
+        let request = app.take_workspace_switch().unwrap();
+        assert_eq!(
+            request.target,
+            super::super::WorkspaceSwitchTarget::UserSelector(destination)
+        );
+        assert!(!request.running_only);
+        assert!(!app.should_quit);
+    }
 }
 
 /// Git-service bookkeeping and semantic row identities owned by the editor's
@@ -814,6 +836,14 @@ impl App {
                         {
                             self.abandon_worktree_teardown();
                         }
+                        #[cfg(windows)]
+                        if let GitOperation::Mutate {
+                            mutation: GitMutation::RemoveWorktree { plan, .. },
+                            ..
+                        } = &operation
+                        {
+                            self.native_worktree_git_completed(Some(id), &plan.path, false);
+                        }
                         #[cfg(unix)]
                         let branch_cascade = match &operation {
                             GitOperation::Mutate {
@@ -851,6 +881,14 @@ impl App {
                             self.mark_action_feedback_failed(action, &message);
                         }
                         self.error_from("Git", "Git operation failed", message);
+                        #[cfg(windows)]
+                        if let GitOperation::Mutate {
+                            mutation: GitMutation::DeleteBranch { plan, .. },
+                            ..
+                        } = &operation
+                        {
+                            self.native_branch_git_completed(Some(id), &plan.branch, false);
+                        }
                     }
                 }
                 if filesystem_reconciliation_succeeded {
@@ -933,7 +971,7 @@ impl App {
         action: Option<u64>,
     ) {
         let (request, state) = completion;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let _ = request;
         match response {
             GitResponse::Discovered(repository) => {
@@ -1206,12 +1244,12 @@ impl App {
         };
         // Captured before the message match consumes `mutation`, so a cascade
         // waiting on this removal can be answered by either outcome below.
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let removed_worktree = match &mutation {
             GitMutation::RemoveWorktree { plan, .. } => Some(plan.path.clone()),
             _ => None,
         };
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let deleted_branch = match &mutation {
             GitMutation::DeleteBranch { plan, .. } => Some(plan.branch.clone()),
             _ => None,
@@ -1321,7 +1359,15 @@ impl App {
             {
                 self.abandon_worktree_teardown();
             }
+            #[cfg(windows)]
+            if let Some(path) = removed_worktree.as_deref() {
+                self.native_worktree_git_completed(request, path, false);
+            }
             self.error_from("Git", "Git mutation failed", message);
+            #[cfg(windows)]
+            if let Some(branch) = deleted_branch.as_deref() {
+                self.native_branch_git_completed(request, branch, false);
+            }
             return;
         }
         #[cfg(unix)]
@@ -1432,6 +1478,14 @@ impl App {
                 .is_some_and(|path| self.awaits_worktree_removal(request, path))
         {
             self.abandon_worktree_teardown();
+        }
+        #[cfg(windows)]
+        if let Some(path) = removed_worktree.as_deref() {
+            self.native_worktree_git_completed(request, path, state == GitServiceState::Completed);
+        }
+        #[cfg(windows)]
+        if let Some(branch) = deleted_branch.as_deref() {
+            self.native_branch_git_completed(request, branch, state == GitServiceState::Completed);
         }
     }
 
@@ -2734,10 +2788,12 @@ impl App {
             self.action_failed("this worktree has no usable project directory");
             return;
         }
-        if !self.request_workspace_switch(row.worktree.path) {
-            return;
+        if self.request_workspace_switch_for_platform(row.worktree.path, cfg!(any(unix, windows))) {
+            #[cfg(unix)]
+            {
+                self.should_quit = true;
+            }
         }
-        self.should_quit = true;
     }
 
     /// Asks whether to remove the ordinary worktree on the active row.
@@ -2751,6 +2807,10 @@ impl App {
         };
         #[cfg(unix)]
         if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
+        #[cfg(windows)]
+        if self.refuse_concurrent_native_worktree_teardown() {
             return;
         }
         let worktree = row.worktree;
@@ -2818,6 +2878,11 @@ impl App {
         if self.request_worktree_session_check(plan.clone(), None, None) {
             return;
         }
+        #[cfg(windows)]
+        {
+            self.request_native_worktree_review(plan, None);
+        }
+        #[cfg(not(windows))]
         self.show_worktree_removal_confirmation(plan, None);
     }
 
@@ -2825,10 +2890,13 @@ impl App {
         &mut self,
         plan: WorktreeRemovalPlan,
         session: Option<AttachedSession>,
+        #[cfg(windows)] reviewed_live: Option<crate::workspace::WorkspaceSelection>,
     ) {
         let confirmation = WorktreeRemovalConfirmation {
             plan,
             session,
+            #[cfg(windows)]
+            reviewed_live,
             input: String::new(),
             cursor: 0,
         };
@@ -2841,6 +2909,7 @@ impl App {
         &mut self,
         plan: WorktreeRemovalPlan,
         authorization: DeletionAuthorization,
+        #[cfg(windows)] reviewed_live: Option<crate::workspace::WorkspaceSelection>,
     ) {
         #[cfg(unix)]
         if self.refuse_concurrent_worktree_teardown() {
@@ -2850,9 +2919,393 @@ impl App {
         if self.request_worktree_session_check(plan.clone(), Some(authorization), None) {
             return;
         }
+        #[cfg(windows)]
+        {
+            self.begin_native_worktree_teardown(plan, authorization, None, reviewed_live);
+        }
+        #[cfg(not(windows))]
         let _ = self.apply_guarded_worktree_removal(plan, authorization);
     }
 
+    #[cfg(windows)]
+    fn refuse_concurrent_native_worktree_teardown(&mut self) -> bool {
+        if self.native_worktree_teardown.is_none() && self.pending_native_worktree_review.is_none()
+        {
+            return false;
+        }
+        self.action_failed("another worktree removal is still in progress");
+        true
+    }
+
+    #[cfg(windows)]
+    fn request_native_worktree_review(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        branch: Option<BranchDeletionPlan>,
+    ) {
+        if self.refuse_concurrent_native_worktree_teardown() {
+            return;
+        }
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            self.action_failed("native session service is unavailable for worktree removal");
+            return;
+        };
+        self.native_worktree_removal_generation = self
+            .native_worktree_removal_generation
+            .wrapping_add(1)
+            .max(1);
+        let generation = self.native_worktree_removal_generation;
+        match service.try_inspect_worktree_teardown(generation, &plan.path) {
+            Ok(()) => {
+                self.pending_native_worktree_review = Some(PendingNativeWorktreeReview {
+                    plan,
+                    branch,
+                    generation,
+                    source_buffer: self.active().buffer,
+                    interaction_generation: self.next_action_id,
+                });
+                self.status("checking the worktree session for unsaved buffers…");
+            }
+            Err(error) => self.action_failed(error),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn finish_native_worktree_review(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        result: std::result::Result<Option<crate::workspace::WorkspaceRow>, String>,
+    ) {
+        let Some(pending) = self.pending_native_worktree_review.as_ref() else {
+            return;
+        };
+        if pending.generation != generation || pending.plan.path != path {
+            return;
+        }
+        let pending = self
+            .pending_native_worktree_review
+            .take()
+            .expect("matched review");
+        let still_selected = pending.branch.as_ref().map_or_else(
+            || self.selected_worktree_path().as_deref() == Some(path.as_path()),
+            |branch| self.selected_branch_name().as_deref() == Some(branch.branch.as_str()),
+        );
+        if pending.source_buffer != self.active().buffer
+            || pending.interaction_generation != self.next_action_id
+            || !still_selected
+        {
+            return;
+        }
+        let row = match result {
+            Ok(row) => row,
+            Err(error) => {
+                self.action_failed(format!("cannot review worktree session: {error}"));
+                return;
+            }
+        };
+        if row.as_ref().is_some_and(|row| {
+            !row.running || row.publication_key.is_none() || row.project_root != path
+        }) {
+            self.action_failed("native worktree review returned a changed session");
+            return;
+        }
+        let reviewed_live = row.as_ref().map(|row| row.selection());
+        let session = row.map(|row| AttachedSession {
+            name: row.display_name(),
+            number: row.number,
+            root: row.project_root,
+        });
+        match pending.branch {
+            Some(branch) => self.show_branch_deletion_confirmation(
+                branch,
+                Some(BranchCascade {
+                    worktree: pending.plan,
+                    session,
+                    reviewed_live,
+                }),
+            ),
+            None => self.show_worktree_removal_confirmation(pending.plan, session, reviewed_live),
+        }
+    }
+
+    #[cfg(windows)]
+    fn begin_native_worktree_teardown(
+        &mut self,
+        plan: WorktreeRemovalPlan,
+        authorization: DeletionAuthorization,
+        branch: Option<BranchDeletionPlan>,
+        reviewed_live: Option<crate::workspace::WorkspaceSelection>,
+    ) {
+        if self.refuse_concurrent_native_worktree_teardown() {
+            return;
+        }
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            self.action_failed("native session service is unavailable for worktree removal");
+            return;
+        };
+        if self.ports.git_service.is_none() {
+            self.action_failed("Git service is unavailable for worktree removal");
+            return;
+        }
+        self.native_worktree_removal_generation = self
+            .native_worktree_removal_generation
+            .wrapping_add(1)
+            .max(1);
+        let generation = self.native_worktree_removal_generation;
+        match service.try_prepare_worktree_teardown(generation, &plan.path, reviewed_live) {
+            Ok(()) => {
+                self.native_worktree_teardown = Some(NativeWorktreeTeardown {
+                    plan,
+                    authorization,
+                    generation,
+                    git_request: None,
+                    lease: None,
+                    stopped_session: None,
+                    branch,
+                    stage: NativeWorktreeStage::Preparing,
+                });
+                self.status("checking and stopping the worktree session…");
+            }
+            Err(error) => self.action_failed(error),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn finish_native_worktree_prepared(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        result: std::result::Result<
+            crate::workspace::windows_service::PreparedWorktreeTeardown,
+            String,
+        >,
+    ) {
+        let Some(teardown) = self.native_worktree_teardown.as_ref() else {
+            return;
+        };
+        if teardown.generation != generation
+            || teardown.stage != NativeWorktreeStage::Preparing
+            || teardown.plan.path != path
+        {
+            return;
+        }
+        let prepared = match result {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.native_worktree_teardown = None;
+                self.action_failed(format!("cannot prepare worktree removal: {error}"));
+                return;
+            }
+        };
+        let stopped_session = prepared.stopped_session().map(|row| AttachedSession {
+            name: row.display_name(),
+            number: row.number,
+            root: row.project_root.clone(),
+        });
+        let lease = prepared.into_lease();
+        if lease.project_root() != path {
+            self.native_worktree_teardown = None;
+            self.action_failed("worktree removal lease does not cover the selected directory");
+            return;
+        }
+        let Some(repository) = self.git.repository().cloned() else {
+            self.native_worktree_teardown = None;
+            self.action_failed("Git repository changed during worktree removal");
+            return;
+        };
+        let Some(service) = self.ports.git_service.as_ref() else {
+            self.native_worktree_teardown = None;
+            self.action_failed("Git service stopped during worktree removal");
+            return;
+        };
+        let mut refresh = self.git_refresh_spec(&repository);
+        refresh.worktrees = true;
+        refresh.branches = true;
+        let authorization = teardown.authorization;
+        let plan = teardown.plan.clone();
+        let operation = GitOperation::Mutate {
+            repository,
+            mutation: GitMutation::RemoveWorktree {
+                plan: Box::new(plan),
+                authorization,
+            },
+            refresh,
+        };
+        match service.try_submit_worktree_removal(operation, lease.clone()) {
+            Ok(id) => {
+                if let Some(action) = self.active_action_id {
+                    self.git_state.action_origins.insert(id, action);
+                }
+                if let Some(teardown) = self.native_worktree_teardown.as_mut() {
+                    teardown.git_request = Some(id);
+                    teardown.lease = Some(lease);
+                    teardown.stopped_session = stopped_session;
+                    teardown.stage = NativeWorktreeStage::Removing;
+                }
+                self.status("removing worktree…");
+            }
+            Err(error) => {
+                self.native_worktree_teardown = None;
+                self.error_from("Git", "Git operation failed", error.to_string());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn native_worktree_git_completed(
+        &mut self,
+        request: Option<GitRequestId>,
+        path: &Path,
+        succeeded: bool,
+    ) {
+        let Some(teardown) = self.native_worktree_teardown.as_ref() else {
+            return;
+        };
+        if teardown.stage != NativeWorktreeStage::Removing
+            || teardown.git_request != request
+            || teardown.plan.path != path
+        {
+            return;
+        }
+        if !succeeded {
+            self.native_worktree_teardown = None;
+            return;
+        }
+        let generation = teardown.generation;
+        let Some(lease) = teardown.lease.as_ref().cloned() else {
+            self.native_worktree_teardown = None;
+            self.action_failed("worktree removal lost its project lease");
+            return;
+        };
+        let Some(service) = self.ports.workspace_service.as_ref() else {
+            self.native_worktree_teardown = None;
+            self.action_failed(
+                "removed worktree, but native session history service is unavailable",
+            );
+            return;
+        };
+        match service.try_finish_worktree_teardown(generation, path, lease) {
+            Ok(()) => {
+                if let Some(teardown) = self.native_worktree_teardown.as_mut() {
+                    teardown.git_request = None;
+                    teardown.stage = NativeWorktreeStage::Forgetting;
+                }
+                self.status("cleaning the removed worktree's session history…");
+            }
+            Err(error) => {
+                self.native_worktree_teardown = None;
+                self.action_failed(format!(
+                    "removed worktree, but its session history could not be queued for cleanup: {error}"
+                ));
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn finish_native_worktree_finalized(
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        result: std::result::Result<bool, String>,
+    ) {
+        let Some(teardown) = self.native_worktree_teardown.as_ref() else {
+            return;
+        };
+        if teardown.generation != generation
+            || teardown.stage != NativeWorktreeStage::Forgetting
+            || teardown.plan.path != path
+        {
+            return;
+        }
+        let teardown = self
+            .native_worktree_teardown
+            .take()
+            .expect("matched teardown");
+        match result {
+            Ok(_) => {
+                if let Some(branch) = teardown.branch.clone() {
+                    let authorization = teardown.authorization;
+                    let request = self.queue_branch_deletion(branch.clone(), authorization);
+                    if let Some(request) = request {
+                        let mut teardown = teardown;
+                        teardown.git_request = Some(request);
+                        teardown.lease = None;
+                        teardown.stage = NativeWorktreeStage::BranchDeleting;
+                        self.native_worktree_teardown = Some(teardown);
+                        self.status(format!(
+                            "removed worktree {}; deleting branch {}…",
+                            crate::git::display_path(&path),
+                            branch.branch
+                        ));
+                    } else {
+                        self.action_failed(format!(
+                            "removed worktree {}; branch {} could not be queued for deletion",
+                            crate::git::display_path(&path),
+                            branch.branch
+                        ));
+                    }
+                    return;
+                }
+                let stopped = teardown
+                    .stopped_session
+                    .as_ref()
+                    .map(|session| format!(" and stopped {}", session.describe()))
+                    .unwrap_or_default();
+                self.status(format!(
+                    "removed worktree {}{stopped}; no branch was deleted",
+                    crate::git::display_path(&path)
+                ));
+            }
+            Err(error) => self.action_failed(format!(
+                "removed worktree {}, but its session record could not be forgotten: {error}",
+                crate::git::display_path(&path)
+            )),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn native_branch_git_completed(
+        &mut self,
+        request: Option<GitRequestId>,
+        branch: &str,
+        succeeded: bool,
+    ) {
+        let Some(teardown) = self.native_worktree_teardown.as_ref() else {
+            return;
+        };
+        if teardown.stage != NativeWorktreeStage::BranchDeleting
+            || teardown.git_request != request
+            || !teardown
+                .branch
+                .as_ref()
+                .is_some_and(|plan| plan.branch == branch)
+        {
+            return;
+        }
+        let teardown = self
+            .native_worktree_teardown
+            .take()
+            .expect("matched teardown");
+        let path = crate::git::display_path(&teardown.plan.path);
+        let stopped = teardown
+            .stopped_session
+            .as_ref()
+            .map(|session| format!(" and stopped {}", session.describe()))
+            .unwrap_or_default();
+        if succeeded {
+            self.status(format!(
+                "deleted branch {branch}, removed worktree {path}{stopped}"
+            ));
+        } else {
+            let detail = self.status.clone();
+            self.action_failed(format!(
+                "removed worktree {path}{stopped}; branch {branch} was not confirmed deleted: {detail}"
+            ));
+        }
+    }
+
+    #[cfg(not(windows))]
     fn apply_guarded_worktree_removal(
         &mut self,
         plan: WorktreeRemovalPlan,
@@ -3427,8 +3880,13 @@ impl App {
     /// definitively created it. Standalone mode keeps creation as a Git-only
     /// operation and stays in the current workspace.
     fn attach_created_worktree(&mut self, destination: PathBuf) {
-        if self.persistent_session && self.request_workspace_switch(destination) {
-            self.should_quit = true;
+        if self.persistent_session
+            && self.request_workspace_switch_for_platform(destination, cfg!(any(unix, windows)))
+        {
+            #[cfg(unix)]
+            {
+                self.should_quit = true;
+            }
         }
     }
 
@@ -4731,6 +5189,10 @@ impl App {
         if self.refuse_concurrent_worktree_teardown() {
             return;
         }
+        #[cfg(windows)]
+        if self.refuse_concurrent_native_worktree_teardown() {
+            return;
+        }
         if branch.current {
             self.action_failed(
                 "cannot delete the branch this working tree is on; check out another branch first",
@@ -4865,6 +5327,11 @@ impl App {
         if self.request_worktree_session_check(worktree.clone(), None, Some(plan.clone())) {
             return;
         }
+        #[cfg(windows)]
+        {
+            self.request_native_worktree_review(worktree, Some(plan));
+        }
+        #[cfg(not(windows))]
         self.show_branch_deletion_confirmation(
             plan,
             Some(BranchCascade {
@@ -4944,6 +5411,10 @@ impl App {
         if self.refuse_concurrent_worktree_teardown() {
             return;
         }
+        #[cfg(windows)]
+        if self.refuse_concurrent_native_worktree_teardown() {
+            return;
+        }
         #[cfg(unix)]
         if self.request_worktree_session_check(
             cascade.worktree.clone(),
@@ -4954,7 +5425,14 @@ impl App {
         }
         #[cfg(unix)]
         self.begin_worktree_teardown(cascade.worktree, authorization, None, Some(plan));
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        self.begin_native_worktree_teardown(
+            cascade.worktree,
+            authorization,
+            Some(plan),
+            cascade.reviewed_live,
+        );
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (plan, cascade, authorization);
             self.action_failed("Removing a worktree and its branch together is not supported on this platform; remove the worktree with :git-worktrees first, then delete the branch");
@@ -4969,6 +5447,10 @@ impl App {
     ) {
         #[cfg(unix)]
         if self.refuse_concurrent_worktree_teardown() {
+            return;
+        }
+        #[cfg(windows)]
+        if self.refuse_concurrent_native_worktree_teardown() {
             return;
         }
         let _ = self.queue_branch_deletion(plan, authorization);

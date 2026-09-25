@@ -3,7 +3,7 @@
 //! Input ownership, key dispatch, command execution, prompts, and confirmations.
 
 // Application-module dependencies:
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::parse_session_number;
 use super::{
     ActiveGrammar, App, AppCapabilitySnapshot, ApplyReport, ArgumentKind, Axis, BTreeMap, Buffer,
@@ -286,7 +286,7 @@ impl App {
             git_project,
             git_refresh,
             persistent_session: persistent_session_availability(
-                cfg!(unix),
+                cfg!(any(unix, windows)),
                 self.persistent_session,
             ),
             session_controls: if cfg!(windows) {
@@ -870,7 +870,16 @@ impl App {
                         .iter()
                         .find(|label| label.cells.contains(&column))
                         && let Some(selection) = strip.targets.get(label.index)
-                        && selection.project_root() != self.project_root
+                        && {
+                            #[cfg(windows)]
+                            {
+                                self.current_native_publication.as_ref() != Some(selection)
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                selection.project_root() != self.project_root
+                            }
+                        }
                         && self.request_selected_workspace_switch(selection.clone())
                     {
                         self.workspace_switch.as_mut().unwrap().running_only = true;
@@ -2998,6 +3007,13 @@ impl App {
                 } else {
                     DeletionAuthorization::Enter
                 };
+                #[cfg(windows)]
+                self.apply_worktree_removal(
+                    confirmation.plan,
+                    authorization,
+                    confirmation.reviewed_live,
+                );
+                #[cfg(not(windows))]
                 self.apply_worktree_removal(confirmation.plan, authorization);
             }
             _ => {
@@ -4496,7 +4512,7 @@ impl App {
                 let target = self.external_target.take();
                 #[cfg(any(unix, windows))]
                 let session_rename_target = self.session_rename_target.take();
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 let session_number_target = self.session_number_target.take();
                 let terminal_rename_target = self.terminal_rename_target.take();
                 let start_point = self.git_branch_start.take();
@@ -4522,14 +4538,14 @@ impl App {
                     #[cfg(not(any(unix, windows)))]
                     self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::SessionNumber {
-                    #[cfg(unix)]
+                    #[cfg(any(unix, windows))]
                     if let Some(target) = session_number_target {
                         match parse_session_number(&value) {
                             Ok(number) => self.number_selected_session(target, number),
                             Err(error) => self.action_failed(error),
                         }
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(not(any(unix, windows)))]
                     self.action_failed("persistent mode is not yet supported on this platform");
                 } else if kind == PromptKind::TerminalRename {
                     if let Some(id) = terminal_rename_target {
@@ -4899,10 +4915,7 @@ impl App {
         #[cfg(any(unix, windows))]
         {
             self.session_rename_target = None;
-            #[cfg(unix)]
-            {
-                self.session_number_target = None;
-            }
+            self.session_number_target = None;
         }
         self.git_branch_start = None;
         self.git_worktree_start = None;
@@ -5402,7 +5415,11 @@ impl App {
         command: ColonCommand,
         parameters: InvocationParameters,
     ) -> Result<()> {
-        self.execute_colon_invocation_for_workspace_platform(command, parameters, cfg!(unix))
+        self.execute_colon_invocation_for_workspace_platform(
+            command,
+            parameters,
+            cfg!(any(unix, windows)),
+        )
     }
 
     pub(super) fn execute_colon_invocation_for_workspace_platform(
@@ -5424,7 +5441,11 @@ impl App {
                 ) {
                     return Ok(());
                 }
-                if self.request_workspace_switch(path) {
+                if self.request_workspace_switch_for_platform(
+                    path,
+                    platform_supports_persistent_sessions,
+                ) && cfg!(unix)
+                {
                     self.should_quit = true;
                 }
                 Ok(())

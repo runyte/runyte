@@ -12,6 +12,8 @@ pub(super) struct Managed {
     identity: String,
     orphaned: bool,
     failed_start: bool,
+    cleanup_pending: bool,
+    close_after_cleanup: bool,
     info: process::Info,
     stdout: process::Ring,
     stderr: Option<process::Ring>,
@@ -23,7 +25,10 @@ pub(super) struct Managed {
 }
 impl Managed {
     fn pending(&self) -> usize {
-        usize::from(self.start.is_some()) + usize::from(self.write.is_some()) + self.close.len()
+        usize::from(self.start.is_some())
+            + usize::from(self.write.is_some())
+            + self.close.len()
+            + usize::from(self.cleanup_pending)
     }
     fn exited(&self) -> bool {
         self.info.state == process::State::Exited
@@ -166,6 +171,8 @@ impl WorkspaceHost {
                         identity,
                         orphaned: false,
                         failed_start: false,
+                        cleanup_pending: false,
+                        close_after_cleanup: false,
                         info: process::Info {
                             process: handle,
                             label,
@@ -245,6 +252,12 @@ impl WorkspaceHost {
                 if entry.exited() {
                     self.remove_process(&handle);
                     return Ok(Some(ResultValue::Empty(api::Empty {})));
+                }
+                if entry.cleanup_pending {
+                    return Err(Error::new(
+                        Code::Unavailable,
+                        "Helper cleanup is still pending",
+                    ));
                 }
                 self.process_request_slot(owner)?;
                 let entry = self.plugin_processes.get_mut(&handle).unwrap();
@@ -412,6 +425,44 @@ impl WorkspaceHost {
                     replies.push((request, result));
                 }
             }
+            #[cfg(windows)]
+            runtime::Kind::CleanupDelayed => {
+                entry.cleanup_pending = true;
+                entry.info.state = process::State::Closing;
+                entry.info.stdin_closed = true;
+                entry.info.output_truncated = true;
+                if !entry.orphaned {
+                    if let Some(request) = entry.start.take() {
+                        entry.failed_start = true;
+                        replies.push((
+                            request,
+                            Err(Error::new(
+                                Code::Unavailable,
+                                "Helper cleanup is still pending",
+                            )),
+                        ));
+                    }
+                    if let Some(request) = entry.write.take() {
+                        replies.push((
+                            request,
+                            Err(Error::new(
+                                Code::OutcomeUnknown,
+                                "Helper stopped; input delivery may be partial",
+                            )),
+                        ));
+                    }
+                    entry.close_after_cleanup |= !entry.close.is_empty();
+                    for request in entry.close.drain(..) {
+                        replies.push((
+                            request,
+                            Err(Error::new(
+                                Code::Unavailable,
+                                "Helper cleanup is still pending",
+                            )),
+                        ));
+                    }
+                }
+            }
             runtime::Kind::Exited {
                 code,
                 signal,
@@ -430,12 +481,13 @@ impl WorkspaceHost {
                     }
                 }
                 entry.info.output_truncated = output_truncated;
+                entry.cleanup_pending = false;
                 entry.info.state = process::State::Exited;
                 entry.info.stdin_closed = true;
                 entry.info.exit_code = code;
                 entry.info.signal = signal;
                 entry.control = None;
-                if entry.orphaned || entry.failed_start {
+                if entry.orphaned || entry.failed_start || entry.close_after_cleanup {
                     remove = true;
                 } else {
                     if let Some((request, result)) = write
@@ -487,3 +539,7 @@ impl WorkspaceHost {
         Ok(())
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "tests/plugin_processes_windows.rs"]
+mod tests;

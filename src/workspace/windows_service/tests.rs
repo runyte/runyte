@@ -3,12 +3,15 @@
 use super::*;
 use crate::{
     private_storage::Directory,
-    protocol::{ClientRequest, FeatureGroup, HostResponse, SessionPreview, VERSION},
+    protocol::{
+        ClientRequest, FeatureGroup, HostResponse, OpenDestination, OpenDestinationEntry,
+        SessionPreview, VERSION,
+    },
     test_support::TestRuntimeRoot,
     workspace::windows_location::{CapturedRoots, DiscoveryInputs},
     workspace::{
         recent_history::{RecentEntry, encode_recents},
-        windows_endpoint::{EndpointLocation, NameStore},
+        windows_endpoint::{EndpointLocation, NameStore, RegistrySet},
         windows_location::{LocationInputs, ResolvedLayout},
         windows_transport::{LocalServer, ServerEvent},
     },
@@ -149,6 +152,39 @@ async fn answer(server: &mut LocalServer, health: HostResponse) {
     .unwrap();
 }
 
+async fn receive_while_answering_health(
+    server: &mut LocalServer,
+    events: &mut mpsc::Receiver<WorkspaceEvent>,
+) -> WorkspaceEvent {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut responses = None;
+        loop {
+            tokio::select! {
+                biased;
+                event = events.recv() => return event.expect("workspace service event"),
+                event = server.recv() => match event.expect("health fixture server event") {
+                    ServerEvent::Connected { responses: sender, .. } => {
+                        sender.send(HostResponse::Welcome {
+                            protocol: VERSION,
+                            pid: std::process::id(),
+                            features: vec![FeatureGroup::Control, FeatureGroup::Buffers, FeatureGroup::Wait],
+                            host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        }).await.unwrap();
+                        responses = Some(sender);
+                    }
+                    ServerEvent::Request { request: ClientRequest::Health, .. } => {
+                        responses.as_ref().expect("connected health client").send(health()).await.unwrap();
+                    }
+                    ServerEvent::Disconnected { .. } => {}
+                    other => panic!("unexpected health fixture event: {other:?}"),
+                },
+            }
+        }
+    })
+    .await
+    .expect("workspace service health observation")
+}
+
 fn fixture(name: &str) -> (TestRuntimeRoot, DiscoveryScope) {
     let root = TestRuntimeRoot::new(name).unwrap();
     let runtime = root.create_private_dir("runtime").unwrap();
@@ -215,6 +251,702 @@ async fn answer_preview(server: &mut LocalServer) {
     })
     .await
     .unwrap();
+}
+
+async fn answer_inventory(server: &mut LocalServer) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut responses = None;
+        loop {
+            match server.recv().await.unwrap() {
+                ServerEvent::Connected {
+                    responses: sender, ..
+                } => {
+                    sender
+                        .send(HostResponse::Welcome {
+                            protocol: VERSION,
+                            pid: std::process::id(),
+                            features: vec![
+                                FeatureGroup::Control,
+                                FeatureGroup::Buffers,
+                                FeatureGroup::Wait,
+                            ],
+                            host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        })
+                        .await
+                        .unwrap();
+                    responses = Some(sender);
+                }
+                ServerEvent::Request {
+                    request: ClientRequest::DestinationInventory,
+                    ..
+                } => {
+                    responses
+                        .as_ref()
+                        .unwrap()
+                        .send(HostResponse::DestinationInventory {
+                            incarnation: "a".repeat(64),
+                            entries: vec![OpenDestinationEntry {
+                                destination: OpenDestination::Buffer(1),
+                                label: "note.txt".to_owned(),
+                                detail: "buffer".to_owned(),
+                            }],
+                            truncated: false,
+                        })
+                        .await
+                        .unwrap();
+                    return;
+                }
+                ServerEvent::Disconnected { .. } => {}
+                other => panic!("unexpected inventory fixture event: {other:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn selected_native_inventory_returns_exact_live_host_destination_identity() {
+    let root = TestRuntimeRoot::new("native-service-inventory").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let (_, mut host) = server(&layout, "inventory");
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        layout.discovery_scope().clone(),
+        Some(layout.read_location()),
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_refresh(1, false).unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut host, health())
+    );
+    let WorkspaceEvent::Refreshed {
+        result: Ok(rows), ..
+    } = event
+    else {
+        panic!("inventory setup did not observe its host")
+    };
+    let selection = rows[0].selection();
+    assert!(selection.publication_key().is_some());
+    assert!(
+        handle
+            .try_inventory(
+                2,
+                WorkspaceSelection::project_only(layout.project_root().to_owned())
+            )
+            .is_err()
+    );
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_inventory(3, selection.clone()).unwrap();
+            tokio::time::timeout(Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        },
+        async {
+            answer(&mut host, health()).await;
+            answer_inventory(&mut host).await;
+        }
+    );
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Inventory {
+            generation: 3,
+            selection: received,
+            result: Ok(inventory),
+            ..
+        } if received == selection
+            && inventory.incarnation == "a".repeat(64)
+            && inventory.entries.len() == 1
+            && inventory.entries[0].destination == OpenDestination::Buffer(1)
+    ));
+    owner.shutdown().await.unwrap();
+    host.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn selected_native_number_mutates_only_the_fresh_exact_live_publication() {
+    let root = TestRuntimeRoot::new("native-service-selected-number").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let history_path = layout
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    assert!(
+        !history_path.exists(),
+        "the host starts without seeded history"
+    );
+    let (_, mut old) = server(&layout, "old");
+    let startup =
+        ParentAttachStartup::capture(&root.join("missing-startup.exe"), None, 0, None).unwrap();
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn_with_current_layout(
+        layout.clone(),
+        PathBuf::from(".runyte"),
+        startup,
+    )
+    .unwrap();
+    handle.try_ensure_current_record().unwrap();
+    handle.try_record_current_activity(42).unwrap();
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_refresh(1, false).unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut old, health())
+    );
+    let WorkspaceEvent::Refreshed {
+        result: Ok(rows), ..
+    } = event
+    else {
+        panic!("number setup did not observe its host")
+    };
+    let old_selection = rows[0].selection();
+    assert!(
+        handle
+            .try_number_selected(
+                2,
+                WorkspaceSelection::project_only(layout.project_root().to_owned()),
+                Some(4)
+            )
+            .is_err()
+    );
+    let (event, ()) = tokio::join!(
+        async {
+            handle
+                .try_number_selected(3, old_selection.clone(), Some(4))
+                .unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut old, health())
+    );
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Numbered {
+            generation: 3,
+            selection: Some(selection),
+            number: Some(4),
+            result: Ok(None),
+            ..
+        } if selection == old_selection
+    ));
+    old.shutdown().await.unwrap();
+    handle.try_refresh(4, false).unwrap();
+    let event = events.recv().await.unwrap();
+    assert!(
+        matches!(
+            &event,
+            WorkspaceEvent::Refreshed {
+                generation: 4,
+                result: Ok(rows),
+            } if rows.len() == 1
+                && !rows[0].running
+                && rows[0].number.is_none()
+                && rows[0].last_active_unix_seconds == Some(42)
+        ),
+        "stopped row after host closure: {event:?}"
+    );
+    let remembered = crate::workspace::recent_history::read_recents(Some(&history_path)).unwrap();
+    assert_eq!(remembered.len(), 1);
+    assert_eq!(remembered[0].project_root, layout.project_root());
+    assert_eq!(remembered[0].number, None);
+    assert!(!remembered[0].number_pinned);
+    let (_, mut replacement) = server(&layout, "replacement");
+    handle
+        .try_number_selected(5, old_selection.clone(), Some(5))
+        .unwrap();
+    let event = receive_while_answering_health(&mut replacement, &mut events).await;
+    assert!(
+        matches!(
+            &event,
+            WorkspaceEvent::Numbered {
+                generation: 5,
+                selection: Some(selection),
+                result: Err(error),
+                ..
+            } if *selection == old_selection && error.contains("choose it again")
+        ),
+        "stale number selection outcome: {event:?}"
+    );
+    handle.try_refresh(6, false).unwrap();
+    let event = receive_while_answering_health(&mut replacement, &mut events).await;
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Refreshed {
+            generation: 6,
+            result: Ok(rows),
+        } if rows.len() == 1 && rows[0].number == Some(1)
+    ));
+    owner.shutdown().await.unwrap();
+    replacement.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn native_number_compacts_stopped_digit_before_explicit_live_renumber() {
+    let root = TestRuntimeRoot::new("native-number-stopped-compaction").unwrap();
+    let stopped = layout(&root, "stopped", "cache");
+    let running = layout(&root, "running", "cache");
+    let history_path = running
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    Directory::open(history_path.parent().unwrap(), true)
+        .unwrap()
+        .atomic_write(
+            OsStr::new("workspaces.json"),
+            &encode_recents(&[
+                RecentEntry::new(stopped.project_root().to_owned(), None, Some(1), None),
+                RecentEntry::new(running.project_root().to_owned(), None, Some(2), None),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+    let (_, mut host) = server(&running, "running");
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        running.discovery_scope().clone(),
+        Some(running.read_location()),
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_refresh(1, false).unwrap();
+            events.recv().await.unwrap()
+        },
+        async {
+            answer(&mut host, health()).await;
+        }
+    );
+    let WorkspaceEvent::Refreshed {
+        result: Ok(rows), ..
+    } = event
+    else {
+        panic!("number compaction did not return complete rows");
+    };
+    let live = rows
+        .iter()
+        .find(|row| row.project_root == running.project_root())
+        .unwrap();
+    assert_eq!(live.number, Some(1));
+    let selection = live.selection();
+    let stopped_row = rows
+        .iter()
+        .find(|row| row.project_root == stopped.project_root())
+        .unwrap();
+    assert!(!stopped_row.running);
+    assert_eq!(stopped_row.number, None);
+    let remembered = crate::workspace::recent_history::read_recents(Some(&history_path)).unwrap();
+    assert_eq!(remembered[0].number, None);
+    assert_eq!(remembered[1].number, Some(1));
+
+    let (event, ()) = tokio::join!(
+        async {
+            handle
+                .try_number_selected(2, selection.clone(), Some(1))
+                .unwrap();
+            events.recv().await.unwrap()
+        },
+        async {
+            answer(&mut host, health()).await;
+        }
+    );
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Numbered {
+            generation: 2,
+            selection: Some(received),
+            result: Ok(None),
+            ..
+        } if received == selection
+    ));
+    owner.shutdown().await.unwrap();
+    host.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn selected_native_forget_removes_only_an_unchanged_stopped_history_row() {
+    let root = TestRuntimeRoot::new("native-service-selected-forget").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let history_path = layout
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    Directory::open(history_path.parent().unwrap(), true)
+        .unwrap()
+        .atomic_write(
+            OsStr::new("workspaces.json"),
+            &encode_recents(&[RecentEntry::new(
+                layout.project_root().to_owned(),
+                Some("stopped".to_owned()),
+                None,
+                None,
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        layout.discovery_scope().clone(),
+        Some(layout.read_location()),
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    let stopped = WorkspaceSelection::project_only(layout.project_root().to_owned());
+    handle.try_forget_selected(6, stopped.clone()).unwrap();
+    let event = events.recv().await.unwrap();
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Forgotten {
+            generation: 6,
+            result: Ok(true),
+            ..
+        }
+    ));
+    assert!(
+        handle
+            .try_forget_selected(
+                7,
+                WorkspaceSelection::selected(
+                    layout.project_root().to_owned(),
+                    crate::workspace::PublicationKey::for_test(b"live"),
+                ),
+            )
+            .is_err()
+    );
+    handle.try_refresh(8, false).unwrap();
+    let event = events.recv().await.unwrap();
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Refreshed {
+            generation: 8,
+            result: Ok(rows),
+        } if rows.is_empty()
+    ));
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn worktree_teardown_forgets_captured_record_after_directory_is_removed() {
+    let root = TestRuntimeRoot::new("native-service-worktree-teardown").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let project = layout.project_root().to_owned();
+    let history_path = layout
+        .cache_root()
+        .unwrap()
+        .unwrap()
+        .join("workspaces.json");
+    Directory::open(history_path.parent().unwrap(), true)
+        .unwrap()
+        .atomic_write(
+            OsStr::new("workspaces.json"),
+            &encode_recents(&[RecentEntry::new(
+                project.clone(),
+                Some("worktree".to_owned()),
+                None,
+                None,
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn(
+        layout.discovery_scope().clone(),
+        None,
+        PathBuf::from(".runyte"),
+    )
+    .unwrap();
+    handle
+        .try_prepare_worktree_teardown(31, &project, None)
+        .unwrap();
+    let WorkspaceEvent::WorktreePrepared {
+        generation: 31,
+        path,
+        result,
+    } = events.recv().await.unwrap()
+    else {
+        panic!("worktree prepare did not return its lease");
+    };
+    let prepared = (*result).unwrap();
+    assert_eq!(path, project);
+    assert!(prepared.stopped_session().is_none());
+    let lease = prepared.into_lease();
+
+    handle
+        .try_finish_worktree_teardown(31, &project, lease.clone())
+        .unwrap();
+    assert!(matches!(
+        events.recv().await.unwrap(),
+        WorkspaceEvent::WorktreeFinalized {
+            generation: 31,
+            result: Err(error),
+            ..
+        } if error.contains("still exists")
+    ));
+    fs::remove_dir(&project).unwrap();
+    handle
+        .try_finish_worktree_teardown(31, &project, lease)
+        .unwrap();
+    assert!(matches!(
+        events.recv().await.unwrap(),
+        WorkspaceEvent::WorktreeFinalized {
+            generation: 31,
+            result: Ok(true),
+            ..
+        }
+    ));
+    assert!(
+        crate::workspace::recent_history::read_recents(Some(&history_path))
+            .unwrap()
+            .is_empty()
+    );
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn worktree_inspection_finds_a_ready_only_host_and_refuses_unreviewed_stop() {
+    let root = TestRuntimeRoot::new("native-service-worktree-ready-only").unwrap();
+    let layout = layout(&root, "project", "source-cache");
+    let project = layout.project_root().to_owned();
+    let other_cache = root.create_private_dir("other-cache").unwrap();
+    let other_inventory = root.create_private_dir("other-inventory").unwrap();
+    // A complete empty scope needs the same stable registry identities as a
+    // populated one. The host below publishes only to the source scope.
+    let _empty_scope =
+        RegistrySet::with_inventory(&[other_cache.join("hosts")], Some(other_inventory.clone()))
+            .unwrap();
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: vec![root.join("config")],
+        roots: CapturedRoots {
+            cache_home: Some(other_cache),
+            inventory_override: Some(other_inventory),
+            ..CapturedRoots::default()
+        },
+    })
+    .unwrap();
+    let (handle, mut owner, mut events) =
+        WorkspaceServiceOwner::spawn(scope, None, PathBuf::from(".runyte")).unwrap();
+
+    handle.try_refresh(1, true).unwrap();
+    assert!(matches!(
+        events.recv().await.unwrap(),
+        WorkspaceEvent::Refreshed {
+            result: Ok(rows),
+            ..
+        } if rows.is_empty()
+    ));
+    handle.try_inspect_worktree_teardown(2, &project).unwrap();
+    assert!(matches!(
+        events.recv().await.unwrap(),
+        WorkspaceEvent::WorktreeInspected {
+            generation: 2,
+            result,
+            ..
+        } if matches!(*result, Ok(None))
+    ));
+    let (_, mut host) = server(&layout, "ready-only");
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_inspect_worktree_teardown(3, &project).unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut host, health())
+    );
+    let WorkspaceEvent::WorktreeInspected {
+        generation: 3,
+        result,
+        ..
+    } = event
+    else {
+        panic!("ready-only host was not inspected: {event:?}");
+    };
+    let row = (*result).unwrap().expect("ready-only host should be live");
+    assert_eq!(row.project_root, project);
+    assert!(row.running);
+    assert_eq!(row.unsaved_buffers, Some(0));
+    let reviewed_live = row.selection();
+
+    let (event, ()) = tokio::join!(
+        async {
+            handle
+                .try_prepare_worktree_teardown(4, &project, None)
+                .unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut host, health())
+    );
+    let WorkspaceEvent::WorktreePrepared { result, .. } = event else {
+        panic!("ready-only host preparation returned the wrong event");
+    };
+    assert!(matches!(*result, Err(error) if error.contains("changed after confirmation")));
+    host.shutdown().await.unwrap();
+    let (_, mut replacement) = server(&layout, "replacement");
+    let (event, ()) = tokio::join!(
+        async {
+            handle
+                .try_prepare_worktree_teardown(5, &project, Some(reviewed_live))
+                .unwrap();
+            events.recv().await.unwrap()
+        },
+        answer(&mut replacement, health())
+    );
+    let WorkspaceEvent::WorktreePrepared { result, .. } = event else {
+        panic!("replacement host preparation returned the wrong event");
+    };
+    assert!(matches!(*result, Err(error) if error.contains("changed after confirmation")));
+    owner.shutdown().await.unwrap();
+    replacement.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn selected_stopped_row_refuses_a_new_live_host_and_cancels_provisional_startup() {
+    let Some(_controlled_job) = run_in_controlled_parent_attach_job(
+        "selected_stopped_row_refuses_a_new_live_host_and_cancels_provisional_startup",
+    ) else {
+        return;
+    };
+    let root = TestRuntimeRoot::new("native-service-selected-stopped").unwrap();
+    let source = layout(&root, "source", "cache");
+    let destination = root.create_private_dir("destination").unwrap();
+    let destination_layout = source
+        .discovery_scope()
+        .initialize_layout(&destination, Path::new(".runyte"))
+        .unwrap();
+    crate::workspace::windows_catalog::ensure_recorded(&destination_layout)
+        .unwrap()
+        .unwrap();
+    let startup = ParentAttachStartup::capture(&std::env::current_exe().unwrap(), None, 0, None)
+        .unwrap()
+        .with_test_harness_helper(SILENT_PARENT_ATTACH_FIXTURE);
+    let (handle, mut owner, mut events) = WorkspaceServiceOwner::spawn_with_parent_attach(
+        source.discovery_scope().clone(),
+        Some(source.read_location()),
+        PathBuf::from(".runyte"),
+        startup,
+    )
+    .unwrap();
+    handle.try_refresh(1, false).unwrap();
+    let WorkspaceEvent::Refreshed {
+        result: Ok(rows), ..
+    } = events.recv().await.unwrap()
+    else {
+        panic!("stopped selection did not appear in the catalog");
+    };
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].running);
+    let selection = rows[0].selection();
+    assert!(
+        handle
+            .prepare_selected_session(selection.clone(), true)
+            .await
+            .is_err()
+    );
+
+    let (_, mut replacement) = server(&destination_layout, "replacement");
+    let (result, ()) = tokio::join!(
+        handle.prepare_selected_session(selection.clone(), false),
+        answer(&mut replacement, health())
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("choose it again"), "{error}");
+    replacement.shutdown().await.unwrap();
+
+    let prepared = handle
+        .prepare_selected_session(selection, false)
+        .await
+        .unwrap();
+    let process = Arc::clone(prepared.peer());
+    let decision = prepared
+        .prepare_acceptance(Instant::now() + Duration::from_secs(5))
+        .await
+        .unwrap();
+    drop(decision);
+    tokio::time::timeout(Duration::from_secs(12), owner.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!process.is_alive().unwrap());
+    assert!(
+        destination_layout
+            .publication_location()
+            .unwrap()
+            .observe_ready()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn selected_stopped_startup_refuses_a_competing_existing_winner() {
+    let root = TestRuntimeRoot::new("native-selected-stopped-race").unwrap();
+    let source = layout(&root, "source", "cache");
+    let destination = layout(&root, "destination", "cache");
+    let (_, mut replacement) = server(&destination, "winner");
+    let startup =
+        ParentAttachStartup::capture(&root.join("missing-startup.exe"), None, 0, None).unwrap();
+    let (_requests, request_rx) = mpsc::channel(1);
+    let (_preview_sender, preview_rx) = watch::channel(None);
+    let (events, _event_rx) = mpsc::channel(1);
+    let (_stop_sender, stop_rx) = watch::channel(false);
+    let mut worker = Worker {
+        scope: source.discovery_scope().clone(),
+        current: Some(source.read_location()),
+        current_layout: None,
+        configured_state: PathBuf::from(".runyte"),
+        parent_attach: Some(startup),
+        snapshot: None,
+        pending_worktree_teardown: None,
+        include_hidden: false,
+        requests: request_rx,
+        previews: preview_rx,
+        events,
+        stop: stop_rx,
+    };
+    let (mut reply, _receiver) = oneshot::channel();
+    let result = tokio::time::timeout(Duration::from_secs(12), async {
+        let preparation =
+            worker.prepare_startup_for_project(destination.project_root(), &mut reply, true);
+        tokio::pin!(preparation);
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut preparation => break result,
+                event = replacement.recv() => match event.unwrap() {
+                    ServerEvent::Connected { responses, .. } => {
+                        responses.send(HostResponse::Welcome {
+                            protocol: VERSION,
+                            pid: std::process::id(),
+                            features: vec![
+                                FeatureGroup::Control,
+                                FeatureGroup::Buffers,
+                                FeatureGroup::Wait,
+                            ],
+                            host_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        }).await.unwrap();
+                    }
+                    ServerEvent::Disconnected { .. } => {}
+                    other => panic!("unexpected winner readiness event: {other:?}"),
+                },
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let error = result
+        .err()
+        .expect("competing winner was accepted")
+        .to_string();
+    assert!(error.contains("choose it again"), "{error}");
+    assert!(
+        PinnedProcess::open_peer(replacement.metadata().process.pid)
+            .unwrap()
+            .is_alive()
+            .unwrap()
+    );
+    replacement.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -296,6 +1028,25 @@ async fn retained_live_selection_previews_exact_peer_and_replacement_gets_new_ke
             result: Err(_),
             ..
         } if selection == old_selection
+    ));
+    let (event, ()) = tokio::join!(
+        async {
+            handle.try_inventory(31, old_selection.clone()).unwrap();
+            tokio::time::timeout(Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        },
+        answer(&mut replacement, health())
+    );
+    assert!(matches!(
+        event,
+        WorkspaceEvent::Inventory {
+            generation: 31,
+            selection,
+            result: Err(error),
+            ..
+        } if selection == old_selection && error.contains("choose it again")
     ));
     let (event, ()) = tokio::join!(
         async {

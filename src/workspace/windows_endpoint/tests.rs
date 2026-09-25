@@ -17,7 +17,7 @@ use windows_sys::Win32::{
 fn location(root: &Path) -> EndpointLocation {
     let project = root.join("project");
     fs::create_dir_all(&project).unwrap();
-    let registries = RegistrySet::open(&[root.join("registry")]).unwrap();
+    let registries = RegistrySet::open_fixture(&[root.join("registry")]).unwrap();
     EndpointLocation::new(&project, root.join("endpoint"), registries).unwrap()
 }
 
@@ -109,9 +109,9 @@ fn malformed_metadata_refuses_bad_paths_addresses_identity_and_size() {
 fn separate_handles_contend_release_and_keep_stable_lock_files() {
     let root = TestRuntimeRoot::new("endpoint-locks").unwrap();
     let registry = root.join("registry");
-    let first = RegistrySet::open(std::slice::from_ref(&registry)).unwrap();
+    let first = RegistrySet::open_fixture(std::slice::from_ref(&registry)).unwrap();
     let alias = registry.join(".");
-    let second = RegistrySet::open(&[alias, registry.clone()]).unwrap();
+    let second = RegistrySet::open_fixture(&[alias, registry.clone()]).unwrap();
     assert_eq!(second.0.len(), 1);
     let id = "a".repeat(32);
     let guards = first.identity_locks(&id).unwrap();
@@ -130,6 +130,112 @@ fn separate_handles_contend_release_and_keep_stable_lock_files() {
 }
 
 #[test]
+fn project_lease_serializes_isolated_namespaces_by_canonical_root() {
+    let root = TestRuntimeRoot::new("project-lease").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let other_project = root.create_private_dir("other-project").unwrap();
+    let inventory = root.join("inventory");
+    let first = EndpointLocation::new(
+        &project,
+        root.join("first-endpoint"),
+        RegistrySet::with_inventory(&[root.join("first")], Some(inventory.clone())).unwrap(),
+    )
+    .unwrap();
+    let second = EndpointLocation::new(
+        &project,
+        root.join("second-endpoint"),
+        RegistrySet::with_inventory(&[root.join("second")], Some(inventory.clone())).unwrap(),
+    )
+    .unwrap();
+
+    let held = ProjectLease::acquire(&project, &inventory).unwrap();
+    first.verify_project_lease(&held).unwrap();
+    second.verify_project_lease(&held).unwrap();
+    assert_eq!(
+        ProjectLease::acquire(&project.join("."), &inventory)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let unrelated = ProjectLease::acquire(&other_project, &inventory).unwrap();
+    assert!(first.verify_project_lease(&unrelated).is_err());
+    drop(unrelated);
+
+    let path = inventory.join(format!(
+        ".project-{}.lock",
+        crate::workspace::workspace_id(held.project_root())
+    ));
+    let original = crate::windows_fs::Identity::read(&path).unwrap();
+    drop(held);
+    let reacquired = ProjectLease::acquire(&project.join("."), &inventory).unwrap();
+    second.verify_project_lease(&reacquired).unwrap();
+    assert_eq!(crate::windows_fs::Identity::read(&path).unwrap(), original);
+}
+
+#[test]
+fn project_lease_rejects_a_different_admitted_inventory() {
+    let root = TestRuntimeRoot::new("project-lease-inventory").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let first_inventory = root.join("first-inventory");
+    let second_inventory = root.join("second-inventory");
+    let lease = ProjectLease::acquire(&project, &first_inventory).unwrap();
+    let different = EndpointLocation::new(
+        &project,
+        root.join("endpoint"),
+        RegistrySet::with_inventory(&[root.join("namespace")], Some(second_inventory)).unwrap(),
+    )
+    .unwrap();
+    assert!(different.verify_project_lease(&lease).is_err());
+}
+
+#[test]
+fn project_lease_detects_replaced_canonical_root_before_publication() {
+    let root = TestRuntimeRoot::new("project-lease-replaced-root").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let lease = ProjectLease::acquire(&project, &root.join("inventory")).unwrap();
+    fs::rename(&project, root.join("moved-project")).unwrap();
+    fs::create_dir(&project).unwrap();
+    assert_eq!(
+        lease.verify_live_identity().unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
+#[test]
+fn ordinary_prepare_waits_for_project_removal_lease_across_namespaces() {
+    let root = TestRuntimeRoot::new("project-lease-prepare").unwrap();
+    let project = root.create_private_dir("project").unwrap();
+    let inventory = root.join("inventory");
+    let removal = ProjectLease::acquire(&project, &inventory).unwrap();
+    let publisher = EndpointLocation::new(
+        &project,
+        root.join("other-endpoint"),
+        RegistrySet::with_inventory(&[root.join("other-namespace")], Some(inventory.clone()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        publisher.prepare(None).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert!(!publisher.directory.exists());
+    drop(removal);
+
+    let prepared = publisher.prepare(None).unwrap();
+    assert_eq!(
+        ProjectLease::acquire(&project, &inventory)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let mut publication = prepared.publish().unwrap();
+    // Publication has completed, so a removal coordinator may take the lease
+    // and then inspect and stop this live host before deleting the project.
+    drop(ProjectLease::acquire(&project, &inventory).unwrap());
+    publication.cleanup().unwrap();
+}
+
+#[test]
 fn shared_secondary_registry_serializes_different_primary_roots_before_endpoint_preparation() {
     let root = TestRuntimeRoot::new("endpoint-shared").unwrap();
     let first_project = root.create_private_dir("first-project").unwrap();
@@ -138,13 +244,13 @@ fn shared_secondary_registry_serializes_different_primary_roots_before_endpoint_
     let first = EndpointLocation::new(
         &first_project,
         root.join("first-endpoint"),
-        RegistrySet::open(&[root.join("first"), common.clone()]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("first"), common.clone()]).unwrap(),
     )
     .unwrap();
     let second = EndpointLocation::new(
         &second_project,
         root.join("second-endpoint"),
-        RegistrySet::open(&[common, root.join("second")]).unwrap(),
+        RegistrySet::open_fixture(&[common, root.join("second")]).unwrap(),
     )
     .unwrap();
     let held = first.prepare(None).unwrap();
@@ -206,13 +312,13 @@ fn distinct_lock_sets_cannot_replace_one_ready_record() {
     let first = EndpointLocation::new(
         &project,
         directory.clone(),
-        RegistrySet::open(&[root.join("first")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("first")]).unwrap(),
     )
     .unwrap();
     let second = EndpointLocation::new(
         &project,
         directory,
-        RegistrySet::open(&[root.join("second")]).unwrap(),
+        RegistrySet::open_fixture(&[root.join("second")]).unwrap(),
     )
     .unwrap();
     let prepared_first = first.prepare(None).unwrap();
@@ -238,8 +344,18 @@ fn distinct_lock_sets_cannot_replace_one_ready_record() {
 #[test]
 fn replaced_registry_path_cannot_publish_ready_into_an_undiscoverable_namespace() {
     let root = TestRuntimeRoot::new("endpoint-root-replaced").unwrap();
-    let endpoint = location(root.path());
+    let project = root.create_private_dir("project").unwrap();
     let registry = root.join("registry");
+    let endpoint = EndpointLocation::new(
+        &project,
+        root.join("endpoint"),
+        RegistrySet::with_inventory(
+            std::slice::from_ref(&registry),
+            Some(root.join("inventory")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let moved = root.join("retired-registry");
     // No child handles are retained yet, so Windows permits the parent rename.
     fs::rename(&registry, &moved).unwrap();
@@ -256,7 +372,7 @@ fn replaced_registry_path_cannot_publish_ready_into_an_undiscoverable_namespace(
 fn failed_publication_reports_cleanup_error_and_attempts_remaining_issued_records() {
     let root = TestRuntimeRoot::new("endpoint-rollback").unwrap();
     let project = root.create_private_dir("project").unwrap();
-    let registries = RegistrySet::open(&[root.join("first"), root.join("second")]).unwrap();
+    let registries = RegistrySet::open_fixture(&[root.join("first"), root.join("second")]).unwrap();
     let endpoint = EndpointLocation::new(&project, root.join("endpoint"), registries).unwrap();
     let prepared = endpoint.prepare(None).unwrap();
     let name = format!("{}.json", prepared.metadata.id);
@@ -281,7 +397,7 @@ fn failed_publication_reports_cleanup_error_and_attempts_remaining_issued_record
 fn registry_replacement_at_readiness_boundary_is_preserved_without_publishing_ready() {
     let root = TestRuntimeRoot::new("endpoint-boundary-replaced").unwrap();
     let project = root.create_private_dir("project").unwrap();
-    let registries = RegistrySet::open(&[root.join("first"), root.join("second")]).unwrap();
+    let registries = RegistrySet::open_fixture(&[root.join("first"), root.join("second")]).unwrap();
     let endpoint = EndpointLocation::new(&project, root.join("endpoint"), registries).unwrap();
     let prepared = endpoint.prepare(None).unwrap();
     let name = format!("{}.json", prepared.metadata.id);
@@ -460,9 +576,9 @@ fn occupied_unverified_and_unsafe_records_are_never_removed_or_followed() {
     fs::hard_link(&record, &linked).unwrap();
     assert!(endpoint.read_ready().is_err());
     assert!(endpoint.prepare(None).is_err());
-    assert!(RegistrySet::open(&[root.join("registry:stream")]).is_err());
-    assert!(RegistrySet::open(&[PathBuf::from("relative")]).is_err());
-    assert!(RegistrySet::open(&[PathBuf::from(r"\\server\share\registry")]).is_err());
+    assert!(RegistrySet::open_fixture(&[root.join("registry:stream")]).is_err());
+    assert!(RegistrySet::open_fixture(&[PathBuf::from("relative")]).is_err());
+    assert!(RegistrySet::open_fixture(&[PathBuf::from(r"\\server\share\registry")]).is_err());
 }
 
 #[test]

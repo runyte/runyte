@@ -34,7 +34,8 @@ fn recent(layout: &ResolvedLayout, name: Option<&str>) -> RecentEntry {
 }
 fn name(layout: &ResolvedLayout, value: &str) {
     let registries =
-        crate::workspace::windows_endpoint::RegistrySet::open(layout.namespace_roots()).unwrap();
+        crate::workspace::windows_endpoint::RegistrySet::open_fixture(layout.namespace_roots())
+            .unwrap();
     NameStore::open(layout.state_root())
         .unwrap()
         .store_if_absent(

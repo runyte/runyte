@@ -632,6 +632,8 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
         | ClientRequest::NativeParentSwitchCommitObserved { .. }
         | ClientRequest::NativeSwitchAbort { .. }
         | ClientRequest::Detach => role == ClientRole::Interactive,
+        #[cfg(windows)]
+        ClientRequest::NativePreviousPublication { .. } => role == ClientRole::Interactive,
         ClientRequest::RenameHost { .. }
         | ClientRequest::ParentAttach { .. }
         | ClientRequest::ParentWait { .. }

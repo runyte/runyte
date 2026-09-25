@@ -75,15 +75,14 @@ pub use buffers::{
 };
 #[cfg(unix)]
 pub use catalog::{
-    ABBREVIATED_WORKSPACE_ID, DestinationInventory, MAX_WORKSPACE_NUMBER, RecordedWorkspace,
-    WorkspaceEvent, WorkspaceRow, WorkspaceService, WorkspaceServiceHandle, abbreviated_id_width,
-    clear_stopped_sessions, ensure_recent_workspace, known_workspaces,
-    known_workspaces_all_namespaces, known_workspaces_for_navigation, record_recent_workspace,
-    record_workspace_activity, recorded_workspace_number, rename_known_workspace,
-    resolve_known_workspace, resolve_known_workspace_from_directory,
+    ABBREVIATED_WORKSPACE_ID, RecordedWorkspace, WorkspaceEvent, WorkspaceRow, WorkspaceService,
+    WorkspaceServiceHandle, abbreviated_id_width, clear_stopped_sessions, ensure_recent_workspace,
+    known_workspaces, known_workspaces_all_namespaces, known_workspaces_for_navigation,
+    record_recent_workspace, record_workspace_activity, recorded_workspace_number,
+    rename_known_workspace, resolve_known_workspace, resolve_known_workspace_from_directory,
 };
 #[cfg(any(unix, windows))]
-pub use catalog_values::{PublicationKey, WorkspaceSelection};
+pub use catalog_values::{DestinationInventory, PublicationKey, WorkspaceSelection};
 #[cfg(windows)]
 pub use catalog_values::{WorkspaceEvent, WorkspaceRow};
 pub use host::{
@@ -92,6 +91,8 @@ pub use host::{
     TERMINAL_OUTPUT_QUIET_INTERVAL, WorkspaceHost,
 };
 pub use identity::{WORKSPACE_ID_LENGTH, WorkspaceIdentity, workspace_id};
+#[cfg(any(unix, windows))]
+pub use recent_history::MAX_WORKSPACE_NUMBER;
 pub use service::{
     CancellationToken, ServiceKind, ServiceLane, ServiceLifecycle, ServiceOutcome, ServicePhase,
     ServiceProgress, ServiceRequestId, ServiceStateError, ServiceSubmitError, ServiceUpdate,

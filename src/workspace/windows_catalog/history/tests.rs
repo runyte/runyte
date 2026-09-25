@@ -46,6 +46,53 @@ fn missing_history_and_namespace_roots_are_not_created_by_refresh() {
 }
 
 #[test]
+fn current_exact_ready_is_live_without_registry_or_history_rows() {
+    runtime().block_on(async {
+        let root = TestRuntimeRoot::new("history-current-ready").unwrap();
+        let layout = layout(&root, "project", "cache");
+        let (_, mut host) = server(&layout, "ready-only");
+        for namespace in layout.namespace_roots() {
+            fs::remove_file(namespace.join(format!("{}.json", host.metadata().id))).unwrap();
+        }
+        assert!(!root.join("cache/runyte/workspaces.json").exists());
+        let absent = snapshot_with_history_in_scope(
+            layout.discovery_scope(),
+            None,
+            Path::new(".runyte"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(absent.entries().is_empty());
+
+        let current = layout.read_location();
+        let (exact, ()) = tokio::join!(
+            snapshot_with_history_in_scope(
+                layout.discovery_scope(),
+                Some(&current),
+                Path::new(".runyte"),
+                false,
+            ),
+            answer(&mut host, health()),
+        );
+        let exact = exact.unwrap();
+        let Some(HistoryTarget::Live { publication, .. }) = exact
+            .select(layout.project_root(), Some(layout.project_root()))
+            .unwrap()
+        else {
+            panic!("exact ready host was not selected");
+        };
+        assert_eq!(publication.metadata(), host.metadata());
+        assert_eq!(publication.observations().len(), 1);
+        assert_eq!(
+            publication.observations()[0].origin(),
+            CandidateOrigin::ConfiguredReady
+        );
+        host.shutdown().await.unwrap();
+    });
+}
+
+#[test]
 fn selector_history_without_a_current_project_preserves_its_captured_cache() {
     runtime().block_on(async {
         let root = TestRuntimeRoot::new("scope-history-cache").unwrap();

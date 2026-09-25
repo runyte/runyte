@@ -27,6 +27,8 @@ use super::{
     RepositoryStatus, Result, StashEntry, StashMutation, StatusStats, Worktree, WorktreeCreate,
     WorktreeRemovalPlan,
 };
+#[cfg(windows)]
+use crate::workspace::windows_endpoint::ProjectLease;
 use crate::workspace::{BufferId, BufferRevision};
 
 const REQUEST_CAPACITY: usize = 64;
@@ -654,6 +656,58 @@ impl GitServiceHandle {
     }
 
     pub fn try_submit(&self, operation: GitOperation) -> Result<GitRequestId> {
+        #[cfg(windows)]
+        if matches!(
+            &operation,
+            GitOperation::Mutate {
+                mutation: GitMutation::RemoveWorktree { .. },
+                ..
+            }
+        ) {
+            return Err(GitError::Unavailable {
+                detail: "worktree removal requires a project lease".to_owned(),
+            });
+        }
+        self.try_submit_inner(
+            operation,
+            #[cfg(windows)]
+            None,
+        )
+    }
+
+    /// The caller retains a clone through native host teardown and history
+    /// cleanup. This copy stays in the Git worker until guarded removal and
+    /// its subprocess cleanup have returned.
+    // The native App teardown coordinator will call this after host cleanup.
+    #[cfg(windows)]
+    #[allow(dead_code)]
+    pub(crate) fn try_submit_worktree_removal(
+        &self,
+        operation: GitOperation,
+        lease: ProjectLease,
+    ) -> Result<GitRequestId> {
+        let GitOperation::Mutate {
+            mutation: GitMutation::RemoveWorktree { plan, .. },
+            ..
+        } = &operation
+        else {
+            return Err(GitError::Unavailable {
+                detail: "a project lease only authorizes worktree removal".to_owned(),
+            });
+        };
+        if plan.path != lease.project_root() || lease.verify_live_identity().is_err() {
+            return Err(GitError::Unavailable {
+                detail: "worktree removal lease does not cover the reviewed project".to_owned(),
+            });
+        }
+        self.try_submit_inner(operation, Some(lease))
+    }
+
+    fn try_submit_inner(
+        &self,
+        operation: GitOperation,
+        #[cfg(windows)] removal_lease: Option<ProjectLease>,
+    ) -> Result<GitRequestId> {
         let id = GitRequestId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let cancelled = Arc::new(AtomicBool::new(false));
         self.cancellations
@@ -670,6 +724,8 @@ impl GitServiceHandle {
             operation,
             cancelled,
             reservation,
+            #[cfg(windows)]
+            removal_lease,
         };
         self.requests.try_send(request).map_err(|error| {
             if let Ok(mut cancellations) = self.cancellations.lock() {
@@ -733,6 +789,7 @@ trait GitServiceWorker: Clone + Send + 'static {
         operation: &GitOperation,
         generation: RepositoryGeneration,
         cancellation: Arc<AtomicBool>,
+        #[cfg(windows)] removal_lease: Option<&ProjectLease>,
     ) -> Result<GitResponse>;
 
     fn uses_repository_process_lock(&self) -> bool {
@@ -746,11 +803,14 @@ impl GitServiceWorker for GitCliProvider {
         operation: &GitOperation,
         generation: RepositoryGeneration,
         cancellation: Arc<AtomicBool>,
+        #[cfg(windows)] removal_lease: Option<&ProjectLease>,
     ) -> Result<GitResponse> {
         execute(
             &self.clone().with_cancellation(cancellation),
             operation,
             generation,
+            #[cfg(windows)]
+            removal_lease,
         )
     }
 
@@ -796,6 +856,8 @@ struct Request {
     operation: GitOperation,
     cancelled: Arc<AtomicBool>,
     reservation: Option<super::repository_lock::RepositoryReservation>,
+    #[cfg(windows)]
+    removal_lease: Option<ProjectLease>,
 }
 
 type Waiter = (GitRequestId, Arc<AtomicBool>);
@@ -813,6 +875,8 @@ struct Job {
     read_key: Option<ReadKey>,
     mutation_key: Option<(PathBuf, MutationIdentity)>,
     reservation: Option<super::repository_lock::RepositoryReservation>,
+    #[cfg(windows)]
+    removal_lease: Option<ProjectLease>,
 }
 
 struct Completion {
@@ -1014,7 +1078,13 @@ fn schedule<W: GitServiceWorker>(
                 let (result, executed) = if let Some(reservation) = job.reservation {
                     match reservation.acquire(Some(&execution_cancelled)) {
                         Some(_guard) => (
-                            worker.execute(&job.operation, generation, execution_cancelled),
+                            worker.execute(
+                                &job.operation,
+                                generation,
+                                execution_cancelled,
+                                #[cfg(windows)]
+                                job.removal_lease.as_ref(),
+                            ),
                             true,
                         ),
                         None => (
@@ -1026,7 +1096,13 @@ fn schedule<W: GitServiceWorker>(
                     }
                 } else {
                     (
-                        worker.execute(&job.operation, generation, execution_cancelled),
+                        worker.execute(
+                            &job.operation,
+                            generation,
+                            execution_cancelled,
+                            #[cfg(windows)]
+                            job.removal_lease.as_ref(),
+                        ),
                         true,
                     )
                 };
@@ -1164,6 +1240,8 @@ fn schedule<W: GitServiceWorker>(
                     read_key,
                     mutation_key,
                     reservation: request.reservation,
+                    #[cfg(windows)]
+                    removal_lease: request.removal_lease,
                 });
         }
     }
@@ -1173,7 +1251,25 @@ fn execute(
     provider: &dyn GitProvider,
     operation: &GitOperation,
     generation: RepositoryGeneration,
+    #[cfg(windows)] removal_lease: Option<&ProjectLease>,
 ) -> Result<GitResponse> {
+    #[cfg(windows)]
+    if let GitOperation::Mutate {
+        mutation: GitMutation::RemoveWorktree { plan, .. },
+        ..
+    } = operation
+    {
+        let Some(lease) = removal_lease else {
+            return Err(GitError::Unavailable {
+                detail: "worktree removal requires a project lease".to_owned(),
+            });
+        };
+        if plan.path != lease.project_root() || lease.verify_live_identity().is_err() {
+            return Err(GitError::Unavailable {
+                detail: "worktree removal lease lost its project identity".to_owned(),
+            });
+        }
+    }
     match operation {
         GitOperation::Discover { start } => provider.discover(start).map(GitResponse::Discovered),
         GitOperation::Status { repository } => provider.status(repository).map(GitResponse::Status),
@@ -1526,6 +1622,7 @@ mod tests {
             operation: &GitOperation,
             generation: RepositoryGeneration,
             cancellation: Arc<AtomicBool>,
+            #[cfg(windows)] _removal_lease: Option<&ProjectLease>,
         ) -> Result<GitResponse> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             self.started.send(operation.label()).unwrap();
@@ -1640,6 +1737,86 @@ mod tests {
             release,
             calls,
         )
+    }
+
+    #[cfg(windows)]
+    fn worktree_removal(path: PathBuf) -> GitOperation {
+        GitOperation::Mutate {
+            repository: Repository::new(path.clone()),
+            mutation: GitMutation::RemoveWorktree {
+                plan: Box::new(WorktreeRemovalPlan {
+                    path,
+                    head: None,
+                    branch: None,
+                    upstream: None,
+                    detached_retained: true,
+                    required_authorization: DeletionAuthorization::Enter,
+                }),
+                authorization: DeletionAuthorization::Enter,
+            },
+            refresh: RefreshSpec::default(),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn worktree_removal_lease_stays_with_worker_through_cancellation() {
+        let root = crate::test_support::TestRuntimeRoot::new("git-worker-lease").unwrap();
+        let project = root.path().join("project");
+        let inventory = root.create_private_dir("inventory").unwrap();
+        std::fs::create_dir(&project).unwrap();
+        let lease = ProjectLease::acquire(&project, &inventory).unwrap();
+        let project = lease.project_root().to_owned();
+        let (worker, started, _release, _) = worker();
+        let (handle, mut events) = GitService::spawn_worker(worker);
+
+        assert!(
+            handle
+                .try_submit(worktree_removal(project.clone()))
+                .is_err()
+        );
+        assert!(
+            handle
+                .try_submit_worktree_removal(
+                    GitOperation::Status {
+                        repository: Repository::new(&project),
+                    },
+                    lease.clone(),
+                )
+                .is_err()
+        );
+        assert!(
+            handle
+                .try_submit_worktree_removal(
+                    worktree_removal(root.path().join("other")),
+                    lease.clone()
+                )
+                .is_err()
+        );
+
+        let id = handle
+            .try_submit_worktree_removal(worktree_removal(project.clone()), lease.clone())
+            .unwrap();
+        drop(lease);
+        started.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(ProjectLease::acquire(&project, &inventory).is_err());
+        assert!(handle.cancel(id));
+        assert!(matches!(
+            completed(&mut events),
+            GitServiceEvent::Completed {
+                id: completed_id,
+                state: GitServiceState::CompletedWithUncertainState,
+                ..
+            } if completed_id == id
+        ));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while ProjectLease::acquire(&project, &inventory).is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "worker kept the project lease after completion"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 
     fn mutation(repository: &Repository, path: &str) -> GitOperation {
