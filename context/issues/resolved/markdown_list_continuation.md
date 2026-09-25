@@ -1,4 +1,45 @@
-# Smart newline aligns under a list item but never starts the next one
+---
+title: "Smart newline aligns under a list item but never starts the next one"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: 50bf24a
+---
+
+## Resolution
+
+Commit `50bf24a` (`Continue Markdown list items on smart newline`) changed
+`App::edit_newline` to continue list markers in Markdown documents while
+`editor.smart_newline` is enabled. The earlier list detector produced only a
+hanging indent, so a sequence of one-line items required deleting that indent
+before typing every marker. A shared shape parser now recognizes bullets,
+decimal and alphabetic markers, canonical uppercase Roman numerals, and task
+items. Newline advances the marker, resets a task checkbox, and moves text
+after a mid-line caret to the new item. An empty item ends the list. Ambiguous
+single Roman letters inherit Roman style only when a preceding same-indent
+sibling establishes it, including through wrapped or nested content.
+
+`App::edit_backspace` replaces an empty marker with its content alignment and
+removes that alignment on the next press. A revision-, pane- and caret-bound
+record handles standalone or width-mismatched items without making ordinary
+whitespace-only indentation disappear in one press. The special Backspace is
+Markdown-only; other file types retain their existing list alignment and
+ordinary Backspace behavior. Each multi-caret newline derives its change from
+the pre-edit text. Replace mode and `smart_newline: false` retain their prior
+behavior. Task separators retain tabs in the alignment.
+
+Coverage is in `src/app/tests/markdown_list_continuation.rs` for marker
+progression, Roman context, tasks, empty items, both Backspace transitions,
+mid-line and multi-caret edits, Markdown file/scratch scope and disabled
+behavior. The existing smart-newline tests in
+`src/app/tests/editing_and_buffers.rs` now exercise non-Markdown hanging
+alignment explicitly. All 11 new and nine existing smart-newline tests,
+formatting and Clippy passed.
+
+Known limitation: inserting or removing an item does not renumber following
+items, and Tab nesting of an empty item remains outside this change.
+
+## Report
 
 With `editor.smart_newline` on, `Enter` at the end of a list item places the
 new line under the item's first content character. `list_continuation_indent`
