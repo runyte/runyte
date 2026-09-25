@@ -1773,6 +1773,9 @@ clears this feedback. This applies to the command line, search and rename prompt
 Finder and list queries, session-directory queries, and typed Git confirmations.
 Literal backslash sequences such as `\n` remain ordinary prompt text. Buffers and
 terminal sessions continue to accept multiline paste.
+Terminal paste actions, including macOS `Cmd-v`, preserve line breaks even
+when the terminal sends them as carriage returns. Existing LF and CRLF
+separators are preserved.
 
 `:notifications` (alias `:not`) opens `[notifications]`, a single searchable,
 read-only buffer containing the retained history newest first. Each entry has

@@ -50,13 +50,18 @@ inventory through an owned socket. Linux master identity includes `TIOCGPTN`,
 since `fstat` alone can describe the shared `/dev/ptmx` device. Failure-injection
 coverage checks that partially allocated endpoints close on return.
 
-Known limitation: macOS retains native `openpty` and subsequent `FD_CLOEXEC`
-updates, preserving its slave-sizing and controlling-terminal behavior. That
-path still has an allocation-to-flag-update inheritance window; this is a
-Linux fix, not a Unix-wide inheritance guarantee. Close-on-exec also does not
-prevent temporary inheritance between fork and exec on either platform. The
-remaining macOS work is tracked in
-[`macos_pty_descriptor_inheritance.md`](../issues/macos_pty_descriptor_inheritance.md).
+macOS also allocates the master with `posix_openpt` and `O_CLOEXEC`. It obtains
+the slave pathname through `TIOCPTYGNAME` into caller-owned storage and opens
+it with `O_RDWR | O_NOCTTY | O_CLOEXEC`. Both endpoints exist before the initial
+size is applied to the slave, preserving native `openpty` setup ordering.
+The same deterministic regression inventories `/dev/fd` on macOS and compares
+the endpoints' native character-device identities; it checks both allocation
+boundaries and injected failure cleanup. There is no inheritable fallback.
+
+Known limitation: close-on-exec does not prevent temporary inheritance between
+fork and exec on either platform. A child that deliberately forks without
+executing is outside this guarantee. Other Unix targets retain the native
+`openpty` fallback without the Linux/macOS atomic allocation guarantee.
 
 The native contracts are documented by the
 [Linux peer ioctl manual](https://man7.org/linux/man-pages/man2/TIOCGPTPEER.2const.html)

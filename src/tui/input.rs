@@ -64,8 +64,28 @@ pub fn convert_event(event: CrosstermEvent) -> Result<Option<InputEvent>, Unsupp
         }
         CrosstermEvent::Mouse(event) => convert_mouse_event(event).map(|event| Some(event.into())),
         CrosstermEvent::Key(event) => convert_key_event(event).map(|stroke| stroke.map(Into::into)),
-        CrosstermEvent::Paste(text) => Ok(Some(InputEvent::Text(text))),
+        CrosstermEvent::Paste(text) => Ok(Some(InputEvent::Text(paste_text(text)))),
     }
+}
+
+fn paste_text(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
+    }
+    // Terminal paste actions can encode clipboard LF as Enter/CR. Restore
+    // those line separators at the transport boundary, keeping any CRLF
+    // pairs intact. Prompts still reject controls and terminal panes apply
+    // their ordinary LF-to-CR encoding when forwarding this literal text.
+    let mut characters = text.chars().peekable();
+    let mut result = String::with_capacity(text.len());
+    while let Some(character) = characters.next() {
+        result.push(if character == '\r' && characters.peek() != Some(&'\n') {
+            '\n'
+        } else {
+            character
+        });
+    }
+    result
 }
 
 fn convert_mouse_event(event: CrosstermMouseEvent) -> Result<PointerEvent, UnsupportedModifiers> {
