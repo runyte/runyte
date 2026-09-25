@@ -1883,14 +1883,19 @@ Contextual help describes the view it was opened over — one document per
 buffer type, not one per mode. NORMAL and SELECT bind the same keys to the same
 commands, so a text buffer has a single `TEXT` document that describes both
 modes in its prose rather than two whose key tables would be identical.
-Sections run from most to least specific:
+The generated key lists then cover each mode:
 
-- **Buffer keys** — direct keys unique to the view and the contextual actions
-  its `Tab` menu opens, such as `Tab s` to stage a changed-file row.
-- **Where to start** — every prefix that opens the hint popup: `Space`, `g`,
-  `z`, `Z`, `m`, and `Ctrl-w`.
-- **Direct keys** — everything that acts on the first press, grouped into
-  letters and punctuation, `Ctrl` chords, `Alt` chords, and named keys.
+- **Normal and Select** — buffer-specific keys and `Tab` actions first,
+  followed by prefixes whose hint popup teaches the rest, then direct keys
+  grouped by letters and punctuation, `Ctrl` chords, `Alt` chords, and named
+  keys. Shifted `<` and `>` also carry searchable `Shift-<` and `Shift->`
+  spellings.
+- **Insert and Replace** — shared keys appear once, with separate lists for
+  keys that differ between the modes. A read-only view says when these modes
+  are unavailable. Terminal Insert describes keys sent to the child and
+  Runyte-owned exceptions separately.
+- **Command** — prompt controls are described under their own heading. The
+  command prompt handles these directly, outside the editor keymap registry.
 
 `Ctrl-o` and `Ctrl-i` walk every recorded position, including terminal surfaces
 and positions within one file. `Alt-o` and `Alt-i` walk the same history but
@@ -1900,9 +1905,9 @@ with `:c` or `Space b c` keeps every pane and returns each one to its own most
 recently used live buffer. When none remains, the pane receives a new scratch
 buffer.
 
-Every key named there is read from the keymap registry when help is opened, so
-it cannot drift from what the keys do. In a read-only view, keys that would
-only report a refusal are left out entirely.
+The modal and Insert/Replace key rows are read from the keymap registry when
+help is opened, so they follow configured bindings. In a read-only view, keys
+that would only report a refusal are left out entirely.
 
 In Normal and Select modes, `Tab` asks what can be done with the thing under
 the cursor. Git views open a contextual action menu: use arrows or `j`/`k` to

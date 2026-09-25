@@ -3680,7 +3680,7 @@ enum ListAction {
 /// `Escape` cannot be it: `vim` and `htop` inside the pane need it, and every
 /// agent uses it too. `Ctrl-\\` begins the staged Normal/review transition;
 /// `Ctrl-w` begins the Insert-mode pane-navigation namespace instead.
-fn is_terminal_normal_key(key: KeyStroke) -> bool {
+pub(crate) fn is_terminal_normal_key(key: KeyStroke) -> bool {
     // Two spellings of Ctrl-\\. A terminal implementing the kitty keyboard
     // protocol reports `Ctrl-\` as the character it is; a legacy one has only
     // the control byte `0x1c`, which Crossterm decodes as `Ctrl-4` because

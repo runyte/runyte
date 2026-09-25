@@ -577,6 +577,7 @@ impl std::error::Error for DuplicateBinding {}
 #[derive(Clone, Debug)]
 pub struct Keymap {
     bindings: Vec<Binding>,
+    fast_pane_keys: bool,
     namespaces: Vec<BindingNamespace>,
     context_actions: Vec<ContextAction>,
     leader: KeyStroke,
@@ -591,6 +592,22 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    pub(crate) fn fast_pane_keys(&self) -> bool {
+        self.fast_pane_keys
+    }
+
+    pub(crate) fn with_fast_pane_keys_enabled(mut self, enabled: bool) -> Self {
+        self.fast_pane_keys = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_bindings(&self, bindings: Vec<Binding>) -> Self {
+        let mut keymap = self.clone();
+        keymap.bindings = bindings;
+        keymap
+    }
+
     /// Resolve indent-key descriptions from the live setting in the same
     /// registry used by dispatch, help, and key hints.
     pub(crate) fn with_indent_style(&self, style: crate::config::IndentStyle) -> Self {
@@ -677,6 +694,7 @@ impl Keymap {
         }
         let mut keymap = Self {
             bindings,
+            fast_pane_keys: false,
             namespaces: Vec::new(),
             context_actions: Vec::new(),
             leader: Key::char(' '),
@@ -2494,8 +2512,11 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
 static DEFAULT_KEYMAP: LazyLock<Arc<Keymap>> =
     LazyLock::new(|| Arc::new(build_keymap(built_in_bindings())));
 
-static FAST_PANE_KEYMAP: LazyLock<Arc<Keymap>> =
-    LazyLock::new(|| Arc::new(build_keymap(with_fast_pane_keys(built_in_bindings()))));
+static FAST_PANE_KEYMAP: LazyLock<Arc<Keymap>> = LazyLock::new(|| {
+    Arc::new(
+        build_keymap(with_fast_pane_keys(built_in_bindings())).with_fast_pane_keys_enabled(true),
+    )
+});
 
 pub fn default_keymap() -> &'static Keymap {
     &DEFAULT_KEYMAP
