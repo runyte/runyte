@@ -2014,12 +2014,19 @@ fn snapshot_line(
                 // names the mode, so CMD stays identifiable in every pane.
                 // `goto-word` still dims it with everything else, because
                 // there the caret is one more thing the labels have to stand
-                // out from.
-                let caret = matches!(
+                // out from. Selected text is exempt for the same reason the
+                // caret is: under a search prompt it is the preview of what
+                // Enter will select, and it has to read against the dimmed
+                // text around it.
+                let highlighted = matches!(
                     role,
-                    TextRole::Caret | TextRole::PrimaryCaret | TextRole::ReplaceCaret
+                    TextRole::Caret
+                        | TextRole::PrimaryCaret
+                        | TextRole::ReplaceCaret
+                        | TextRole::Selected
+                        | TextRole::PrimarySelected
                 );
-                if pane.dimmed && (pane.jump_active || !caret) {
+                if pane.dimmed && (pane.jump_active || !highlighted) {
                     style.fg(dim_muted)
                 } else {
                     style
@@ -8649,6 +8656,55 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(text(&mut app), before);
+    }
+
+    #[test]
+    fn a_search_preview_keeps_its_matches_legible_in_the_dimmed_pane() {
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        config.theme = Some("light".into());
+        let theme = config.resolve_theme("light").unwrap();
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "zz qq zz"));
+        for character in "szz".chars() {
+            app.handle_key(crate::input::KeyStroke::char(character))
+                .unwrap();
+        }
+
+        let hints = KeyHintState::default();
+        let mut terminal = Terminal::new(TestBackend::new(40, 14)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &hints))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let colour = |symbol: &str, background| {
+            buffer
+                .content
+                .iter()
+                .find(|cell| {
+                    cell.symbol() == symbol && cell.style().bg == Some(to_tui_color(background))
+                })
+                .map(|cell| cell.style().fg)
+        };
+
+        // The text around the matches is dimmed as under any prompt, while
+        // the matches keep the foreground they will have once selected.
+        assert_eq!(
+            buffer
+                .content
+                .iter()
+                .find(|cell| cell.symbol() == "q")
+                .map(|cell| cell.style().fg),
+            Some(Some(to_tui_color(theme.jump_text_muted)))
+        );
+        assert_eq!(
+            colour("z", theme.selection_primary),
+            Some(Some(to_tui_color(theme.foreground)))
+        );
+        assert_eq!(
+            colour("z", theme.selection),
+            Some(Some(to_tui_color(theme.foreground)))
+        );
     }
 
     #[test]

@@ -2182,6 +2182,15 @@ motion such as `e` turns the results into ordinary selections, restores their
 Select-coloured endpoint cursors, and replaces the search status with the
 current selection count.
 
+Both prompts preview their matches while you type. Every match the pattern
+would select is highlighted as Enter will leave it, and the pane scrolls to the
+match that would become primary: the first at or after the cursor. Nothing is
+selected until Enter, and Escape returns the pane to where it was looking. A
+pattern that matches nothing highlights nothing and returns the view too, while
+an unfinished regular expression such as `foo(` keeps the last preview until the
+pattern is valid again. The rest of the pane stays dimmed under the prompt, so
+the highlighted matches stand out from it.
+
 A search runs over the whole buffer unless something is selected. When at least
 two characters are selected — from `v` and a motion, from `x`, from `%`, or from
 a previous search — the search looks only inside that text, and `n` and `N` wrap

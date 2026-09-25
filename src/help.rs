@@ -129,7 +129,7 @@ impl HelpTopic {
                 "NORMAL mode replaces the selection as you move. v enters SELECT mode, where moving extends every selection instead; v or Escape returns.",
                 "INSERT writes text at each caret. REPLACE overwrites forward and lets Backspace retrace the current overwrite. Their shared bindings and any mode-specific keys appear below.",
                 "COMMAND owns the interaction-line prompt. Type to edit a command, or use its prompt controls listed below; it returns to editing when submitted or cancelled.",
-                "Search selects every match at once. With two or more characters selected, s and / search only inside the selection, leaving a cursor on every match; n and N then select only one result and step through them.",
+                "Search selects every match at once, and highlights them while the pattern is still being typed. With two or more characters selected, s and / search only inside the selection, leaving a cursor on every match; n and N then select only one result and step through them.",
                 "Press {prefix:Space} and pause to explore command groups without memorising the full keymap.",
                 "{key:swap-window} exchanges this pane's complete content with the previously focused pane and follows it to its new position; {key:swap-window:compatibility} is the compatibility spelling.",
                 "{binding:Space n} opens Navigator over open buffers and running terminals. Enter focuses a visible destination; Tab offers actions including bringing it into this pane. {binding:Ctrl-w p} returns to this pane's previous destination.",

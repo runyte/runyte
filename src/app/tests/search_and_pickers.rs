@@ -379,6 +379,233 @@ fn an_invalid_regex_from_the_search_prompt_echoes_as_an_error() {
     );
 }
 
+fn preview_geometry() -> FrameGeometry {
+    FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 12,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 10,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    }
+}
+
+/// The role the open search prompt's preview gives `offset`, or `None` when
+/// the prompt previews nothing.
+fn preview_role(app: &App, offset: usize) -> Option<crate::snapshot::TextRole> {
+    let pane = app.active();
+    app.search_preview_for(app.active_pane, pane.buffer)
+        .map(|preview| preview.role_at(offset))
+}
+
+#[test]
+fn both_search_prompts_preview_their_matches_before_enter() {
+    use crate::snapshot::TextRole;
+
+    for (opener, pattern) in [('s', "CAT"), ('/', "c.t")] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, "cat dog cat");
+        let revision = app.active().selection_revision;
+
+        press(&mut app, opener);
+        type_text(&mut app, pattern);
+        app.prepare_view(preview_geometry());
+
+        assert_eq!(
+            app.mode,
+            Mode::Command,
+            "{opener}: the prompt is still open"
+        );
+        assert_eq!(preview_role(&app, 0), Some(TextRole::PrimarySelected));
+        assert_eq!(preview_role(&app, 2), Some(TextRole::PrimaryCaret));
+        assert_eq!(preview_role(&app, 3), Some(TextRole::Plain));
+        assert_eq!(preview_role(&app, 8), Some(TextRole::Selected));
+        assert_eq!(preview_role(&app, 10), Some(TextRole::Selected));
+        // Nothing is selected, committed, or remembered until Enter.
+        assert_eq!(app.active().selection, Selection::point(0));
+        assert_eq!(app.active().selection_revision, revision);
+        assert!(app.search.pattern.is_empty());
+
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.active().selection.len(), 2);
+        assert_eq!(app.status, format!("match 1/2 (all selected): {pattern}"));
+        app.prepare_view(preview_geometry());
+        assert!(app.search_preview.is_none());
+    }
+}
+
+#[test]
+fn the_preview_follows_each_edit_of_the_pattern() {
+    use crate::snapshot::TextRole;
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "cat car cot");
+    press(&mut app, 's');
+
+    type_text(&mut app, "ca");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 4), Some(TextRole::Selected));
+    assert_eq!(preview_role(&app, 8), Some(TextRole::Plain));
+
+    type_text(&mut app, "r");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 0), Some(TextRole::Plain));
+    assert_eq!(preview_role(&app, 4), Some(TextRole::PrimarySelected));
+
+    // Deleting the pattern and matching nothing both leave nothing drawn.
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 4), None);
+    type_text(&mut app, "absent");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 4), None);
+
+    // A paste reaches the preview by the same path as a keystroke.
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    app.handle_input(InputEvent::Text("cot".into())).unwrap();
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 8), Some(TextRole::PrimarySelected));
+}
+
+#[test]
+fn an_edit_under_the_open_prompt_reaches_the_preview() {
+    use crate::snapshot::TextRole;
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "cat dog");
+    press(&mut app, 's');
+    type_text(&mut app, "dog");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 4), Some(TextRole::PrimarySelected));
+
+    // Text arriving from elsewhere, such as a reload or a language server,
+    // while the pattern stays the same.
+    app.buffers[0].apply(&Transaction::insert(0, "dog "));
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 0), Some(TextRole::PrimarySelected));
+    assert_eq!(preview_role(&app, 8), Some(TextRole::Selected));
+}
+
+#[test]
+fn an_unfinished_regex_keeps_the_last_preview() {
+    use crate::snapshot::TextRole;
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "fx and fy");
+    press(&mut app, '/');
+    type_text(&mut app, "f");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 7), Some(TextRole::Selected));
+
+    // `f(` is an unclosed group on the way to `f(y)`.
+    type_text(&mut app, "(");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 0), Some(TextRole::PrimaryCaret));
+    assert_eq!(preview_role(&app, 7), Some(TextRole::Selected));
+
+    type_text(&mut app, "y)");
+    app.prepare_view(preview_geometry());
+    assert_eq!(preview_role(&app, 0), Some(TextRole::Plain));
+    assert_eq!(preview_role(&app, 7), Some(TextRole::PrimarySelected));
+    assert_eq!(preview_role(&app, 8), Some(TextRole::PrimaryCaret));
+}
+
+#[test]
+fn the_preview_stays_inside_the_selection_a_search_would_be_confined_to() {
+    use crate::snapshot::TextRole;
+
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "cat\ncat\ncat");
+    press(&mut app, 'x');
+    press(&mut app, 's');
+    type_text(&mut app, "cat");
+    app.prepare_view(preview_geometry());
+
+    assert_eq!(preview_role(&app, 0), Some(TextRole::PrimarySelected));
+    assert_eq!(preview_role(&app, 4), Some(TextRole::Plain));
+    assert_eq!(preview_role(&app, 8), Some(TextRole::Plain));
+}
+
+#[test]
+fn escape_returns_the_view_the_preview_scrolled_away_from() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let content = (0..60)
+        .map(|row| {
+            if row == 45 {
+                "needle".to_owned()
+            } else {
+                format!("line {row}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    seed(&mut app, &content);
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, 0);
+
+    press(&mut app, 's');
+    type_text(&mut app, "needle");
+    app.prepare_view(preview_geometry());
+    let previewed = app.active().scroll_row;
+    assert!(
+        previewed > 30,
+        "the match is scrolled into view: {previewed}"
+    );
+    assert_eq!(cursor(&app), Position::default(), "the caret has not moved");
+
+    // A pattern found nowhere shows nothing, so the view goes back.
+    type_text(&mut app, "zzz");
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, 0);
+    for _ in 0..3 {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, previewed);
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, 0);
+    assert_eq!(cursor(&app), Position::default());
+
+    // Enter keeps the view the preview was already showing.
+    press(&mut app, 's');
+    type_text(&mut app, "needle");
+    app.prepare_view(preview_geometry());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, previewed);
+    assert_eq!(cursor(&app), Position::new(45, 5));
+}
+
+#[test]
+fn a_search_that_finds_nothing_on_enter_returns_the_view() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let content = (0..60)
+        .map(|row| format!("line {row}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    seed(&mut app, &content);
+    app.prepare_view(preview_geometry());
+
+    press(&mut app, '/');
+    type_text(&mut app, "line 5[0-9]");
+    app.prepare_view(preview_geometry());
+    assert!(app.active().scroll_row > 0);
+    // Accepted before the next frame could clear the preview.
+    type_text(&mut app, "x");
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    app.prepare_view(preview_geometry());
+    assert_eq!(app.active().scroll_row, 0);
+    assert_eq!(app.status, "pattern not found: line 5[0-9]x");
+}
+
 #[test]
 fn a_vim_search_prompt_with_no_match_echoes_as_information() {
     let mut app = vim_app("foo bar");
