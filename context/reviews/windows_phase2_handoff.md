@@ -1,5 +1,24 @@
 # Windows Phase 2 continuation
 
+## Latest checkpoint: dev acceptance, 2026-09-25
+
+Windows support is merged into `dev` in `e601582`. Follow-up source `be17cc7`
+passes all 18 jobs in
+[CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810),
+including the native startup-contention regressions, exact stale-publication
+refusal, restart/save, context bridge, isolated clipboard and real language-server
+acceptance. Both Unix coverage gates pass at the unchanged 89% floor.
+The [publication-startup handoff](windows_publication_startup_handoff.md)
+records the source review, local native checks and PowerShell ZIP validation.
+
+This supersedes older working-tree, branch and pending-CI descriptions below.
+The Phase 2 implementation and cross-platform CI acceptance are complete;
+the tagged Windows binary release and published checksum verification remain
+open in the active plan and Windows support issue. No release is implied by
+this checkpoint.
+
+## Earlier checkpoints
+
 Checkpoint: 2026-09-24, branch `feat/windows-support`, private native
 ParentAttach is accepted in `42f2c9c`, durable Windows plugin state is accepted
 in `140347e`, private native parent waits are accepted in `fa18a52`, and private

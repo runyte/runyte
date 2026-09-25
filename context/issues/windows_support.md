@@ -5,7 +5,9 @@ Current continuation: Phase 1 and Phase 2.1–2.4 are complete. Phase 2.5 and
 persistent-session navigation, ordinary-shell wait, PowerShell directory
 handoff, guarded Git worktree teardown, and managed plugin helpers. Native
 formatting, denied-warning all-target Clippy, and the full workspace suite pass.
-Remote acceptance and the Windows release follow-up remain open. The
+Cross-platform acceptance through `be17cc7` passed all 18 jobs in
+[CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810).
+The tagged Windows release and published archive/checksum follow-up remain open. The
 [handoff](../reviews/windows_phase2_handoff.md) records the current checkout,
 validation and next package; the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 contains detailed delivery evidence. Earlier investigations below are historical.

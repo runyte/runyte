@@ -1,5 +1,16 @@
 # Windows Phase 2
 
+Current acceptance: Phase 2 implementation through `be17cc7` is merged into
+`dev` and passes all 18 jobs in
+[CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810).
+The [native validation checkpoint](../../reviews/windows_publication_startup_handoff.md#2026-09-25-native-acceptance-checkpoint)
+records startup-lock, context, clipboard, language-server and packaging evidence.
+The plan remains active for the tagged Windows binary release and published
+archive/checksum verification below. Earlier implementation and pending-CI
+descriptions are historical.
+
+## Earlier checkpoints
+
 For the current working-tree state, exact next package and reviewed remaining
 designs, start with the [continuation handoff](../../reviews/windows_phase2_handoff.md).
 Phase 2.1–2.4 are complete; 2.5 is in progress. In 2.6, public Windows

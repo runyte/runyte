@@ -5,6 +5,53 @@ and the accompanying CI-fix changes. Use the commit containing this handoff,
 including its new tests. The [CI investigation](ci_36131655861.md) records the
 observations from run `36131655861`.
 
+## 2026-09-25 native acceptance checkpoint
+
+Source commit `be17cc7` (`Fix release details and bound CI startup contention`)
+passed all 18 jobs in
+[CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810).
+The native job used Windows Server 2025, image `windows-2025-vs2026`
+`20260922.246.2`. Its ordinary suite passed all five startup-preparation
+regressions and the unchanged exact-publication stale-row acceptance. The
+required restart/save, Python context adapter, private and public context
+bridge, three isolated clipboard, and real rust-analyzer acceptance gates all
+ran and passed. Linux line coverage was 91.97% and macOS 91.89%, above the
+unchanged 89% floor. Windows coverage remains provisional.
+
+Local Windows 11 build 26200 validation uses Rust 1.97.1,
+`x86_64-pc-windows-msvc`, one Cargo build job, two test threads and temporary
+configuration/context storage. Formatting, denied-warning all-target Clippy and
+`cargo test --locked --workspace --no-fail-fast` pass. All five focused startup
+tests, the exact stale-row test, the complete public-attachment target, both
+exact restart cases and the exact save case pass.
+The save case observed 128 durable saves, 165,618 complete concurrent reads,
+1,280 missing-file errors (2), 1,583 sharing violations (32), and exact bytes
+after every save acknowledgement. Independent source review found no actionable
+findings; no further Rust correction was needed.
+
+The local Python adapter suite passes nine active tests, including all five
+required CI cases; 40 platform or separately invoked fixture cases are skipped.
+The exact private/public context bridge and real rust-analyzer cases also pass.
+Python 3.13.15 uses the existing embedded runtime with a temporary package-path
+entry, restored afterward. PowerShell 5.1 wraps stderr in the saved Python log;
+the five required passing results were verified with multiline-aware matching.
+All three explicit local clipboard cases refuse private-window-station creation
+with Windows error 5 because the normal token lacks the required administrator
+privilege. They never reach the person's clipboard. The successful exact CI
+cases above provide clipboard acceptance; no local clipboard pass is claimed.
+
+PowerShell `Compress-Archive` and `Expand-Archive` preserve the documentation
+payload: the extracted user guide's `../contrib/runyte.ps1` link resolves, and
+the helper's SHA-256 matches the source. This validates the two-line packaging
+change, not a release-mode executable or published archive.
+
+This checkpoint closes the native compilation and acceptance gap recorded
+below. The deterministic reader-lock test reproduces the supported contention
+path; the exact lock responsible for the original CI failure remains unknown.
+The original Node scheduling delay is also unproven, although both current
+plugin-conformance jobs pass. A version bump, publication and tagged Windows
+archive/checksum validation remain separate release work.
+
 ## Failure and implemented correction
 
 `native_manager_visits_selected_live_publication_and_refuses_stale_row` failed
