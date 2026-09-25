@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import Mock
 
 from test_bridge import MCPClient, PACKAGE, REPO
 from workspace_readiness import wait_for_workspaces
@@ -31,6 +32,7 @@ if UNIX_PTY:
 
     sys.path.insert(0, str(REPO / 'benchmarks'))
     import ptybench
+    from startup import Terminal
 
 BINARY = os.environ.get('RUNYTE_CONTEXT_TEST_BINARY')
 SCOPES = ['terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose']
@@ -39,6 +41,18 @@ CONTROL = re.compile(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)
 
 def compact_presentation(value):
     return b''.join(CONTROL.sub(b'', value).split())
+
+
+def screen_text(terminal, compact=False):
+    # A synchronized update is not visible until its closing sequence. Read
+    # cells directly: pyte's display helper mishandles some wide glyphs.
+    if (2026 << 5) in terminal.screen.mode:
+        return None
+    screen = terminal.screen
+    text = '\n'.join(''.join(screen.buffer[row][column].data
+                            for column in range(screen.columns))
+                     for row in range(screen.lines))
+    return ''.join(text.split()) if compact else text
 
 
 def private_json(path, value):
@@ -81,6 +95,7 @@ class NativeEditor:
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.output = bytearray()
+        self.screen = Terminal()
         self.reaped = False
         self.stop_files = []
         self.terminal_number = 0
@@ -139,7 +154,6 @@ class NativeEditor:
             raise
 
     def drain(self):
-        tail = b''
         try:
             with selectors.DefaultSelector() as poll:
                 poll.register(self.fd, selectors.EVENT_READ)
@@ -155,13 +169,9 @@ class NativeEditor:
                     with self.lock:
                         self.output.extend(data)
                         del self.output[:-1024 * 1024]
-                    combined = tail + data
-                    for match in CONTROL.finditer(combined):
-                        if match.end() > len(tail):
-                            reply = ptybench.terminal_replies(match.group())
-                            if reply:
-                                os.write(self.fd, reply)
-                    tail = combined[-256:]
+                        reply = self.screen.feed(data)
+                    if reply:
+                        os.write(self.fd, reply)
         except Exception as error:
             self.errors.append(type(error).__name__)
 
@@ -169,9 +179,8 @@ class NativeEditor:
         deadline = time.monotonic() + seconds if deadline is None else deadline
         while time.monotonic() < deadline:
             with self.lock:
-                output = bytes(self.output)
-                rendered = compact_presentation(output) if compact else CONTROL.sub(b'', output)
-                if marker.encode() in rendered:
+                rendered = screen_text(self.screen, compact)
+                if rendered is not None and marker in rendered:
                     return
             if self.errors:
                 raise AssertionError('Native PTY reader failed: ' + self.errors[0])
@@ -185,9 +194,11 @@ class NativeEditor:
         with self.lock:
             output = CONTROL.sub(b'', bytes(self.output)).decode('utf-8', 'replace')[-2048:]
             size = len(self.output)
+            rendered = screen_text(self.screen)
+            visible = rendered[-2048:] if rendered is not None else '<incomplete frame>'
         return AssertionError(
             f'Native editor did not display {marker!r}; '
-            f'exit={self.process.poll()}, output_bytes={size}, tail={output!r}'
+            f'exit={self.process.poll()}, output_bytes={size}, screen_tail={visible!r}, tail={output!r}'
         )
 
     def command(self, command):
@@ -327,6 +338,51 @@ class RealMCPClient(MCPClient):
 
 @unittest.skipUnless(UNIX_PTY, 'Unix PTY fixture')
 class NativeFixtureSynchronizationTests(unittest.TestCase):
+    def screen_fixture(self):
+        editor = NativeEditor.__new__(NativeEditor)
+        editor.lock = threading.Lock()
+        editor.output = bytearray()
+        editor.screen = Terminal()
+        editor.errors = []
+        editor.process = Mock()
+        editor.process.poll.return_value = None
+        return editor
+
+    def test_readiness_requires_current_complete_screen_and_decodes_split_utf8(self):
+        editor = self.screen_fixture()
+        marker = 'Ready é界'
+
+        def feed(data):
+            editor.output.extend(data)
+            editor.screen.feed(data)
+
+        data = ('\x1b[?2026h' + marker).encode()
+        for byte in data:
+            feed(bytes([byte]))
+        with self.assertRaisesRegex(AssertionError, 'incomplete frame'):
+            editor.wait_output(marker, seconds=.01)
+        feed(b'\x1b[?2026l')
+        editor.wait_output(marker, seconds=.05)
+        feed(b'\x1b[2J')
+        self.assertIn(marker.encode(), editor.output)
+        with self.assertRaisesRegex(AssertionError, 'did not display'):
+            editor.wait_output(marker, seconds=.01)
+
+    def test_rename_readiness_reconstructs_cells_omitted_by_incremental_redraw(self):
+        editor = self.screen_fixture()
+        prefix = 'terminal 1 named '
+        initial = ('\x1b[1;1H' + prefix + 'eeeeeeee').encode()
+        # Cells already containing 'e' are not repainted by a terminal diff.
+        # The byte stream says "Dtachd" while the final screen says "Detached".
+        delta = b''.join(
+            f'\x1b[1;{len(prefix) + index + 1}H{char}'.encode()
+            for index, char in enumerate('Detached') if char != 'e')
+        for data in (initial, delta):
+            editor.output.extend(data)
+            editor.screen.feed(data)
+        self.assertNotIn(b'namedDetached', compact_presentation(editor.output))
+        editor.wait_output('namedDetached', seconds=.05, compact=True)
+
     def test_terminal_marker_is_child_output_and_absent_from_typed_command(self):
         with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
             stop = Path(directory) / 'stop'
@@ -344,8 +400,8 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
         old_prompt = (marker[:split] + ' ' + marker[split:]).encode()
         self.assertEqual(CONTROL.sub(b'', old_prompt.replace(b' ', b'\x1b[2D')), marker.encode())
         command = terminal_command(marker, Path('/fixture/stop'))
-        # The PTY reader removes cursor controls; a terminal can also omit
-        # blank cells that separated the old literal marker halves.
+        # Retained raw diagnostics can omit unchanged cells; the marker must
+        # not appear in those diagnostics or in the reconstructed prompt.
         rendered = command.encode().replace(b' ', b'\x1b[2D')
         self.assertNotIn(marker.encode(), CONTROL.sub(b'', rendered))
 

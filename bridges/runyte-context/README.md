@@ -231,8 +231,14 @@ or bytes. Requests are processed serially; deadlines bound a blocked host call.
 Run the independent, network-free suite from this directory:
 
 ```sh
+python3 -m pip install -r ../../benchmarks/requirements.txt # Unix screen-decoder tests only
 python3 -m unittest discover -s tests -v
 ```
+
+The Unix fixture reuses the benchmark terminal decoder to observe completed
+screen frames, including cursor-addressed redraws. These are test dependencies;
+the installed context bridge still has no runtime dependencies. Windows's
+native fixtures do not use this decoder.
 
 Fixtures run real MCP stdio clients against independent local hosts, including
 a detached host, without invoking agent accounts. They cover explicit
