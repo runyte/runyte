@@ -32,6 +32,10 @@ deliberate boundary rather than a second hand-written binding table.
 mode, configured keymaps and terminal ownership. All 29 help tests, formatting
 and Clippy passed.
 
+`help_scrolls_and_searches_like_any_other_buffer` in `tests/key_hints.rs`
+checks that `g e` reaches the final Command section after the help document
+gained its additional mode sections.
+
 ## Report
 
 `Space ?` opens a help window for the current view. Its generated key tables
