@@ -42,8 +42,8 @@ use super::catalog_values::{
 };
 use super::recent_history::*;
 pub use super::recent_history::{
-    MAX_WORKSPACE_NUMBER, RecentEntry, RecordedWorkspace, ensure_recent_workspace,
-    record_recent_workspace, record_workspace_activity, recorded_workspace_number,
+    RecentEntry, RecordedWorkspace, ensure_recent_workspace, record_recent_workspace,
+    record_workspace_activity, recorded_workspace_number,
 };
 #[cfg(test)]
 use super::session_name::MAX_HOST_NAME_BYTES;
