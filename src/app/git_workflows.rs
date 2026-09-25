@@ -3868,7 +3868,7 @@ impl App {
             text.push('\n');
             text.push_str(&format!(
                 "{}  {}  {}  {}",
-                commit.abbreviated, commit.author_date, commit.author, commit.subject
+                commit.abbreviated, commit.author_datetime, commit.author, commit.subject
             ));
             if !commit.decorations.is_empty() {
                 hints.push((

@@ -3286,6 +3286,36 @@ fn history_pages_continue_by_object_identity_and_details_are_bounded_values() {
     ));
 }
 
+#[test]
+fn log_rows_keep_author_clock_time_across_utc_midnight() {
+    let repository = TempRepository::new("history-author-timezone");
+    repository.write("history.txt", "content\n");
+    repository.git(&["add", "history.txt"]);
+    let output = Command::new("git")
+        .args(["commit", "--quiet", "-m", "near midnight"])
+        .current_dir(repository.path())
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:05:00+02:00")
+        .env("GIT_COMMITTER_DATE", "2026-01-02T12:00:00-05:00")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let provider = provider();
+    let page = provider
+        .log_page(&repository.repository(), &LogRequest::default())
+        .unwrap();
+    assert_eq!(page.commits[0].author_date, "2026-01-01");
+    assert_eq!(page.commits[0].author_datetime, "2026-01-01 00:05");
+    let detail = provider
+        .commit_detail(&repository.repository(), &page.commits[0].oid)
+        .unwrap();
+    assert_eq!(detail.summary.author_datetime, "2026-01-01 00:05");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_non_numeric_history_count_is_a_malformed_git_response() {

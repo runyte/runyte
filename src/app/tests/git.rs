@@ -600,6 +600,7 @@ fn commit_message_picker_fuzzy_matches_bodies_and_keeps_object_identity() {
                 author: "Ada".to_owned(),
                 author_time: 1,
                 author_date: "2026-08-12".to_owned(),
+                author_datetime: "2026-08-12 12:34".to_owned(),
                 subject: subject.to_owned(),
                 decorations: Vec::new(),
             },
@@ -671,6 +672,7 @@ fn commit_picker_also_matches_object_ids_authors_and_dates() {
                 author: author.to_owned(),
                 author_time: 1,
                 author_date: date.to_owned(),
+                author_datetime: format!("{date} 12:34"),
                 subject: subject.to_owned(),
                 decorations: Vec::new(),
             },
@@ -728,6 +730,7 @@ fn filtering_a_git_commit_popup_keeps_the_command_that_opened_it() {
                 author: "Ada".to_owned(),
                 author_time: 1,
                 author_date: "2026-08-13".to_owned(),
+                author_datetime: "2026-08-13 12:34".to_owned(),
                 subject: "Keep popup feedback".to_owned(),
                 decorations: Vec::new(),
             },
@@ -771,6 +774,7 @@ fn periodic_refresh_defers_to_an_open_prompt_and_to_search_matches() {
             author: "Author".to_owned(),
             author_time: 1,
             author_date: "2026-08-12".to_owned(),
+            author_datetime: "2026-08-12 12:34".to_owned(),
             subject: subject.to_owned(),
             decorations: Vec::new(),
         }
@@ -940,6 +944,7 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
             author: "Author".to_owned(),
             author_time: 1,
             author_date: author_date.to_owned(),
+            author_datetime: format!("{author_date} 12:34"),
             subject: format!("commit {digit}"),
             decorations: Vec::new(),
         }
@@ -1101,6 +1106,7 @@ fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
         author: "Author".to_owned(),
         author_time: 1,
         author_date: "2026-09-02".to_owned(),
+        author_datetime: "2026-09-02 12:34".to_owned(),
         subject: format!("commit {digit}"),
         decorations: Vec::new(),
     };
@@ -1242,6 +1248,7 @@ fn git_log_shows_branch_and_tag_refs_as_a_row_hint_not_text() {
             author: "Author".to_owned(),
             author_time: 1,
             author_date: "2026-08-12".to_owned(),
+            author_datetime: "2026-08-12 12:34".to_owned(),
             subject: format!("commit {digit}"),
             decorations: decorations
                 .iter()
@@ -1265,11 +1272,14 @@ fn git_log_shows_branch_and_tag_refs_as_a_row_hint_not_text() {
     // The decorated row's text stays the hash/date/author/subject only;
     // the refs never become part of what a person can select or search.
     let decorated_line = app.buffers[log].line_string(1);
-    assert_eq!(decorated_line, "1111111  2026-08-12  Author  commit 1");
+    assert_eq!(
+        decorated_line,
+        "1111111  2026-08-12 12:34  Author  commit 1"
+    );
     assert!(!decorated_line.contains("main"));
     assert!(!decorated_line.contains("dev"));
     let plain_line = app.buffers[log].line_string(2);
-    assert_eq!(plain_line, "2222222  2026-08-12  Author  commit 2");
+    assert_eq!(plain_line, "2222222  2026-08-12 12:34  Author  commit 2");
 
     let hints = app.buffers[log].row_hints();
     assert_eq!(hints.text(1), Some("(main, HEAD -> dev)"));
@@ -1351,6 +1361,7 @@ fn one_very_long_decorated_commit_does_not_hide_hints_on_a_narrow_pane() {
             author: "Author".to_owned(),
             author_time: 1,
             author_date: "2026-08-12".to_owned(),
+            author_datetime: "2026-08-12 12:34".to_owned(),
             subject,
             decorations: decorations
                 .iter()
@@ -1487,6 +1498,7 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
             author: "Author".to_owned(),
             author_time: 1,
             author_date: "2026-08-12".to_owned(),
+            author_datetime: "2026-08-12 12:34".to_owned(),
             subject: subject.to_owned(),
             decorations: Vec::new(),
         }
@@ -4078,6 +4090,7 @@ fn open_commit_detail(body: &str, patch: &str) -> App {
             author: "A Reader".to_owned(),
             author_time: 1_786_687_978,
             author_date: "2026-08-14".to_owned(),
+            author_datetime: "2026-08-14 12:34".to_owned(),
             subject: "subject".to_owned(),
             decorations: Vec::new(),
         },
@@ -4105,6 +4118,7 @@ fn commit_detail_buffers_reuse_full_object_identity() {
             author: "A Reader".to_owned(),
             author_time: 1,
             author_date: "2026-08-17".to_owned(),
+            author_datetime: "2026-08-17 12:34".to_owned(),
             subject: "refreshed".to_owned(),
             decorations: Vec::new(),
         },
@@ -4123,6 +4137,7 @@ fn commit_detail_buffers_reuse_full_object_identity() {
             author: "A Reader".to_owned(),
             author_time: 2,
             author_date: "2026-08-17".to_owned(),
+            author_datetime: "2026-08-17 12:34".to_owned(),
             subject: "different".to_owned(),
             decorations: Vec::new(),
         },
@@ -8064,6 +8079,7 @@ fn a_commit_search_refuses_outside_a_repository_and_reports_a_capped_page() {
                 author: "Ada".to_owned(),
                 author_time: 1,
                 author_date: "2026-08-12".to_owned(),
+                author_datetime: "2026-08-12 12:34".to_owned(),
                 subject: "The only loaded commit".to_owned(),
                 decorations: Vec::new(),
             },

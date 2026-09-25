@@ -39,6 +39,8 @@ pub struct CommitSummary {
     /// Git's `%as` rather than derived from `author_time`, so it reads the
     /// same as `git log --date=short` instead of shifting by a day in UTC.
     pub author_date: String,
+    /// Author date and time as `YYYY-MM-DD HH:MM` in the commit's own timezone.
+    pub author_datetime: String,
     pub subject: String,
     pub decorations: Vec<String>,
 }
@@ -91,19 +93,19 @@ pub struct CommitSearchResult {
     pub limited: bool,
 }
 
-/// Parses the eight fixed NUL-delimited fields emitted by `git log -z`.
+/// Parses the nine fixed NUL-delimited fields emitted by `git log -z`.
 pub fn parse_log(output: &[u8]) -> Result<Vec<CommitSummary>> {
     let mut fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
     // `-z` adds exactly one record terminator. An empty final decoration is
-    // the empty eighth field immediately before it and must be retained.
+    // the empty ninth field immediately before it and must be retained.
     if fields.last().is_some_and(|field| field.is_empty()) {
         fields.pop();
     }
-    if fields.len() % 8 != 0 {
-        return malformed("history record does not contain eight fields");
+    if fields.len() % 9 != 0 {
+        return malformed("history record does not contain nine fields");
     }
     fields
-        .chunks_exact(8)
+        .chunks_exact(9)
         .map(|fields| {
             let oid = object_id(fields[0], "commit object")?;
             let abbreviated = text(fields[1], 16);
@@ -128,7 +130,13 @@ pub fn parse_log(output: &[u8]) -> Result<Vec<CommitSummary>> {
             if !valid_short_date(&author_date) {
                 return malformed("author date is not a YYYY-MM-DD date");
             }
-            let decorations = text(fields[7], 8_192)
+            let author_datetime = strict_text(fields[6], "author date and time")?;
+            if !valid_author_datetime(&author_datetime)
+                || !author_datetime.starts_with(&author_date)
+            {
+                return malformed("author date and time is not a matching YYYY-MM-DD HH:MM value");
+            }
+            let decorations = text(fields[8], 8_192)
                 .split(", ")
                 .filter(|value| !value.is_empty())
                 .take(32)
@@ -141,34 +149,35 @@ pub fn parse_log(output: &[u8]) -> Result<Vec<CommitSummary>> {
                 author: text(fields[3], 256),
                 author_time,
                 author_date,
-                subject: text(fields[6], 4_096),
+                author_datetime,
+                subject: text(fields[7], 4_096),
                 decorations,
             })
         })
         .collect()
 }
 
-/// Parses the eight summary fields used by [`parse_log`] plus a full message.
+/// Parses the nine summary fields used by [`parse_log`] plus a full message.
 pub fn parse_commit_search(output: &[u8]) -> Result<Vec<CommitSearchEntry>> {
     let mut fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
     if fields.last().is_some_and(|field| field.is_empty()) {
         fields.pop();
     }
-    if fields.len() % 9 != 0 {
-        return malformed("commit-search record does not contain nine fields");
+    if fields.len() % 10 != 0 {
+        return malformed("commit-search record does not contain ten fields");
     }
     fields
-        .chunks_exact(9)
+        .chunks_exact(10)
         .map(|fields| {
             let mut summary_record = Vec::new();
-            for field in &fields[..8] {
+            for field in &fields[..9] {
                 summary_record.extend_from_slice(field);
                 summary_record.push(0);
             }
             let mut summaries = parse_log(&summary_record)?;
             Ok(CommitSearchEntry {
                 summary: summaries.remove(0),
-                message: text(fields[8], 16_384),
+                message: text(fields[9], 16_384),
             })
         })
         .collect()
@@ -183,6 +192,19 @@ fn valid_short_date(value: &str) -> bool {
         && [0, 1, 2, 3, 5, 6, 8, 9]
             .iter()
             .all(|index| bytes[*index].is_ascii_digit())
+}
+
+fn valid_author_datetime(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 16
+        && std::str::from_utf8(&bytes[..10]).is_ok_and(valid_short_date)
+        && bytes[10] == b' '
+        && bytes[13] == b':'
+        && bytes[11..13].iter().all(u8::is_ascii_digit)
+        && bytes[14..16].iter().all(u8::is_ascii_digit)
+        && bytes[11] <= b'2'
+        && (bytes[11] != b'2' || bytes[12] <= b'3')
+        && bytes[14] <= b'5'
 }
 
 pub fn valid_object_id(value: &str) -> bool {
@@ -237,13 +259,14 @@ mod tests {
         )
         .into_bytes();
         input.extend_from_slice(
-            b"\xffuthor\0-12\x001969-12-31\0subject\xff\0HEAD -> main, tag: v1\0",
+            b"\xffuthor\0-12\x001969-12-31\x001969-12-31 23:59\0subject\xff\0HEAD -> main, tag: v1\0",
         );
         let commits = parse_log(&input).unwrap();
         assert_eq!(commits[0].oid, first);
         assert_eq!(commits[0].parents, [parent, merge]);
         assert_eq!(commits[0].author_time, -12);
         assert_eq!(commits[0].author_date, "1969-12-31");
+        assert_eq!(commits[0].author_datetime, "1969-12-31 23:59");
         assert_eq!(commits[0].decorations, ["HEAD -> main", "tag: v1"]);
         assert!(commits[0].author.contains('\u{fffd}'));
         assert!(commits[0].subject.contains('\u{fffd}'));
@@ -252,12 +275,15 @@ mod tests {
     #[test]
     fn malformed_field_counts_and_object_ids_are_refused() {
         assert!(parse_log(b"one\0two\0").is_err());
-        assert!(parse_log(b"nope\0abc\0\0author\x001\x002026-08-12\0subject\0\0").is_err());
+        assert!(
+            parse_log(b"nope\0abc\0\0author\x001\x002026-08-12\x002026-08-12 12:00\0subject\0\0")
+                .is_err()
+        );
         // A well-formed record whose date is not YYYY-MM-DD is refused rather
         // than displayed as an unexplained column.
         assert!(
             parse_log(
-                b"0123456789012345678901234567890123456789\x00012345678901\0\0author\x001\0nonsense\0subject\0\0"
+                b"0123456789012345678901234567890123456789\x00012345678901\0\0author\x001\0nonsense\x002026-08-12 12:00\0subject\0\0"
             )
             .is_err()
         );
@@ -267,7 +293,7 @@ mod tests {
     fn commit_search_keeps_the_full_message_beside_typed_summary_fields() {
         let oid = "0123456789012345678901234567890123456789";
         let input = format!(
-            "{oid}\0{}\0\0Ada\01\02026-08-12\0Fix picker\0HEAD -> main\0Fix picker\n\nSearch the body too.\0",
+            "{oid}\0{}\0\0Ada\01\02026-08-12\02026-08-12 12:34\0Fix picker\0HEAD -> main\0Fix picker\n\nSearch the body too.\0",
             &oid[..12]
         );
         let commits = parse_commit_search(input.as_bytes()).unwrap();
@@ -279,7 +305,7 @@ mod tests {
     fn the_search_haystack_carries_identity_beside_the_message() {
         let oid = "0123456789012345678901234567890123456789";
         let input = format!(
-            "{oid}\0{}\0\0Ada\01\02026-08-12\0Fix picker\0HEAD -> main\0Fix picker\n\nSearch the body too.\n\0",
+            "{oid}\0{}\0\0Ada\01\02026-08-12\02026-08-12 12:34\0Fix picker\0HEAD -> main\0Fix picker\n\nSearch the body too.\n\0",
             &oid[..12]
         );
         let commits = parse_commit_search(input.as_bytes()).unwrap();

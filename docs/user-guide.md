@@ -2998,12 +2998,12 @@ counts, its earliest and latest author dates, and a reminder of how to move
 between pages, separated by `|` and all within 80 characters. The paging
 reminder is a muted, read-only hint rather than buffer text, so it cannot be
 selected, searched, or copied. Each row shows the short object ID, the author
-date as `YYYY-MM-DD`, the author, and the subject, while keeping the full
-object ID behind it. A commit's branch and tag refs, when it has any, are
-shown the same way — a muted, read-only hint rather than text appended to
-the subject. Unlike the explorer's symlink hints, a commit's ref hint is not
-aligned to a shared column: it sits one space past that row's own text, so
-one commit with an unusually long subject or long ref list never pushes a
+date and time as `YYYY-MM-DD HH:MM` in the commit's timezone, the author, and
+the subject, while keeping the full object ID behind it. A commit's branch and
+tag refs, when it has any, are shown the same way — a muted, read-only hint
+rather than text appended to the subject. Unlike the explorer's symlink hints,
+a commit's ref hint is not aligned to a shared column: it sits one space past
+that row's own text. A long subject or ref list therefore never pushes a
 shorter row's hint off a narrow pane.
 
 Enter opens bounded commit metadata and Git's patch. `Ctrl-n` and `Ctrl-p` move
