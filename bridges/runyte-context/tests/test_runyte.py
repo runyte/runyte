@@ -12,6 +12,7 @@ import re
 import secrets
 import selectors
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -190,16 +191,15 @@ class NativeEditor:
         )
 
     def command(self, command):
+        prefix = b''
         if self.terminal_input:
-            os.write(self.fd, b'\x1c')
-            time.sleep(.1)
+            prefix = b'\x1c'
             self.terminal_input = False
-        os.write(self.fd, b'\x1b')
-        time.sleep(.1)  # Crossterm must classify Escape separately from Alt-:.
-        os.write(self.fd, b':' + command.encode())
-        time.sleep(.1)
-        os.write(self.fd, b'\r')
-        time.sleep(.15)
+        # A complete CSI-u Escape report cannot merge with ':' into Alt-:
+        # when the editor is descheduled. Sender-side sleeps cannot establish
+        # that boundary. Keep terminal exit before Escape, which belongs to
+        # the child until Ctrl-\ switches back to the editor.
+        os.write(self.fd, prefix + b'\x1b[27u:' + command.encode() + b'\r')
 
     def terminal(self, name, marker):
         deadline = time.monotonic() + 15
@@ -429,6 +429,45 @@ class RealRunyteTests(unittest.TestCase):
         self.assertEqual(len(rows), len(projects))
         self.assertTrue(all(row['readable'] for row in rows))
         return {Path(row['root']).name: row['workspace'] for row in rows}
+
+    def test_queued_command_keys_keep_escape_separate_from_colon(self):
+        editor = self.editor(0)
+
+        def queued(command):
+            # The sender's sleeps cannot establish a key boundary when the
+            # reader is descheduled. Stop our own editor until every command
+            # byte has been queued, then let the real Crossterm parser read it.
+            editor.process.send_signal(signal.SIGSTOP)
+            try:
+                deadline = time.monotonic() + 5
+                while True:
+                    pid, status = os.waitpid(editor.process.pid, os.WUNTRACED | os.WNOHANG)
+                    if pid:
+                        self.assertTrue(os.WIFSTOPPED(status), 'fixture exited before pause')
+                        break
+                    if time.monotonic() >= deadline:
+                        self.fail('fixture did not acknowledge SIGSTOP')
+                    time.sleep(.01)
+                editor.command(command)
+            finally:
+                editor.process.send_signal(signal.SIGCONT)
+
+        stop = editor.project / 'queued-terminal-stop'
+        editor.stop_files.append(stop)
+        queued(terminal_command('QUEUED_CHILD_MARKER', stop))
+        editor.terminal_input = True
+        editor.wait_output('QUEUED_CHILD_MARKER', seconds=5)
+        queued('terminal-rename Queued')
+        editor.wait_output('namedQueued', seconds=5, compact=True)
+
+        client = self.client('codex')
+        workspace = self.workspaces(client, [self.projects[0]])['one']
+        buffers = client.data('list_buffers', workspace=workspace)['buffers']
+        original = next(row for row in buffers if row['name'].endswith('note.txt'))
+        text = client.data('read_buffer', workspace=workspace, buffer=original['buffer'],
+                           expected_revision=original['revision'],
+                           **{'from': 0, 'to': original['chars']})['text']
+        self.assertEqual(text, 'ORIGINAL_BUFFER_MARKER\n')
 
     def test_two_agent_clients_read_live_and_detached_workspaces_edit_unsaved_and_observe_revocation(self):
         standalone = self.editor(0)
