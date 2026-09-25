@@ -13,7 +13,7 @@ editor:
   motion_repeat_multiplier: 2
   show_hidden_files: false # press . in an explorer to toggle for the session
   soft_wrap: false
-  # Draw spaces as ·, tabs from →, and line endings as ↵.
+  # Draw spaces as ·, tabs from →, and line endings as ¬.
   render_whitespace: false
   zen_width: 100
   hard_wrap_width: 80

@@ -1370,7 +1370,7 @@ impl App {
         {
             let end = row_start + line_len;
             runs.push(TextRun {
-                text: "↵".to_owned(),
+                text: "¬".to_owned(),
                 kind: TextRunKind::Text {
                     role: role_at(end),
                     scope: None,
@@ -1755,7 +1755,7 @@ mod tests {
             .iter()
             .map(|run| run.text.as_str())
             .collect::<String>();
-        assert_eq!(rendered, "a·→ b↵");
+        assert_eq!(rendered, "a·→ b¬");
         assert_eq!(display_cells(&rendered), 6);
         assert!(first.runs.iter().any(|run| matches!(
             run.kind,
@@ -1764,18 +1764,25 @@ mod tests {
                 ..
             } if run.text == "·→ "
         )));
-        assert!(first.runs.iter().any(|run| matches!(
-            run.kind,
-            TextRunKind::Text {
-                whitespace: true,
-                ..
-            } if run.text == "↵"
-        )));
+        let ending_marker = first
+            .runs
+            .iter()
+            .find(|run| {
+                matches!(
+                    run.kind,
+                    TextRunKind::Text {
+                        whitespace: true,
+                        ..
+                    } if run.text == "¬"
+                )
+            })
+            .expect("CRLF has a whitespace-styled ending marker");
+        assert_eq!(display_cells(&ending_marker.text), 1);
 
         let SnapshotRow::Text(last) = &snapshot.pane(0).unwrap().rows[1] else {
             panic!("last row is text");
         };
-        assert!(!last.runs.iter().any(|run| run.text.contains('↵')));
+        assert!(!last.runs.iter().any(|run| run.text.contains('¬')));
 
         app.config.editor.render_whitespace = false;
         let snapshot = prepared_snapshot(&mut app, 20, 8);

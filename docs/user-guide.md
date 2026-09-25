@@ -1951,7 +1951,7 @@ context; scoped explorer keys are documented under
 | `&` | Pad until every cursor shares the rightmost display column |
 | `_` | Delete trailing whitespace from every selected line; `%` then `_` strips the buffer |
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
-| `Space p .` | Toggle dim `·`, `→`, and `↵` markers for spaces, tabs, and line endings |
+| `Space p .` | Toggle dim `·`, `→`, and `¬` markers for spaces, tabs, and line endings |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
 | `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
@@ -2210,7 +2210,7 @@ stays a choose-one picker.
 `Space p` groups text presentation and the commands that lay selected lines
 out. `Space p .` toggles visible whitespace for the current session.
 Spaces become `·`, tabs begin with `→` and retain enough following cells to
-reach the same tab stop, and a real LF or CRLF line ending becomes one `↵`.
+reach the same tab stop, and a real LF or CRLF line ending becomes one `¬`.
 An unterminated final line has no marker. These symbols are display-only: they
 do not change buffer text, offsets, selections, wrapping, or saved files.
 
@@ -4191,7 +4191,7 @@ editor:
   explorer_sort: name # name/modified/size, each also _descending; directories group first
   explorer_details: false # ls -l columns before each explorer row; ? toggles it in an explorer
   soft_wrap: false
-  render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
+  render_whitespace: false # show · for spaces, → for tabs, and ¬ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup
   hard_wrap_width: 80 # width for Space p w and Space p r; editable in :config's popup
   scratch_markdown: true # Space p r refills and ? renders the pathless scratch buffer as Markdown
@@ -4467,7 +4467,7 @@ Markdown source alike: `markup.bold` and `markup.heading` are drawn bold,
 than to the theme, because bold text is bold in every palette; a theme chooses
 the colour that goes with it.
 
-`whitespace` colours the display-only `·`, `→`, and `↵` markers. When a custom
+`whitespace` colours the display-only `·`, `→`, and `¬` markers. When a custom
 theme omits it, Runyte derives a very dim colour one small step away from that
 theme's `background`; a theme using the terminal's `reset` background falls
 back to `muted` because its actual ground is unknown.
