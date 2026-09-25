@@ -15,7 +15,8 @@ Public Windows plugin discovery, startup, stop and restart are accepted in sourc
 commit `9743bd9`. Explicit public Windows persistent attachment is accepted in
 source commit `2563fba`; configured bare Windows attachment is accepted in
 source commit `378a22b`. Guarded CLI-only Windows session restart is implemented
-in source commit `8a8987c`, with detached-capable replacement acceptance pending.
+in source commit `8a8987c`; the 2026-09-25 restart acceptance checkpoint below
+supersedes the original detached-capable replacement acceptance gap.
 Native Windows `Ctrl-\` decoding and review acceptance are `eff117c` and
 `1159418`, with resolved issue record `e34d04c`. Public integrated-parent
 Windows `--wait` is accepted locally in `fee4819`.
@@ -30,6 +31,36 @@ attachment is `1e69755` and shared response ordering repair is `5d727db`.
 This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
+
+## 2026-09-25 restart and save acceptance
+
+Source revision `5295d2e` passed native acceptance on Windows 11 Home build
+26200, `x86_64-pc-windows-msvc`, Rust 1.97.1. The working tree at validation
+matches that commit's Rust source and test files. Formatting, all-target
+denied-warning Clippy, and `cargo test --locked` with two test threads passed.
+The native session CLI target passed 12 tests and the ConPTY save fixture passed.
+The new exact CI commands were also run locally with their pass-detection checks:
+
+- `restart_success_replaces_host_and_preserves_protected_state` passed (0.84s),
+  proving replacement, exact retained dirty state on refusal, forced state loss,
+  saved-file preservation and cleanup after an injected assertion panic.
+- `restart_refuses_detached_policy_without_breakaway_job` passed (0.24s).
+- `successful_saves_have_complete_contents_after_acknowledgement` passed (2.58s):
+  128 durable saves, 34,108 complete concurrent reads, 1,501 missing-file errors
+  (2), 1,823 sharing violations (32), and all 128 post-completion reads exact.
+
+The nested acceptance job permits detached creation while retaining an outer
+kill-on-close owner. Unsupported runner policy fails the required gate. The
+native shutdown flush race found during this work now recovers the response
+without resending and still requires pinned process exit. The save algorithm
+is unchanged; its concurrent pathname visibility limit is documented.
+Subagent review reported no actionable findings. Cross-platform CI for this
+source revision is pending; no remote result is claimed yet.
+
+The durable diagnoses and named regression tests are in
+[`windows_restart_success_acceptance.md`](../issues/resolved/windows_restart_success_acceptance.md)
+and [`windows_save_path_visibility.md`](../issues/resolved/windows_save_path_visibility.md).
+This checkpoint supersedes the historical refusal-only restart evidence below.
 
 ## Scope and delivery
 

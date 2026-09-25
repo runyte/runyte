@@ -560,8 +560,11 @@ race, corrected with independent review in `fd1cd7b` and recorded in
 The ConPTY save fixture now waits for the editor's successful write status
 before reading completed contents. A single pre-completion `NotFound` read is
 recorded separately in
-[`windows_save_path_visibility.md`](../../issues/windows_save_path_visibility.md);
-neither a persistent save failure nor its underlying cause is established.
+[`windows_save_path_visibility.md`](../../issues/resolved/windows_save_path_visibility.md).
+Subsequent native characterization at `5295d2e` observed missing-file and sharing
+errors during replacement, with exact bytes after all 128 completed saves.
+Neither a persistent save failure nor the original observation's underlying
+cause is established.
 
 #### Sub-phase 2.4 package 2 contract
 
