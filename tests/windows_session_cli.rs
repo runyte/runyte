@@ -75,14 +75,10 @@ struct RestartCleanup<'a> {
     root: &'a TestRuntimeRoot,
     cwd: &'a Path,
     selector: &'a str,
-    armed: bool,
 }
 
 impl Drop for RestartCleanup<'_> {
     fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
         let mut command = Command::new(BIN);
         command
             .creation_flags(CREATE_NO_WINDOW)
@@ -184,6 +180,9 @@ fn run_restart_fixture(fixture: &str, budget: Duration) {
         thread::sleep(Duration::from_millis(10));
     }
     let status = child.0.take().unwrap().wait().unwrap();
+    // The success fixture can break out of its innermost job, but not this
+    // outer owner. Close it before checking results or deleting fixture files.
+    drop(job);
     assert!(
         status.success(),
         "restart fixture {fixture} failed: {}",
@@ -397,7 +396,7 @@ fn empty_listing_from_nonproject_directory_creates_no_project() {
 }
 
 #[test]
-fn restart_preflights_detached_policy_and_replaces_only_confirmed_real_host() {
+fn restart_success_replaces_host_and_preserves_protected_state() {
     run_restart_fixture(RESTART_SUCCESS_FIXTURE, Duration::from_secs(80));
 }
 
@@ -454,15 +453,18 @@ fn restart_success_body(root: &TestRuntimeRoot) {
         other => panic!("original host was not alive before restart: {other:?}"),
     };
     let project = layout.project_root().to_str().unwrap();
-    let mut cleanup = RestartCleanup {
+    let cleanup = RestartCleanup {
         root,
         cwd: &outside,
         selector: project,
-        armed: true,
     };
 
     let first = cli(root, &outside, &["--session-restart", project]);
-    assert!(first.status.success(), "{:?}", text(&first));
+    assert!(
+        first.status.success(),
+        "required native restart acceptance failed; the runner must permit the fixture's nested breakaway job (no skip or refusal fallback): {:?}",
+        text(&first)
+    );
     assert!(original.0.try_wait().unwrap().is_some());
     assert!(!before_pin.is_alive().unwrap());
     let running = location.read_ready().unwrap().unwrap();
@@ -475,11 +477,19 @@ fn restart_success_body(root: &TestRuntimeRoot) {
 
     let file = layout.project_root().join("note.txt");
     fs::write(&file, "original").unwrap();
-    let (_runtime, control) = make_unsaved(&layout, &file);
+    let (runtime, mut control) = make_unsaved(&layout, &file);
+    let protected = read_fixture_buffer(&runtime, &mut control, &file);
+    assert!(protected.metadata.dirty);
+    assert_eq!(protected.text, "unsaved original");
     let refused = cli(root, &outside, &["--session-restart", project]);
     assert!(!refused.status.success());
     assert!(text(&refused).1.contains("unsaved"), "{:?}", text(&refused));
     assert_eq!(location.read_ready().unwrap().unwrap(), running);
+    assert!(running_pin.is_alive().unwrap());
+    let retained = read_fixture_buffer(&runtime, &mut control, &file);
+    assert_eq!(retained.metadata.revision, protected.metadata.revision);
+    assert!(retained.metadata.dirty);
+    assert_eq!(retained.text, protected.text);
 
     let forced = cli(root, &outside, &["--session-restart", "--force", project]);
     assert!(forced.status.success(), "{:?}", text(&forced));
@@ -487,11 +497,59 @@ fn restart_success_body(root: &TestRuntimeRoot) {
     assert!(!running_pin.is_alive().unwrap());
     let replaced = location.read_ready().unwrap().unwrap();
     assert_ne!(replaced.process, running.process);
+    assert_eq!(replaced.project_root().unwrap(), layout.project_root());
+    let replaced_pin = match PinnedProcess::open(replaced.process).unwrap() {
+        PinResult::Pinned(process) => process,
+        other => panic!("replacement host was not alive: {other:?}"),
+    };
+    let mut replacement = runtime.block_on(connect_control(&replaced)).unwrap();
+    let reopened = read_fixture_buffer(&runtime, &mut replacement, &file);
+    assert!(!reopened.metadata.dirty);
+    assert_eq!(reopened.text, "original");
+    drop(replacement);
     assert_eq!(fs::read_to_string(file).unwrap(), "original");
-    let stopped = cli(root, &outside, &["--session-stop", project]);
-    assert!(stopped.status.success(), "{:?}", text(&stopped));
+    // Exercise the same owner that runs if any earlier assertion fails.
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _cleanup = cleanup;
+        panic!("injected restart acceptance assertion failure");
+    }));
+    assert_eq!(
+        unwound.unwrap_err().downcast_ref::<&str>(),
+        Some(&"injected restart acceptance assertion failure")
+    );
     assert!(location.read_ready().unwrap().is_none());
-    cleanup.armed = false;
+    assert!(!replaced_pin.is_alive().unwrap());
+}
+
+fn read_fixture_buffer(
+    runtime: &tokio::runtime::Runtime,
+    client: &mut LocalClient,
+    file: &Path,
+) -> runyte::protocol::BufferContents {
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            client
+                .send(&ClientRequest::OpenBuffers {
+                    paths: vec![encode_path(file)],
+                    activate: false,
+                })
+                .await
+                .unwrap();
+            let Some(HostResponse::Opened { buffers }) = client.recv().await.unwrap() else {
+                panic!("host did not reopen fixture buffer");
+            };
+            client
+                .send(&ClientRequest::ReadBuffer { buffer: buffers[0] })
+                .await
+                .unwrap();
+            let Some(HostResponse::Buffer { buffer }) = client.recv().await.unwrap() else {
+                panic!("host did not read fixture buffer");
+            };
+            buffer
+        })
+        .await
+        .expect("host did not answer bounded buffer read")
+    })
 }
 
 #[test]

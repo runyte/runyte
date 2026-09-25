@@ -47,6 +47,26 @@ jobs:
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
         run: cargo test --locked --no-fail-fast
+      - name: Require successful restart and characterize save visibility
+        if: ${{ !cancelled() }}
+        # Restart provisions a nested breakaway job inside a non-breakaway
+        # kill-on-close owner. Unsupported runner policy fails, never skips.
+        run: |
+          $cases = @(
+            @('windows_session_cli', 'restart_success_replaces_host_and_preserves_protected_state'),
+            @('windows_session_cli', 'restart_refuses_detached_policy_without_breakaway_job'),
+            @('windows_save_visibility', 'successful_saves_have_complete_contents_after_acknowledgement')
+          )
+          foreach ($entry in $cases) {
+            $target = $entry[0]
+            $case = $entry[1]
+            cargo test --locked --test $target $case -- --exact --show-output 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/$case.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $acceptance = Get-Content -Raw "$env:RUNNER_TEMP/$case.log"
+            if ($acceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
+              throw "Required native acceptance did not run: $case"
+            }
+          }
       - name: Accept the private Windows context bridge
         if: ${{ !cancelled() }}
         run: |

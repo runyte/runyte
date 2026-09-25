@@ -1523,6 +1523,13 @@ Git is optional: if it is absent, Git commands are disabled with a clear reason,
 and editing still works. Restart Runyte after installing Git or changing `PATH`.
 Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
 
+On Windows, existing-file saves preserve replacement metadata through
+`ReplaceFileW`. Concurrent pathname opens can briefly fail with missing-file
+or sharing errors during replacement. A successful `wrote` acknowledgement
+means the complete document has been installed; tools checking saved bytes
+should wait for completion. This is not a guarantee of uninterrupted pathname
+visibility while a save is in progress.
+
 Native session controls work from a directory outside any project. The CLI
 uses captured cache/runtime settings and a complete session catalog; an
 unavailable catalog fails the command instead of showing an empty list.

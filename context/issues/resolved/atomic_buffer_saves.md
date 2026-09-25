@@ -26,7 +26,19 @@ Tests in src/buffer.rs cover the behavior:
 - atomic_replacement_restores_special_permission_bits_after_writing
 - atomic_replacement_preserves_a_posix_access_acl
 
-Known limitation: Unix targets without one of the implemented native ACL mechanisms refuse atomic replacement of an existing file rather than risk silently dropping its access controls. The Windows-only native path was target-compiled in isolation because this environment lacks the MinGW C headers required to cross-build Runyte's statically linked grammar dependencies.
+Native Windows follow-up: `successful_saves_have_complete_contents_after_acknowledgement`
+in `tests/windows_save_visibility.rs` exercises 128 ordinary saves with concurrent
+pathname readers. Windows 11 build 26200 produced both missing-file (2) and
+sharing-violation (32) errors during replacement, while every completed save
+had exact contents. Here, atomic installation describes replacement of complete
+file contents, not uninterrupted Windows pathname visibility. The ConPTY test
+`real_editor_paste_and_save` in `tests/windows_acceptance.rs` waits for `wrote`
+before inspecting bytes. The replacement algorithm, metadata/DACL and stream
+preservation, conflict checks and recovery backups are unchanged. Microsoft's
+[ReplaceFileW contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
+does not promise concurrent-reader visibility.
+
+Known limitation: Unix targets without one of the implemented native ACL mechanisms refuse atomic replacement of an existing file rather than risk silently dropping its access controls. Concurrent Windows pathname readers may encounter transient errors before save completion; the bounded characterization is not a guarantee for every filesystem or process policy.
 
 ## Report
 

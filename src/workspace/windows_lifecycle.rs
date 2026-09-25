@@ -126,17 +126,12 @@ async fn shutdown_request(
 ) -> Result<StopReceipt> {
     let mut client = connect_control(metadata).await?;
     timeout_at(Instant::now() + CONTROL_BUDGET, async {
-        client.send(&request).await?;
-        match client.recv().await? {
-            Some(HostResponse::ShuttingDown) | None => Ok(StopReceipt {
-                metadata: metadata.clone(),
-                peer: client.peer().clone(),
-            }),
-            Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
-                anyhow::bail!(message)
-            }
-            Some(response) => anyhow::bail!("unexpected {description} response: {response:?}"),
-        }
+        let sent = client.send(&request).await;
+        shutdown_response(sent, client.recv(), description).await?;
+        Ok(StopReceipt {
+            metadata: metadata.clone(),
+            peer: client.peer().clone(),
+        })
     })
     .await
     .with_context(|| format!("workspace host {description} request timed out"))?
@@ -164,6 +159,43 @@ async fn await_host_stopped_until(receipt: &StopReceipt, deadline: Instant) -> R
             }
         }
     }
+}
+
+async fn shutdown_response(
+    sent: Result<()>,
+    receive: impl std::future::Future<Output = Result<Option<HostResponse>>>,
+    description: &str,
+) -> Result<()> {
+    // The host can consume the request and close before the native writer's
+    // final flush completes. Preserve the reader to recover its response;
+    // never resend an uncertain request. Closure yields only a receipt, whose
+    // pinned process must still exit before stop or restart can succeed.
+    if let Err(error) = sent
+        && !closed_pipe(&error)
+    {
+        return Err(error).context("sending shutdown request");
+    }
+    match receive.await {
+        Ok(Some(HostResponse::ShuttingDown) | None) => Ok(()),
+        Ok(Some(HostResponse::Refused { message } | HostResponse::Error { message })) => {
+            anyhow::bail!(message)
+        }
+        Ok(Some(response)) => anyhow::bail!("unexpected {description} response: {response:?}"),
+        Err(error) if closed_pipe(&error) => Ok(()),
+        Err(error) => Err(error).context("receiving shutdown response"),
+    }
+}
+
+fn closed_pipe(error: &anyhow::Error) -> bool {
+    use windows_sys::Win32::Foundation::{
+        ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_NOT_CONNECTED,
+    };
+    error.downcast_ref::<io::Error>().is_some_and(|error| {
+        matches!(
+            error.raw_os_error().map(|code| code as u32),
+            Some(ERROR_BROKEN_PIPE | ERROR_NO_DATA | ERROR_PIPE_NOT_CONNECTED)
+        )
+    })
 }
 
 /// Explicit recovery for an incompatible host. A private observation alone is
