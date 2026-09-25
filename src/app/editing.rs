@@ -2510,12 +2510,12 @@ impl App {
         }
     }
 
-    pub(super) fn paste(&mut self, before: bool) {
+    pub(super) fn paste(&mut self, before: bool, transient_line_selection: bool) {
         let register = self.read_selected_register();
         if register.text.is_empty() {
             return;
         }
-        self.paste_register(&register, before);
+        self.paste_register(&register, before, transient_line_selection);
     }
 
     /// Pastes the register beside every caret and over every selection.
@@ -2525,7 +2525,12 @@ impl App {
     /// left alone, so the same content can be pasted over one range after
     /// another. `P` never replaces, which is how text still reaches the edge
     /// of a selection without consuming it.
-    pub(super) fn paste_register(&mut self, register: &Register, before: bool) {
+    pub(super) fn paste_register(
+        &mut self,
+        register: &Register,
+        before: bool,
+        transient_line_selection: bool,
+    ) {
         if self.active_buffer().is_directory()
             && let Some(directory) = &register.directory
         {
@@ -2541,6 +2546,8 @@ impl App {
             self.active().selection_semantics(),
             SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
         );
+        let line_selection = transient_line_selection
+            || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
         // In Runyte's inclusive grammar a selected single character and a
         // Normal-mode caret both have equal endpoints. Select mode is what
         // distinguishes the former, including one-character search matches.
@@ -2548,14 +2555,20 @@ impl App {
 
         // Spans first, changes after: the replaced ones have to be found again
         // once the text has moved under them, and that needs their widths.
-        let spans: Vec<(Offset, Offset, String)> = self
+        let spans: Vec<(Offset, Offset, String, bool)> = self
             .active()
             .selection
             .ranges()
             .iter()
             .map(|range| {
-                if !before && (!range.is_empty() || replace_point_ranges) {
-                    return replaced_span(buffer, range, register, half_open);
+                let replace = !before
+                    && (!range.is_empty()
+                        || replace_point_ranges
+                        || (line_selection && register.linewise));
+                if replace {
+                    let (from, to, text) =
+                        replaced_span(buffer, range, register, half_open, line_selection);
+                    return (from, to, text, true);
                 }
                 let mut text = clipboard.clone();
                 let at = if register.linewise {
@@ -2585,21 +2598,21 @@ impl App {
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     (range.to() + 1).min(row_end)
                 };
-                (at, at, text)
+                (at, at, text, false)
             })
             .collect();
 
-        // A replacement always spans text and an insertion never does, so the
-        // span itself says which ranges are about to be replaced.
+        // An empty final line has no text to span, so keep the replacement
+        // decision separately from the transaction's offsets.
         let replaced: Vec<Option<Offset>> = spans
             .iter()
-            .map(|(from, to, _)| (from < to).then_some(*from))
+            .map(|(from, _, _, replace)| replace.then_some(*from))
             .collect();
 
         let transaction = Transaction::new(
             spans
                 .into_iter()
-                .map(|(from, to, text)| Change::new(from, to, text))
+                .map(|(from, to, text, _)| Change::new(from, to, text))
                 .collect(),
         );
         let primary = self.active().selection.primary_index();
@@ -2613,15 +2626,15 @@ impl App {
             .map(|range| range.map(&transaction))
             .collect();
         // Where the replacements land has to come from the transaction rather
-        // than from adding up what each span changed: two ranges sharing a row
-        // both widen to that whole row under a linewise register, and
+        // than from adding up what each span changed: two line selections
+        // sharing a row can both widen to that whole row, and
         // `Transaction::new` drops the second as the overlap it is. A running
         // total cannot know that happened; the transaction can be asked.
         let pasted: Vec<Option<(Offset, usize)>> = replaced
             .into_iter()
             .map(|replaced_from| {
                 replaced_from.and_then(|from| {
-                    // Linewise widening can make disjoint selections overlap.
+                    // Line-selection widening can make disjoint selections overlap.
                     // Transaction normalization retains the first replacement
                     // and drops the later one; every original selection must
                     // then point at that retained replacement, not at the
@@ -2630,7 +2643,8 @@ impl App {
                         .changes()
                         .iter()
                         .find(|change| {
-                            change.from < change.to && change.from <= from && from < change.to
+                            (change.from < change.to && change.from <= from && from < change.to)
+                                || (change.from == change.to && change.from == from)
                         })
                         .map(|change| {
                             (
@@ -2764,16 +2778,36 @@ impl App {
 /// place.
 ///
 /// Characterwise content substitutes exactly what `d` would have deleted.
-/// Linewise content is whole lines, so it takes whole lines: the span grows to
-/// the rows the selection touched, and the register's own terminators shape the
-/// result. Replacing through a final line that never had a terminator must not
-/// leave one behind.
+/// A line selection takes whole lines from a linewise register. Every other
+/// selection keeps its exact span and drops only the register's final line
+/// terminator, retaining any inner line breaks.
 fn replaced_span(
     buffer: &Buffer,
     range: &Range,
     register: &Register,
     half_open: bool,
+    line_selection: bool,
 ) -> (Offset, Offset, String) {
+    if register.linewise && line_selection {
+        let first = buffer.offset_to_row(range.from());
+        let last_offset = if half_open && !range.is_empty() {
+            range.to() - 1
+        } else {
+            range.to()
+        };
+        let last = buffer.offset_to_row(last_offset);
+        let start = buffer.line_to_offset(first);
+        if last < buffer.last_row() {
+            return (
+                start,
+                buffer.line_to_offset(last + 1),
+                register.text.clone(),
+            );
+        }
+        let mut text = register.text.clone();
+        trim_final_line_terminator(&mut text);
+        return (start, buffer.len_chars(), text);
+    }
     let (from, to) = if half_open {
         (range.from(), range.to())
     } else {
@@ -2782,24 +2816,18 @@ fn replaced_span(
     if !register.linewise {
         return (from, to, register.text.clone());
     }
-    let first = buffer.offset_to_row(from);
-    let last = buffer.offset_to_row(to.saturating_sub(1).max(from));
-    let start = buffer.line_to_offset(first);
-    if last < buffer.last_row() {
-        return (
-            start,
-            buffer.line_to_offset(last + 1),
-            register.text.clone(),
-        );
-    }
     let mut text = register.text.clone();
+    trim_final_line_terminator(&mut text);
+    (from, to, text)
+}
+
+fn trim_final_line_terminator(text: &mut String) {
     if text.ends_with('\n') {
         text.pop();
         if text.ends_with('\r') {
             text.pop();
         }
     }
-    (start, buffer.len_chars(), text)
 }
 
 /// The range covering `len` characters just pasted at `start`.

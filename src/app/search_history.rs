@@ -40,7 +40,7 @@ impl App {
         }
     }
 
-    pub(super) fn clipboard_paste(&mut self, before: bool) {
+    pub(super) fn clipboard_paste(&mut self, before: bool, transient_line_selection: bool) {
         match self.ports.clipboard().read() {
             Ok(text) if text.is_empty() => self.status("system clipboard is empty"),
             Ok(text) => {
@@ -52,6 +52,7 @@ impl App {
                         directory: None,
                     },
                     before,
+                    transient_line_selection,
                 );
             }
             Err(error) => {
@@ -71,10 +72,10 @@ impl App {
     /// hand an image over with, falls through to the ordinary system-clipboard
     /// text paste. Both bound keys use this command, so the clipboard format
     /// does not require choosing a different command before pasting.
-    pub(super) fn clipboard_paste_any(&mut self) {
+    pub(super) fn clipboard_paste_any(&mut self, transient_line_selection: bool) {
         match self.ports.clipboard().read_image() {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
-            Ok(None) => self.clipboard_paste(false),
+            Ok(None) => self.clipboard_paste(false, transient_line_selection),
             Err(error) => {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
             }
@@ -126,6 +127,7 @@ impl App {
                     linewise: false,
                     directory: None,
                 },
+                false,
                 false,
             );
         }

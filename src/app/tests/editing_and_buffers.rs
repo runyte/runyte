@@ -1507,6 +1507,58 @@ fn system_clipboard_bindings_use_the_clipboard_boundary() {
 }
 
 #[test]
+fn clipboard_linewise_paste_replaces_only_the_selected_text() {
+    let shared = Arc::new(Mutex::new("copied\r\n".to_owned()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(MemoryClipboard(shared)));
+    seed(&mut app, "prefix SELECTED suffix");
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(7, 14));
+
+    for key in [' ', 'c', 'p'] {
+        press(&mut app, key);
+    }
+
+    assert_eq!(text(&app), "prefix copied suffix");
+}
+
+#[test]
+fn clipboard_linewise_paste_over_x_selection_replaces_the_line() {
+    let shared = Arc::new(Mutex::new("copied\n".to_owned()));
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_system_clipboard(Box::new(MemoryClipboard(shared)));
+    seed(&mut app, "target words\nnext");
+    press(&mut app, 'x');
+
+    for key in [' ', 'c', 'p'] {
+        press(&mut app, key);
+    }
+
+    assert_eq!(text(&app), "copied\nnext");
+}
+
+#[test]
+fn clipboard_linewise_paste_replaces_degenerate_x_lines() {
+    for (source, expected) in [
+        ("alpha\nb\nnext", "alpha\ncopied\nnext"),
+        ("alpha\n\nnext", "alpha\ncopied\nnext"),
+        ("alpha\n", "alpha\ncopied"),
+    ] {
+        let shared = Arc::new(Mutex::new("copied\n".to_owned()));
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.set_system_clipboard(Box::new(MemoryClipboard(shared)));
+        seed(&mut app, source);
+        set_cursor(&mut app, 1, 0);
+        press(&mut app, 'x');
+
+        for key in [' ', 'c', 'p'] {
+            press(&mut app, key);
+        }
+
+        assert_eq!(text(&app), expected, "source {source:?}");
+    }
+}
+
+#[test]
 fn path_command_opens_a_popup_with_the_active_files_absolute_path() {
     let mut app = App::new(Config::default(), None).unwrap();
     let path = temporary_directory().join(format!("runyte-path-{}.txt", std::process::id()));

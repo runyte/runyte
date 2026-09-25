@@ -1982,8 +1982,10 @@ context; scoped explorer keys are documented under
 pastes after the caret, as it always has; with a range that holds text it
 replaces that text, so selecting a word and pressing `p` puts the register
 there instead of beside it. A linewise register — the one `x y` or `Y`
-writes — replaces every line the selection touched rather than landing inside
-one. The register is not consumed and the replacement is left selected, so the
+writes — pastes as whole lines at a bare caret. Over a characterwise selection,
+it replaces exactly the selected span, with its final line ending removed;
+inner line breaks remain. Over an `x`/`X` or Vim line selection, it replaces
+whole lines. The register is not consumed and the replacement is left selected, so the
 same content can be pasted over one range after another, and a multi-selection
 from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
