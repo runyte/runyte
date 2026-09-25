@@ -902,7 +902,7 @@ impl Default for EditorConfig {
             line_numbers: true,
             tab_width: 4,
             indent: IndentStyle::Spaces,
-            smart_newline: false,
+            smart_newline: true,
             scroll_offset: 3,
             motion_repeat_multiplier: 2,
             show_hidden_files: false,
@@ -4110,10 +4110,10 @@ mod tests {
     }
 
     #[test]
-    fn smart_newline_is_default_off_and_configurable() {
-        assert!(!Config::default().editor.smart_newline);
-        let config: Config = serde_yaml::from_str("editor:\n  smart_newline: true\n").unwrap();
-        assert!(config.editor.smart_newline);
+    fn smart_newline_is_default_on_and_configurable() {
+        assert!(Config::default().editor.smart_newline);
+        let config: Config = serde_yaml::from_str("editor:\n  smart_newline: false\n").unwrap();
+        assert!(!config.editor.smart_newline);
     }
 
     #[test]
