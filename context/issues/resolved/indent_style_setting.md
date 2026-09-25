@@ -1,4 +1,43 @@
-# Tab always inserts spaces, with no setting for tab indentation
+---
+title: "Tab always inserts spaces, with no setting for tab indentation"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: 3c2b148
+---
+
+## Resolution
+
+Commit `3c2b148` (`Make indentation style configurable across editing modes`)
+added `editor.indent` with `spaces` and `tabs`, defaulting to `spaces`.
+`App::insert_indentation`, line indent, Replace-mode indentation and smart
+newline previously chose spaces independently. They now use the configured
+style for an added level, while a grammar-requested tab remains a tab in
+either style. `Tab` inserts the configured style and `Shift-Tab` the other;
+`<` continues to remove either style. `tab_width` still controls space units
+and tab display width. Configuration reload and the `[config]` setting update
+the live keymap descriptions used by help and hints.
+
+The command metadata names are `insert-indent` and
+`insert-other-indent`. The former `insert-tab` and `insert-literal-tab` names
+are not aliases: `keys.rebind` addresses key sequences, not command names.
+Existing key sequence configuration is unaffected. Replace-mode multi-caret
+space insertion carries each caret's remaining count through normalized
+selection merges, preventing a later caret from losing its final space.
+
+Coverage is in `src/config.rs` (`indent_style_defaults_to_spaces_accepts_tabs_and_rejects_unknown_values`),
+`src/app/tests/config_reload.rs` (`indent_style_reload_updates_the_live_key_registry_and_rejects_unknown_values`),
+`src/settings.rs` (`indent_style_persists_as_a_typed_unquoted_yaml_choice`),
+and `src/keymap.rs` (`indent_command_names_are_not_key_config_rebinding_aliases`).
+`src/app/tests/editing_and_buffers.rs` covers both Tab keys in Insert and
+Replace, multi-caret merge and Backspace restoration, line indent/unindent,
+and smart newline style. The 25 focused indent tests, formatting and Clippy
+passed.
+
+Known limitation: indentation is a global setting; file detection,
+per-language defaults and `.editorconfig` remain outside this change.
+
+## Report
 
 In Insert mode, `Tab` runs `insert-tab`. `insert_indentation` in
 `src/app/editing.rs` inserts spaces up to the next multiple of
