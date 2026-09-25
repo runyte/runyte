@@ -286,6 +286,7 @@ impl App {
             self.reveal_pane_selection_from_folds(pane_id);
         }
         self.prepare_diffs();
+        self.refresh_search_preview();
         self.areas.clear();
         if let Some(maximized) = self
             .maximized
@@ -440,7 +441,12 @@ impl App {
                 .saturating_sub(row_prefix_scroll)
                 .min(text_width.saturating_sub(1));
             let document_text_width = text_width.saturating_sub(row_prefix_width).max(1);
-            let cursor = self.panes[&pane_id].cursor(&self.buffers[buffer_id]);
+            // An open search prompt scrolls to the match it would select, not
+            // to the caret the selection still holds.
+            let cursor = self.search_preview_head(pane_id, buffer_id).map_or_else(
+                || self.panes[&pane_id].cursor(&self.buffers[buffer_id]),
+                |head| self.buffers[buffer_id].position_of(head),
+            );
             let soft_wrap = self.pane_soft_wrap(pane_id);
             let scroll_offset = self.config.editor.scroll_offset;
             let tab_width = self.config.editor.tab_width;

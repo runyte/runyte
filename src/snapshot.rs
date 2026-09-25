@@ -1032,9 +1032,15 @@ impl App {
         let pristine_search =
             self.mode == Mode::Select && self.pristine_search_selection(prepared.pane_id);
         let replacing = self.awaiting_character_command() == Some(EditorCommand::ReplaceChar);
+        let preview = self.search_preview_for(prepared.pane_id, prepared.buffer_id);
         let role_at = |offset: Offset| {
             if !active {
                 return TextRole::Plain;
+            }
+            // An open search prompt draws what Enter would select in place of
+            // the selection it would replace.
+            if let Some(preview) = preview {
+                return preview.role_at(offset);
             }
             if replacing
                 && pane
@@ -2268,6 +2274,39 @@ mod tests {
         let snapshot = prepared_snapshot(&mut app, 80, 12);
         assert_eq!(snapshot.mode, Mode::Command);
         assert!(snapshot.panes.iter().all(|pane| !pane.dimmed));
+    }
+
+    #[test]
+    fn an_open_search_prompt_draws_the_matches_enter_would_select() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "at xx at yy"));
+        for character in ['s', 'a', 't'] {
+            app.handle_key(KeyStroke::char(character)).unwrap();
+        }
+
+        let snapshot = prepared_snapshot(&mut app, 40, 8);
+        assert_eq!(snapshot.mode, Mode::Command);
+        let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        let roles = row
+            .runs
+            .iter()
+            .filter_map(|run| match run.kind {
+                TextRunKind::Text { role, .. } if role != TextRole::Plain => {
+                    Some((run.text.as_str(), role))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            roles,
+            [
+                ("a", TextRole::PrimarySelected),
+                ("t", TextRole::PrimaryCaret),
+                ("at", TextRole::Selected),
+            ]
+        );
     }
 
     #[test]

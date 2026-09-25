@@ -193,6 +193,16 @@ endpoint cursors because subsequent extension depends on them. `i`, `a`, and
 `c` then show red Insert-mode cursors at their resulting insertion points; `r`
 shows all heads in red while it waits for the replacement character.
 
+Both prompts preview while the pattern is typed, as Helix's `/` does. Helix
+previews by moving the selection to the next match and restoring it on Escape;
+Runyte leaves the selection, jumplist, and committed query untouched and draws
+every match Enter would select over the dimmed pane, primary included, while the
+viewport follows the would-be primary. Escape restores the viewport. An invalid
+regular expression keeps the last preview; an empty or unmatched pattern shows
+none and returns the view. The preview is recomputed per frame from the prompt
+text and buffer revision, so every prompt edit and paste reaches it by one path.
+Selected text therefore keeps its foreground under any command-prompt dim.
+
 A search is confined to the current selection when at least one range covers two
 or more characters. A bare caret is a one-character range in this grammar, so
 that threshold is what separates a selection from a cursor position. The spans

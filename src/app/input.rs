@@ -4519,6 +4519,9 @@ impl App {
                 let worktree_start = self.git_worktree_start.take();
                 let worktree_new_branch = self.git_worktree_new_branch.take();
                 let worktree_upstream = self.git_worktree_upstream.take();
+                // Taken so closing does not scroll back to where the prompt
+                // opened: an accepted search keeps the view it previewed.
+                let search_preview = self.take_search_preview();
                 self.close_prompt();
                 if kind == PromptKind::ExternalProgram {
                     if let Some(target) = target {
@@ -4621,15 +4624,17 @@ impl App {
                     // instead of only reaching the retained notification.
                     let state = CommandState::capture(self);
                     if value.is_empty() {
+                        self.finish_search_preview(search_preview, false);
                         self.action_failed("search pattern is empty");
                     } else if let PromptKind::Search(mode) = kind {
                         let region = self.scoping_region();
-                        self.commit_search(SearchQuery {
+                        let found = self.commit_search(SearchQuery {
                             pattern: value,
                             mode,
                             region,
                             forward: true,
                         });
+                        self.finish_search_preview(search_preview, found);
                     } else {
                         // The Vim grammar's directional single-match search.
                         let forward = kind == PromptKind::SearchForward;
@@ -4876,6 +4881,7 @@ impl App {
     }
 
     pub(super) fn open_prompt(&mut self, kind: PromptKind) {
+        self.abandon_search_preview();
         self.prompt_input_error = None;
         if self.mode != Mode::Command {
             self.prompt_origin_mode = self.mode;
@@ -4887,6 +4893,7 @@ impl App {
         self.command_selection = 0;
         self.program_action_menu = None;
         self.prompt_revision = self.prompt_revision.wrapping_add(1);
+        self.begin_search_preview();
     }
 
     pub(super) fn open_prompt_with_value(&mut self, kind: PromptKind, value: String) {
@@ -4897,6 +4904,7 @@ impl App {
     }
 
     pub(super) fn close_prompt(&mut self) {
+        self.abandon_search_preview();
         self.prompt_input_error = None;
         #[cfg(any(unix, windows))]
         let session_manager_return_target = self.session_manager_return_target.take();
