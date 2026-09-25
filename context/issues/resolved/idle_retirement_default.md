@@ -1,4 +1,29 @@
-# Persistent session hosts retire after a day idle by default
+---
+title: "Persistent session hosts retire after a day idle by default"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: 65dd97d
+---
+
+## Resolution
+
+Commit `65dd97d` (`Keep persistent hosts running by default`) changed
+`WorkspaceConfig::default` from `1440` to `0` minutes. The host already treats
+zero as disabling idle retirement and reads the setting when considering
+retirement; no lifecycle or validation change was needed. Explicit positive
+intervals still retire eligible clean, unattached hosts. The example config
+and user guide now explain that idle persistent hosts and their language
+servers continue running until explicitly stopped or a positive interval is
+configured.
+
+`src/config.rs` tests the default, and the
+`WorkspaceIdleRetirementMinutes` test in `src/settings.rs` covers the live
+setting's values, including a positive interval followed by zero. Both
+focused tests and formatting passed. Existing host eligibility tests use
+explicit intervals and do not depend on the former default.
+
+## Report
 
 `workspace.idle_retirement_minutes` controls how long a clean persistent
 session host with no attached client, no outstanding `--wait` request and no
