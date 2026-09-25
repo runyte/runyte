@@ -1906,6 +1906,84 @@ fn enter_on_a_wrapped_config_continuation_opens_that_settings_choices() {
 }
 
 #[test]
+fn setting_value_rows_label_selected_and_saved_without_generic_choice_text() {
+    let mut config = Config::default();
+    config.editor.smart_newline = false;
+    config.editor.explorer_sort = crate::config::ExplorerSort::Name;
+    let mut app = App::new(config, None).unwrap();
+    app.persisted_config.editor.smart_newline = true;
+    app.persisted_config.editor.explorer_sort = crate::config::ExplorerSort::Size;
+
+    app.open_setting_values(SettingId::EditorSmartNewline);
+    let picker = app.list.as_ref().unwrap();
+    assert_eq!(picker.items.len(), 2);
+    assert!(
+        picker
+            .items
+            .iter()
+            .any(|item| item.label == "false" && item.detail == "selected")
+    );
+    assert!(
+        picker
+            .items
+            .iter()
+            .any(|item| item.label == "true" && item.detail == "saved")
+    );
+    assert_eq!(picker.items[picker.selected].detail, "selected");
+    let saved_row = picker
+        .items
+        .iter()
+        .position(|item| item.detail == "saved")
+        .unwrap();
+    app.list.as_mut().unwrap().selected = saved_row;
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert_eq!(overlay.selected, Some(saved_row));
+    assert_eq!(overlay.rows[saved_row].detail, "saved");
+    assert!(overlay.rows.iter().any(|row| row.detail == "selected"));
+
+    app.open_setting_values(SettingId::EditorExplorerSort);
+    let picker = app.list.as_mut().unwrap();
+    assert!(picker.items.iter().any(|item| item.detail == "selected"));
+    assert!(picker.items.iter().any(|item| item.detail == "saved"));
+    assert!(picker.items.iter().any(|item| item.detail.is_empty()));
+    for character in "choice".chars() {
+        picker.push_filter(character);
+    }
+    assert!(
+        picker.visible_indices().is_empty(),
+        "removed row labels must not match the filter"
+    );
+}
+
+#[test]
+fn explorer_order_rows_use_the_same_labels_as_setting_values() {
+    let directory = temporary("order-choice-labels");
+    fs::create_dir(&directory).unwrap();
+    let mut config = Config::default();
+    config.editor.explorer_sort = crate::config::ExplorerSort::Name;
+    let mut app = App::new(config, Some(directory.clone())).unwrap();
+    app.persisted_config.editor.explorer_sort = crate::config::ExplorerSort::Size;
+
+    app.choose_explorer_order().unwrap();
+    let picker = app.list.as_ref().unwrap();
+    assert_eq!(picker.items.len(), crate::config::ExplorerSort::ALL.len());
+    assert_eq!(picker.items[picker.selected].detail, "selected");
+    assert!(picker.items.iter().any(|item| item.detail == "saved"));
+    assert!(picker.items.iter().any(|item| item.detail.is_empty()));
+    assert!(
+        picker
+            .items
+            .iter()
+            .all(|item| item.detail != "choice" && item.detail != "in use")
+    );
+    fs::remove_dir(directory).unwrap();
+}
+
+#[test]
 fn hard_wrap_width_setting_uses_a_typed_prompt_and_persists_on_enter() {
     let path = temporary("settings-hard-wrap-width.yaml");
     fs::write(&path, "editor:\n  hard_wrap_width: 80\n").unwrap();

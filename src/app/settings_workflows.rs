@@ -530,11 +530,11 @@ impl App {
             .enumerate()
             .map(|(index, value)| {
                 let marker = if *value == effective {
-                    "effective"
+                    "selected"
                 } else if value.to_string() == saved {
                     "saved"
                 } else {
-                    "choice"
+                    ""
                 };
                 let item = PickerItem::new(value.to_string(), marker, index);
                 match self.setting_value_group(setting, value) {

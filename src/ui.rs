@@ -4999,6 +4999,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_unlabelled_choice_row_uses_no_detail_separator_cells() {
+        let row = crate::snapshot::OverlayRow {
+            heading: false,
+            identity: crate::snapshot::OverlayIdentity::Index(0),
+            label: "name, A to Z".to_owned(),
+            detail: String::new(),
+            trailing_detail: String::new(),
+            available: true,
+            dimmed: false,
+            muted: Vec::new(),
+            emphasis: Vec::new(),
+            detail_emphasis: Vec::new(),
+        };
+        let plain_width = snapshot_row_width(OverlayKind::ResultList, &row);
+        assert_eq!(
+            usize::from(plain_width),
+            SELECTION_GUTTER.width() + row.label.width()
+        );
+
+        let labelled = crate::snapshot::OverlayRow {
+            detail: "selected".to_owned(),
+            ..row
+        };
+        assert_eq!(
+            usize::from(snapshot_row_width(OverlayKind::ResultList, &labelled)),
+            usize::from(plain_width) + 2 + "selected".width()
+        );
+    }
+
     /// A terminal smaller than the popup gets the terminal, not an overflow.
     #[test]
     fn setting_popups_never_exceed_the_area_they_are_centered_in() {

@@ -334,11 +334,11 @@ fn choosing_a_listing_order_saves_it_and_reprojects_the_explorer() {
         .expect("the order list is open")
         .items
         .iter()
-        .map(|item| format!("{} {}", item.label, item.detail))
+        .map(|item| (item.label.as_str(), item.detail.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), ExplorerSort::ALL.len());
-    assert_eq!(rows[0], "name, A to Z in use");
-    assert_eq!(rows[5], "size, largest first choice");
+    assert_eq!(rows[0], ("name, A to Z", "selected"));
+    assert_eq!(rows[5], ("size, largest first", ""));
 
     // Typed characters filter the list, so the selection moves on the arrows.
     for _ in 0..5 {
