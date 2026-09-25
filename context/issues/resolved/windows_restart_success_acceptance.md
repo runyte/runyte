@@ -32,6 +32,12 @@ exact CI acceptance commands. The session CLI target passed 12 tests; its two
 ignored helpers execute inside their owners. The exact restart success gate
 passed in 0.84s. Subagent review had no actionable findings.
 
+Remote acceptance: all jobs passed at source revision `5acb153` in
+[CI run 36128568321](https://github.com/runyte/runyte/actions/runs/36128568321).
+The Windows Server 2025 runner (`windows-2025-vs2026`) passed both exact restart
+cases independently, including the required successful replacement gate.
+Linux and macOS line coverage remained above the unchanged 89% floor.
+
 Regression coverage:
 
 - `restart_success_replaces_host_and_preserves_protected_state`,
@@ -41,10 +47,6 @@ Regression coverage:
   `shutdown_timeout_has_no_receipt_and_eof_is_not_proof_of_process_exit`, and
   `supported_stop_receipt_observes_only_the_original_process_exit` in
   `src/workspace/windows_lifecycle/tests.rs`.
-
-Known limitation: remote cross-platform CI for this fix is pending. Local native
-acceptance is established; the configured CI gate is not represented as a
-completed remote result. The Windows delivery record tracks remote validation.
 
 ## Report
 

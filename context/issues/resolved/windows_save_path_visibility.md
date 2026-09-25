@@ -32,6 +32,12 @@ complete-content replacement from uninterrupted Windows pathname visibility.
 No save algorithm, DACL/metadata or stream preservation, conflict check,
 recovery backup, or error reporting was changed.
 
+Remote acceptance: all jobs passed at source revision `5acb153` in
+[CI run 36128568321](https://github.com/runyte/runyte/actions/runs/36128568321).
+The exact Windows Server 2025 acceptance run observed 300,676 complete concurrent
+reads, 656 missing-file errors and 1,020 sharing violations. All 128 saves were
+durable and their post-completion reads exact.
+
 Native formatting, denied-warning all-target Clippy, the full Rust suite and
 the exact CI commands passed. Subagent review had no actionable findings.
 Regression coverage is
@@ -40,8 +46,7 @@ Regression coverage is
 `real_editor_paste_and_save` in `tests/windows_acceptance.rs`.
 
 Known limitation: this bounded run does not certify every filesystem or process
-policy. Concurrent pathname errors remain possible before completion. Remote
-cross-platform CI for this fix is pending; the Windows delivery record tracks it.
+policy. Concurrent pathname errors remain possible before completion.
 
 ## Report
 

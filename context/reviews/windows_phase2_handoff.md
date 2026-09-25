@@ -54,8 +54,24 @@ kill-on-close owner. Unsupported runner policy fails the required gate. The
 native shutdown flush race found during this work now recovers the response
 without resending and still requires pinned process exit. The save algorithm
 is unchanged; its concurrent pathname visibility limit is documented.
-Subagent review reported no actionable findings. Cross-platform CI for this
-source revision is pending; no remote result is claimed yet.
+Subagent review reported no actionable findings.
+
+All jobs passed at source revision `5acb153` in
+[CI run 36128568321](https://github.com/runyte/runyte/actions/runs/36128568321).
+The native runner was Windows Server 2025, image `windows-2025-vs2026`. Its
+ordinary suite and all three exact acceptance cases passed. The save gate
+reported 128 durable saves, 300,676 complete concurrent reads, 656 missing-file
+errors (2), 1,020 sharing violations (32), and exact contents after every save.
+Linux line coverage was 91.98% and macOS 91.88%, above the unchanged 89% floor.
+
+Two subsequent CI cleanup commits are included in that validated revision:
+`77ec6b5` creates the lease fixture's inventory with explicit private ownership
+and documents the intentional Unix backslash filename's scoped Clippy exception;
+`5acb153` removes an unused Unix catalog re-export while preserving the public
+workspace export. The final local formatting, Clippy and full suite passed too.
+One intermediate local run failed the existing held-health-probe setup test;
+its isolated run and final full-suite rerun passed without changing that fixture.
+Combined subagent review through `5acb153` had no actionable findings.
 
 The durable diagnoses and named regression tests are in
 [`windows_restart_success_acceptance.md`](../issues/resolved/windows_restart_success_acceptance.md)
