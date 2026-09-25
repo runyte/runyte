@@ -1,4 +1,35 @@
-# Pasting a linewise register over a partial selection replaces whole lines
+---
+title: "Pasting a linewise register over a partial selection replaces whole lines"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: f502a87
+---
+
+## Resolution
+
+Commit `f502a87` (`Respect selection shape when pasting linewise text`) fixed
+the replacement span in `App::paste_register`. It previously widened every
+selection to whole rows when the register was linewise. The paste now uses
+the selection's provenance: a characterwise range replaces exactly its text
+and omits only the register's final LF or CRLF, while a transient `x`/`X` or
+Vim line selection replaces complete selected rows. A characterwise range
+covering a line's text without its terminator remains characterwise. Bare
+carets still insert linewise content as whole lines, and `P` still does not
+replace.
+
+The replacement gate also uses line-selection provenance when a one-character
+or empty row produces a point-shaped range. It derives the row from raw
+selection endpoints so a final empty row does not consume the preceding
+line's terminator. Register and clipboard paste share this rule, and the
+replacement remains selected without consuming the register.
+
+Coverage is in `src/app/tests/editing.rs` for characterwise, linewise,
+multi-range, LF/CRLF and point-shaped row selections, and in
+`src/app/tests/editing_and_buffers.rs` for clipboard paste. All 60 paste
+tests passed, as did formatting.
+
+## Report
 
 `p` on a range that holds text replaces that text with the register.
 When the register is linewise, the one written by `x y`, `Y`, or `d` after
