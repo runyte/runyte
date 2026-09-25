@@ -17,6 +17,267 @@ use super::{
     transform_selection, visual_column, without_trailing_line_terminator,
 };
 
+#[derive(Clone, Copy)]
+enum ListKind<'a> {
+    Bullet(char),
+    Decimal(&'a str),
+    Letter(char),
+    Roman(&'a str),
+}
+
+struct ListItem<'a> {
+    indent: &'a str,
+    marker: &'a str,
+    separator: &'a str,
+    task_separator: Option<&'a str>,
+    kind: ListKind<'a>,
+    content_start: usize,
+}
+
+pub(super) struct ListAlignment {
+    pub buffer: usize,
+    pub pane: usize,
+    pub revision: u64,
+    pub head: Offset,
+    pub indent_start: Offset,
+}
+
+impl ListItem<'_> {
+    fn hanging_indent(&self, include_task: bool) -> String {
+        format!(
+            "{}{}{}{}",
+            self.indent,
+            " ".repeat(self.marker.chars().count()),
+            self.separator,
+            if include_task {
+                self.task_separator
+                    .map_or(String::new(), |separator| format!("   {separator}"))
+            } else {
+                String::new()
+            }
+        )
+    }
+}
+
+fn canonical_roman(marker: &str) -> bool {
+    fn take_prefix(input: &mut &str, prefixes: &[&str]) {
+        if let Some(prefix) = prefixes.iter().find(|prefix| input.starts_with(**prefix)) {
+            *input = &input[prefix.len()..];
+        }
+    }
+    if marker.is_empty()
+        || !marker
+            .chars()
+            .all(|character| matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M'))
+    {
+        return false;
+    }
+    let mut rest = marker;
+    take_prefix(&mut rest, &["MMM", "MM", "M"]);
+    take_prefix(
+        &mut rest,
+        &["CM", "CD", "DCCC", "DCC", "DC", "D", "CCC", "CC", "C"],
+    );
+    take_prefix(
+        &mut rest,
+        &["XC", "XL", "LXXX", "LXX", "LX", "L", "XXX", "XX", "X"],
+    );
+    take_prefix(
+        &mut rest,
+        &["IX", "IV", "VIII", "VII", "VI", "V", "III", "II", "I"],
+    );
+    rest.is_empty()
+}
+
+fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
+    let indent_end = line.find(|character: char| !matches!(character, ' ' | '\t'))?;
+    let body = &line[indent_end..];
+    let (kind, marker_end) = match body.chars().next()? {
+        bullet @ ('-' | '*' | '+') => (ListKind::Bullet(bullet), 1),
+        _ => {
+            let period = body.find('.')?;
+            let token = &body[..period];
+            let kind = if !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit()) {
+                ListKind::Decimal(token)
+            } else if token.len() == 1 && token.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                ListKind::Letter(token.chars().next()?)
+            } else if token.len() > 1 && canonical_roman(token) {
+                ListKind::Roman(token)
+            } else {
+                return None;
+            };
+            (kind, period + 1)
+        }
+    };
+    let after_marker = &body[marker_end..];
+    let separator_end = after_marker
+        .find(|character: char| !matches!(character, ' ' | '\t'))
+        .unwrap_or(after_marker.len());
+    if separator_end == 0 {
+        return None;
+    }
+    let separator = &after_marker[..separator_end];
+    let after_separator = &after_marker[separator_end..];
+    let task_separator = if matches!(kind, ListKind::Bullet('-'))
+        && (after_separator.starts_with("[ ]")
+            || after_separator.starts_with("[x]")
+            || after_separator.starts_with("[X]"))
+    {
+        let after_task = &after_separator[3..];
+        let end = after_task
+            .find(|character: char| !matches!(character, ' ' | '\t'))
+            .unwrap_or(after_task.len());
+        (end > 0).then_some(&after_task[..end])
+    } else {
+        None
+    };
+    let content_start = indent_end
+        + marker_end
+        + separator_end
+        + task_separator.map_or(0, |separator| 3 + separator.len());
+    Some(ListItem {
+        indent: &line[..indent_end],
+        marker: &body[..marker_end],
+        separator,
+        task_separator,
+        kind,
+        content_start,
+    })
+}
+
+fn roman_value(marker: &str) -> usize {
+    let value = |character| match character {
+        'I' => 1,
+        'V' => 5,
+        'X' => 10,
+        'L' => 50,
+        'C' => 100,
+        'D' => 500,
+        'M' => 1000,
+        _ => 0,
+    };
+    let mut total = 0;
+    let mut previous = 0;
+    for character in marker.chars().rev() {
+        let current = value(character);
+        if current < previous {
+            total -= current;
+        } else {
+            total += current;
+        }
+        previous = current;
+    }
+    total
+}
+
+fn roman_style_before(buffer: &Buffer, row: usize, indent: &str) -> bool {
+    for previous_row in (0..row).rev() {
+        let line = buffer.line_string(previous_row);
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Some(item) = parse_list_item(&line) {
+            if item.indent == indent {
+                match item.kind {
+                    ListKind::Roman(_) => return true,
+                    ListKind::Letter('I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M') => continue,
+                    ListKind::Bullet(_) | ListKind::Decimal(_) | ListKind::Letter(_) => {
+                        return false;
+                    }
+                }
+            }
+            if item.indent.starts_with(indent) && item.indent.len() > indent.len() {
+                continue;
+            }
+            break;
+        }
+        let body = line.trim_start_matches([' ', '\t']);
+        let leading = &line[..line.len() - body.len()];
+        if leading == indent {
+            if let Some(marker) = body.strip_suffix('.') {
+                if marker.len() == 1
+                    && marker.chars().next().is_some_and(|character| {
+                        matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M')
+                    })
+                {
+                    continue;
+                }
+                return marker.len() > 1 && canonical_roman(marker);
+            }
+            break;
+        }
+        if !leading.starts_with(indent) || leading.len() <= indent.len() {
+            break;
+        }
+    }
+    false
+}
+
+fn next_roman(value: usize) -> Option<String> {
+    if value > 3999 {
+        return None;
+    }
+    let mut remaining = value;
+    let mut output = String::new();
+    for (number, symbol) in [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ] {
+        while remaining >= number {
+            output.push_str(symbol);
+            remaining -= number;
+        }
+    }
+    Some(output)
+}
+
+fn next_decimal(marker: &str) -> String {
+    let mut digits = marker.as_bytes().to_vec();
+    for digit in digits.iter_mut().rev() {
+        if *digit < b'9' {
+            *digit += 1;
+            return String::from_utf8(digits).expect("decimal marker is ASCII");
+        }
+        *digit = b'0';
+    }
+    digits.insert(0, b'1');
+    String::from_utf8(digits).expect("decimal marker is ASCII")
+}
+
+fn next_list_prefix(item: &ListItem<'_>, roman_style: bool) -> Option<String> {
+    let marker = match item.kind {
+        ListKind::Bullet(character) => character.to_string(),
+        ListKind::Decimal(number) => format!("{}.", next_decimal(number)),
+        ListKind::Roman(roman) => format!("{}.", next_roman(roman_value(roman) + 1)?),
+        ListKind::Letter(character) => {
+            if roman_style && matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M') {
+                format!("{}.", next_roman(roman_value(&character.to_string()) + 1)?)
+            } else {
+                let next = match character {
+                    'a'..='y' | 'A'..='Y' => char::from_u32(character as u32 + 1)?,
+                    _ => return None,
+                };
+                format!("{next}.")
+            }
+        }
+    };
+    let task = item
+        .task_separator
+        .map_or(String::new(), |separator| format!("[ ]{separator}"));
+    Some(format!("{}{marker}{}{task}", item.indent, item.separator))
+}
+
 impl App {
     pub(super) fn active_mut(&mut self) -> &mut Pane {
         self.panes.get_mut(&self.active_pane).unwrap()
@@ -752,79 +1013,6 @@ impl App {
     }
 
     pub(super) fn edit_newline(&mut self) {
-        fn canonical_roman(marker: &str) -> bool {
-            fn take_prefix(input: &mut &str, prefixes: &[&str]) {
-                if let Some(prefix) = prefixes.iter().find(|prefix| input.starts_with(**prefix)) {
-                    *input = &input[prefix.len()..];
-                }
-            }
-
-            if marker.is_empty()
-                || !marker
-                    .chars()
-                    .all(|character| matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M'))
-            {
-                return false;
-            }
-            let mut rest = marker;
-            take_prefix(&mut rest, &["MMM", "MM", "M"]);
-            take_prefix(
-                &mut rest,
-                &["CM", "CD", "DCCC", "DCC", "DC", "D", "CCC", "CC", "C"],
-            );
-            take_prefix(
-                &mut rest,
-                &["XC", "XL", "LXXX", "LXX", "LX", "L", "XXX", "XX", "X"],
-            );
-            take_prefix(
-                &mut rest,
-                &["IX", "IV", "VIII", "VII", "VI", "V", "III", "II", "I"],
-            );
-            rest.is_empty()
-        }
-
-        fn list_continuation_indent(before_caret: &str) -> Option<String> {
-            let indent_end = before_caret
-                .char_indices()
-                .find_map(|(index, character)| (!matches!(character, ' ' | '\t')).then_some(index))
-                .unwrap_or(before_caret.len());
-            let body = &before_caret[indent_end..];
-            let marker_end = match body.chars().next()? {
-                '-' | '*' | '+' => 1,
-                _ => {
-                    let period = body.find('.')?;
-                    let marker = &body[..period];
-                    let characters = marker.chars().count();
-                    let decimal = !marker.is_empty()
-                        && marker.chars().all(|character| character.is_ascii_digit());
-                    let letter = characters == 1
-                        && marker
-                            .chars()
-                            .all(|character| character.is_ascii_alphabetic());
-                    let roman = characters > 1 && canonical_roman(marker);
-                    if !(decimal || letter || roman) {
-                        return None;
-                    }
-                    period + 1
-                }
-            };
-            let after_marker = &body[marker_end..];
-            let separator_end = after_marker
-                .char_indices()
-                .find_map(|(index, character)| (!matches!(character, ' ' | '\t')).then_some(index))
-                .unwrap_or(after_marker.len());
-            if separator_end == 0 {
-                return None;
-            }
-
-            Some(format!(
-                "{}{}{}",
-                &before_caret[..indent_end],
-                " ".repeat(body[..marker_end].chars().count()),
-                &after_marker[..separator_end]
-            ))
-        }
-
         let buffer_id = self.active().buffer;
         let selection = self.active().selection.clone();
         let buffer = &self.buffers[buffer_id];
@@ -834,10 +1022,11 @@ impl App {
             crate::config::IndentStyle::Tabs => "\t".to_owned(),
         };
         let smart_newline = self.config.editor.smart_newline;
+        let markdown = smart_newline && self.is_markdown_document(buffer_id);
         // Every answer is derived from the same pre-edit text. This matters
         // for multi-caret insertion: an earlier caret must never change the
         // syntax or leading whitespace observed by a later one.
-        let replacements = selection
+        let changes = selection
             .ranges()
             .iter()
             .map(|range| {
@@ -847,6 +1036,7 @@ impl App {
                 let row = buffer.offset_to_row(range.from());
                 let line_start = buffer.line_to_offset(row);
                 let before_caret = buffer.slice(line_start, range.from());
+                let line = buffer.line_string(row);
                 let prefix = before_caret
                     .chars()
                     .take_while(|character| matches!(character, ' ' | '\t'))
@@ -856,9 +1046,25 @@ impl App {
                     .map(|(terminator, _)| terminator)
                     .unwrap_or_else(|| preferred_line_ending(buffer, row));
                 if !smart_newline {
-                    return format!("{terminator}{prefix}");
+                    return Change::new(range.from(), range.to(), format!("{terminator}{prefix}"));
                 }
-                let list_indent = list_continuation_indent(&before_caret);
+                let list_item = parse_list_item(&before_caret);
+                let full_item = markdown.then(|| parse_list_item(&line)).flatten();
+                if let Some(item) = &full_item
+                    && range.is_empty()
+                    && range.from() == line_start + buffer.line_len(row)
+                    && item.content_start == line.len()
+                {
+                    return Change::new(line_start, range.from(), "");
+                }
+                let list_indent = list_item.as_ref().map(|item| item.hanging_indent(markdown));
+                if let Some(item) = &full_item
+                    && before_caret.len() >= item.content_start
+                    && let Some(next) =
+                        next_list_prefix(item, roman_style_before(buffer, row, item.indent))
+                {
+                    return Change::new(range.from(), range.to(), format!("{terminator}{next}"));
+                }
                 // The syntax contract answers for an existing newline token,
                 // so a mid-line caret deliberately probes its pre-edit row
                 // terminator. An unterminated final row has no truthful token
@@ -882,39 +1088,136 @@ impl App {
                             }
                         })
                 });
-                format!(
-                    "{terminator}{}{}",
-                    list_indent.as_deref().unwrap_or(&prefix),
-                    syntax_unit.unwrap_or("")
+                Change::new(
+                    range.from(),
+                    range.to(),
+                    format!(
+                        "{terminator}{}{}",
+                        list_indent.as_deref().unwrap_or(&prefix),
+                        syntax_unit.unwrap_or("")
+                    ),
                 )
             })
             .collect::<Vec<_>>();
-        let mut index = 0;
-        let transaction = selection.change_by(|_| {
-            let replacement = replacements[index].clone();
-            index += 1;
-            Some(replacement)
-        });
-        self.edit(transaction);
+        self.edit(Transaction::new(changes));
     }
 
     pub(super) fn edit_backspace(&mut self) {
         let buffer_id = self.active().buffer;
-        let spans = self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .filter_map(|range| {
-                if !range.is_empty() {
-                    return Some((range.from(), range.to()));
+        let pending_alignments = std::mem::take(&mut self.list_alignments);
+        let buffer = &self.buffers[buffer_id];
+        let markdown = self.config.editor.smart_newline && self.is_markdown_document(buffer_id);
+        let revision = buffer.revision();
+        let pane = self.active_pane;
+        let selection_count = self.active().selection.len();
+        let mut new_alignments = Vec::new();
+        let mut special = Vec::new();
+        let mut ordinary = Vec::new();
+        for (index, range) in self.active().selection.ranges().iter().enumerate() {
+            if !range.is_empty() {
+                ordinary.push((range.from(), range.to()));
+                continue;
+            }
+            let head = range.head;
+            if head == 0 {
+                continue;
+            }
+            if markdown {
+                let row = buffer.offset_to_row(head);
+                let start = buffer.line_to_offset(row);
+                let line = buffer.line_string(row);
+                if head == start + buffer.line_len(row) {
+                    if line
+                        .chars()
+                        .all(|character| matches!(character, ' ' | '\t'))
+                        && let Some(alignment) = pending_alignments.iter().find(|alignment| {
+                            alignment.buffer == buffer_id
+                                && alignment.pane == pane
+                                && alignment.revision == revision
+                                && alignment.head == head
+                        })
+                    {
+                        special.push(Change::new(alignment.indent_start, head, ""));
+                        continue;
+                    }
+                    if let Some(item) = parse_list_item(&line)
+                        && item.content_start == line.len()
+                    {
+                        let indent_start = start + item.indent.chars().count();
+                        special.push(Change::new(
+                            indent_start,
+                            head,
+                            &item.hanging_indent(true)[item.indent.len()..],
+                        ));
+                        new_alignments.push((index, item.indent.chars().count()));
+                        continue;
+                    }
+                    if line
+                        .chars()
+                        .all(|character| matches!(character, ' ' | '\t'))
+                    {
+                        let mut aligned = false;
+                        for previous_row in (0..row).rev() {
+                            let previous = buffer.line_string(previous_row);
+                            if let Some(item) = parse_list_item(&previous) {
+                                let next_alignment = next_list_prefix(
+                                    &item,
+                                    roman_style_before(buffer, previous_row, item.indent),
+                                )
+                                .and_then(|prefix| {
+                                    parse_list_item(&prefix).map(|next| next.hanging_indent(true))
+                                });
+                                if item.hanging_indent(true) == line
+                                    || next_alignment.as_deref() == Some(line.as_str())
+                                {
+                                    special.push(Change::new(
+                                        start + item.indent.chars().count(),
+                                        head,
+                                        "",
+                                    ));
+                                    aligned = true;
+                                }
+                                break;
+                            }
+                            if !previous.starts_with(&line) || previous.trim().is_empty() {
+                                break;
+                            }
+                        }
+                        if aligned {
+                            continue;
+                        }
+                    }
                 }
-                (range.head > 0).then_some((range.head - 1, range.head))
-            })
-            .collect::<Vec<_>>();
-        let changes = crlf_safe_deletions(&self.buffers[buffer_id], spans);
+            }
+            ordinary.push((head - 1, head));
+        }
+        let mut changes = crlf_safe_deletions(buffer, ordinary);
+        changes.extend(special);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
+        let revision = self.active_buffer().revision();
+        if self.active().selection.len() == selection_count {
+            let alignments = new_alignments
+                .into_iter()
+                .filter_map(|(index, indent)| {
+                    self.active()
+                        .selection
+                        .ranges()
+                        .get(index)
+                        .map(|range| ListAlignment {
+                            buffer: buffer_id,
+                            pane,
+                            revision,
+                            head: range.head,
+                            indent_start: self
+                                .active_buffer()
+                                .line_to_offset(self.active_buffer().offset_to_row(range.head))
+                                + indent,
+                        })
+                })
+                .collect();
+            self.list_alignments = alignments;
+        }
     }
 
     pub(super) fn edit_delete(&mut self) {

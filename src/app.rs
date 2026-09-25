@@ -2741,6 +2741,9 @@ pub struct App {
     pub mode: Mode,
     /// The reversible overwrite trail owned by a live Replace-mode edit.
     replace_session: Option<ReplaceSession>,
+    /// A freshly converted empty Markdown item can lose its alignment in one
+    /// further Backspace, including when no earlier sibling identifies it.
+    list_alignments: Vec<editing::ListAlignment>,
     pub command: String,
     pub command_cursor: usize,
     pub command_selection: usize,
@@ -3370,6 +3373,7 @@ impl App {
             maximized: None,
             mode: initial_mode,
             replace_session: None,
+            list_alignments: Vec::new(),
             command: String::new(),
             command_cursor: 0,
             command_selection: 0,

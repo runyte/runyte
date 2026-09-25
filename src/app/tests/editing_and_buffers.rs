@@ -2849,7 +2849,9 @@ fn smart_newline_aligns_list_continuations_under_their_content() {
         ("        + nested", "          "),
         ("            a. nested", "               "),
     ] {
-        let mut app = App::new(smart_newline_config(), None).unwrap();
+        let mut config = smart_newline_config();
+        config.editor.scratch_markdown = false;
+        let mut app = App::new(config, None).unwrap();
         seed(&mut app, line);
         app.mode = Mode::Insert;
         app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));
@@ -2862,7 +2864,9 @@ fn smart_newline_aligns_list_continuations_under_their_content() {
 
 #[test]
 fn smart_newline_keeps_following_continuation_lines_aligned() {
-    let mut app = App::new(smart_newline_config(), None).unwrap();
+    let mut config = smart_newline_config();
+    config.editor.scratch_markdown = false;
+    let mut app = App::new(config, None).unwrap();
     seed(&mut app, "10285. numbered");
     app.mode = Mode::Insert;
     app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));

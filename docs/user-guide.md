@@ -3383,14 +3383,15 @@ escaped delimiters are ignored and injected code remains syntax-structural.
 
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
 at most one level in `editor.indent` style when the syntax indentation query
-requests it; a grammar that requires a tab still gets a tab. On list items
-beginning with `-`, `*`, `+`, a decimal number, a
-single letter, or a canonical uppercase Roman numeral followed by `.`, it
-instead aligns the next line under the first content character, including at
-nested indentation.
-Set `editor.smart_newline` to `true` to enable syntax indentation and list
-alignment. By default, Enter preserves only the row's existing leading
-indentation.
+requests it; a grammar that requires a tab still gets a tab. With
+`editor.smart_newline` enabled, Markdown list items continue on Enter: bullets
+keep their marker, numbered and lettered items advance, and task items start
+unchecked. Enter on an empty item ends the list. Backspace after an empty
+marker changes it to a continuation indent; another Backspace removes that
+alignment in one press. A single `I.` or `V.` advances as a letter unless the
+preceding sibling establishes Roman numbering. In other file types, smart
+newline retains the existing alignment under a list item's content. By
+default, Enter preserves only the row's existing leading indentation.
 Unsupported, malformed, oversized, and unterminated-final-line cases retain
 the exact prefix and never block newline insertion. Syntax folds
 are pane-local: two panes may collapse different regions of one shared buffer,
@@ -4198,7 +4199,7 @@ editor:
   line_numbers: true
   tab_width: 4
   indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
-  smart_newline: false # true adds syntax indentation and aligns list continuations
+  smart_newline: false # true adds syntax indentation and continues Markdown lists
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
   show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
