@@ -1,4 +1,30 @@
-# Line-ending whitespace marker renders wider than one cell
+---
+title: "Line-ending whitespace marker renders wider than one cell"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: 8f9d1b3
+---
+
+## Resolution
+
+Commit `8f9d1b3` (`Use one-cell line ending marker in common monospace fonts`)
+fixed the glyph-coverage problem. `src/snapshot.rs` emitted U+21B5 `↵` for
+real line endings. Although its declared display width was one cell, common
+monospace fonts lacked the glyph and the terminal could draw a wider fallback.
+The snapshot now emits U+00AC `¬`, a Latin-1 glyph with narrow East Asian
+width, while keeping the existing CRLF coalescing, clipping, dim whitespace
+style and caret role. The user guide, example config and keymap reference name
+the new marker.
+
+`whitespace_markers_preserve_cells_and_distinguish_real_line_endings` in
+`src/snapshot.rs` covers LF/CRLF rendering, one-cell width, styling and the
+unterminated final line. The focused test, formatting and Clippy passed.
+
+Known limitation: the marker is fixed rather than configurable, as specified
+in the report.
+
+## Report
 
 With whitespace rendering on (`Space p .`), a real LF or CRLF line ending is
 drawn as `↵` (U+21B5 DOWNWARDS ARROW WITH CORNER LEFTWARDS). The run is
