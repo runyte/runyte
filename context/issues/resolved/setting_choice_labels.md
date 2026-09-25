@@ -1,4 +1,29 @@
-# Setting value lists label every row with "choice" or "effective"
+---
+title: "Setting value lists label every row with choice or effective"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: b17dd3b
+---
+
+## Resolution
+
+Commit `b17dd3b` (`Clarify setting and explorer choice labels`) fixed the
+list-row details. `open_setting_values` in `src/app/settings_workflows.rs`
+previously labelled the in-use value `effective` and every other unsaved
+value `choice`; `choose_explorer_order` in `src/app/file_workflows.rs` used
+different words for the same state. Both now label the in-use value
+`selected`, a different persisted value `saved`, and other rows with no
+detail. Highlighting still marks the row being previewed, independently of
+the `selected` label. Empty details neither alter value alignment nor add a
+filter match.
+
+`src/app/tests/presentation_and_settings.rs` covers settings and explorer
+row states, filtering and preview distinction. `src/ui.rs` covers the width
+of an empty detail, and `tests/directory_buffer.rs` covers the explorer
+selection flow. Focused tests, formatting and Clippy passed.
+
+## Report
 
 Choosing a setting from the `[config]` settings buffer opens a value list for
 finite settings (booleans, grammar, theme, session strip, workspace mode,
