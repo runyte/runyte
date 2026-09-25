@@ -1763,9 +1763,8 @@ mod tests {
     fn worktree_removal_lease_stays_with_worker_through_cancellation() {
         let root = crate::test_support::TestRuntimeRoot::new("git-worker-lease").unwrap();
         let project = root.path().join("project");
-        let inventory = root.path().join("inventory");
+        let inventory = root.create_private_dir("inventory").unwrap();
         std::fs::create_dir(&project).unwrap();
-        std::fs::create_dir(&inventory).unwrap();
         let lease = ProjectLease::acquire(&project, &inventory).unwrap();
         let project = lease.project_root().to_owned();
         let (worker, started, _release, _) = worker();

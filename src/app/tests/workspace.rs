@@ -3921,6 +3921,9 @@ fn session_directory_paste_uses_path_completion_state() {
 #[test]
 fn session_directory_home_path_preserves_literal_backslash_filename() {
     let root = temporary("chooser-home-backslash");
+    // This Unix-only regression deliberately starts a filename with a literal
+    // backslash; it is not a Unix separator. Clippy checks both platforms.
+    #[allow(clippy::join_absolute_paths)]
     let child = root.join("\\literal");
     fs::create_dir_all(&child).unwrap();
     let mut app = App::new_in_isolated_project(
