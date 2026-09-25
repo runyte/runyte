@@ -17,6 +17,267 @@ use super::{
     transform_selection, visual_column, without_trailing_line_terminator,
 };
 
+#[derive(Clone, Copy)]
+enum ListKind<'a> {
+    Bullet(char),
+    Decimal(&'a str),
+    Letter(char),
+    Roman(&'a str),
+}
+
+struct ListItem<'a> {
+    indent: &'a str,
+    marker: &'a str,
+    separator: &'a str,
+    task_separator: Option<&'a str>,
+    kind: ListKind<'a>,
+    content_start: usize,
+}
+
+pub(super) struct ListAlignment {
+    pub buffer: usize,
+    pub pane: usize,
+    pub revision: u64,
+    pub head: Offset,
+    pub indent_start: Offset,
+}
+
+impl ListItem<'_> {
+    fn hanging_indent(&self, include_task: bool) -> String {
+        format!(
+            "{}{}{}{}",
+            self.indent,
+            " ".repeat(self.marker.chars().count()),
+            self.separator,
+            if include_task {
+                self.task_separator
+                    .map_or(String::new(), |separator| format!("   {separator}"))
+            } else {
+                String::new()
+            }
+        )
+    }
+}
+
+fn canonical_roman(marker: &str) -> bool {
+    fn take_prefix(input: &mut &str, prefixes: &[&str]) {
+        if let Some(prefix) = prefixes.iter().find(|prefix| input.starts_with(**prefix)) {
+            *input = &input[prefix.len()..];
+        }
+    }
+    if marker.is_empty()
+        || !marker
+            .chars()
+            .all(|character| matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M'))
+    {
+        return false;
+    }
+    let mut rest = marker;
+    take_prefix(&mut rest, &["MMM", "MM", "M"]);
+    take_prefix(
+        &mut rest,
+        &["CM", "CD", "DCCC", "DCC", "DC", "D", "CCC", "CC", "C"],
+    );
+    take_prefix(
+        &mut rest,
+        &["XC", "XL", "LXXX", "LXX", "LX", "L", "XXX", "XX", "X"],
+    );
+    take_prefix(
+        &mut rest,
+        &["IX", "IV", "VIII", "VII", "VI", "V", "III", "II", "I"],
+    );
+    rest.is_empty()
+}
+
+fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
+    let indent_end = line.find(|character: char| !matches!(character, ' ' | '\t'))?;
+    let body = &line[indent_end..];
+    let (kind, marker_end) = match body.chars().next()? {
+        bullet @ ('-' | '*' | '+') => (ListKind::Bullet(bullet), 1),
+        _ => {
+            let period = body.find('.')?;
+            let token = &body[..period];
+            let kind = if !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit()) {
+                ListKind::Decimal(token)
+            } else if token.len() == 1 && token.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                ListKind::Letter(token.chars().next()?)
+            } else if token.len() > 1 && canonical_roman(token) {
+                ListKind::Roman(token)
+            } else {
+                return None;
+            };
+            (kind, period + 1)
+        }
+    };
+    let after_marker = &body[marker_end..];
+    let separator_end = after_marker
+        .find(|character: char| !matches!(character, ' ' | '\t'))
+        .unwrap_or(after_marker.len());
+    if separator_end == 0 {
+        return None;
+    }
+    let separator = &after_marker[..separator_end];
+    let after_separator = &after_marker[separator_end..];
+    let task_separator = if matches!(kind, ListKind::Bullet('-'))
+        && (after_separator.starts_with("[ ]")
+            || after_separator.starts_with("[x]")
+            || after_separator.starts_with("[X]"))
+    {
+        let after_task = &after_separator[3..];
+        let end = after_task
+            .find(|character: char| !matches!(character, ' ' | '\t'))
+            .unwrap_or(after_task.len());
+        (end > 0).then_some(&after_task[..end])
+    } else {
+        None
+    };
+    let content_start = indent_end
+        + marker_end
+        + separator_end
+        + task_separator.map_or(0, |separator| 3 + separator.len());
+    Some(ListItem {
+        indent: &line[..indent_end],
+        marker: &body[..marker_end],
+        separator,
+        task_separator,
+        kind,
+        content_start,
+    })
+}
+
+fn roman_value(marker: &str) -> usize {
+    let value = |character| match character {
+        'I' => 1,
+        'V' => 5,
+        'X' => 10,
+        'L' => 50,
+        'C' => 100,
+        'D' => 500,
+        'M' => 1000,
+        _ => 0,
+    };
+    let mut total = 0;
+    let mut previous = 0;
+    for character in marker.chars().rev() {
+        let current = value(character);
+        if current < previous {
+            total -= current;
+        } else {
+            total += current;
+        }
+        previous = current;
+    }
+    total
+}
+
+fn roman_style_before(buffer: &Buffer, row: usize, indent: &str) -> bool {
+    for previous_row in (0..row).rev() {
+        let line = buffer.line_string(previous_row);
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Some(item) = parse_list_item(&line) {
+            if item.indent == indent {
+                match item.kind {
+                    ListKind::Roman(_) => return true,
+                    ListKind::Letter('I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M') => continue,
+                    ListKind::Bullet(_) | ListKind::Decimal(_) | ListKind::Letter(_) => {
+                        return false;
+                    }
+                }
+            }
+            if item.indent.starts_with(indent) && item.indent.len() > indent.len() {
+                continue;
+            }
+            break;
+        }
+        let body = line.trim_start_matches([' ', '\t']);
+        let leading = &line[..line.len() - body.len()];
+        if leading == indent {
+            if let Some(marker) = body.strip_suffix('.') {
+                if marker.len() == 1
+                    && marker.chars().next().is_some_and(|character| {
+                        matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M')
+                    })
+                {
+                    continue;
+                }
+                return marker.len() > 1 && canonical_roman(marker);
+            }
+            break;
+        }
+        if !leading.starts_with(indent) || leading.len() <= indent.len() {
+            break;
+        }
+    }
+    false
+}
+
+fn next_roman(value: usize) -> Option<String> {
+    if value > 3999 {
+        return None;
+    }
+    let mut remaining = value;
+    let mut output = String::new();
+    for (number, symbol) in [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ] {
+        while remaining >= number {
+            output.push_str(symbol);
+            remaining -= number;
+        }
+    }
+    Some(output)
+}
+
+fn next_decimal(marker: &str) -> String {
+    let mut digits = marker.as_bytes().to_vec();
+    for digit in digits.iter_mut().rev() {
+        if *digit < b'9' {
+            *digit += 1;
+            return String::from_utf8(digits).expect("decimal marker is ASCII");
+        }
+        *digit = b'0';
+    }
+    digits.insert(0, b'1');
+    String::from_utf8(digits).expect("decimal marker is ASCII")
+}
+
+fn next_list_prefix(item: &ListItem<'_>, roman_style: bool) -> Option<String> {
+    let marker = match item.kind {
+        ListKind::Bullet(character) => character.to_string(),
+        ListKind::Decimal(number) => format!("{}.", next_decimal(number)),
+        ListKind::Roman(roman) => format!("{}.", next_roman(roman_value(roman) + 1)?),
+        ListKind::Letter(character) => {
+            if roman_style && matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M') {
+                format!("{}.", next_roman(roman_value(&character.to_string()) + 1)?)
+            } else {
+                let next = match character {
+                    'a'..='y' | 'A'..='Y' => char::from_u32(character as u32 + 1)?,
+                    _ => return None,
+                };
+                format!("{next}.")
+            }
+        }
+    };
+    let task = item
+        .task_separator
+        .map_or(String::new(), |separator| format!("[ ]{separator}"));
+    Some(format!("{}{marker}{}{task}", item.indent, item.separator))
+}
+
 impl App {
     pub(super) fn active_mut(&mut self) -> &mut Pane {
         self.panes.get_mut(&self.active_pane).unwrap()
@@ -575,24 +836,36 @@ impl App {
     }
 
     fn replace_mode_character(&mut self, character: char) {
+        let _ = self.replace_mode_characters(|_| Some(character), false);
+    }
+
+    /// One overwrite round. A caret that already reached its tab stop moves
+    /// through the same transaction without writing another space.
+    fn replace_mode_characters(
+        &mut self,
+        character_at: impl Fn(usize) -> Option<char>,
+        capture_heads: bool,
+    ) -> Option<Vec<usize>> {
         let buffer_id = self.active().buffer;
         let before = self.active().selection.clone();
         let buffer = self.active_buffer();
         let changes = before
             .ranges()
             .iter()
-            .map(|range| {
+            .enumerate()
+            .filter_map(|(index, range)| {
+                let character = character_at(index)?;
                 let head = range.head;
                 if character == '\n' {
                     let row = buffer.offset_to_row(head);
-                    Change::new(head, head, preferred_line_ending(buffer, row))
+                    Some(Change::new(head, head, preferred_line_ending(buffer, row)))
                 } else {
                     let row = buffer.offset_to_row(head);
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     if head < row_end {
-                        Change::new(head, head + 1, character.to_string())
+                        Some(Change::new(head, head + 1, character.to_string()))
                     } else {
-                        Change::new(head, head, character.to_string())
+                        Some(Change::new(head, head, character.to_string()))
                     }
                 }
             })
@@ -600,25 +873,29 @@ impl App {
         let transaction = Transaction::new(changes);
         let mut preview = self.buffers[buffer_id].text().clone();
         let inverse = preview.apply(&transaction).into_transaction();
-        let after = Selection::new(
-            before
-                .ranges()
-                .iter()
-                .map(|range| {
-                    let start = transaction.map_offset(range.head, crate::text::Assoc::Before);
-                    let inserted = if character == '\n' {
-                        let row = self.active_buffer().offset_to_row(range.head);
-                        preferred_line_ending(self.active_buffer(), row)
-                            .chars()
-                            .count()
-                    } else {
-                        1
-                    };
-                    Range::point(start + inserted)
-                })
-                .collect(),
-            before.primary_index(),
-        );
+        let mapped_ranges = before
+            .ranges()
+            .iter()
+            .enumerate()
+            .map(|(index, range)| {
+                let character = character_at(index);
+                let start = transaction.map_offset(range.head, crate::text::Assoc::Before);
+                let inserted = if character == Some('\n') {
+                    let row = self.active_buffer().offset_to_row(range.head);
+                    preferred_line_ending(self.active_buffer(), row)
+                        .chars()
+                        .count()
+                } else if character.is_some() {
+                    1
+                } else {
+                    0
+                };
+                Range::point(start + inserted)
+            })
+            .collect::<Vec<_>>();
+        let mapped_heads =
+            capture_heads.then(|| mapped_ranges.iter().map(|range| range.head).collect());
+        let after = Selection::new(mapped_ranges, before.primary_index());
         let mut session = self
             .replace_session
             .take()
@@ -632,7 +909,8 @@ impl App {
                 steps: Vec::new(),
             };
         }
-        if self.edit(transaction) {
+        let changed = self.edit(transaction);
+        if changed {
             self.active_mut().replace_selection(after.clone());
             session.steps.push(super::ReplaceStep {
                 before,
@@ -641,6 +919,61 @@ impl App {
             });
         }
         self.replace_session = Some(session);
+        changed.then(|| mapped_heads.unwrap_or_default())
+    }
+
+    pub(super) fn replace_mode_indentation(&mut self, style: crate::config::IndentStyle) {
+        if style == crate::config::IndentStyle::Tabs {
+            self.replace_mode_text("\t");
+            return;
+        }
+        let width = self.config.editor.tab_width.max(1);
+        let buffer = self.active_buffer();
+        let mut remaining = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|range| {
+                let position = buffer.position_of(range.head);
+                let column = visual_column(&buffer.line_string(position.row), position.col, width);
+                width - column % width
+            })
+            .collect::<Vec<_>>();
+        while remaining.iter().any(|count| *count > 0) {
+            let characters = remaining
+                .iter_mut()
+                .map(|count| {
+                    if *count == 0 {
+                        None
+                    } else {
+                        *count -= 1;
+                        Some(' ')
+                    }
+                })
+                .collect::<Vec<_>>();
+            let Some(mapped_heads) = self.replace_mode_characters(|index| characters[index], true)
+            else {
+                break;
+            };
+            // Selection normalization may coalesce nearby Replace carets.
+            // Carry the largest outstanding count to the surviving point,
+            // instead of interpreting the next caret's count at the old index.
+            let mut by_head = BTreeMap::<usize, usize>::new();
+            for (head, count) in mapped_heads.into_iter().zip(remaining) {
+                by_head
+                    .entry(head)
+                    .and_modify(|existing| *existing = (*existing).max(count))
+                    .or_insert(count);
+            }
+            remaining = self
+                .active()
+                .selection
+                .ranges()
+                .iter()
+                .map(|range| by_head.get(&range.head).copied().unwrap_or(0))
+                .collect();
+        }
     }
 
     pub(super) fn restore_replace_step(&mut self) -> bool {
@@ -680,89 +1013,20 @@ impl App {
     }
 
     pub(super) fn edit_newline(&mut self) {
-        fn canonical_roman(marker: &str) -> bool {
-            fn take_prefix(input: &mut &str, prefixes: &[&str]) {
-                if let Some(prefix) = prefixes.iter().find(|prefix| input.starts_with(**prefix)) {
-                    *input = &input[prefix.len()..];
-                }
-            }
-
-            if marker.is_empty()
-                || !marker
-                    .chars()
-                    .all(|character| matches!(character, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M'))
-            {
-                return false;
-            }
-            let mut rest = marker;
-            take_prefix(&mut rest, &["MMM", "MM", "M"]);
-            take_prefix(
-                &mut rest,
-                &["CM", "CD", "DCCC", "DCC", "DC", "D", "CCC", "CC", "C"],
-            );
-            take_prefix(
-                &mut rest,
-                &["XC", "XL", "LXXX", "LXX", "LX", "L", "XXX", "XX", "X"],
-            );
-            take_prefix(
-                &mut rest,
-                &["IX", "IV", "VIII", "VII", "VI", "V", "III", "II", "I"],
-            );
-            rest.is_empty()
-        }
-
-        fn list_continuation_indent(before_caret: &str) -> Option<String> {
-            let indent_end = before_caret
-                .char_indices()
-                .find_map(|(index, character)| (!matches!(character, ' ' | '\t')).then_some(index))
-                .unwrap_or(before_caret.len());
-            let body = &before_caret[indent_end..];
-            let marker_end = match body.chars().next()? {
-                '-' | '*' | '+' => 1,
-                _ => {
-                    let period = body.find('.')?;
-                    let marker = &body[..period];
-                    let characters = marker.chars().count();
-                    let decimal = !marker.is_empty()
-                        && marker.chars().all(|character| character.is_ascii_digit());
-                    let letter = characters == 1
-                        && marker
-                            .chars()
-                            .all(|character| character.is_ascii_alphabetic());
-                    let roman = characters > 1 && canonical_roman(marker);
-                    if !(decimal || letter || roman) {
-                        return None;
-                    }
-                    period + 1
-                }
-            };
-            let after_marker = &body[marker_end..];
-            let separator_end = after_marker
-                .char_indices()
-                .find_map(|(index, character)| (!matches!(character, ' ' | '\t')).then_some(index))
-                .unwrap_or(after_marker.len());
-            if separator_end == 0 {
-                return None;
-            }
-
-            Some(format!(
-                "{}{}{}",
-                &before_caret[..indent_end],
-                " ".repeat(body[..marker_end].chars().count()),
-                &after_marker[..separator_end]
-            ))
-        }
-
         let buffer_id = self.active().buffer;
         let selection = self.active().selection.clone();
         let buffer = &self.buffers[buffer_id];
         let syntax = self.syntax[buffer_id].as_ref();
-        let unit = " ".repeat(self.config.editor.tab_width.max(1));
+        let unit = match self.config.editor.indent {
+            crate::config::IndentStyle::Spaces => " ".repeat(self.config.editor.tab_width.max(1)),
+            crate::config::IndentStyle::Tabs => "\t".to_owned(),
+        };
         let smart_newline = self.config.editor.smart_newline;
+        let markdown = smart_newline && self.is_markdown_document(buffer_id);
         // Every answer is derived from the same pre-edit text. This matters
         // for multi-caret insertion: an earlier caret must never change the
         // syntax or leading whitespace observed by a later one.
-        let replacements = selection
+        let changes = selection
             .ranges()
             .iter()
             .map(|range| {
@@ -772,6 +1036,7 @@ impl App {
                 let row = buffer.offset_to_row(range.from());
                 let line_start = buffer.line_to_offset(row);
                 let before_caret = buffer.slice(line_start, range.from());
+                let line = buffer.line_string(row);
                 let prefix = before_caret
                     .chars()
                     .take_while(|character| matches!(character, ' ' | '\t'))
@@ -781,9 +1046,25 @@ impl App {
                     .map(|(terminator, _)| terminator)
                     .unwrap_or_else(|| preferred_line_ending(buffer, row));
                 if !smart_newline {
-                    return format!("{terminator}{prefix}");
+                    return Change::new(range.from(), range.to(), format!("{terminator}{prefix}"));
                 }
-                let list_indent = list_continuation_indent(&before_caret);
+                let list_item = parse_list_item(&before_caret);
+                let full_item = markdown.then(|| parse_list_item(&line)).flatten();
+                if let Some(item) = &full_item
+                    && range.is_empty()
+                    && range.from() == line_start + buffer.line_len(row)
+                    && item.content_start == line.len()
+                {
+                    return Change::new(line_start, range.from(), "");
+                }
+                let list_indent = list_item.as_ref().map(|item| item.hanging_indent(markdown));
+                if let Some(item) = &full_item
+                    && before_caret.len() >= item.content_start
+                    && let Some(next) =
+                        next_list_prefix(item, roman_style_before(buffer, row, item.indent))
+                {
+                    return Change::new(range.from(), range.to(), format!("{terminator}{next}"));
+                }
                 // The syntax contract answers for an existing newline token,
                 // so a mid-line caret deliberately probes its pre-edit row
                 // terminator. An unterminated final row has no truthful token
@@ -807,39 +1088,136 @@ impl App {
                             }
                         })
                 });
-                format!(
-                    "{terminator}{}{}",
-                    list_indent.as_deref().unwrap_or(&prefix),
-                    syntax_unit.unwrap_or("")
+                Change::new(
+                    range.from(),
+                    range.to(),
+                    format!(
+                        "{terminator}{}{}",
+                        list_indent.as_deref().unwrap_or(&prefix),
+                        syntax_unit.unwrap_or("")
+                    ),
                 )
             })
             .collect::<Vec<_>>();
-        let mut index = 0;
-        let transaction = selection.change_by(|_| {
-            let replacement = replacements[index].clone();
-            index += 1;
-            Some(replacement)
-        });
-        self.edit(transaction);
+        self.edit(Transaction::new(changes));
     }
 
     pub(super) fn edit_backspace(&mut self) {
         let buffer_id = self.active().buffer;
-        let spans = self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .filter_map(|range| {
-                if !range.is_empty() {
-                    return Some((range.from(), range.to()));
+        let pending_alignments = std::mem::take(&mut self.list_alignments);
+        let buffer = &self.buffers[buffer_id];
+        let markdown = self.config.editor.smart_newline && self.is_markdown_document(buffer_id);
+        let revision = buffer.revision();
+        let pane = self.active_pane;
+        let selection_count = self.active().selection.len();
+        let mut new_alignments = Vec::new();
+        let mut special = Vec::new();
+        let mut ordinary = Vec::new();
+        for (index, range) in self.active().selection.ranges().iter().enumerate() {
+            if !range.is_empty() {
+                ordinary.push((range.from(), range.to()));
+                continue;
+            }
+            let head = range.head;
+            if head == 0 {
+                continue;
+            }
+            if markdown {
+                let row = buffer.offset_to_row(head);
+                let start = buffer.line_to_offset(row);
+                let line = buffer.line_string(row);
+                if head == start + buffer.line_len(row) {
+                    if line
+                        .chars()
+                        .all(|character| matches!(character, ' ' | '\t'))
+                        && let Some(alignment) = pending_alignments.iter().find(|alignment| {
+                            alignment.buffer == buffer_id
+                                && alignment.pane == pane
+                                && alignment.revision == revision
+                                && alignment.head == head
+                        })
+                    {
+                        special.push(Change::new(alignment.indent_start, head, ""));
+                        continue;
+                    }
+                    if let Some(item) = parse_list_item(&line)
+                        && item.content_start == line.len()
+                    {
+                        let indent_start = start + item.indent.chars().count();
+                        special.push(Change::new(
+                            indent_start,
+                            head,
+                            &item.hanging_indent(true)[item.indent.len()..],
+                        ));
+                        new_alignments.push((index, item.indent.chars().count()));
+                        continue;
+                    }
+                    if line
+                        .chars()
+                        .all(|character| matches!(character, ' ' | '\t'))
+                    {
+                        let mut aligned = false;
+                        for previous_row in (0..row).rev() {
+                            let previous = buffer.line_string(previous_row);
+                            if let Some(item) = parse_list_item(&previous) {
+                                let next_alignment = next_list_prefix(
+                                    &item,
+                                    roman_style_before(buffer, previous_row, item.indent),
+                                )
+                                .and_then(|prefix| {
+                                    parse_list_item(&prefix).map(|next| next.hanging_indent(true))
+                                });
+                                if item.hanging_indent(true) == line
+                                    || next_alignment.as_deref() == Some(line.as_str())
+                                {
+                                    special.push(Change::new(
+                                        start + item.indent.chars().count(),
+                                        head,
+                                        "",
+                                    ));
+                                    aligned = true;
+                                }
+                                break;
+                            }
+                            if !previous.starts_with(&line) || previous.trim().is_empty() {
+                                break;
+                            }
+                        }
+                        if aligned {
+                            continue;
+                        }
+                    }
                 }
-                (range.head > 0).then_some((range.head - 1, range.head))
-            })
-            .collect::<Vec<_>>();
-        let changes = crlf_safe_deletions(&self.buffers[buffer_id], spans);
+            }
+            ordinary.push((head - 1, head));
+        }
+        let mut changes = crlf_safe_deletions(buffer, ordinary);
+        changes.extend(special);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
+        let revision = self.active_buffer().revision();
+        if self.active().selection.len() == selection_count {
+            let alignments = new_alignments
+                .into_iter()
+                .filter_map(|(index, indent)| {
+                    self.active()
+                        .selection
+                        .ranges()
+                        .get(index)
+                        .map(|range| ListAlignment {
+                            buffer: buffer_id,
+                            pane,
+                            revision,
+                            head: range.head,
+                            indent_start: self
+                                .active_buffer()
+                                .line_to_offset(self.active_buffer().offset_to_row(range.head))
+                                + indent,
+                        })
+                })
+                .collect();
+            self.list_alignments = alignments;
+        }
     }
 
     pub(super) fn edit_delete(&mut self) {
@@ -931,7 +1309,11 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
-    pub(super) fn insert_indentation(&mut self) {
+    pub(super) fn insert_indentation(&mut self, style: crate::config::IndentStyle) {
+        if style == crate::config::IndentStyle::Tabs {
+            self.insert_char('\t');
+            return;
+        }
         let width = self.config.editor.tab_width.max(1);
         let buffer = self.active_buffer();
         let selection = self.active().selection.clone();
@@ -2244,6 +2626,10 @@ impl App {
     pub(super) fn indent(&mut self, unindent: bool) {
         let buffer_id = self.active().buffer;
         let width = self.config.editor.tab_width.max(1);
+        let unit = match self.config.editor.indent {
+            crate::config::IndentStyle::Spaces => " ".repeat(width),
+            crate::config::IndentStyle::Tabs => "\t".to_owned(),
+        };
         let buffer = &self.buffers[buffer_id];
 
         let mut rows: Vec<usize> = self
@@ -2269,7 +2655,7 @@ impl App {
                     };
                     (removed > 0).then(|| Change::new(start, start + removed, ""))
                 } else if buffer.line_len(row) > 0 {
-                    Some(Change::new(start, start, " ".repeat(width)))
+                    Some(Change::new(start, start, unit.clone()))
                 } else {
                     None
                 }
@@ -2510,12 +2896,12 @@ impl App {
         }
     }
 
-    pub(super) fn paste(&mut self, before: bool) {
+    pub(super) fn paste(&mut self, before: bool, transient_line_selection: bool) {
         let register = self.read_selected_register();
         if register.text.is_empty() {
             return;
         }
-        self.paste_register(&register, before);
+        self.paste_register(&register, before, transient_line_selection);
     }
 
     /// Pastes the register beside every caret and over every selection.
@@ -2525,7 +2911,12 @@ impl App {
     /// left alone, so the same content can be pasted over one range after
     /// another. `P` never replaces, which is how text still reaches the edge
     /// of a selection without consuming it.
-    pub(super) fn paste_register(&mut self, register: &Register, before: bool) {
+    pub(super) fn paste_register(
+        &mut self,
+        register: &Register,
+        before: bool,
+        transient_line_selection: bool,
+    ) {
         if self.active_buffer().is_directory()
             && let Some(directory) = &register.directory
         {
@@ -2541,6 +2932,8 @@ impl App {
             self.active().selection_semantics(),
             SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
         );
+        let line_selection = transient_line_selection
+            || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
         // In Runyte's inclusive grammar a selected single character and a
         // Normal-mode caret both have equal endpoints. Select mode is what
         // distinguishes the former, including one-character search matches.
@@ -2548,14 +2941,20 @@ impl App {
 
         // Spans first, changes after: the replaced ones have to be found again
         // once the text has moved under them, and that needs their widths.
-        let spans: Vec<(Offset, Offset, String)> = self
+        let spans: Vec<(Offset, Offset, String, bool)> = self
             .active()
             .selection
             .ranges()
             .iter()
             .map(|range| {
-                if !before && (!range.is_empty() || replace_point_ranges) {
-                    return replaced_span(buffer, range, register, half_open);
+                let replace = !before
+                    && (!range.is_empty()
+                        || replace_point_ranges
+                        || (line_selection && register.linewise));
+                if replace {
+                    let (from, to, text) =
+                        replaced_span(buffer, range, register, half_open, line_selection);
+                    return (from, to, text, true);
                 }
                 let mut text = clipboard.clone();
                 let at = if register.linewise {
@@ -2585,21 +2984,21 @@ impl App {
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     (range.to() + 1).min(row_end)
                 };
-                (at, at, text)
+                (at, at, text, false)
             })
             .collect();
 
-        // A replacement always spans text and an insertion never does, so the
-        // span itself says which ranges are about to be replaced.
+        // An empty final line has no text to span, so keep the replacement
+        // decision separately from the transaction's offsets.
         let replaced: Vec<Option<Offset>> = spans
             .iter()
-            .map(|(from, to, _)| (from < to).then_some(*from))
+            .map(|(from, _, _, replace)| replace.then_some(*from))
             .collect();
 
         let transaction = Transaction::new(
             spans
                 .into_iter()
-                .map(|(from, to, text)| Change::new(from, to, text))
+                .map(|(from, to, text, _)| Change::new(from, to, text))
                 .collect(),
         );
         let primary = self.active().selection.primary_index();
@@ -2613,15 +3012,15 @@ impl App {
             .map(|range| range.map(&transaction))
             .collect();
         // Where the replacements land has to come from the transaction rather
-        // than from adding up what each span changed: two ranges sharing a row
-        // both widen to that whole row under a linewise register, and
+        // than from adding up what each span changed: two line selections
+        // sharing a row can both widen to that whole row, and
         // `Transaction::new` drops the second as the overlap it is. A running
         // total cannot know that happened; the transaction can be asked.
         let pasted: Vec<Option<(Offset, usize)>> = replaced
             .into_iter()
             .map(|replaced_from| {
                 replaced_from.and_then(|from| {
-                    // Linewise widening can make disjoint selections overlap.
+                    // Line-selection widening can make disjoint selections overlap.
                     // Transaction normalization retains the first replacement
                     // and drops the later one; every original selection must
                     // then point at that retained replacement, not at the
@@ -2630,7 +3029,8 @@ impl App {
                         .changes()
                         .iter()
                         .find(|change| {
-                            change.from < change.to && change.from <= from && from < change.to
+                            (change.from < change.to && change.from <= from && from < change.to)
+                                || (change.from == change.to && change.from == from)
                         })
                         .map(|change| {
                             (
@@ -2764,16 +3164,36 @@ impl App {
 /// place.
 ///
 /// Characterwise content substitutes exactly what `d` would have deleted.
-/// Linewise content is whole lines, so it takes whole lines: the span grows to
-/// the rows the selection touched, and the register's own terminators shape the
-/// result. Replacing through a final line that never had a terminator must not
-/// leave one behind.
+/// A line selection takes whole lines from a linewise register. Every other
+/// selection keeps its exact span and drops only the register's final line
+/// terminator, retaining any inner line breaks.
 fn replaced_span(
     buffer: &Buffer,
     range: &Range,
     register: &Register,
     half_open: bool,
+    line_selection: bool,
 ) -> (Offset, Offset, String) {
+    if register.linewise && line_selection {
+        let first = buffer.offset_to_row(range.from());
+        let last_offset = if half_open && !range.is_empty() {
+            range.to() - 1
+        } else {
+            range.to()
+        };
+        let last = buffer.offset_to_row(last_offset);
+        let start = buffer.line_to_offset(first);
+        if last < buffer.last_row() {
+            return (
+                start,
+                buffer.line_to_offset(last + 1),
+                register.text.clone(),
+            );
+        }
+        let mut text = register.text.clone();
+        trim_final_line_terminator(&mut text);
+        return (start, buffer.len_chars(), text);
+    }
     let (from, to) = if half_open {
         (range.from(), range.to())
     } else {
@@ -2782,24 +3202,18 @@ fn replaced_span(
     if !register.linewise {
         return (from, to, register.text.clone());
     }
-    let first = buffer.offset_to_row(from);
-    let last = buffer.offset_to_row(to.saturating_sub(1).max(from));
-    let start = buffer.line_to_offset(first);
-    if last < buffer.last_row() {
-        return (
-            start,
-            buffer.line_to_offset(last + 1),
-            register.text.clone(),
-        );
-    }
     let mut text = register.text.clone();
+    trim_final_line_terminator(&mut text);
+    (from, to, text)
+}
+
+fn trim_final_line_terminator(text: &mut String) {
     if text.ends_with('\n') {
         text.pop();
         if text.ends_with('\r') {
             text.pop();
         }
     }
-    (start, buffer.len_chars(), text)
 }
 
 /// The range covering `len` characters just pasted at `start`.

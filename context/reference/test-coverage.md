@@ -57,6 +57,51 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-25 — macOS PTY, paste, and Git wait regressions
+
+Measured natively on `aarch64-apple-darwin` with Rust 1.97.1 and
+cargo-llvm-cov 0.9.0 using `cargo llvm-cov --locked --workspace`, with default
+Cargo and test-thread parallelism and unrestricted local socket/process access.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 128,260 | 139,585 | 91.89% |
+| Functions | 11,578 | 12,606 | 91.85% |
+| Regions | 194,010 | 212,536 | 91.28% |
+
+Formatting and warnings-as-errors all-target Clippy pass. The ordinary and
+instrumented suites each pass 3,933 tests with 38 ignored. Three additional
+native `local_protocol` stress passes each
+pass all 44 ordinary tests, with the existing subprocess fixture ignored.
+The instrumented workspace run includes deterministic allocation-time exec
+overlap and failure cleanup on macOS, initial PTY sizing and master resize,
+explorer clipboard text transported with CR separators, and Git editor wait
+completion while a verbose post-commit hook exceeds the PTY output capacity.
+The Git fixture now drains its terminal and continues consuming interactive
+frames, explicitly verifies save/close, and drops retained slave handles.
+
+The enforced floor remains 89%. This is a native macOS measurement; Linux
+coverage remains subject to its existing CI gate. The original historical Git
+timeout's precise trigger was not reproduced; deterministic fixture
+backpressure was reproduced and corrected without increasing its deadline.
+
+## 2026-09-24 — Plugin contextual help
+
+The Linux x86-64 canonical workspace suite passed at **91.96% total line
+coverage** (128,044 of 139,240 lines), above the unchanged 89% floor, with
+default Cargo and test-thread parallelism. Formatting, all-target Clippy with
+warnings denied, and all 3,929 ordinary tests passed (36 ignored). The public
+plugin schema suite passed all 15 cases.
+
+`src/plugin/tests/help_topics.rs` covers topic bounds and streaming decode
+limits. `src/workspace/host/tests/plugin_help.rs` covers wire-decoded
+registration, `view-help` negotiation and payload charge, topic routing through
+publish and header patch, fallback and plugin stop. It also checks that plugin
+text in the key table stays unstyled. The renderer tests in `src/help.rs` cover
+authored prose, marker escaping and action grouping. The native
+`ru-dbviewer` PTY suite exercised `Space ?` against this build. The Windows
+target was not built locally; its only change is one test literal.
+
 ## 2026-09-22 — Navigator, buffer cleanup and plugin default keys
 
 The Linux x86-64 canonical workspace suite passed with one Cargo job and one

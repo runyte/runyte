@@ -54,7 +54,6 @@ Configured bare launches attach when a project is discoverable. Native session
 controls, the session strip, directory and worktree session switching, and foreground hosts
 are available. See the
 [Windows scope and requirements](docs/user-guide.md#windows-support).
-The released 0.3.1 packages predate this Windows work.
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·

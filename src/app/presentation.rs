@@ -720,12 +720,14 @@ impl App {
         } else {
             HelpTopic::for_context(self.key_binding_scope())
         };
+        let plugin = self.plugin_help_page();
         let document = crate::help::render_document_with_descriptions(
             topic,
             self.grammar.kind(),
             self.key_binding_scope(),
             self.keymap(),
             self.active_buffer().is_read_only(),
+            plugin.as_ref(),
             |target| self.plugin_binding_description(target).map(str::to_owned),
         );
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
@@ -752,6 +754,17 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         self.mode = Mode::Normal;
+    }
+
+    /// The semantic spans a generated page such as help was rendered with.
+    ///
+    /// Only tests outside this module need it: frontends receive the same
+    /// spans through snapshots, clipped to what is on screen.
+    #[cfg(all(test, unix))]
+    pub(crate) fn generated_highlights(&self, buffer: usize) -> &[crate::syntax::Span] {
+        self.generated_highlights
+            .get(&buffer)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Opens the general manual and optionally places its requested section at
@@ -1281,6 +1294,14 @@ impl App {
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
             }
+        }
+        /// Footer for path hints while Enter would finish an unfinished
+        /// path rather than submit it.
+        fn enter_completes_path_actions() -> Vec<OverlayAction> {
+            vec![
+                OverlayAction::new("↑/↓", "select"),
+                OverlayAction::new("Tab/Enter", "complete"),
+            ]
         }
         /// Rows for a completing prompt's path assistance.
         ///
@@ -1888,14 +1909,18 @@ impl App {
                         .command
                         .split_once(char::is_whitespace)
                         .map_or("", |(name, _)| name);
-                    overlays.push(bounded(
+                    let mut overlay = bounded(
                         OverlayKind::PathCompletion,
                         format!("Choose path for :{command}"),
                         "",
                         path_hint_rows(&hints),
                         (!hints.is_empty()).then_some(self.command_selection),
                         hints.is_empty().then(|| "No matching paths".to_owned()),
-                    ));
+                    );
+                    if self.palette_enter_accepts_path_hint(&hints) {
+                        overlay.actions = enter_completes_path_actions();
+                    }
+                    overlays.push(overlay);
                 } else {
                     let matches = self.matching_commands();
                     overlays.push(bounded(
@@ -1949,7 +1974,7 @@ impl App {
                 }
             } else if self.prompt_kind == PromptKind::FinderPath {
                 if let Some(hints) = self.finder_path_hints() {
-                    overlays.push(bounded(
+                    let mut overlay = bounded(
                         OverlayKind::PathCompletion,
                         "Choose path for finder",
                         "",
@@ -1957,7 +1982,11 @@ impl App {
                         (!hints.is_empty())
                             .then_some(self.command_selection.min(hints.len().saturating_sub(1))),
                         hints.is_empty().then(|| "No matching paths".to_owned()),
-                    ));
+                    );
+                    if self.finder_enter_accepts_path_hint(&hints) {
+                        overlay.actions = enter_completes_path_actions();
+                    }
+                    overlays.push(overlay);
                 }
             } else if self.prompt_kind == PromptKind::ExternalProgram {
                 let choices = self.matching_program_choices();
@@ -2012,6 +2041,7 @@ impl App {
                         | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
                         | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
+                        SettingType::Indent => setting.descriptor().key.to_owned(),
                     },
                     _ => format!("{:?}", self.prompt_kind),
                 };
@@ -2210,13 +2240,27 @@ impl App {
                     snapshot.total_rows = hints.len();
                     snapshot.selected = Some(surface.completion_selected.min(hints.len() - 1));
                     snapshot.scroll_anchor = snapshot.selected;
-                    snapshot.actions = vec![
-                        OverlayAction::new("Tab", "complete"),
-                        OverlayAction::new("↑/↓", "path"),
-                        OverlayAction::new("Shift-Tab", "field"),
-                        OverlayAction::new("Enter", "submit"),
-                        OverlayAction::new("Esc", "cancel"),
-                    ];
+                    let enter_completes = matches!(
+                        &surface.values[surface.selected],
+                        crate::plugin::interaction::Value::Text(value)
+                            if self.plugin_enter_accepts_path_hint(value)
+                    );
+                    snapshot.actions = if enter_completes {
+                        vec![
+                            OverlayAction::new("Tab/Enter", "complete"),
+                            OverlayAction::new("↑/↓", "path"),
+                            OverlayAction::new("Shift-Tab", "field"),
+                            OverlayAction::new("Esc", "cancel"),
+                        ]
+                    } else {
+                        vec![
+                            OverlayAction::new("Tab", "complete"),
+                            OverlayAction::new("↑/↓", "path"),
+                            OverlayAction::new("Shift-Tab", "field"),
+                            OverlayAction::new("Enter", "submit"),
+                            OverlayAction::new("Esc", "cancel"),
+                        ]
+                    };
                 }
             }
             if surface.confirmation {

@@ -20,7 +20,7 @@ use std::{
 use crate::{
     command::GrammarKind,
     config::{
-        Config, DEFAULT_THEME, ExplorerSort, MAX_GIT_REFRESH_INTERVAL_SECONDS,
+        Config, DEFAULT_THEME, ExplorerSort, IndentStyle, MAX_GIT_REFRESH_INTERVAL_SECONDS,
         MAX_IDLE_RETIREMENT_MINUTES, SessionStripVisibility, WorkspaceMode,
     },
     syntax::{Scope, Span},
@@ -37,6 +37,7 @@ pub enum SettingId {
     EditorGrammar,
     EditorLineNumbers,
     EditorTabWidth,
+    EditorIndent,
     EditorSmartNewline,
     EditorScrollOffset,
     EditorMotionRepeatMultiplier,
@@ -72,6 +73,7 @@ pub enum SettingValue {
     WorkspaceMode(WorkspaceMode),
     SessionStrip(SessionStripVisibility),
     ExplorerSort(ExplorerSort),
+    Indent(IndentStyle),
     Text(String),
 }
 
@@ -87,6 +89,7 @@ pub enum SettingType {
     WorkspaceMode,
     SessionStrip,
     ExplorerSort,
+    Indent,
     /// An unrestricted string entered directly rather than chosen from a list.
     Text,
 }
@@ -145,10 +148,19 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorIndent,
+        key: "editor.indent",
+        title: "Indent style",
+        description: "Use spaces or tabs for new indentation",
+        value_type: SettingType::Indent,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::EditorSmartNewline,
         key: "editor.smart_newline",
         title: "Smart newline",
-        description: "Add syntax indentation and align list continuations",
+        description: "Add syntax indentation and continue Markdown lists",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -393,6 +405,7 @@ impl SettingId {
         Self::EditorGrammar,
         Self::EditorLineNumbers,
         Self::EditorTabWidth,
+        Self::EditorIndent,
         Self::EditorSmartNewline,
         Self::EditorScrollOffset,
         Self::EditorMotionRepeatMultiplier,
@@ -448,6 +461,7 @@ impl SettingId {
             Self::EditorGrammar => SettingValue::Grammar(config.editor.grammar),
             Self::EditorLineNumbers => SettingValue::Boolean(config.editor.line_numbers),
             Self::EditorTabWidth => SettingValue::Integer(config.editor.tab_width),
+            Self::EditorIndent => SettingValue::Indent(config.editor.indent),
             Self::EditorSmartNewline => SettingValue::Boolean(config.editor.smart_newline),
             Self::EditorScrollOffset => SettingValue::Integer(config.editor.scroll_offset),
             Self::EditorMotionRepeatMultiplier => {
@@ -516,6 +530,7 @@ impl SettingId {
             SettingType::ExplorerSort => {
                 ExplorerSort::ALL.iter().map(ToString::to_string).collect()
             }
+            SettingType::Indent => IndentStyle::ALL.iter().map(ToString::to_string).collect(),
             SettingType::Integer { .. } | SettingType::Text => Vec::new(),
         }
     }
@@ -531,6 +546,7 @@ impl SettingId {
             | (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(_))
             | (SettingType::SessionStrip, SettingValue::SessionStrip(_))
             | (SettingType::ExplorerSort, SettingValue::ExplorerSort(_)) => Ok(()),
+            (SettingType::Indent, SettingValue::Indent(_)) => Ok(()),
             (SettingType::Integer { minimum, maximum }, SettingValue::Integer(value)) => {
                 if (minimum..=maximum).contains(value) {
                     Ok(())
@@ -566,6 +582,9 @@ impl SettingId {
             }
             (Self::EditorTabWidth, SettingValue::Integer(value)) => {
                 config.editor.tab_width = *value;
+            }
+            (Self::EditorIndent, SettingValue::Indent(value)) => {
+                config.editor.indent = *value;
             }
             (Self::EditorSmartNewline, SettingValue::Boolean(value)) => {
                 config.editor.smart_newline = *value;
@@ -651,6 +670,7 @@ impl fmt::Display for SettingType {
             Self::WorkspaceMode => formatter.write_str("a workspace mode"),
             Self::SessionStrip => formatter.write_str("a session-strip visibility"),
             Self::ExplorerSort => formatter.write_str("an explorer order"),
+            Self::Indent => formatter.write_str("an indent style"),
             Self::Text => formatter.write_str("text"),
         }
     }
@@ -665,6 +685,7 @@ impl fmt::Display for SettingValue {
             Self::WorkspaceMode(value) => value.fmt(formatter),
             Self::SessionStrip(value) => value.fmt(formatter),
             Self::ExplorerSort(value) => formatter.write_str(value.label()),
+            Self::Indent(value) => value.fmt(formatter),
             Self::Text(value) => formatter.write_str(value),
         }
     }
@@ -1224,6 +1245,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::WorkspaceMode(value) => value.to_string(),
         SettingValue::SessionStrip(value) => value.to_string(),
         SettingValue::ExplorerSort(value) => value.to_string(),
+        SettingValue::Indent(value) => value.to_string(),
         SettingValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
     }
 }
@@ -1674,6 +1696,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn indent_style_persists_as_a_typed_unquoted_yaml_choice() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+        fs::write(&path, "# keep\neditor:\n  tab_width: 4 # mine\n").unwrap();
+
+        let config = persist_setting(
+            &path,
+            SettingId::EditorIndent,
+            &SettingValue::Indent(IndentStyle::Tabs),
+        )
+        .unwrap();
+
+        assert_eq!(config.editor.indent, IndentStyle::Tabs);
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            "# keep\neditor:\n  tab_width: 4 # mine\n  indent: tabs\n"
+        );
+    }
+
     /// Retirement is what turns a running host into a stopped row, so it is
     /// reachable from the settings view rather than only from the config file.
     /// Zero stays inside the accepted range because it is how "never retire"
@@ -1683,11 +1725,11 @@ mod tests {
         let mut config = Config::default();
         assert_eq!(
             SettingId::WorkspaceIdleRetirementMinutes.configured_value(&config),
-            SettingValue::Integer(1440)
+            SettingValue::Integer(0)
         );
         assert!(SettingId::ALL.contains(&SettingId::WorkspaceIdleRetirementMinutes));
 
-        for minutes in [0, 30, MAX_IDLE_RETIREMENT_MINUTES] {
+        for minutes in [30, 0, MAX_IDLE_RETIREMENT_MINUTES] {
             let value = SettingValue::Integer(minutes);
             SettingId::WorkspaceIdleRetirementMinutes
                 .apply(&value, &mut config)

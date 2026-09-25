@@ -2,10 +2,9 @@
 
 //! Contextual help for the view under the cursor.
 //!
-//! Only the prose lives here. Every key this module names is read out of the
-//! keymap registry at render time, so help cannot drift from what the keys
-//! actually do — a hand-maintained key table is a second source of truth, and
-//! the one that goes stale.
+//! Editor key tables come from the keymap registry at render time, so help
+//! follows dispatch and configured bindings. Command prompts handle their own
+//! input outside that registry and are described as such.
 //!
 //! The rendered document carries semantic colour spans over plain text and is
 //! opened as an ordinary read-only buffer. That is what makes help searchable,
@@ -128,6 +127,8 @@ impl HelpTopic {
             Self::Text => &[
                 "Runyte is a selection-first modal editor: move to select, then act. Every editing command works on whatever is selected, however many ranges that is.",
                 "NORMAL mode replaces the selection as you move. v enters SELECT mode, where moving extends every selection instead; v or Escape returns.",
+                "INSERT writes text at each caret. REPLACE overwrites forward and lets Backspace retrace the current overwrite. Their shared bindings and any mode-specific keys appear below.",
+                "COMMAND owns the interaction-line prompt. Type to edit a command, or use its prompt controls listed below; it returns to editing when submitted or cancelled.",
                 "Search selects every match at once. With two or more characters selected, s and / search only inside the selection, leaving a cursor on every match; n and N then select only one result and step through them.",
                 "Press {prefix:Space} and pause to explore command groups without memorising the full keymap.",
                 "{key:swap-window} exchanges this pane's complete content with the previously focused pane and follows it to its new position; {key:swap-window:compatibility} is the compatibility spelling.",
@@ -282,7 +283,37 @@ pub(crate) fn render_document(
     keymap: &Keymap,
     read_only: bool,
 ) -> HelpDocument {
-    render_document_with_descriptions(topic, grammar, scope, keymap, read_only, |_| None)
+    render_document_with_descriptions(topic, grammar, scope, keymap, read_only, None, |_| None)
+}
+
+/// What a running plugin contributes to help for one of its views.
+///
+/// The topic is the plugin's own prose, if its current model names one. The
+/// actions are what the view's Tab menu offers right now, read from the same
+/// registry the menu reads, so this page cannot list an action the menu would
+/// not.
+pub(crate) struct PluginPage<'a> {
+    pub application: &'a str,
+    pub topic: Option<&'a crate::plugin::help::Topic>,
+    pub actions: Vec<PluginAction<'a>>,
+}
+
+pub(crate) struct PluginAction<'a> {
+    pub label: &'a str,
+    pub description: &'a str,
+    pub group: Option<&'a str>,
+}
+
+impl PluginPage<'_> {
+    fn title(&self, read_only: bool) -> Option<String> {
+        let topic = self.topic?;
+        let access = if read_only { " · Read-only" } else { "" };
+        Some(format!(
+            " Help · {} · {}{access} ",
+            self.application.to_uppercase(),
+            topic.title.to_uppercase()
+        ))
+    }
 }
 
 pub(crate) fn render_document_with_descriptions(
@@ -291,6 +322,7 @@ pub(crate) fn render_document_with_descriptions(
     scope: BindingScope,
     keymap: &Keymap,
     read_only: bool,
+    plugin: Option<&PluginPage<'_>>,
     description: impl Fn(crate::keymap::BindingTarget) -> Option<String>,
 ) -> HelpDocument {
     // Normal and Select bind the same sequences to the same commands, so
@@ -299,10 +331,29 @@ pub(crate) fn render_document_with_descriptions(
     // quietly documenting half the keymap.
     let mode = Mode::Normal;
     let mut out = String::new();
-    let _ = writeln!(out, "{}\n", topic.title_for(grammar, read_only).trim());
+    let title = plugin
+        .and_then(|plugin| plugin.title(read_only))
+        .unwrap_or_else(|| topic.title_for(grammar, read_only));
+    let _ = writeln!(
+        out,
+        "{}\n",
+        crate::key_spelling::escape_markers(title.trim())
+    );
 
-    for paragraph in topic.overview_for(grammar) {
-        let _ = writeln!(out, "{paragraph}\n");
+    // Character ranges of text a plugin wrote. They are escaped on the way in
+    // so no marker can hide in them, and styled only by their own backticks.
+    let mut authored: Vec<Range<usize>> = Vec::new();
+    let mut headings: Vec<Range<usize>> = Vec::new();
+    if let Some(topic) = plugin.and_then(|plugin| plugin.topic) {
+        let from = out.chars().count();
+        for paragraph in &topic.paragraphs {
+            let _ = writeln!(out, "{}\n", crate::key_spelling::escape_markers(paragraph));
+        }
+        authored.push(from..out.chars().count());
+    } else {
+        for paragraph in topic.overview_for(grammar) {
+            let _ = writeln!(out, "{paragraph}\n");
+        }
     }
     // The overview is written for the keys as they ship. Single-key pane
     // movement is the one option that changes what a *running program* sees,
@@ -349,18 +400,76 @@ pub(crate) fn render_document_with_descriptions(
     // ordinary English word far more often than it is a key mention.
     let mut key_cells: Vec<Range<usize>> = Vec::new();
 
+    if let Some(plugin) = plugin.filter(|plugin| !plugin.actions.is_empty()) {
+        let _ = writeln!(out, "Application actions");
+        let _ = writeln!(
+            out,
+            "  {} opens the menu of these, as they were offered for the selection\n  help was opened from.\n",
+            ACTION_MENU_KEY
+        );
+        // Sections follow their first action, as they do in the menu.
+        let mut groups: Vec<Option<&str>> = Vec::new();
+        for action in &plugin.actions {
+            if !groups.contains(&action.group) {
+                groups.push(action.group);
+            }
+        }
+        for group in groups {
+            let indent = if let Some(group) = group {
+                let from = out.chars().count() + 2;
+                let _ = writeln!(out, "  {}", crate::key_spelling::escape_markers(group));
+                // Measured as written: escaping can lengthen the name.
+                headings.push(from..out.chars().count() - 1);
+                "    "
+            } else {
+                "  "
+            };
+            for action in plugin.actions.iter().filter(|action| action.group == group) {
+                let from = out.chars().count();
+                let _ = write!(
+                    out,
+                    "{indent}{}",
+                    crate::key_spelling::escape_markers(action.label)
+                );
+                if action.description != action.label {
+                    let _ = write!(
+                        out,
+                        " — {}",
+                        crate::key_spelling::escape_markers(action.description)
+                    );
+                }
+                out.push('\n');
+                authored.push(from..out.chars().count());
+            }
+            out.push('\n');
+        }
+    }
+
+    let _ = writeln!(out, "Normal and Select\n");
     let scoped = keymap.scoped_bindings(mode, scope).collect::<Vec<_>>();
     let actions = keymap.context_actions(scope).collect::<Vec<_>>();
     if !scoped.is_empty() || !actions.is_empty() {
         let _ = writeln!(out, "Buffer keys");
         let _ = writeln!(out, "  Only this view answers to these.\n");
         for binding in &scoped {
-            let authored = description(binding.target);
+            let label = description(binding.target);
             let detail = platform_description(
                 binding.target,
-                authored.as_deref().unwrap_or(&binding.description),
+                label.as_deref().unwrap_or(&binding.description),
             );
+            // A plugin wrote this description, and Runyte validates it for
+            // length and control characters, not for braces.
+            let plugin = matches!(binding.target, BindingTarget::Plugin(_));
+            let detail = if plugin {
+                std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
+            } else {
+                detail
+            };
             key_cells.push(row(&mut out, &binding.sequence.to_string(), &detail));
+            if plugin {
+                let end = out.chars().count() - 1;
+                authored.push(end - detail.chars().count()..end);
+            }
         }
         if !actions.is_empty() {
             if !scoped.is_empty() {
@@ -436,11 +545,100 @@ pub(crate) fn render_document_with_descriptions(
                     }
                     _ => std::borrow::Cow::Borrowed(entry.description),
                 };
-                key_cells.push(row(&mut out, entry.key.label().as_str(), &detail));
+                key_cells.push(row(&mut out, &help_key_label(entry.key), &detail));
             }
             out.push('\n');
         }
     }
+
+    // Insert and Replace share most bindings. Compare what this scope actually
+    // dispatches in each mode, so configured keys and scoped overrides stay in
+    // the right section without a second key inventory.
+    if read_only && topic != HelpTopic::Terminal {
+        let _ = writeln!(
+            out,
+            "Insert and Replace\n  Unavailable in this read-only view.\n"
+        );
+    } else {
+        let visible = |binding: &&crate::keymap::Binding| {
+            topic != HelpTopic::Terminal || terminal_insert_admits(binding, keymap)
+        };
+        let insert = keymap
+            .bindings_for_scope(Mode::Insert, scope)
+            .filter(visible)
+            .collect::<Vec<_>>();
+        let replace = keymap
+            .bindings_for_scope(Mode::Replace, scope)
+            .filter(visible)
+            .collect::<Vec<_>>();
+        if topic == HelpTopic::Terminal {
+            write_mode_bindings(
+                &mut out,
+                "Terminal Insert",
+                &insert,
+                &description,
+                &mut key_cells,
+                &mut authored,
+            );
+            let _ = writeln!(
+                out,
+                "  Ordinary keys go to the child program; the Runyte-owned exceptions are described above.\nReplace\n  Unavailable in a terminal view.\n"
+            );
+        } else {
+            let same = |left: &&crate::keymap::Binding, right: &&crate::keymap::Binding| {
+                left.sequence == right.sequence
+                    && left.target == right.target
+                    && left.description == right.description
+            };
+            let shared = insert
+                .iter()
+                .copied()
+                .filter(|binding| replace.iter().any(|other| same(binding, other)))
+                .collect::<Vec<_>>();
+            let insert_only = insert
+                .iter()
+                .copied()
+                .filter(|binding| !replace.iter().any(|other| same(binding, other)))
+                .collect::<Vec<_>>();
+            let replace_only = replace
+                .iter()
+                .copied()
+                .filter(|binding| !insert.iter().any(|other| same(binding, other)))
+                .collect::<Vec<_>>();
+            write_mode_bindings(
+                &mut out,
+                "Insert and Replace",
+                &shared,
+                &description,
+                &mut key_cells,
+                &mut authored,
+            );
+            write_mode_bindings(
+                &mut out,
+                "Insert only",
+                &insert_only,
+                &description,
+                &mut key_cells,
+                &mut authored,
+            );
+            write_mode_bindings(
+                &mut out,
+                "Replace only",
+                &replace_only,
+                &description,
+                &mut key_cells,
+                &mut authored,
+            );
+        }
+    }
+
+    // Command input is owned by the prompt rather than Keymap dispatch. It
+    // has no registry bindings to tabulate, and this heading makes that
+    // boundary explicit instead of silently omitting the mode.
+    let _ = writeln!(
+        out,
+        "Command\n  The command prompt handles text input directly. Type to edit; Enter first accepts a pending command or path completion, otherwise submits a nonempty command. Escape or Ctrl-c cancels. Tab completes; Up/Down or Shift-Tab choose suggestions, and Home/End jump to the first/last suggestion. Left/Right or Ctrl-b/f move the caret; Ctrl-a/e move to its ends and Alt-b/f move by word. Backspace or Ctrl-h deletes backward, Ctrl-d deletes forward, Ctrl-w deletes the previous word, and Ctrl-u/k deletes to the start/end. Ctrl-s saves the active file.\n"
+    );
 
     let (resolved, offset_map) = crate::key_spelling::resolve_with_map(&out, keymap)
         .expect("help key markers must resolve against every built-in keymap");
@@ -450,10 +648,11 @@ pub(crate) fn render_document_with_descriptions(
         document.mark_range(range.start, range.end, HelpRole::KeyBinding);
     }
 
-    let title = topic.title_for(grammar, read_only);
     for heading in [
         title.trim(),
         "Mouse",
+        "Application actions",
+        "Normal and Select",
         "Buffer keys",
         "Where to start",
         "Direct keys",
@@ -461,6 +660,12 @@ pub(crate) fn render_document_with_descriptions(
         "Ctrl chords",
         "Alt chords",
         "Arrows and named keys",
+        "Insert and Replace",
+        "Insert only",
+        "Replace only",
+        "Terminal Insert",
+        "Replace",
+        "Command",
         "Creating a stash",
     ] {
         document.mark_token_since(0, heading, HelpRole::Heading);
@@ -583,8 +788,25 @@ pub(crate) fn render_document_with_descriptions(
         document.mark_token_since(0, path, HelpRole::FilePath);
     }
 
+    // Last, so that nothing Runyte marks by searching the whole document for
+    // its own words can land inside text a plugin wrote.
+    for range in &authored {
+        document.reset_to_prose(offset_map[range.start], offset_map[range.end]);
+    }
+    for range in &headings {
+        document.mark_range(
+            offset_map[range.start],
+            offset_map[range.end],
+            HelpRole::Heading,
+        );
+    }
+
     document.finish()
 }
+
+/// Opens a plugin view's action menu. Named here because the actions section
+/// cites it, and the key table it sits beside is generated.
+const ACTION_MENU_KEY: &str = "{literal-key:Tab}";
 
 fn platform_description(target: BindingTarget, description: &str) -> std::borrow::Cow<'_, str> {
     match target.id().platform_unavailable() {
@@ -644,20 +866,98 @@ fn hides_a_refusal(
         })
 }
 
-/// Whether the registry in force binds the bare pane moves.
-///
-/// Asked of the keymap rather than of configuration, because the keymap is
-/// what this page is describing.
+/// First keys allowed past `App::handle_key_stroke`'s Terminal Insert gate.
+/// Its pane-key and persistent-session paths are conditional at runtime; help
+/// includes them because the same registry entry is usable when enabled.
+fn terminal_insert_admits(binding: &crate::keymap::Binding, keymap: &Keymap) -> bool {
+    let Some(&first) = binding.sequence.as_slice().first() else {
+        return false;
+    };
+    let first = first.canonical_for_binding();
+    let terminal_escape = crate::app::is_terminal_normal_key(first);
+    let window_prefix = first == keymap.window_prefix();
+    let fast_pane_move =
+        fast_pane_keys_are_active(keymap) && crate::keymap::is_fast_pane_key(first);
+    let navigation = |binding: &crate::keymap::Binding| {
+        matches!(
+            binding.target,
+            BindingTarget::Editor(
+                EditorCommand::NextRunningSession
+                    | EditorCommand::PreviousRunningSession
+                    | EditorCommand::PreviousSession
+            )
+        )
+    };
+    let persistent_navigation = match keymap.lookup_in(
+        Mode::Insert,
+        BindingScope::Terminal,
+        &KeySequence::from(first),
+    ) {
+        Lookup::Exact(binding) => navigation(binding),
+        Lookup::Prefix(bindings) => bindings.iter().any(|binding| navigation(binding)),
+        Lookup::ExactAndPrefix {
+            exact,
+            continuations,
+        } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
+        Lookup::NoMatch => false,
+    };
+    terminal_escape || window_prefix || fast_pane_move || persistent_navigation
+}
+
+fn help_key_label(key: Key) -> String {
+    let label = key.label();
+    if key.code == KeyCode::BackTab {
+        format!("{label} / Shift-Tab")
+    } else if key.modifiers.is_empty() && matches!(key.code, KeyCode::Char('<' | '>')) {
+        format!("{label} / Shift-{label}")
+    } else {
+        label
+    }
+}
+
+fn write_mode_bindings(
+    out: &mut String,
+    heading: &str,
+    bindings: &[&crate::keymap::Binding],
+    description: &impl Fn(BindingTarget) -> Option<String>,
+    key_cells: &mut Vec<Range<usize>>,
+    authored: &mut Vec<Range<usize>>,
+) {
+    let _ = writeln!(out, "{heading}");
+    if bindings.is_empty() {
+        let _ = writeln!(out, "  No additional bindings.\n");
+        return;
+    }
+    for binding in bindings {
+        let label = if binding.sequence.len() == 1 {
+            help_key_label(binding.sequence.as_slice()[0])
+        } else {
+            binding.sequence.to_string()
+        };
+        let configured = description(binding.target);
+        let detail = platform_description(
+            binding.target,
+            configured
+                .as_deref()
+                .unwrap_or(binding.description.as_ref()),
+        );
+        let plugin = matches!(binding.target, BindingTarget::Plugin(_));
+        let detail = if plugin {
+            std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
+        } else {
+            detail
+        };
+        key_cells.push(row(out, &label, &detail));
+        if plugin {
+            let end = out.chars().count() - 1;
+            authored.push(end - detail.chars().count()..end);
+        }
+    }
+    out.push('\n');
+}
+
 fn fast_pane_keys_are_active(keymap: &Keymap) -> bool {
-    matches!(
-        keymap.lookup_in(
-            Mode::Insert,
-            BindingScope::Global,
-            &KeySequence::from(Key::ctrl('h')),
-        ),
-        Lookup::Exact(binding)
-            if binding.target == BindingTarget::Editor(EditorCommand::FocusWindowLeft)
-    )
+    keymap.fast_pane_keys()
 }
 
 /// Writes one key-table row and reports where its key cell landed.
@@ -771,6 +1071,249 @@ mod tests {
             .to_lowercase();
         assert!(prose.contains("normal"), "{prose}");
         assert!(prose.contains("select"), "{prose}");
+    }
+
+    #[test]
+    fn contextual_help_covers_each_default_binding_in_its_mode_and_scope() {
+        let keymap = default_keymap();
+        for &scope in BindingScope::ALL {
+            let topic = HelpTopic::for_context(scope);
+            let read_only = !matches!(
+                scope,
+                BindingScope::Global
+                    | BindingScope::Markdown
+                    | BindingScope::Directory
+                    | BindingScope::CommitMessage
+            );
+            let document = render(topic, GrammarKind::Runyte, scope, keymap, read_only);
+            let insert_heading = if scope == BindingScope::Terminal {
+                "Terminal Insert\n"
+            } else {
+                "Insert and Replace\n"
+            };
+            let modal = document
+                .split_once("Normal and Select\n")
+                .unwrap()
+                .1
+                .split_once(insert_heading)
+                .unwrap()
+                .0;
+            let insert_and_replace = document.split_once(insert_heading).unwrap().1;
+            for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+                for binding in keymap.bindings_for_scope(mode, scope) {
+                    if mode == Mode::Replace && scope == BindingScope::Terminal {
+                        assert!(insert_and_replace.contains("Unavailable in a terminal view"));
+                        continue;
+                    }
+                    if matches!(mode, Mode::Insert | Mode::Replace)
+                        && read_only
+                        && scope != BindingScope::Terminal
+                    {
+                        assert!(insert_and_replace.contains("Unavailable in this read-only view"));
+                        continue;
+                    }
+                    if matches!(mode, Mode::Insert | Mode::Replace)
+                        && scope == BindingScope::Terminal
+                        && !terminal_insert_admits(binding, keymap)
+                    {
+                        continue;
+                    }
+                    if matches!(mode, Mode::Normal | Mode::Select)
+                        && read_only
+                        && binding.scope == BindingScope::Global
+                        && binding.sequence.len() == 1
+                        && hides_a_refusal(binding.sequence.as_slice()[0], mode, scope, keymap)
+                    {
+                        continue;
+                    }
+                    let label = if matches!(mode, Mode::Normal | Mode::Select)
+                        && binding.scope == BindingScope::Global
+                        && binding.sequence.len() > 1
+                    {
+                        binding.sequence.as_slice()[0].label()
+                    } else if binding.sequence.len() == 1 {
+                        help_key_label(binding.sequence.as_slice()[0])
+                    } else {
+                        binding.sequence.to_string()
+                    };
+                    let section = if matches!(mode, Mode::Normal | Mode::Select) {
+                        modal
+                    } else {
+                        insert_and_replace
+                    };
+                    assert!(
+                        section.lines().any(|line| {
+                            line.trim_start().starts_with(&label) && line.starts_with("  ")
+                        }),
+                        "{scope:?} {mode:?} missing {label:?} ({:?})",
+                        binding.target
+                    );
+                }
+            }
+            assert!(document.contains("Command\n"));
+            assert_eq!(keymap.bindings_for_scope(Mode::Command, scope).count(), 0);
+        }
+    }
+
+    #[test]
+    fn insert_and_replace_share_rows_and_shifted_indent_is_searchable() {
+        let document = render(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            default_keymap(),
+            false,
+        );
+        let shared = document
+            .split_once("Insert and Replace\n")
+            .unwrap()
+            .1
+            .split_once("Insert only\n")
+            .unwrap()
+            .0;
+        assert!(shared.contains("Tab"));
+        assert!(shared.contains("Shift-Tab"));
+        assert!(shared.contains("Ctrl-x"));
+        assert!(shared.contains("Ctrl-w"));
+        assert_eq!(shared.matches("Ctrl-x").count(), 1);
+        assert!(document.contains("< / Shift-<"));
+        assert!(document.contains("> / Shift->"));
+    }
+
+    #[test]
+    fn configured_insert_bindings_and_live_indent_descriptions_reach_help() {
+        let section: serde_yaml::Value = serde_yaml::from_str("rebind:\n  Ctrl-x: F12\n").unwrap();
+        let compiled = crate::keymap::configured::compile(&section, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let document = render(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            &compiled.keymap,
+            false,
+        );
+        let shared = document
+            .split_once("Insert and Replace\n")
+            .unwrap()
+            .1
+            .split_once("Insert only\n")
+            .unwrap()
+            .0;
+        assert!(
+            shared
+                .lines()
+                .any(|line| line.trim_start().starts_with("F12 "))
+        );
+        assert!(
+            !shared
+                .lines()
+                .any(|line| line.trim_start().starts_with("Ctrl-x "))
+        );
+
+        let tabs = default_keymap().with_indent_style(crate::config::IndentStyle::Tabs);
+        let document = render(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            &tabs,
+            false,
+        );
+        assert!(document.contains("Insert a tab (indent: tabs)"));
+        assert!(document.contains("Insert spaces to the next tab stop (indent: tabs)"));
+    }
+
+    #[test]
+    fn terminal_insert_help_lists_only_keys_admitted_past_the_child_gate() {
+        for keymap in [
+            std::sync::Arc::new(default_keymap().clone()),
+            crate::keymap::keymap_for(true),
+        ] {
+            let document = render(
+                HelpTopic::Terminal,
+                GrammarKind::Runyte,
+                BindingScope::Terminal,
+                &keymap,
+                true,
+            );
+            let rows = document
+                .split_once("Terminal Insert\n")
+                .unwrap()
+                .1
+                .split_once("\nReplace\n")
+                .unwrap()
+                .0;
+            let has_row = |key: &str| {
+                rows.lines()
+                    .any(|line| line.starts_with("  ") && line.trim_start().starts_with(key))
+            };
+            for child_key in [
+                "Escape ",
+                "Left ",
+                "Right ",
+                "Home ",
+                "End ",
+                "PageUp ",
+                "PageDown ",
+                "Ctrl-x ",
+                "Tab ",
+                "Ctrl-v ",
+                "Alt-v ",
+            ] {
+                assert!(!has_row(child_key), "child owns {child_key:?}");
+            }
+            assert!(has_row("Ctrl-\\ "));
+            assert!(has_row("Ctrl-w n "));
+            assert!(has_row("Shift-Left "));
+            assert_eq!(has_row("Ctrl-h "), fast_pane_keys_are_active(&keymap));
+        }
+    }
+
+    #[test]
+    fn terminal_insert_help_follows_effective_first_key_admission() {
+        // These direct registry edits exercise dispatchable maps even though
+        // keys.rebind currently only accepts Space/Ctrl-w namespace sources.
+        let cases = [
+            (false, "Shift-Left", "F12 p", "F12 p "),
+            (true, "Ctrl-h", "F12", "Ctrl-j "),
+            (false, "Ctrl-4", "Ctrl-Alt-4 z", "Ctrl-Alt-4 z "),
+        ];
+        for (fast_pane_keys, source, target, expected) in cases {
+            let built_in = crate::keymap::keymap_for(fast_pane_keys);
+            let mut bindings = built_in.bindings().to_vec();
+            let source = KeySequence::parse(source).unwrap();
+            let binding = bindings
+                .iter_mut()
+                .find(|binding| binding.is_active_in(Mode::Insert) && binding.sequence == source)
+                .unwrap();
+            binding.sequence = KeySequence::parse(target).unwrap();
+            Keymap::new(bindings.clone()).unwrap();
+            let keymap = built_in.with_test_bindings(bindings);
+            let document = render(
+                HelpTopic::Terminal,
+                GrammarKind::Runyte,
+                BindingScope::Terminal,
+                &keymap,
+                true,
+            );
+            let rows = document
+                .split_once("Terminal Insert\n")
+                .unwrap()
+                .1
+                .split_once("\nReplace\n")
+                .unwrap()
+                .0;
+            assert!(
+                rows.lines()
+                    .any(|line| line.trim_start().starts_with(expected)),
+                "{source} -> {target}: missing {expected:?} from {rows}"
+            );
+        }
+
+        let section: serde_yaml::Value = serde_yaml::from_str("{}").unwrap();
+        let fast = crate::keymap::keymap_for(true);
+        let compiled = crate::keymap::configured::compile(&section, &fast);
+        assert!(compiled.errors.is_empty());
+        assert!(compiled.keymap.fast_pane_keys());
     }
 
     #[test]
@@ -1159,5 +1702,149 @@ mod tests {
         assert_eq!(scope_at("Space ?"), Some("keyword"));
         assert_eq!(scope_at("/local/path"), Some("string"));
         assert_eq!(scope_at("editor.mouse"), Some("markup.raw"));
+    }
+
+    fn plugin_topic() -> crate::plugin::help::Topic {
+        crate::plugin::help::Topic {
+            id: "rows".into(),
+            title: "Rows".into(),
+            paragraphs: vec![
+                "Rows shows one page of a table. Press `Tab` for paging; Enter opens a record.".into(),
+                "{key:nope} and {{binding:x} are text, not markers. Mouse and Buffer keys are words here.".into(),
+            ],
+        }
+    }
+
+    fn plugin_document(page: &PluginPage<'_>) -> HelpDocument {
+        render_document_with_descriptions(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Plugin(0),
+            default_keymap(),
+            true,
+            Some(page),
+            |_| None,
+        )
+    }
+
+    fn roles_at(document: &HelpDocument, needle: &str) -> Vec<&'static str> {
+        let start = document.text()[..document.text().find(needle).unwrap()]
+            .chars()
+            .count();
+        let end = start + needle.chars().count();
+        document
+            .spans()
+            .iter()
+            .filter(|span| span.from < end && span.to > start)
+            .map(|span| span.scope.name())
+            .collect()
+    }
+
+    /// A plugin topic replaces the overview, not the rest of the page: the
+    /// trailer, mouse notes and generated tables still follow it.
+    #[test]
+    fn a_plugin_topic_replaces_the_overview_and_keeps_generated_sections() {
+        let topic = plugin_topic();
+        let page = PluginPage {
+            application: "Database viewer",
+            topic: Some(&topic),
+            actions: vec![
+                PluginAction {
+                    label: "Refresh",
+                    description: "Refresh",
+                    group: None,
+                },
+                PluginAction {
+                    label: "Next page",
+                    description: "Show the next page of rows",
+                    group: Some("Paging"),
+                },
+                PluginAction {
+                    label: "Filter",
+                    description: "Filter {key:rows}",
+                    group: Some("Query {key:x}"),
+                },
+                PluginAction {
+                    label: "Previous page",
+                    description: "Show the previous page",
+                    group: Some("Paging"),
+                },
+            ],
+        };
+        let document = plugin_document(&page);
+        let text = document.text();
+        assert!(text.starts_with("Help · DATABASE VIEWER · ROWS · Read-only\n"));
+        assert!(text.contains("{key:nope} and {{binding:x} are text, not markers."));
+        assert!(!text.contains("selection-first modal editor"));
+        assert!(text.contains(":help opens the general Runyte manual"));
+        assert!(text.contains("\nMouse\n"));
+        // Ungrouped first, then sections in the order their first action has.
+        let refresh = text.find("\n  Refresh\n").unwrap();
+        let paging = text.find("\n  Paging\n").unwrap();
+        let next = text
+            .find("\n    Next page — Show the next page of rows\n")
+            .unwrap();
+        let previous = text
+            .find("\n    Previous page — Show the previous page\n")
+            .unwrap();
+        let query = text
+            .find("\n  Query {key:x}\n    Filter — Filter {key:rows}\n")
+            .unwrap();
+        assert!(refresh < paging && paging < next && next < previous && previous < query);
+        assert!(text.find("Application actions").unwrap() < refresh);
+        assert!(text.contains("  Tab opens the menu of these"));
+
+        assert_eq!(
+            roles_at(&document, "Help · DATABASE VIEWER"),
+            ["markup.heading"]
+        );
+        assert_eq!(roles_at(&document, "Paging"), ["markup.heading"]);
+        // The whole escaped group name, not one character short of it.
+        let heading = document.text().find("\n  Query {key:x}\n").unwrap() + 3;
+        let start = document.text()[..heading].chars().count();
+        assert!(document.spans().iter().any(|span| span.from == start
+            && span.to == start + "Query {key:x}".chars().count()
+            && span.scope.name() == "markup.heading"));
+        assert_eq!(
+            roles_at(&document, "Application actions"),
+            ["markup.heading"]
+        );
+        // Only the plugin's own backticks style its prose.
+        assert_eq!(
+            roles_at(&document, "`Tab`"),
+            ["punctuation", "markup.raw", "punctuation"]
+        );
+        for word in ["Enter opens", "Mouse and Buffer keys", "Next page — "] {
+            assert!(roles_at(&document, word).is_empty(), "{word}");
+        }
+    }
+
+    #[test]
+    fn a_plugin_view_without_a_topic_keeps_the_text_overview_and_lists_actions() {
+        let page = PluginPage {
+            application: "Tasks",
+            topic: None,
+            actions: vec![PluginAction {
+                label: "toggle",
+                description: "Toggle selected tasks",
+                group: None,
+            }],
+        };
+        let text = plugin_document(&page).text().to_owned();
+        assert!(text.starts_with("Help · RUNYTE · TEXT · Read-only\n"));
+        assert!(text.contains("selection-first modal editor"));
+        assert!(text.contains("Application actions\n"));
+        assert!(text.contains("\n  toggle — Toggle selected tasks\n"));
+
+        let empty = PluginPage {
+            application: "Tasks",
+            topic: None,
+            actions: vec![],
+        };
+        assert!(
+            !plugin_document(&empty)
+                .text()
+                .contains("Application actions")
+        );
     }
 }

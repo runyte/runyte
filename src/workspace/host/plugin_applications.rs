@@ -19,6 +19,7 @@ impl WorkspaceHost {
                 optional_features,
                 name,
                 commands,
+                help_topics,
                 required_capabilities,
                 optional_capabilities,
             } => {
@@ -134,12 +135,23 @@ impl WorkspaceHost {
                     crate::plugin::arguments::validate(&command.arguments)
                         .map_err(|error| anyhow::anyhow!(error.message))?;
                 }
-                self.register_plugin_commands(
+                // An authored list, even an empty one, is a negotiated shape.
+                ensure!(
+                    help_topics.is_none() || features.contains(api::VIEW_HELP),
+                    "Help topics require view-help"
+                );
+                let help_topics = help_topics.unwrap_or_default();
+                plugin::help::validate(&help_topics).map_err(anyhow::Error::msg)?;
+                self.register_plugin_application(
                     id,
-                    commands,
-                    capabilities,
-                    features,
-                    configured.normalized().to_owned(),
+                    super::plugins::Registered {
+                        name,
+                        commands,
+                        help_topics,
+                        capabilities,
+                        features,
+                        runyte: configured.normalized().to_owned(),
+                    },
                 )?;
             }
             api::ClientMessage::Request {

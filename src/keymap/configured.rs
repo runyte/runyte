@@ -186,6 +186,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
     let keymap = Keymap::with_namespaces(resolution.bindings, resolution.namespaces)
         .expect("the configured-keymap validator rejected every duplicate")
         .with_context_actions(built_in.all_context_actions().to_vec())
+        .with_fast_pane_keys_enabled(built_in.fast_pane_keys())
         .with_spelling_metadata(resolution.leader, resolution.window, resolution.spelling);
     CompiledKeymap {
         keymap: Arc::new(keymap),

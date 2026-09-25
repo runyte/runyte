@@ -1124,9 +1124,10 @@ async fn send_or_exit(
             match result {
                 Ok(()) => Ok(WireOutcome::Sent),
                 Err(send_error) => {
-                    // The host may have accepted :quit-here and closed its
-                    // writer before this unrelated queued send completed.
-                    // Its independent reader still owns the final response.
+                    // Detach or shutdown can close the pipe while the host
+                    // process is still running and a request is in flight.
+                    // Read its queued final reply before reporting the write
+                    // failure, preserving any :quit-here directory handoff.
                     let recovered = drain_after_host_exit_kind(client).await;
                     final_after_send_failure(send_error, recovered)
                 }

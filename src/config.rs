@@ -350,12 +350,43 @@ impl fmt::Display for ExplorerSort {
     }
 }
 
+/// The character used for one indentation level in editing commands.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentStyle {
+    #[default]
+    Spaces,
+    Tabs,
+}
+
+impl IndentStyle {
+    pub const ALL: &'static [Self] = &[Self::Spaces, Self::Tabs];
+
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Spaces => Self::Tabs,
+            Self::Tabs => Self::Spaces,
+        }
+    }
+}
+
+impl fmt::Display for IndentStyle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Spaces => "spaces",
+            Self::Tabs => "tabs",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct EditorConfig {
     pub grammar: GrammarKind,
     pub line_numbers: bool,
     pub tab_width: usize,
+    /// Character inserted by Tab, indent, and syntax-driven extra newline levels.
+    pub indent: IndentStyle,
     /// Add syntax indentation and align list continuations when inserting a newline.
     pub smart_newline: bool,
     pub scroll_offset: usize,
@@ -859,7 +890,7 @@ impl Default for WorkspaceConfig {
             state_anchor: None,
             mode: WorkspaceMode::Standalone,
             session_strip: SessionStripVisibility::Auto,
-            idle_retirement_minutes: 1440,
+            idle_retirement_minutes: 0,
         }
     }
 }
@@ -870,7 +901,8 @@ impl Default for EditorConfig {
             grammar: GrammarKind::Runyte,
             line_numbers: true,
             tab_width: 4,
-            smart_newline: false,
+            indent: IndentStyle::Spaces,
+            smart_newline: true,
             scroll_offset: 3,
             motion_repeat_multiplier: 2,
             show_hidden_files: false,
@@ -1567,7 +1599,7 @@ mod tests {
         assert_eq!(Config::default().workspace.state, PathBuf::from(".runyte"));
         assert_eq!(Config::default().workspace.state_anchor, None);
         assert_eq!(Config::default().workspace.mode, WorkspaceMode::Standalone);
-        assert_eq!(Config::default().workspace.idle_retirement_minutes, 1440);
+        assert_eq!(Config::default().workspace.idle_retirement_minutes, 0);
 
         let renamed: Config = serde_yaml::from_str("workspace:\n  state: .state\n").unwrap();
         assert_eq!(renamed.workspace.state, PathBuf::from(".state"));
@@ -4078,10 +4110,21 @@ mod tests {
     }
 
     #[test]
-    fn smart_newline_is_default_off_and_configurable() {
-        assert!(!Config::default().editor.smart_newline);
-        let config: Config = serde_yaml::from_str("editor:\n  smart_newline: true\n").unwrap();
-        assert!(config.editor.smart_newline);
+    fn smart_newline_is_default_on_and_configurable() {
+        assert!(Config::default().editor.smart_newline);
+        let config: Config = serde_yaml::from_str("editor:\n  smart_newline: false\n").unwrap();
+        assert!(!config.editor.smart_newline);
+    }
+
+    #[test]
+    fn indent_style_defaults_to_spaces_accepts_tabs_and_rejects_unknown_values() {
+        assert_eq!(Config::default().editor.indent, IndentStyle::Spaces);
+        let spaces: Config = serde_yaml::from_str("editor:\n  indent: spaces\n").unwrap();
+        assert_eq!(spaces.editor.indent, IndentStyle::Spaces);
+        let tabs: Config = serde_yaml::from_str("editor:\n  indent: tabs\n").unwrap();
+        assert_eq!(tabs.editor.indent, IndentStyle::Tabs);
+        let error = serde_yaml::from_str::<Config>("editor:\n  indent: mixed\n").unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     /// A light theme that paints light text on a light background is unusable,

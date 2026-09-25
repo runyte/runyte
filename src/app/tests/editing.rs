@@ -934,6 +934,54 @@ fn a_linewise_paste_over_a_line_selection_replaces_whole_lines() {
 }
 
 #[test]
+fn a_linewise_paste_over_a_vim_line_selection_replaces_whole_lines() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "target words\nnext");
+    app.registers.insert(
+        '"',
+        Register {
+            text: "copied\n".to_owned(),
+            linewise: true,
+            directory: None,
+        },
+    );
+    app.active_mut().selection = Selection::single(Range::new(0, 13));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::VimLinewise);
+
+    press(&mut app, 'p');
+
+    assert_eq!(text(&app), "copied\nnext");
+}
+
+#[test]
+fn linewise_paste_replaces_one_character_blank_and_final_empty_x_lines() {
+    for (source, row, expected) in [
+        ("alpha\nb\nnext", 1, "alpha\ncopied\nnext"),
+        ("alpha\n\nnext", 1, "alpha\ncopied\nnext"),
+        ("alpha\n", 1, "alpha\ncopied"),
+    ] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, source);
+        app.registers.insert(
+            '"',
+            Register {
+                text: "copied\n".to_owned(),
+                linewise: true,
+                directory: None,
+            },
+        );
+        set_cursor(&mut app, row, 0);
+        press(&mut app, 'x');
+
+        press(&mut app, 'p');
+
+        assert_eq!(text(&app), expected, "source {source:?}");
+        assert_eq!(app.active().selection.primary(), Range::new(6, 11));
+    }
+}
+
+#[test]
 fn a_paste_replaces_every_range_that_holds_text_and_inserts_beside_the_rest() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "one two one");
@@ -1005,7 +1053,7 @@ fn a_paste_replaces_single_character_search_matches() {
 }
 
 #[test]
-fn a_linewise_paste_replaces_each_row_once_however_many_ranges_touch_it() {
+fn linewise_paste_replaces_each_characterwise_range_without_widening() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "one two\nalpha");
     app.registers.insert(
@@ -1018,56 +1066,60 @@ fn a_linewise_paste_replaces_each_row_once_however_many_ranges_touch_it() {
     );
     app.panes.get_mut(&0).unwrap().selection =
         Selection::new(vec![Range::new(0, 2), Range::new(4, 6)], 0);
+
     press(&mut app, 'p');
-    assert_eq!(
-        text(&app),
-        "X\nalpha",
-        "whole lines two ranges share are replaced once, not once per range"
-    );
-    assert_eq!(app.active().selection.ranges(), [Range::point(0)]);
 
-    // Widening can also make spans overlap without giving them the same start.
-    // The later selection must resolve to the replacement retained for both,
-    // rather than becoming a phantom selection in the following row.
-    let mut overlapping = App::new(Config::default(), None).unwrap();
-    seed(&mut overlapping, "one two\nalpha beta\nomega");
-    overlapping.registers.insert(
+    assert_eq!(text(&app), "X X\nalpha");
+    assert_eq!(
+        app.active().selection.ranges(),
+        [Range::point(0), Range::point(2)]
+    );
+    assert!(app.registers[&'"'].linewise);
+}
+
+#[test]
+fn linewise_paste_over_partial_text_trims_only_the_final_terminator() {
+    for (register, expected) in [
+        ("copied\n", "prefix copied suffix"),
+        ("first\nsecond\n", "prefix first\nsecond suffix"),
+        ("first\r\nsecond\r\n", "prefix first\r\nsecond suffix"),
+    ] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, "prefix SELECTED suffix");
+        app.registers.insert(
+            '"',
+            Register {
+                text: register.to_owned(),
+                linewise: true,
+                directory: None,
+            },
+        );
+        app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(7, 14));
+
+        press(&mut app, 'p');
+
+        assert_eq!(text(&app), expected, "register {register:?}");
+        assert!(app.registers[&'"'].linewise);
+    }
+}
+
+#[test]
+fn a_full_text_characterwise_selection_still_keeps_its_line() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "target\nnext");
+    app.registers.insert(
         '"',
         Register {
-            text: "X\n".to_owned(),
+            text: "copied\n".to_owned(),
             linewise: true,
             directory: None,
         },
     );
-    overlapping.panes.get_mut(&0).unwrap().selection =
-        Selection::new(vec![Range::new(0, 9), Range::new(14, 17)], 0);
-    press(&mut overlapping, 'p');
-    assert_eq!(text(&overlapping), "X\nomega");
-    assert_eq!(
-        overlapping.active().selection.ranges(),
-        [Range::point(0)],
-        "both widened spans resolve to the one retained replacement"
-    );
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 5));
 
-    // Ranges on rows of their own each replace their own row.
-    let mut apart = App::new(Config::default(), None).unwrap();
-    seed(&mut apart, "one\ntwo\nthree");
-    apart.registers.insert(
-        '"',
-        Register {
-            text: "X\n".to_owned(),
-            linewise: true,
-            directory: None,
-        },
-    );
-    apart.panes.get_mut(&0).unwrap().selection =
-        Selection::new(vec![Range::new(0, 2), Range::new(8, 12)], 0);
-    press(&mut apart, 'p');
-    assert_eq!(text(&apart), "X\ntwo\nX");
-    assert_eq!(
-        apart.active().selection.ranges(),
-        [Range::point(0), Range::point(6)]
-    );
+    press(&mut app, 'p');
+
+    assert_eq!(text(&app), "copied\nnext");
 }
 
 #[test]

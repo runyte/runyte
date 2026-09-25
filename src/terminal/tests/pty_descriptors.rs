@@ -12,6 +12,7 @@ const FIXTURE: &str = "terminal::pty::descriptor_tests::executed_descriptor_prob
 
 // All Linux masters can have the same stat identity (/dev/ptmx). TIOCGPTN
 // distinguishes their peer numbers; st_dev also distinguishes devpts mounts.
+#[cfg(target_os = "linux")]
 fn identity(fd: RawFd) -> Option<String> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } < 0 {
@@ -31,6 +32,19 @@ fn identity(fd: RawFd) -> Option<String> {
         "{}:{}:{}:{peer}",
         stat.st_dev, stat.st_ino, stat.st_rdev
     ))
+}
+
+// Darwin assigns each endpoint its own character-device identity. Descriptor
+// numbers alone are insufficient because Command may reuse closed slots.
+#[cfg(target_os = "macos")]
+fn identity(fd: RawFd) -> Option<String> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } < 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    (stat.st_mode & libc::S_IFMT == libc::S_IFCHR)
+        .then(|| format!("{}:{}:{}", stat.st_dev, stat.st_ino, stat.st_rdev))
 }
 
 fn packet(stream: &mut UnixStream, bytes: &[u8]) {
@@ -76,7 +90,11 @@ fn executed_descriptor_probe() {
     deadline(&stream);
     packet(&mut stream, b"executed");
     let requested = String::from_utf8(receive(&mut stream)).unwrap();
-    let identities: Vec<_> = std::fs::read_dir("/proc/self/fd")
+    #[cfg(target_os = "linux")]
+    let descriptors = "/proc/self/fd";
+    #[cfg(target_os = "macos")]
+    let descriptors = "/dev/fd";
+    let identities: Vec<_> = std::fs::read_dir(descriptors)
         .unwrap()
         .map(|entry| {
             entry
@@ -209,5 +227,22 @@ fn endpoint_identity_distinguishes_simultaneous_ptys() {
         .collect();
     for (index, identity) in identities.iter().enumerate() {
         assert!(!identities[..index].contains(identity));
+    }
+}
+
+#[test]
+fn allocated_slave_has_initial_size_and_observes_master_resize() {
+    let (master, slave) = open_pair(93, 27).unwrap();
+    for (columns, rows) in [(93, 27), (112, 35)] {
+        if columns == 112 {
+            set_size(master.as_raw_fd(), columns, rows).unwrap();
+        }
+        let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
+        assert_eq!(
+            unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCGWINSZ as _, size.as_mut_ptr()) },
+            0
+        );
+        let size = unsafe { size.assume_init() };
+        assert_eq!((size.ws_col, size.ws_row), (columns, rows));
     }
 }

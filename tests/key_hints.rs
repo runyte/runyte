@@ -1142,7 +1142,7 @@ fn help_scrolls_and_searches_like_any_other_buffer() {
     app.handle_key(KeyStroke::char('e')).unwrap();
     let end = render(80, 24, &mut app, &hints);
     assert!(
-        end.contains("Ctrl-o") || end.contains("Arrows and named keys"),
+        end.contains("Command"),
         "moving to the end did not scroll help:\n{end}"
     );
 

@@ -118,10 +118,9 @@ impl App {
         view.model.selected_actions(&selected)
     }
 
-    pub(super) fn open_plugin_actions(&mut self) -> bool {
-        let crate::keymap::BindingScope::Plugin(owner) = self.key_binding_scope() else {
-            return false;
-        };
+    /// The view commands the active plugin view's Tab menu offers, in menu
+    /// order. Help lists the same commands, so the two cannot disagree.
+    pub(super) fn plugin_menu_commands(&self, owner: usize) -> Vec<u64> {
         let allowed = self
             .plugins
             .instances
@@ -166,6 +165,56 @@ impl App {
                 command.id,
             )
         });
+        commands.into_iter().map(|command| command.id).collect()
+    }
+
+    /// What the active plugin view adds to contextual help, or `None` when
+    /// the active view is not a live plugin view.
+    ///
+    /// The topic is looked up in the owner's current registration. A stopped
+    /// plugin's views keep their buffers but leave the registry, so they fall
+    /// back to the ordinary overview rather than to prose nothing now answers.
+    pub(super) fn plugin_help_page(&self) -> Option<crate::help::PluginPage<'_>> {
+        let crate::keymap::BindingScope::Plugin(owner) = self.key_binding_scope() else {
+            return None;
+        };
+        let application = &self.plugins.instances.get(&owner)?.application;
+        let help = application.help.as_ref();
+        let topic = application
+            .views
+            .values()
+            .find(|view| view.buffer == self.active().buffer)
+            .and_then(|view| view.model.help.as_ref())
+            .and_then(|topic| help?.topics.get(topic));
+        let actions = self
+            .plugin_menu_commands(owner)
+            .into_iter()
+            .map(|id| {
+                let command = &self.plugins.commands[&id];
+                let presentation = self.plugin_command_presentation(command);
+                crate::help::PluginAction {
+                    label: presentation.map_or(command.local.as_str(), |p| p.label.as_str()),
+                    description: command.description.as_str(),
+                    group: presentation.and_then(|p| p.group.as_deref()),
+                }
+            })
+            .collect();
+        Some(crate::help::PluginPage {
+            application: help.map_or("", |help| help.application.as_str()),
+            topic,
+            actions,
+        })
+    }
+
+    pub(super) fn open_plugin_actions(&mut self) -> bool {
+        let crate::keymap::BindingScope::Plugin(owner) = self.key_binding_scope() else {
+            return false;
+        };
+        let commands = self
+            .plugin_menu_commands(owner)
+            .into_iter()
+            .map(|id| &self.plugins.commands[&id])
+            .collect::<Vec<_>>();
         if commands.is_empty() {
             return false;
         }

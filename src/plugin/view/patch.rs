@@ -208,6 +208,7 @@ impl Model {
             model.preview = header.preview;
             model.status = header.status;
             model.metadata = header.metadata;
+            model.help = header.help;
             model.action_presentation = header.action_presentation;
             model.actions = header.actions;
         }
@@ -226,6 +227,7 @@ impl Model {
             preview: self.preview.clone(),
             status: self.status.clone(),
             metadata: self.metadata.clone(),
+            help: self.help.clone(),
             action_presentation: self.action_presentation.clone(),
             actions: self.actions.clone(),
         }

@@ -65,6 +65,7 @@ fn registration(commands: Vec<api::Registration>) -> api::ClientMessage {
         runyte: format!("={}", plugin::compatibility::HOST_VERSION),
         settings_schema: None,
         name: "Test plugin".into(),
+        help_topics: None,
         commands,
         required_capabilities: Default::default(),
         optional_capabilities: ["text".into(), "selections".into(), "workspace".into()].into(),

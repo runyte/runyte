@@ -812,11 +812,14 @@ terminal children; switching away remains safe because the old host retains
 them.
 
 Recently visited workspaces are recorded in Runyte's per-user cache, not in
-the runtime registry, so stopped projects remain listed across logout. A clean
-host with no attached client, outstanding `--wait` request, or live terminal
-child retires after
-`workspace.idle_retirement_minutes` (1440 by default); zero disables
-retirement. `--session-list` prints the same running/stopped inventory.
+the runtime registry, so stopped projects remain listed across logout. By
+default, persistent hosts for every visited project keep running after detach,
+along with their language servers, until stopped with `:session-stop` or the
+host otherwise shuts down. Set `workspace.idle_retirement_minutes` to a
+positive number to retire a clean host after that many minutes without an
+attached client, outstanding `--wait` request, or live terminal child. Its
+default of `0` disables idle retirement. `--session-list` prints the same
+running/stopped inventory.
 
 ### Session and destination navigation
 
@@ -1421,9 +1424,8 @@ The active theme is not among them; `Space o t` shows and changes it.
 
 ## Install and run
 
-Linux and macOS provide the full feature set. This source tree also includes
-provisional [native Windows support](#windows-support). The released 0.3.1
-packages predate that work; use a build from this branch to try it.
+Linux and macOS provide the full feature set.
+[Native Windows support](#windows-support) is provisional.
 
 Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
 [GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
@@ -1791,6 +1793,9 @@ clears this feedback. This applies to the command line, search and rename prompt
 Finder and list queries, session-directory queries, and typed Git confirmations.
 Literal backslash sequences such as `\n` remain ordinary prompt text. Buffers and
 terminal sessions continue to accept multiline paste.
+Terminal paste actions, including macOS `Cmd-v`, preserve line breaks even
+when the terminal sends them as carriage returns. Existing LF and CRLF
+separators are preserved.
 
 `:notifications` (alias `:not`) opens `[notifications]`, a single searchable,
 read-only buffer containing the retained history newest first. Each entry has
@@ -1869,7 +1874,9 @@ come apart. The maximized pane's title carries `[zen]` or `[fullscreen]` after
 its `[+]` and `[RO]` markers, so the one pane on screen says which view is
 hiding the rest of the layout; an ordinary pane carries neither tag.
 In the Runyte grammar, `Space ?` opens contextual help for the current buffer
-type. `:help` and its `:?` alias instead open the general Runyte manual;
+type. In a plugin view it lists the actions Tab offers there. A plugin that
+supplies help topics also explains the view's workflow, such as browsing a
+table's rows or inspecting one record. `:help` and its `:?` alias instead open the general Runyte manual;
 `:help <topic>` opens the same manual at a section such as
 `:help regex`, `:help search`, `:help mouse`, `:help git`, `:help sessions`,
 or `:help lsp`. Both kinds of help are ordinary read-only buffers, so they
@@ -1899,14 +1906,19 @@ Contextual help describes the view it was opened over — one document per
 buffer type, not one per mode. NORMAL and SELECT bind the same keys to the same
 commands, so a text buffer has a single `TEXT` document that describes both
 modes in its prose rather than two whose key tables would be identical.
-Sections run from most to least specific:
+The generated key lists then cover each mode:
 
-- **Buffer keys** — direct keys unique to the view and the contextual actions
-  its `Tab` menu opens, such as `Tab s` to stage a changed-file row.
-- **Where to start** — every prefix that opens the hint popup: `Space`, `g`,
-  `z`, `Z`, `m`, and `Ctrl-w`.
-- **Direct keys** — everything that acts on the first press, grouped into
-  letters and punctuation, `Ctrl` chords, `Alt` chords, and named keys.
+- **Normal and Select** — buffer-specific keys and `Tab` actions first,
+  followed by prefixes whose hint popup teaches the rest, then direct keys
+  grouped by letters and punctuation, `Ctrl` chords, `Alt` chords, and named
+  keys. Shifted `<` and `>` also carry searchable `Shift-<` and `Shift->`
+  spellings.
+- **Insert and Replace** — shared keys appear once, with separate lists for
+  keys that differ between the modes. A read-only view says when these modes
+  are unavailable. Terminal Insert describes keys sent to the child and
+  Runyte-owned exceptions separately.
+- **Command** — prompt controls are described under their own heading. The
+  command prompt handles these directly, outside the editor keymap registry.
 
 `Ctrl-o` and `Ctrl-i` walk every recorded position, including terminal surfaces
 and positions within one file. `Alt-o` and `Alt-i` walk the same history but
@@ -1916,9 +1928,9 @@ with `:c` or `Space b c` keeps every pane and returns each one to its own most
 recently used live buffer. When none remains, the pane receives a new scratch
 buffer.
 
-Every key named there is read from the keymap registry when help is opened, so
-it cannot drift from what the keys do. In a read-only view, keys that would
-only report a refusal are left out entirely.
+The modal and Insert/Replace key rows are read from the keymap registry when
+help is opened, so they follow configured bindings. In a read-only view, keys
+that would only report a refusal are left out entirely.
 
 In Normal and Select modes, `Tab` asks what can be done with the thing under
 the cursor. Git views open a contextual action menu: use arrows or `j`/`k` to
@@ -1970,7 +1982,7 @@ context; scoped explorer keys are documented under
 | `&` | Pad until every cursor shares the rightmost display column |
 | `_` | Delete trailing whitespace from every selected line; `%` then `_` strips the buffer |
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
-| `Space p .` | Toggle dim `·`, `→`, and `↵` markers for spaces, tabs, and line endings |
+| `Space p .` | Toggle dim `·`, `→`, and `¬` markers for spaces, tabs, and line endings |
 | `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
 | `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
@@ -1998,8 +2010,10 @@ context; scoped explorer keys are documented under
 pastes after the caret, as it always has; with a range that holds text it
 replaces that text, so selecting a word and pressing `p` puts the register
 there instead of beside it. A linewise register — the one `x y` or `Y`
-writes — replaces every line the selection touched rather than landing inside
-one. The register is not consumed and the replacement is left selected, so the
+writes — pastes as whole lines at a bare caret. Over a characterwise selection,
+it replaces exactly the selected span, with its final line ending removed;
+inner line breaks remain. Over an `x`/`X` or Vim line selection, it replaces
+whole lines. The register is not consumed and the replacement is left selected, so the
 same content can be pasted over one range after another, and a multi-selection
 from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
@@ -2082,7 +2096,7 @@ The direct editing keys shared by Insert and Replace modes are:
 | `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |
 | `Ctrl-u` / `Ctrl-k` | Delete to the start / end of the line |
 | `Enter` / `Ctrl-j` | Insert a newline with the current indentation and optional smart indentation |
-| `Tab` / `Shift-Tab` | Insert spaces to the next configured tab stop / insert a literal tab |
+| `Tab` / `Shift-Tab` | Insert the configured indent style / the other style (`spaces` to the next tab stop, or one tab) |
 | `Left` / `Down` / `Up` / `Right` | Move the caret |
 | `Home` / `End`; `PageUp` / `PageDown` | Move to a line boundary; move by a page |
 | `Ctrl-x` | Ask the language server for completions |
@@ -2229,7 +2243,7 @@ stays a choose-one picker.
 `Space p` groups text presentation and the commands that lay selected lines
 out. `Space p .` toggles visible whitespace for the current session.
 Spaces become `·`, tabs begin with `→` and retain enough following cells to
-reach the same tab stop, and a real LF or CRLF line ending becomes one `↵`.
+reach the same tab stop, and a real LF or CRLF line ending becomes one `¬`.
 An unterminated final line has no marker. These symbols are display-only: they
 do not change buffer text, offsets, selections, wrapping, or saved files.
 
@@ -2692,7 +2706,9 @@ reachable. Every other exclusion still holds: `.git`, `.runyte`, the workspace
 state directory, symlinks, and `editor.show_hidden_files` apply exactly as
 before. `Space / p` asks for a path first, completing entries as they are
 typed; `~` expands, a relative path resolves against the working directory,
-and `Tab` accepts the selected row. The path need not be inside the workspace.
+and `Tab` accepts the selected row. Enter does too while the typed text does
+not yet name an existing entry; once it does, Enter opens the finder there.
+The path need not be inside the workspace.
 Both scopes survive the `Tab` into content mode, so an ignored file's lines
 are searchable too.
 
@@ -3015,12 +3031,12 @@ counts, its earliest and latest author dates, and a reminder of how to move
 between pages, separated by `|` and all within 80 characters. The paging
 reminder is a muted, read-only hint rather than buffer text, so it cannot be
 selected, searched, or copied. Each row shows the short object ID, the author
-date as `YYYY-MM-DD`, the author, and the subject, while keeping the full
-object ID behind it. A commit's branch and tag refs, when it has any, are
-shown the same way — a muted, read-only hint rather than text appended to
-the subject. Unlike the explorer's symlink hints, a commit's ref hint is not
-aligned to a shared column: it sits one space past that row's own text, so
-one commit with an unusually long subject or long ref list never pushes a
+date and time as `YYYY-MM-DD HH:MM` in the commit's timezone, the author, and
+the subject, while keeping the full object ID behind it. A commit's branch and
+tag refs, when it has any, are shown the same way — a muted, read-only hint
+rather than text appended to the subject. Unlike the explorer's symlink hints,
+a commit's ref hint is not aligned to a shared column: it sits one space past
+that row's own text. A long subject or ref list therefore never pushes a
 shorter row's hint off a narrow pane.
 
 Enter opens bounded commit metadata and Git's patch. `Ctrl-n` and `Ctrl-p` move
@@ -3389,14 +3405,17 @@ nodes, they use a balanced scan bounded to the enclosing Markdown syntax node;
 escaped delimiters are ignored and injected code remains syntax-structural.
 
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
-at most one `tab_width`-sized space level when the syntax indentation query
-requests it. On list items beginning with `-`, `*`, `+`, a decimal number, a
-single letter, or a canonical uppercase Roman numeral followed by `.`, it
-instead aligns the next line under the first content character, including at
-nested indentation.
-Set `editor.smart_newline` to `true` to enable syntax indentation and list
-alignment. By default, Enter preserves only the row's existing leading
-indentation.
+at most one level in `editor.indent` style when the syntax indentation query
+requests it; a grammar that requires a tab still gets a tab. With
+`editor.smart_newline` enabled, as it is by default, Markdown list items
+continue on Enter: bullets keep their marker, numbered and lettered items
+advance, and task items start unchecked. Enter on an empty item ends the list.
+Backspace after an empty marker changes it to a continuation indent; another
+Backspace removes that alignment in one press. A single `I.` or `V.` advances
+as a letter unless the preceding sibling establishes Roman numbering. In other
+file types, smart newline retains the existing alignment under a list item's
+content. With `editor.smart_newline: false`, Enter preserves only the row's
+existing leading indentation.
 Unsupported, malformed, oversized, and unterminated-final-line cases retain
 the exact prefix and never block newline insertion. Syntax folds
 are pane-local: two panes may collapse different regions of one shared buffer,
@@ -3475,7 +3494,8 @@ that field explicitly opts in. Validation runs without blocking editor input.
 Plugins can also opt text fields into local path completion. Type a directory
 or filename prefix, select with Up/Down, and press Tab to complete. Directory
 suggestions continue into that directory. Shift-Tab returns to the previous
-field, Enter submits, and Escape cancels. Relative paths start at the workspace
+field and Escape cancels. Enter completes the selected suggestion while the
+typed path does not name an existing entry, and submits once it does. Relative paths start at the workspace
 root; spaces and quotes are literal, and `~` or environment variables are not
 expanded. Older hosts retain the plugin's ordinary text field behavior.
 Provider applications can also open version-bound UTF-8 documents with normal
@@ -3587,6 +3607,18 @@ the editable directory explorer. A leading `~` means the user's home directory,
 so paths such as `:open ~/.bashrc` and `:open ~/projects` work without shell
 expansion. Dotfiles are offered when their name begins with `.` or hidden files
 are enabled.
+
+Every path prompt treats Enter the same way: the palette's path arguments, the
+`Space / p` finder path, and plugin fields that complete local paths. While
+hints are showing and the typed path does not name an existing file or
+directory, Enter accepts the selected hint exactly as Tab does. Once the path
+exists, Enter submits it, so `:cd sr` Enter Enter completes to `src/` and then
+changes into it. A new name that is a prefix of an existing one is completed
+too: `:w notes` beside `notes.md` becomes `:w notes.md`. Hints only follow a
+cursor at the end of the line, so press Left and then Enter to submit `notes`
+as typed. Completion in a buffer, of
+words, language-server items, or paths, still takes only Tab; Enter there
+inserts a newline.
 
 ```text
 :cd <path>               change the working directory; retarget an active explorer
@@ -4112,7 +4144,9 @@ persistent launch path is selected before the editor application starts; the
 saved choice applies to future bare launches.
 `workspace.idle_retirement_minutes` is in the same menu but applies at once: a
 persistent host reads it each time it considers retiring, so a shorter or
-longer interval takes effect without restarting the host it governs.
+longer interval takes effect without restarting the host it governs. Its
+default is `0`, which keeps idle hosts running; set a positive interval to
+retire them automatically, or use `:session-stop` to stop a host explicitly.
 Unrelated YAML flow collections (`{...}` and `[...]`), including multiline
 ones, are preserved when saving a setting. The setting being changed must
 still be a scalar in a block mapping; editing inside a flow mapping is not
@@ -4189,14 +4223,15 @@ editor:
   grammar: runyte # `helix` is accepted as a compatibility alias
   line_numbers: true
   tab_width: 4
-  smart_newline: false # true adds syntax indentation and aligns list continuations
+  indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
+  smart_newline: true # adds syntax indentation and continues Markdown lists; false keeps only leading indent
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
   show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
   explorer_sort: name # name/modified/size, each also _descending; directories group first
   explorer_details: false # ls -l columns before each explorer row; ? toggles it in an explorer
   soft_wrap: false
-  render_whitespace: false # show · for spaces, → for tabs, and ↵ for line endings
+  render_whitespace: false # show · for spaces, → for tabs, and ¬ for line endings
   zen_width: 100 # maximum text width while :zen is active; editable in :config's popup
   hard_wrap_width: 80 # width for Space p w and Space p r; editable in :config's popup
   scratch_markdown: true # Space p r refills and ? renders the pathless scratch buffer as Markdown
@@ -4472,7 +4507,7 @@ Markdown source alike: `markup.bold` and `markup.heading` are drawn bold,
 than to the theme, because bold text is bold in every palette; a theme chooses
 the colour that goes with it.
 
-`whitespace` colours the display-only `·`, `→`, and `↵` markers. When a custom
+`whitespace` colours the display-only `·`, `→`, and `¬` markers. When a custom
 theme omits it, Runyte derives a very dim colour one small step away from that
 theme's `background`; a theme using the terminal's `reset` background falls
 back to `muted` because its actual ground is unknown.

@@ -169,6 +169,29 @@ async fn provider_reload_dirty_choices_preserve_text_until_physical_acceptance()
 }
 
 #[tokio::test]
+async fn frontend_repeat_keeps_provider_reload_pending_until_fresh_enter() {
+    let (_root, mut host) = host();
+    let (_requester, mut provider, _, index) = document(&mut host, "base");
+    host.app.buffers[index].apply(&Transaction::insert(0, "local "));
+    let mut events = model_service(&mut host);
+    begin(&mut host, &mut provider, index, "remote");
+    model_complete(&mut host, &mut events).await;
+    let enter = crate::input::InputEvent::Key(crate::input::KeyStroke::parse("Enter").unwrap());
+    let generation = host.app.plugins.foreground_generation;
+    host.execute_frontend_input(enter.clone(), true).unwrap();
+    host.sync_provider_recoveries();
+    assert!(host.app.plugins.foreground_generation > generation);
+    assert!(host.app.plugins.provider_reload.is_some());
+    assert!(host.app.plugins.provider_reload_decision.is_none());
+    assert_eq!(host.app.buffers[index].to_string(), "local base");
+
+    host.execute_frontend_input(enter, false).unwrap();
+    host.sync_provider_recoveries();
+    assert!(host.app.plugins.provider_reload.is_none());
+    assert!(host.plugin_recoveries.is_empty());
+}
+
+#[tokio::test]
 async fn provider_reload_stale_text_discards_prepared_result_and_keeps_baseline() {
     let (_root, mut host) = host();
     let (_requester, mut provider, _, index) = document(&mut host, "base");

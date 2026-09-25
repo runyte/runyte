@@ -185,6 +185,7 @@ mod external_dispatch;
 mod git;
 mod git_discovery;
 mod language;
+mod markdown_list_continuation;
 mod markdown_positions;
 mod markdown_tables;
 mod mouse_autoscroll;

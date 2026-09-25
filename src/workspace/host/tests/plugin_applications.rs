@@ -22,6 +22,8 @@ mod filesystem_review;
 mod filesystem_stat;
 #[path = "plugin_handoffs.rs"]
 mod handoffs;
+#[path = "plugin_help.rs"]
+mod help;
 #[path = "plugin_interaction.rs"]
 mod interaction;
 #[path = "plugin_job_feedback.rs"]
@@ -85,6 +87,7 @@ fn setup(
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),
+            help_topics: None,
             commands: vec![api::Registration {
                 default_binding: None,
                 presentation: None,
@@ -183,6 +186,7 @@ fn application_palette_validates_arguments_before_closing_and_submits_quoted_val
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Arguments".into(),
+            help_topics: None,
             commands: vec![api::Registration {
                 default_binding: None,
                 presentation: None,
@@ -490,6 +494,7 @@ fn required_capabilities_registration_rollback_and_request_reuse_are_bounded() {
                 settings_schema: None,
                 version: api::VERSION.into(),
                 name: "Denied".into(),
+                help_topics: None,
                 commands: vec![],
                 required_capabilities: ["jobs".into()].into(),
                 optional_capabilities: Default::default(),
@@ -694,6 +699,7 @@ fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
             settings_schema: None,
             version: api::VERSION.into(),
             name: "Tasks".into(),
+            help_topics: None,
             commands: vec![
                 api::Registration {
                     default_binding: None,

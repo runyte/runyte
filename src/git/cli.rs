@@ -2671,7 +2671,8 @@ impl GitProvider for GitCliProvider {
             OsString::from("--date-order"),
             OsString::from("--abbrev=12"),
             OsString::from(format!("--max-count={count}")),
-            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%s%x00%D"),
+            OsString::from("--date=format:%Y-%m-%d %H:%M"),
+            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%ad%x00%s%x00%D"),
             OsString::from(start),
         ];
         let mut commits = parse_log(&self.run_read_bounded(
@@ -2703,7 +2704,8 @@ impl GitProvider for GitCliProvider {
             OsString::from("--date-order"),
             OsString::from("--abbrev=12"),
             OsString::from(format!("--max-count={count}")),
-            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%s%x00%D%x00%B"),
+            OsString::from("--date=format:%Y-%m-%d %H:%M"),
+            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%ad%x00%s%x00%D%x00%B"),
             OsString::from("HEAD"),
         ];
         let mut commits = parse_commit_search(&self.run_read_bounded(
@@ -3016,7 +3018,8 @@ impl GitProvider for GitCliProvider {
             OsString::from("-z"),
             OsString::from("-1"),
             OsString::from("--abbrev=12"),
-            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%s%x00%D"),
+            OsString::from("--date=format:%Y-%m-%d %H:%M"),
+            OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%ad%x00%s%x00%D"),
             OsString::from(oid),
         ];
         let mut summaries = parse_log(&self.run_read_bounded(

@@ -475,6 +475,11 @@ impl App {
                 .copied()
                 .map(SettingValue::ExplorerSort)
                 .collect(),
+            SettingType::Indent => crate::config::IndentStyle::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::Indent)
+                .collect(),
             SettingType::Integer { minimum, maximum } => {
                 (minimum..=maximum).map(SettingValue::Integer).collect()
             }
@@ -530,11 +535,11 @@ impl App {
             .enumerate()
             .map(|(index, value)| {
                 let marker = if *value == effective {
-                    "effective"
+                    "selected"
                 } else if value.to_string() == saved {
                     "saved"
                 } else {
-                    "choice"
+                    ""
                 };
                 let item = PickerItem::new(value.to_string(), marker, index);
                 match self.setting_value_group(setting, value) {
@@ -613,6 +618,7 @@ impl App {
             | SettingValue::WorkspaceMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
+            | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}
         }
         self.status(format!(
@@ -721,6 +727,7 @@ impl App {
             | SettingValue::WorkspaceMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
+            | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}
         }
         // An explorer setting changed from this page has to reach the open

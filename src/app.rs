@@ -2780,6 +2780,9 @@ pub struct App {
     pub mode: Mode,
     /// The reversible overwrite trail owned by a live Replace-mode edit.
     replace_session: Option<ReplaceSession>,
+    /// A freshly converted empty Markdown item can lose its alignment in one
+    /// further Backspace, including when no earlier sibling identifies it.
+    list_alignments: Vec<editing::ListAlignment>,
     pub command: String,
     pub command_cursor: usize,
     pub command_selection: usize,
@@ -3384,6 +3387,7 @@ impl App {
             .as_ref()
             .map(|maps| Arc::clone(&maps[usize::from(config.editor.fast_pane_keys)]))
             .unwrap_or_else(|| keymap_for(config.editor.fast_pane_keys));
+        let keymap = Arc::new(keymap.with_indent_style(config.editor.indent));
         let live_help =
             crate::key_spelling::resolve(crate::key_spelling::actionable::STARTUP_HELP, &keymap)
                 .expect("startup help marker must resolve")
@@ -3418,6 +3422,7 @@ impl App {
             maximized: None,
             mode: initial_mode,
             replace_session: None,
+            list_alignments: Vec::new(),
             command: String::new(),
             command_cursor: 0,
             command_selection: 0,
@@ -3738,7 +3743,7 @@ enum ListAction {
 /// `Escape` cannot be it: `vim` and `htop` inside the pane need it, and every
 /// agent uses it too. `Ctrl-\\` begins the staged Normal/review transition;
 /// `Ctrl-w` begins the Insert-mode pane-navigation namespace instead.
-fn is_terminal_normal_key(key: KeyStroke) -> bool {
+pub(crate) fn is_terminal_normal_key(key: KeyStroke) -> bool {
     // Two spellings of Ctrl-\\. A terminal implementing the kitty keyboard
     // protocol reports `Ctrl-\` as the character it is; a legacy one has only
     // the control byte `0x1c`, which Crossterm decodes as `Ctrl-4` because

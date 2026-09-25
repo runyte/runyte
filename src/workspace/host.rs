@@ -1460,6 +1460,19 @@ impl WorkspaceHost {
         Ok(HostInputOutcome::Applied)
     }
 
+    /// Preserves frontend repeat provenance through the host input boundary.
+    pub fn execute_frontend_input(
+        &mut self,
+        input: InputEvent,
+        repeated: bool,
+    ) -> Result<HostInputOutcome> {
+        if repeated {
+            self.execute_repeated_input(input)
+        } else {
+            self.execute(HostCommand::Input(input))
+        }
+    }
+
     pub fn apply_event(&mut self, event: HostEvent) {
         match event {
             HostEvent::Syntax(event) => {

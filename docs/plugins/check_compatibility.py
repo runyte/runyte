@@ -69,6 +69,27 @@ class CompatibilityTests(unittest.TestCase):
                                  optional_features=['view-action-presentation'])
         self.assertEqual(sent[0]['commands'][0]['presentation'], {'label': 'Open value'})
 
+    def test_help_topics_are_sent_only_to_hosts_that_offer_view_help(self):
+        topics = [{'id': 'rows', 'title': 'Rows', 'paragraphs': ['Rows shows one page.']}]
+        with self.assertRaises(ValueError):
+            Application('Check', [], ['views'], runyte='>=0.3.0, <0.4.0', help_topics=topics)
+        app, sent = self.handshake(optional_features=['view-help'], help_topics=topics)
+        self.assertNotIn('help_topics', sent[0])
+        with self.assertRaises(PluginError) as error:
+            app.publish_model(1, 'm:1', {'title': 'Rows', 'purpose': 'list', 'rows': [], 'help': 'rows'})
+        self.assertEqual(error.exception.code, 'unsupported')
+        hello = {'type': 'hello', 'version': VERSION, 'host_version': '0.3.1',
+                 'capabilities': ['views'], 'features': ['view-help'], 'limits': TEST_LIMITS}
+        with self.assertRaises(PluginError) as error:
+            self.handshake(hello=hello, optional_features=['view-help'], help_topics=topics)
+        self.assertEqual(error.exception.code, 'invalid_registration')
+        ack = {'type': 'registered', 'runyte': '>=0.3.1, <0.4.0', 'capabilities': ['views'],
+               'features': ['view-help'], 'limits': TEST_LIMITS}
+        app, sent = self.handshake(hello=hello, registered=ack, optional_features=['view-help'],
+                                   help_topics=topics)
+        self.assertEqual(sent[0]['help_topics'], topics)
+        self.assertIn('view-help', app.features)
+
     def test_acknowledged_state_and_ignorable_additions(self):
         app, sent = self.handshake(optional_features=['extension', 'unavailable'], optional_capabilities=['jobs'])
         self.assertEqual(app.host_version, '0.3.1')

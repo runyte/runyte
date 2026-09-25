@@ -8,8 +8,8 @@
 //! plugin lifecycle is the host's half and is covered beside it.
 
 use super::*;
-use crate::config::WorkspaceMode;
-use crate::keymap::Key;
+use crate::config::{IndentStyle, WorkspaceMode};
+use crate::keymap::{Key, KeySequence, Lookup};
 use crate::lsp::LspCommand;
 
 /// A unique temporary configuration path per test.
@@ -47,6 +47,67 @@ fn an_edited_setting_takes_effect_without_restarting() {
     assert_eq!(app.persisted_config.editor.tab_width, 8);
     assert!(!app.status_error, "{}", app.status);
     assert!(app.status.contains("reloaded config"), "{}", app.status);
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn indent_style_reload_updates_the_live_key_registry_and_rejects_unknown_values() {
+    let (mut app, path) = editor("indent.yaml", "editor:\n  indent: spaces\n");
+    let description = |app: &App, key: Key| {
+        let Lookup::Exact(binding) = app.keymap().lookup(Mode::Insert, &KeySequence::from(key))
+        else {
+            panic!("insert binding is missing");
+        };
+        binding.description.to_string()
+    };
+    let tab = Key::plain(KeyCode::Tab);
+    let other = Key::new(KeyCode::BackTab, Modifiers::SHIFT);
+    assert!(description(&app, tab).contains("spaces to the next tab stop (indent: spaces)"));
+    assert!(description(&app, other).contains("a tab (indent: spaces)"));
+
+    fs::write(&path, "editor:\n  indent: tabs\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert_eq!(app.config.editor.indent, IndentStyle::Tabs);
+    assert!(description(&app, tab).contains("a tab (indent: tabs)"));
+    assert!(description(&app, other).contains("spaces to the next tab stop (indent: tabs)"));
+
+    app.open_setting_values(SettingId::EditorIndent);
+    assert_eq!(
+        app.list_actions
+            .iter()
+            .filter_map(|action| match action {
+                ListAction::SettingValue {
+                    setting: SettingId::EditorIndent,
+                    value: SettingValue::Indent(value),
+                } => Some(*value),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        IndentStyle::ALL
+    );
+    let spaces = app
+        .list_actions
+        .iter()
+        .position(|action| {
+            matches!(
+                action,
+                ListAction::SettingValue {
+                    value: SettingValue::Indent(IndentStyle::Spaces),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    app.list.as_mut().unwrap().selected = spaces;
+    app.preview_selected_setting_value();
+    assert_eq!(app.config.editor.indent, IndentStyle::Spaces);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.config.editor.indent, IndentStyle::Tabs);
+
+    fs::write(&path, "editor:\n  indent: mixed\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.status_error);
+    assert_eq!(app.config.editor.indent, IndentStyle::Tabs);
     fs::remove_file(path).unwrap();
 }
 

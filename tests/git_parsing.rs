@@ -75,7 +75,7 @@ fn detail(error: &GitError) -> String {
 
 const OID: &[u8] = b"1234567890abcdef1234567890abcdef12345678";
 
-/// The eight `git log -z` fields, in order, for one ordinary commit.
+/// The nine `git log -z` fields, in order, for one ordinary commit.
 fn log_fields() -> Vec<Vec<u8>> {
     vec![
         OID.to_vec(),
@@ -84,6 +84,7 @@ fn log_fields() -> Vec<Vec<u8>> {
         b"Author".to_vec(),
         b"1700000000".to_vec(),
         b"2023-11-14".to_vec(),
+        b"2023-11-14 22:13".to_vec(),
         b"Subject".to_vec(),
         Vec::new(),
     ]
@@ -120,6 +121,19 @@ fn a_log_record_whose_author_time_is_not_an_integer_is_refused() {
 }
 
 #[test]
+fn a_log_record_with_a_mismatched_or_non_ascii_author_clock_is_refused() {
+    for value in [
+        b"2023-11-15 00:13".as_slice(),
+        b"2023-11-14 24:00",
+        b"2023-11-\xff4 12:00",
+        "2023-11-1é 12:0".as_bytes(),
+        b"2023-11-14 12:\xff0",
+    ] {
+        assert!(parse_log(&log_with(6, value)).is_err());
+    }
+}
+
+#[test]
 fn a_log_field_that_is_not_utf8_is_refused_rather_than_replaced() {
     // Author names and subjects are read leniently, because a commit written
     // in an unknown encoding is still worth showing. The identities and the
@@ -140,12 +154,12 @@ fn a_log_field_that_is_not_utf8_is_refused_rather_than_replaced() {
 
 #[test]
 fn a_commit_search_record_missing_its_message_is_refused() {
-    // Commit search asks for the log's eight fields plus the full message.
-    // Eight fields alone parse perfectly well as a log record, so the count
-    // is the only thing that can catch a query that lost its ninth field.
-    let error = parse_commit_search(&log_with(7, b"HEAD -> main")).unwrap_err();
+    // Commit search asks for the log's nine fields plus the full message.
+    // Nine fields alone parse perfectly well as a log record, so the count
+    // is the only thing that can catch a query that lost its tenth field.
+    let error = parse_commit_search(&log_with(8, b"HEAD -> main")).unwrap_err();
     assert!(
-        detail(&error).contains("commit-search record does not contain nine fields"),
+        detail(&error).contains("commit-search record does not contain ten fields"),
         "{error}"
     );
 

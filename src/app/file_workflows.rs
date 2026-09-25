@@ -470,11 +470,11 @@ impl App {
             .map(|(index, value)| {
                 let detail = if *value == effective {
                     selected = index;
-                    "in use"
+                    "selected"
                 } else if *value == saved {
                     "saved"
                 } else {
-                    "choice"
+                    ""
                 };
                 PickerItem::new(value.to_string(), detail, index)
             })

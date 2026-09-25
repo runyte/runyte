@@ -732,6 +732,7 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         | crate::settings::SettingType::SessionStrip
         | crate::settings::SettingType::WorkspaceMode
         | crate::settings::SettingType::ExplorerSort => "choice".to_owned(),
+        crate::settings::SettingType::Indent => "choice".to_owned(),
     };
     let show_error = app.status_error && !app.displayed_status_message().is_empty();
     let area = to_tui_rect(setting_popup_area(editor_area));
@@ -4996,6 +4997,36 @@ mod tests {
         assert!(
             title.width() <= usize::from(setting_choice_popup_area(editor).width - 2),
             "the setting choice popup cannot show its own key hints"
+        );
+    }
+
+    #[test]
+    fn an_unlabelled_choice_row_uses_no_detail_separator_cells() {
+        let row = crate::snapshot::OverlayRow {
+            heading: false,
+            identity: crate::snapshot::OverlayIdentity::Index(0),
+            label: "name, A to Z".to_owned(),
+            detail: String::new(),
+            trailing_detail: String::new(),
+            available: true,
+            dimmed: false,
+            muted: Vec::new(),
+            emphasis: Vec::new(),
+            detail_emphasis: Vec::new(),
+        };
+        let plain_width = snapshot_row_width(OverlayKind::ResultList, &row);
+        assert_eq!(
+            usize::from(plain_width),
+            SELECTION_GUTTER.width() + row.label.width()
+        );
+
+        let labelled = crate::snapshot::OverlayRow {
+            detail: "selected".to_owned(),
+            ..row
+        };
+        assert_eq!(
+            usize::from(snapshot_row_width(OverlayKind::ResultList, &labelled)),
+            usize::from(plain_width) + 2 + "selected".width()
         );
     }
 

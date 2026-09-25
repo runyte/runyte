@@ -659,6 +659,44 @@ fn live_process_state(pid: u32) -> String {
     state
 }
 
+/// Bounded diagnostic inventory of only this fixture's Git/editor descendants.
+fn fixture_process_tree(root: u32) -> String {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,state=,time=,comm="])
+        .output();
+    let Ok(output) = output else {
+        return "process inventory unavailable".into();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let records: Vec<_> = text
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((
+                fields.next()?.parse::<u32>().ok()?,
+                fields.next()?.parse::<u32>().ok()?,
+                line,
+            ))
+        })
+        .collect();
+    let mut owned = vec![root];
+    for _ in 0..3 {
+        let children: Vec<_> = records
+            .iter()
+            .filter(|(pid, parent, _)| owned.contains(parent) && !owned.contains(pid))
+            .map(|(pid, _, _)| *pid)
+            .take(16 - owned.len())
+            .collect();
+        owned.extend(children);
+    }
+    records
+        .iter()
+        .filter(|(pid, _, _)| owned.contains(pid))
+        .map(|(_, _, line)| line.chars().take(256).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 async fn wait_child(child: &mut Child) -> ExitStatus {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -2254,6 +2292,17 @@ async fn killing_the_host_fails_an_attached_persistent_tui() {
 async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
     let root = project();
     git(&root, &["add", "note.txt", "other.txt"]);
+    // A waiting editor's caller can run a verbose hook after completion. The
+    // fixture must keep reading its terminal throughout the caller's lifetime.
+    std::os::unix::fs::symlink(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/src/fixtures/stand-in"),
+        root.join(".git/hooks/post-commit"),
+    )
+    .unwrap();
+    fs::write(
+        root.join(".git/hooks/post-commit.behavior"),
+        "dd if=/dev/zero bs=1024 count=128 2>/dev/null | tr '\\000' x\nprintf '\\npost-commit-output-complete\\n'\n",
+    ).unwrap();
     let endpoint = LocalEndpoint::discover_with_runtime(
         &root.join(".runyte"),
         &root,
@@ -2282,8 +2331,12 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         .env("GIT_EDITOR", editor)
         .env("XDG_RUNTIME_DIR", test_runtime_dir())
         .env("XDG_CACHE_HOME", test_cache_dir());
-    let (mut commit, _commit_terminal) = spawn_in_pty_without_hangup_signal(&mut commit);
-
+    let (child, commit_terminal) = spawn_in_pty_without_hangup_signal(&mut commit);
+    // Command retains its configured slave handles after spawn. Release them
+    // so the capture reaches EOF when Git and its editor/hook children exit.
+    drop(commit);
+    let mut commit = ChildGuard(Some(child));
+    let output = capture_terminal_output(&commit_terminal);
     let mut message = None;
     for _ in 0..200 {
         interactive.send(&ClientRequest::ListBuffers).await.unwrap();
@@ -2301,9 +2354,9 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    let _message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
+    let message = message.expect("Git editor wait request did not open COMMIT_EDITMSG");
     assert!(
-        commit.try_wait().unwrap().is_none(),
+        commit.0.as_mut().unwrap().try_wait().unwrap().is_none(),
         "git commit exited while its editor-owned buffer was still open"
     );
     send_input_expect_frame(&mut interactive, InputEvent::Key(KeyStroke::char('i'))).await;
@@ -2331,7 +2384,70 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         response(&mut interactive).await,
         HostResponse::Frame { .. }
     ));
-    assert!(wait_child(&mut commit).await.success());
+    // Frames are asynchronous presentation, not command acknowledgements.
+    // The ordered buffer response establishes that :wbc actually closed the
+    // target, and the disk check establishes that it saved the intended text.
+    interactive.send(&ClientRequest::ListBuffers).await.unwrap();
+    let HostResponse::Buffers { buffers } = semantic_response(&mut interactive).await else {
+        panic!("expected buffers after :wbc");
+    };
+    let message_state = buffers.iter().find(|buffer| buffer.id == message.id);
+    assert!(
+        message_state.is_none_or(|buffer| buffer.closed),
+        ":wbc did not close the commit buffer: {message_state:?}"
+    );
+    assert!(
+        fs::read_to_string(root.join(".git/COMMIT_EDITMSG"))
+            .unwrap()
+            .starts_with("host-owned commit message\n")
+    );
+
+    let mut last_health = None;
+    let completion = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            // Keep the simulated TUI reading while Git finishes. An idle
+            // client that stops consuming frames can be disconnected as slow.
+            interactive.send(&ClientRequest::Health).await.unwrap();
+            let health = semantic_response(&mut interactive).await;
+            if let HostResponse::Health {
+                interactive_attached,
+                pending_wait_requests,
+                ..
+            } = health
+            {
+                last_health = Some((interactive_attached, pending_wait_requests));
+                assert!(
+                    interactive_attached,
+                    "existing TUI detached while Git finished"
+                );
+                assert_eq!(
+                    pending_wait_requests, 0,
+                    "closed commit buffer left a pending wait"
+                );
+            } else {
+                panic!("expected health while Git finished: {health:?}");
+            }
+            if let Some(status) = commit.0.as_mut().unwrap().try_wait().unwrap() {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    let status = completion.unwrap_or_else(|_| panic!(
+        "Git did not exit within 10s after verified save/close; last (attached, pending waits)={last_health:?}; {}; {}",
+        fixture_process_tree(commit.0.as_ref().unwrap().id()), output.raw_tail(),
+    ));
+    assert!(
+        status.success(),
+        "Git failed: {status}; {}",
+        output.raw_tail()
+    );
+    assert!(
+        terminal_output_at_exit(&output)
+            .await
+            .contains("post-commit-output-complete")
+    );
     interactive.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
         semantic_response(&mut interactive).await,

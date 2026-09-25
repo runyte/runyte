@@ -8,12 +8,14 @@
 editor:
   line_numbers: true
   tab_width: 4
+  indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
+  smart_newline: false # true adds syntax indentation and continues Markdown lists
   scroll_offset: 3
   # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.
   motion_repeat_multiplier: 2
   show_hidden_files: false # press . in an explorer to toggle for the session
   soft_wrap: false
-  # Draw spaces as ·, tabs from →, and line endings as ↵.
+  # Draw spaces as ·, tabs from →, and line endings as ¬.
   render_whitespace: false
   zen_width: 100
   hard_wrap_width: 80
@@ -42,8 +44,9 @@ workspace:
   # this project's host and attach to it.
   mode: standalone
   # A clean host with no TUI and no --wait request retires after this many
-  # minutes. Zero disables retirement.
-  idle_retirement_minutes: 1440
+  # minutes. Zero, the default, disables retirement; set a positive interval
+  # to clean up idle hosts automatically.
+  idle_retirement_minutes: 0
 
 # Newest workspace-lifetime notifications retained in memory. Opening
 # :notifications (alias :not) acknowledges the entries currently present.

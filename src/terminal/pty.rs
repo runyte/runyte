@@ -520,12 +520,12 @@ impl Drop for Pty {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     open_pair_with_checkpoints(columns, rows, |_, _| Ok(()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn open_pair_with_checkpoints(
     columns: u16,
     rows: u16,
@@ -550,7 +550,27 @@ fn open_pair_with_checkpoints(
     // Linux >= 4.13 opens the peer directly, without a pathname lookup or an
     // inheritable intermediate descriptor. Do not fall back to openpty if this
     // fails: that would silently restore the inheritance race.
+    #[cfg(target_os = "linux")]
     let slave = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCGPTPEER, flags) };
+    // Darwin exposes the slave name through a caller-owned ioctl buffer. Do
+    // not use ptsname's shared storage while other terminals may be opening.
+    #[cfg(target_os = "macos")]
+    let slave = {
+        let mut name = [0 as libc::c_char; 128];
+        if unsafe {
+            libc::ioctl(
+                master.as_raw_fd(),
+                libc::TIOCPTYGNAME as _,
+                name.as_mut_ptr(),
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // The kernel fills a NUL-terminated name in the fixed 128-byte ABI.
+        // Opening both endpoints before sizing preserves native openpty order.
+        unsafe { libc::open(name.as_ptr(), flags) }
+    };
     if slave < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -560,7 +580,7 @@ fn open_pair_with_checkpoints(
     Ok((master, slave))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     let mut master = -1;
     let mut slave = -1;
@@ -582,10 +602,8 @@ fn open_pair(columns: u16, rows: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     }
     let master = unsafe { OwnedFd::from_raw_fd(master) };
     let slave = unsafe { OwnedFd::from_raw_fd(slave) };
-    // Preserve the native openpty sizing/controlling-terminal behavior here.
-    // Unlike the Linux path, this leaves an allocation-to-fcntl inheritance
-    // window on macOS. These flags only protect launches after setup completes.
-    // `dup2` clears the flag on the intended child's standard descriptors.
+    // Other Unix targets retain native allocation. Linux and macOS above
+    // guarantee atomic CLOEXEC; this fallback does not make that guarantee.
     for descriptor in [master.as_raw_fd(), slave.as_raw_fd()] {
         if unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
             return Err(io::Error::last_os_error());
@@ -881,6 +899,6 @@ mod tests {
 #[path = "tests/proposal_delivery.rs"]
 mod proposal_delivery;
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 #[path = "tests/pty_descriptors.rs"]
 mod descriptor_tests;

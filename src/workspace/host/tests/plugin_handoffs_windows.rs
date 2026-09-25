@@ -114,6 +114,7 @@ fn fixture() -> (TestRuntimeRoot, WorkspaceHost, mpsc::Receiver<HostMessage>) {
             runyte: format!("={}", crate::plugin::compatibility::HOST_VERSION),
             settings_schema: None,
             name: "Native fixture".into(),
+            help_topics: None,
             commands: vec![api::Registration {
                 presentation: None,
                 default_binding: None,

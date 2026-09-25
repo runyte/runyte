@@ -59,13 +59,14 @@ impl App {
     /// state of its own, and a stale one would answer keys the reader has
     /// already turned off.
     pub(super) fn sync_keymap(&mut self) {
-        self.keymap = self
+        let keymap = self
             .configured_keymaps
             .as_ref()
             .map(|maps| {
                 std::sync::Arc::clone(&maps[usize::from(self.config.editor.fast_pane_keys)])
             })
             .unwrap_or_else(|| keymap_for(self.config.editor.fast_pane_keys));
+        self.keymap = std::sync::Arc::new(keymap.with_indent_style(self.config.editor.indent));
     }
 
     /// Whether this key moves between panes on its own right now.
@@ -411,6 +412,64 @@ impl App {
     /// Plugin fields contain literal paths, without palette quoting or home expansion.
     pub(super) fn literal_path_hints(&self, raw: &str) -> Vec<PathHint> {
         self.path_hints_for_raw(raw, &self.project_root, false)
+    }
+
+    /// Whether Enter over visible path hints should accept the highlighted
+    /// row, as Tab does, rather than submit the typed text.
+    ///
+    /// A typed path that already names an entry is taken as meant, so Enter
+    /// submits it; anything else is an unfinished prefix, and Enter finishes
+    /// it. One rule serves every path prompt, and Enter can still submit a
+    /// directory whose children are showing as hints. The cost is a new name
+    /// that prefixes an existing one: `:w notes` beside `notes.md` completes
+    /// to `notes.md`. Hints follow only a cursor at the end of the line, so
+    /// Left then Enter submits the shorter name as typed.
+    fn enter_accepts_path_hint(&self, raw: &str, root: &Path, expand_home: bool) -> bool {
+        if raw.is_empty() {
+            return false;
+        }
+        let typed = PathBuf::from(raw);
+        let expanded = if expand_home {
+            expand_home_path(typed, self.home_directory.as_deref())
+        } else {
+            typed
+        };
+        let path = if expanded.is_absolute() {
+            expanded
+        } else {
+            root.join(expanded)
+        };
+        // Not `exists`: a dangling symbolic link is still an entry by that name.
+        std::fs::symlink_metadata(path).is_err()
+    }
+
+    /// Whether Enter in the palette should accept its highlighted path hint,
+    /// given the rows [`Self::matching_path_hints`] offers.
+    pub(super) fn palette_enter_accepts_path_hint(&self, hints: &[PathHint]) -> bool {
+        if self.command_selection >= hints.len() {
+            return false;
+        }
+        let Some((_, argument)) = self.command.split_once(char::is_whitespace) else {
+            return false;
+        };
+        let raw = unclosed_or_complete_quoted_path(argument.trim_start());
+        self.enter_accepts_path_hint(raw, &self.working_directory, true)
+    }
+
+    /// Whether Enter in the finder-path prompt should accept its highlighted
+    /// row, given the rows [`Self::finder_path_hints`] offers.
+    pub(super) fn finder_enter_accepts_path_hint(&self, hints: &[PathHint]) -> bool {
+        self.command_selection < hints.len()
+            && self.enter_accepts_path_hint(
+                unclosed_or_complete_quoted_path(self.command.trim_start()),
+                &self.working_directory,
+                true,
+            )
+    }
+
+    /// Whether Enter in a plugin field should accept its highlighted path hint.
+    pub(super) fn plugin_enter_accepts_path_hint(&self, value: &str) -> bool {
+        self.enter_accepts_path_hint(value, &self.project_root, false)
     }
 
     fn path_hints_for_raw(&self, raw: &str, root: &Path, expand_home: bool) -> Vec<PathHint> {
@@ -3397,6 +3456,13 @@ impl App {
                 self.close_prompt();
             }
             KeyCode::Enter => {
+                if self
+                    .matching_path_hints()
+                    .is_some_and(|hints| self.palette_enter_accepts_path_hint(&hints))
+                {
+                    self.complete_selected_command();
+                    return Ok(());
+                }
                 // Completion or a prefilled prompt may supply text without a
                 // paste event. Never execute an undisplayed control suffix.
                 if self.reject_prompt_controls(
@@ -4008,8 +4074,8 @@ impl App {
             Command::Redo => self.redo(),
             Command::Yank => self.yank(transient_line_selection),
             Command::YankLine => self.yank_line(),
-            Command::PasteAfter => self.paste(false),
-            Command::PasteBefore => self.paste(true),
+            Command::PasteAfter => self.paste(false, transient_line_selection),
+            Command::PasteBefore => self.paste(true, transient_line_selection),
             Command::Indent => self.indent(false),
             Command::Unindent => self.indent(true),
             Command::ToggleComments => self.toggle_comments(),
@@ -4263,11 +4329,13 @@ impl App {
             Command::InsertNewline if self.mode == Mode::Replace => self.replace_mode_text("\n"),
             Command::InsertNewline => self.edit_newline(),
             Command::InsertTab if self.mode == Mode::Replace => {
-                self.replace_mode_text(&" ".repeat(self.config.editor.tab_width.max(1)))
+                self.replace_mode_indentation(self.config.editor.indent)
             }
-            Command::InsertTab => self.insert_indentation(),
-            Command::InsertLiteralTab if self.mode == Mode::Replace => self.replace_mode_text("\t"),
-            Command::InsertLiteralTab => self.insert_char('\t'),
+            Command::InsertTab => self.insert_indentation(self.config.editor.indent),
+            Command::InsertLiteralTab if self.mode == Mode::Replace => {
+                self.replace_mode_indentation(self.config.editor.indent.other())
+            }
+            Command::InsertLiteralTab => self.insert_indentation(self.config.editor.indent.other()),
             Command::CommitUndoCheckpoint => {
                 let buffer_id = self.active().buffer;
                 self.buffers[buffer_id].commit_undo_group();
@@ -4350,10 +4418,10 @@ impl App {
             Command::LeaveTerminal => self.leave_terminal(),
             Command::CopyTerminalOutput => self.copy_terminal_output(),
             Command::SendToTerminal => self.send_to_terminal(),
-            Command::ClipboardPasteAfter => self.clipboard_paste(false),
-            Command::ClipboardPasteBefore => self.clipboard_paste(true),
+            Command::ClipboardPasteAfter => self.clipboard_paste(false, transient_line_selection),
+            Command::ClipboardPasteBefore => self.clipboard_paste(true, transient_line_selection),
             Command::ClipboardYank => self.clipboard_yank(),
-            Command::ClipboardPaste => self.clipboard_paste_any(),
+            Command::ClipboardPaste => self.clipboard_paste_any(transient_line_selection),
             Command::ShellPipe => {
                 self.action_failed(format!(
                     "{} is not available",
@@ -4385,6 +4453,14 @@ impl App {
             KeyCode::Escape => self.close_prompt(),
             KeyCode::Enter => {
                 let kind = self.prompt_kind;
+                if kind == PromptKind::FinderPath
+                    && self
+                        .finder_path_hints()
+                        .is_some_and(|hints| self.finder_enter_accepts_path_hint(&hints))
+                {
+                    self.complete_selected_finder_path();
+                    return Ok(());
+                }
                 let value = if kind == PromptKind::ExternalProgram {
                     self.selected_program_choice()
                         .map_or_else(|| self.command.clone(), |choice| choice.launch_value())
@@ -4415,7 +4491,8 @@ impl App {
                         | SettingType::Theme
                         | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
-                        | SettingType::ExplorerSort => {
+                        | SettingType::ExplorerSort
+                        | SettingType::Indent => {
                             self.action_failed("this setting must be chosen from its list");
                             return Ok(());
                         }

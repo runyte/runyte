@@ -338,7 +338,12 @@ fn geometry() -> FrameGeometry {
 }
 
 async fn wait_for_endpoint(child: &mut ChildGuard, endpoint: &LocalEndpoint) -> bool {
-    let deadline = Instant::now() + Duration::from_millis(2_500);
+    // A published host answers Welcome only once its startup services are
+    // running, which takes longer when a whole suite starts hosts at once on
+    // a small macOS runner. The client's own wait in `workspace::lifecycle`
+    // allows 200 polls 25 ms apart, each of which may itself wait for Welcome,
+    // so a shorter budget here fails hosts the product accepts.
+    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
     loop {
         if endpoint.metadata().exists() {
             let handshake = tokio::time::timeout(Duration::from_millis(100), async {

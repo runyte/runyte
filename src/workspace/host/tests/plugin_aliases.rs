@@ -216,6 +216,7 @@ fn stable_alias_keeps_argument_usage_completion_and_wire_command_identity() {
             required_features: Default::default(),
             optional_features: Default::default(),
             name: "Timer".into(),
+            help_topics: None,
             commands: vec![api::Registration {
                 default_binding: None,
                 presentation: None,

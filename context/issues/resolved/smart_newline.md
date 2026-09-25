@@ -31,12 +31,18 @@ therefore accepts multi-letter Roman markers only when they use uppercase
 canonical Roman-numeral order; lowercase `i.` remains supported through the
 single-letter alphabetic marker rule.
 
+A later Markdown-specific change continues list markers on Enter and uses
+Backspace to switch an empty item to its hanging indent. The original hanging
+indent remains the behavior in non-Markdown buffers. The two alignment tests
+below now disable scratch Markdown to exercise that boundary.
+
 Tests covering the behavior are
-`app::tests::smart_newline_aligns_list_continuations_under_their_content`,
-`app::tests::smart_newline_keeps_following_continuation_lines_aligned`, and
-`app::tests::smart_newline_ignores_prose_and_can_be_disabled` in `src/app.rs`,
-plus `config::tests::smart_newline_is_default_on_and_configurable` in
-`src/config.rs`.
+`smart_newline_aligns_list_continuations_under_their_content`,
+`smart_newline_keeps_following_continuation_lines_aligned`, and
+`smart_newline_ignores_prose` in `src/app/tests/editing_and_buffers.rs`, plus
+`smart_newline_is_default_off_and_configurable` in `src/config.rs`.
+Markdown-specific continuation and Backspace are covered by
+`src/app/tests/markdown_list_continuation.rs`.
 
 ## Report
 

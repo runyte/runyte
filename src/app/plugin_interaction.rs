@@ -229,6 +229,11 @@ impl App {
     pub(super) fn handle_plugin_input(&mut self, input: InputEvent) {
         self.cancel_plugin_validation_intent();
         let hints = self.plugin_path_hints();
+        let enter_accepts_hint = !hints.is_empty()
+            && self.plugins.input.as_ref().is_some_and(|surface| {
+                matches!(&surface.values[surface.selected], Value::Text(value)
+                    if self.plugin_enter_accepts_path_hint(value))
+            });
         let foreground = self.plugins.foreground_generation;
         let Some(surface) = self.plugins.input.as_mut() else {
             return;
@@ -311,10 +316,11 @@ impl App {
             InputEvent::Key(key)
                 if !hints.is_empty()
                     && key.modifiers.is_empty()
-                    && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down) =>
+                    && (matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
+                        || (key.code == KeyCode::Enter && enter_accepts_hint)) =>
             {
                 let selected = surface.completion_selected.min(hints.len() - 1);
-                if key.code == KeyCode::Tab {
+                if matches!(key.code, KeyCode::Tab | KeyCode::Enter) {
                     let value = hints[selected].value.clone();
                     surface.cursor = value.chars().count();
                     surface.values[i] = Value::Text(value);
