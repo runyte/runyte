@@ -1,4 +1,38 @@
-# Help omits Insert, Replace and Command mode bindings
+---
+title: "Help omits Insert, Replace and Command mode bindings"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: 86aa8c0
+---
+
+## Resolution
+
+Commit `86aa8c0` (`List contextual bindings for every editor mode`) extended
+`render_document_with_descriptions` in `src/help.rs`. It previously fixed the
+keymap query to Normal mode, leaving Insert and Replace bindings out of the
+contextual document. Help now renders Normal/Select, a single shared
+Insert/Replace section, and separate mode-specific rows from the same
+effective keymap that dispatch and hints use. Read-only views explain
+unavailable modes, and shifted `<` and `>` have searchable `Shift-` spellings.
+
+Terminal Insert lists only keys that Runyte admits before the child program;
+the filter follows the effective window prefix, persistent navigation,
+terminal escape predicate and fast pane setting, including configured
+prefixes. The Command prompt has no registry bindings because its input is
+handled directly by `App::handle_command`; its own heading describes prompt
+controls and Enter's completion-before-submission behavior. That is a
+deliberate boundary rather than a second hand-written binding table.
+
+`src/help.rs` tests
+`contextual_help_covers_each_default_binding_in_its_mode_and_scope`,
+`configured_insert_bindings_and_live_indent_descriptions_reach_help`,
+`terminal_insert_help_lists_only_keys_admitted_past_the_child_gate`, and
+`terminal_insert_help_follows_effective_first_key_admission` cover scope,
+mode, configured keymaps and terminal ownership. All 29 help tests, formatting
+and Clippy passed.
+
+## Report
 
 `Space ?` opens a help window for the current view. Its generated key tables
 come from the keymap registry for one mode only.
