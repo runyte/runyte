@@ -42,8 +42,9 @@ workspace:
   # this project's host and attach to it.
   mode: standalone
   # A clean host with no TUI and no --wait request retires after this many
-  # minutes. Zero disables retirement.
-  idle_retirement_minutes: 1440
+  # minutes. Zero, the default, disables retirement; set a positive interval
+  # to clean up idle hosts automatically.
+  idle_retirement_minutes: 0
 
 # Newest workspace-lifetime notifications retained in memory. Opening
 # :notifications (alias :not) acknowledges the entries currently present.

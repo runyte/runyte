@@ -809,11 +809,14 @@ terminal children; switching away remains safe because the old host retains
 them.
 
 Recently visited workspaces are recorded in Runyte's per-user cache, not in
-the runtime registry, so stopped projects remain listed across logout. A clean
-host with no attached client, outstanding `--wait` request, or live terminal
-child retires after
-`workspace.idle_retirement_minutes` (1440 by default); zero disables
-retirement. `--session-list` prints the same running/stopped inventory.
+the runtime registry, so stopped projects remain listed across logout. By
+default, persistent hosts for every visited project keep running after detach,
+along with their language servers, until stopped with `:session-stop` or the
+host otherwise shuts down. Set `workspace.idle_retirement_minutes` to a
+positive number to retire a clean host after that many minutes without an
+attached client, outstanding `--wait` request, or live terminal child. Its
+default of `0` disables idle retirement. `--session-list` prints the same
+running/stopped inventory.
 
 ### Session and destination navigation
 
@@ -4107,7 +4110,9 @@ persistent launch path is selected before the editor application starts; the
 saved choice applies to future bare launches.
 `workspace.idle_retirement_minutes` is in the same menu but applies at once: a
 persistent host reads it each time it considers retiring, so a shorter or
-longer interval takes effect without restarting the host it governs.
+longer interval takes effect without restarting the host it governs. Its
+default is `0`, which keeps idle hosts running; set a positive interval to
+retire them automatically, or use `:session-stop` to stop a host explicitly.
 Unrelated YAML flow collections (`{...}` and `[...]`), including multiline
 ones, are preserved when saving a setting. The setting being changed must
 still be a scalar in a block mapping; editing inside a flow mapping is not

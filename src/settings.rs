@@ -1683,11 +1683,11 @@ mod tests {
         let mut config = Config::default();
         assert_eq!(
             SettingId::WorkspaceIdleRetirementMinutes.configured_value(&config),
-            SettingValue::Integer(1440)
+            SettingValue::Integer(0)
         );
         assert!(SettingId::ALL.contains(&SettingId::WorkspaceIdleRetirementMinutes));
 
-        for minutes in [0, 30, MAX_IDLE_RETIREMENT_MINUTES] {
+        for minutes in [30, 0, MAX_IDLE_RETIREMENT_MINUTES] {
             let value = SettingValue::Integer(minutes);
             SettingId::WorkspaceIdleRetirementMinutes
                 .apply(&value, &mut config)

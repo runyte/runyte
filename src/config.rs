@@ -859,7 +859,7 @@ impl Default for WorkspaceConfig {
             state_anchor: None,
             mode: WorkspaceMode::Standalone,
             session_strip: SessionStripVisibility::Auto,
-            idle_retirement_minutes: 1440,
+            idle_retirement_minutes: 0,
         }
     }
 }
@@ -1567,7 +1567,7 @@ mod tests {
         assert_eq!(Config::default().workspace.state, PathBuf::from(".runyte"));
         assert_eq!(Config::default().workspace.state_anchor, None);
         assert_eq!(Config::default().workspace.mode, WorkspaceMode::Standalone);
-        assert_eq!(Config::default().workspace.idle_retirement_minutes, 1440);
+        assert_eq!(Config::default().workspace.idle_retirement_minutes, 0);
 
         let renamed: Config = serde_yaml::from_str("workspace:\n  state: .state\n").unwrap();
         assert_eq!(renamed.workspace.state, PathBuf::from(".state"));
