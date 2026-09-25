@@ -2068,7 +2068,7 @@ The direct editing keys shared by Insert and Replace modes are:
 | `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |
 | `Ctrl-u` / `Ctrl-k` | Delete to the start / end of the line |
 | `Enter` / `Ctrl-j` | Insert a newline with the current indentation and optional smart indentation |
-| `Tab` / `Shift-Tab` | Insert spaces to the next configured tab stop / insert a literal tab |
+| `Tab` / `Shift-Tab` | Insert the configured indent style / the other style (`spaces` to the next tab stop, or one tab) |
 | `Left` / `Down` / `Up` / `Right` | Move the caret |
 | `Home` / `End`; `PageUp` / `PageDown` | Move to a line boundary; move by a page |
 | `Ctrl-x` | Ask the language server for completions |
@@ -3377,8 +3377,9 @@ nodes, they use a balanced scan bounded to the enclosing Markdown syntax node;
 escaped delimiters are ignored and injected code remains syntax-structural.
 
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
-at most one `tab_width`-sized space level when the syntax indentation query
-requests it. On list items beginning with `-`, `*`, `+`, a decimal number, a
+at most one level in `editor.indent` style when the syntax indentation query
+requests it; a grammar that requires a tab still gets a tab. On list items
+beginning with `-`, `*`, `+`, a decimal number, a
 single letter, or a canonical uppercase Roman numeral followed by `.`, it
 instead aligns the next line under the first content character, including at
 nested indentation.
@@ -4191,6 +4192,7 @@ editor:
   grammar: runyte # `helix` is accepted as a compatibility alias
   line_numbers: true
   tab_width: 4
+  indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
   smart_newline: false # true adds syntax indentation and aligns list continuations
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed

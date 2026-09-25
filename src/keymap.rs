@@ -591,6 +591,34 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    /// Resolve indent-key descriptions from the live setting in the same
+    /// registry used by dispatch, help, and key hints.
+    pub(crate) fn with_indent_style(&self, style: crate::config::IndentStyle) -> Self {
+        let mut keymap = self.clone();
+        for binding in &mut keymap.bindings {
+            binding.description = match (binding.target, style) {
+                (
+                    BindingTarget::Editor(EditorCommand::InsertTab),
+                    crate::config::IndentStyle::Spaces,
+                ) => "Insert spaces to the next tab stop (indent: spaces)".into(),
+                (
+                    BindingTarget::Editor(EditorCommand::InsertTab),
+                    crate::config::IndentStyle::Tabs,
+                ) => "Insert a tab (indent: tabs)".into(),
+                (
+                    BindingTarget::Editor(EditorCommand::InsertLiteralTab),
+                    crate::config::IndentStyle::Spaces,
+                ) => "Insert a tab (indent: spaces)".into(),
+                (
+                    BindingTarget::Editor(EditorCommand::InsertLiteralTab),
+                    crate::config::IndentStyle::Tabs,
+                ) => "Insert spaces to the next tab stop (indent: tabs)".into(),
+                _ => continue,
+            };
+        }
+        keymap
+    }
+
     pub(crate) fn with_plugin_bindings(&self, bindings: Vec<Binding>) -> anyhow::Result<Self> {
         for binding in &bindings {
             anyhow::ensure!(
@@ -2491,6 +2519,29 @@ pub fn keymap_for(fast_pane_keys: bool) -> Arc<Keymap> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indent_command_names_are_not_key_config_rebinding_aliases() {
+        let section: serde_yaml::Value = serde_yaml::from_str(
+            "rebind:\n  insert-tab: F12\n  insert-literal-tab: F11\n  insert-indent: F10\n",
+        )
+        .unwrap();
+        let compiled = configured::compile(&section, default_keymap());
+        assert_eq!(compiled.errors.len(), 3);
+        assert!(
+            compiled
+                .errors
+                .iter()
+                .all(|error| error.contains("rebind") && error.contains("rejected"))
+        );
+        assert!(matches!(
+            compiled
+                .keymap
+                .lookup(Mode::Insert, &KeySequence::from(Key::plain(KeyCode::Tab))),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::InsertTab)
+        ));
+    }
 
     fn built_in_keymaps() -> [(&'static str, Arc<Keymap>); 2] {
         [

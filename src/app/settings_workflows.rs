@@ -475,6 +475,11 @@ impl App {
                 .copied()
                 .map(SettingValue::ExplorerSort)
                 .collect(),
+            SettingType::Indent => crate::config::IndentStyle::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::Indent)
+                .collect(),
             SettingType::Integer { minimum, maximum } => {
                 (minimum..=maximum).map(SettingValue::Integer).collect()
             }
@@ -613,6 +618,7 @@ impl App {
             | SettingValue::WorkspaceMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
+            | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}
         }
         self.status(format!(
@@ -721,6 +727,7 @@ impl App {
             | SettingValue::WorkspaceMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
+            | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}
         }
         // An explorer setting changed from this page has to reach the open

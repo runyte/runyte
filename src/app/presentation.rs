@@ -2041,6 +2041,7 @@ impl App {
                         | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
                         | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
+                        SettingType::Indent => setting.descriptor().key.to_owned(),
                     },
                     _ => format!("{:?}", self.prompt_kind),
                 };

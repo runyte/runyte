@@ -3335,6 +3335,7 @@ impl App {
             .as_ref()
             .map(|maps| Arc::clone(&maps[usize::from(config.editor.fast_pane_keys)]))
             .unwrap_or_else(|| keymap_for(config.editor.fast_pane_keys));
+        let keymap = Arc::new(keymap.with_indent_style(config.editor.indent));
         let live_help =
             crate::key_spelling::resolve(crate::key_spelling::actionable::STARTUP_HELP, &keymap)
                 .expect("startup help marker must resolve")

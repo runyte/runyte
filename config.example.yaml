@@ -8,6 +8,7 @@
 editor:
   line_numbers: true
   tab_width: 4
+  indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
   scroll_offset: 3
   # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.
   motion_repeat_multiplier: 2

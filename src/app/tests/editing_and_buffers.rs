@@ -3,6 +3,137 @@
 use super::*;
 
 #[test]
+fn tab_and_shift_tab_insert_opposite_styles_at_each_carets_tab_stop() {
+    for (style, tab_result, other_result) in [
+        (
+            crate::config::IndentStyle::Spaces,
+            "a   \nab  ",
+            "a\t\nab\t",
+        ),
+        (crate::config::IndentStyle::Tabs, "a\t\nab\t", "a   \nab  "),
+    ] {
+        for (code, modifiers, expected) in [
+            (KeyCode::Tab, Modifiers::NONE, tab_result),
+            (KeyCode::BackTab, Modifiers::SHIFT, other_result),
+        ] {
+            let mut config = Config::default();
+            config.editor.indent = style;
+            let mut app = App::new(config, None).unwrap();
+            seed(&mut app, "a\nab");
+            app.mode = Mode::Insert;
+            app.replace_active_selection(Selection::new(vec![Range::point(1), Range::point(4)], 0));
+
+            key(&mut app, code, modifiers);
+            assert_eq!(text(&app), expected, "{style:?} {code:?}");
+        }
+    }
+}
+
+#[test]
+fn replace_mode_tab_and_shift_tab_follow_style_and_restore_overwrites() {
+    for (style, code, modifiers, expected, restore_steps) in [
+        (
+            crate::config::IndentStyle::Spaces,
+            KeyCode::Tab,
+            Modifiers::NONE,
+            "a   \nab  ef",
+            3,
+        ),
+        (
+            crate::config::IndentStyle::Spaces,
+            KeyCode::BackTab,
+            Modifiers::SHIFT,
+            "a\tcd\nab\tdef",
+            1,
+        ),
+        (
+            crate::config::IndentStyle::Tabs,
+            KeyCode::Tab,
+            Modifiers::NONE,
+            "a\tcd\nab\tdef",
+            1,
+        ),
+        (
+            crate::config::IndentStyle::Tabs,
+            KeyCode::BackTab,
+            Modifiers::SHIFT,
+            "a   \nab  ef",
+            3,
+        ),
+    ] {
+        let mut config = Config::default();
+        config.editor.indent = style;
+        let mut app = App::new(config, None).unwrap();
+        seed(&mut app, "abcd\nabcdef");
+        app.replace_active_selection(Selection::new(vec![Range::point(1), Range::point(7)], 0));
+        press(&mut app, 'R');
+
+        key(&mut app, code, modifiers);
+        assert_eq!(text(&app), expected, "{style:?} {code:?}");
+        for _ in 0..restore_steps {
+            key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        }
+        assert_eq!(
+            text(&app),
+            "abcd\nabcdef",
+            "the overwrite trail restores each caret"
+        );
+    }
+}
+
+#[test]
+fn replace_tab_keeps_remaining_spaces_with_caret_identity_after_nearby_carets_merge() {
+    for (style, code, modifiers) in [
+        (
+            crate::config::IndentStyle::Spaces,
+            KeyCode::Tab,
+            Modifiers::NONE,
+        ),
+        (
+            crate::config::IndentStyle::Tabs,
+            KeyCode::BackTab,
+            Modifiers::SHIFT,
+        ),
+    ] {
+        let mut config = Config::default();
+        config.editor.indent = style;
+        let mut app = App::new(config, None).unwrap();
+        seed(&mut app, "界abcdef\nabcdefgh");
+        app.replace_active_selection(Selection::new(
+            vec![Range::point(0), Range::point(1), Range::point(8)],
+            0,
+        ));
+        press(&mut app, 'R');
+
+        key(&mut app, code, modifiers);
+
+        assert_eq!(app.active_buffer().line_string(1), "    efgh", "{style:?}");
+        for _ in 0..4 {
+            key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        }
+        assert_eq!(text(&app), "界abcdef\nabcdefgh");
+    }
+}
+
+#[test]
+fn indent_selected_lines_uses_configured_style_and_unindent_accepts_both() {
+    for (style, expected) in [
+        (crate::config::IndentStyle::Spaces, "    a\n    b"),
+        (crate::config::IndentStyle::Tabs, "\ta\n\tb"),
+    ] {
+        let mut config = Config::default();
+        config.editor.indent = style;
+        let mut app = App::new(config, None).unwrap();
+        seed(&mut app, "a\nb");
+        press(&mut app, '%');
+        press(&mut app, '>');
+        assert_eq!(text(&app), expected);
+        press(&mut app, '<');
+        assert_eq!(text(&app), "a\nb");
+    }
+}
+
+#[test]
 fn shift_backspace_aliases_backspace_in_insert_and_replace_modes() {
     let mut insert = App::new(Config::default(), None).unwrap();
     seed(&mut insert, "ABC");
@@ -2563,6 +2694,32 @@ fn syntax_newline_indentation_is_one_pre_edit_multi_caret_transaction() {
 }
 
 #[test]
+fn syntax_newline_extra_level_uses_the_configured_indent_style() {
+    let path = temporary("syntax-indent-style.rs");
+    let original = "fn outer() {\n    if ready {\n    }\n}\n";
+    fs::write(&path, original).unwrap();
+    for (style, added) in [
+        (crate::config::IndentStyle::Spaces, "        "),
+        (crate::config::IndentStyle::Tabs, "    \t"),
+    ] {
+        let mut config = smart_newline_config();
+        config.editor.indent = style;
+        let mut app = App::new(config, Some(path.clone())).unwrap();
+        app.mode = Mode::Insert;
+        let caret = app.buffers[0].line_to_offset(1) + app.buffers[0].line_len(1);
+        app.replace_active_selection(Selection::point(caret));
+
+        app.edit_newline();
+        assert_eq!(
+            text(&app),
+            format!("fn outer() {{\n    if ready {{\n{added}\n    }}\n}}\n"),
+            "{style:?}"
+        );
+    }
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn smart_newline_preserves_crlf_and_uses_its_syntax_indent() {
     let path = temporary("syntax-indent-crlf.rs");
     let original = "fn outer() {\r\n    if ready {\r\n    }\r\n}\r\n";
@@ -2588,16 +2745,23 @@ fn smart_newline_uses_the_required_make_recipe_tab() {
     let path = temporary("syntax-indent.mk");
     let original = "all:\n";
     fs::write(&path, original).unwrap();
-    let mut app = App::new(smart_newline_config(), Some(path.clone())).unwrap();
-    app.mode = Mode::Insert;
-    let caret = app.buffers[0].line_len(0);
-    app.replace_active_selection(Selection::point(caret));
+    for style in [
+        crate::config::IndentStyle::Spaces,
+        crate::config::IndentStyle::Tabs,
+    ] {
+        let mut config = smart_newline_config();
+        config.editor.indent = style;
+        let mut app = App::new(config, Some(path.clone())).unwrap();
+        app.mode = Mode::Insert;
+        let caret = app.buffers[0].line_len(0);
+        app.replace_active_selection(Selection::point(caret));
 
-    app.edit_newline();
+        app.edit_newline();
 
-    assert_eq!(text(&app), "all:\n\t\n");
-    app.undo();
-    assert_eq!(text(&app), original);
+        assert_eq!(text(&app), "all:\n\t\n");
+        app.undo();
+        assert_eq!(text(&app), original);
+    }
     fs::remove_file(path).unwrap();
 }
 

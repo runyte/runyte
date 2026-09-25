@@ -575,24 +575,36 @@ impl App {
     }
 
     fn replace_mode_character(&mut self, character: char) {
+        let _ = self.replace_mode_characters(|_| Some(character), false);
+    }
+
+    /// One overwrite round. A caret that already reached its tab stop moves
+    /// through the same transaction without writing another space.
+    fn replace_mode_characters(
+        &mut self,
+        character_at: impl Fn(usize) -> Option<char>,
+        capture_heads: bool,
+    ) -> Option<Vec<usize>> {
         let buffer_id = self.active().buffer;
         let before = self.active().selection.clone();
         let buffer = self.active_buffer();
         let changes = before
             .ranges()
             .iter()
-            .map(|range| {
+            .enumerate()
+            .filter_map(|(index, range)| {
+                let character = character_at(index)?;
                 let head = range.head;
                 if character == '\n' {
                     let row = buffer.offset_to_row(head);
-                    Change::new(head, head, preferred_line_ending(buffer, row))
+                    Some(Change::new(head, head, preferred_line_ending(buffer, row)))
                 } else {
                     let row = buffer.offset_to_row(head);
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     if head < row_end {
-                        Change::new(head, head + 1, character.to_string())
+                        Some(Change::new(head, head + 1, character.to_string()))
                     } else {
-                        Change::new(head, head, character.to_string())
+                        Some(Change::new(head, head, character.to_string()))
                     }
                 }
             })
@@ -600,25 +612,29 @@ impl App {
         let transaction = Transaction::new(changes);
         let mut preview = self.buffers[buffer_id].text().clone();
         let inverse = preview.apply(&transaction).into_transaction();
-        let after = Selection::new(
-            before
-                .ranges()
-                .iter()
-                .map(|range| {
-                    let start = transaction.map_offset(range.head, crate::text::Assoc::Before);
-                    let inserted = if character == '\n' {
-                        let row = self.active_buffer().offset_to_row(range.head);
-                        preferred_line_ending(self.active_buffer(), row)
-                            .chars()
-                            .count()
-                    } else {
-                        1
-                    };
-                    Range::point(start + inserted)
-                })
-                .collect(),
-            before.primary_index(),
-        );
+        let mapped_ranges = before
+            .ranges()
+            .iter()
+            .enumerate()
+            .map(|(index, range)| {
+                let character = character_at(index);
+                let start = transaction.map_offset(range.head, crate::text::Assoc::Before);
+                let inserted = if character == Some('\n') {
+                    let row = self.active_buffer().offset_to_row(range.head);
+                    preferred_line_ending(self.active_buffer(), row)
+                        .chars()
+                        .count()
+                } else if character.is_some() {
+                    1
+                } else {
+                    0
+                };
+                Range::point(start + inserted)
+            })
+            .collect::<Vec<_>>();
+        let mapped_heads =
+            capture_heads.then(|| mapped_ranges.iter().map(|range| range.head).collect());
+        let after = Selection::new(mapped_ranges, before.primary_index());
         let mut session = self
             .replace_session
             .take()
@@ -632,7 +648,8 @@ impl App {
                 steps: Vec::new(),
             };
         }
-        if self.edit(transaction) {
+        let changed = self.edit(transaction);
+        if changed {
             self.active_mut().replace_selection(after.clone());
             session.steps.push(super::ReplaceStep {
                 before,
@@ -641,6 +658,61 @@ impl App {
             });
         }
         self.replace_session = Some(session);
+        changed.then(|| mapped_heads.unwrap_or_default())
+    }
+
+    pub(super) fn replace_mode_indentation(&mut self, style: crate::config::IndentStyle) {
+        if style == crate::config::IndentStyle::Tabs {
+            self.replace_mode_text("\t");
+            return;
+        }
+        let width = self.config.editor.tab_width.max(1);
+        let buffer = self.active_buffer();
+        let mut remaining = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|range| {
+                let position = buffer.position_of(range.head);
+                let column = visual_column(&buffer.line_string(position.row), position.col, width);
+                width - column % width
+            })
+            .collect::<Vec<_>>();
+        while remaining.iter().any(|count| *count > 0) {
+            let characters = remaining
+                .iter_mut()
+                .map(|count| {
+                    if *count == 0 {
+                        None
+                    } else {
+                        *count -= 1;
+                        Some(' ')
+                    }
+                })
+                .collect::<Vec<_>>();
+            let Some(mapped_heads) = self.replace_mode_characters(|index| characters[index], true)
+            else {
+                break;
+            };
+            // Selection normalization may coalesce nearby Replace carets.
+            // Carry the largest outstanding count to the surviving point,
+            // instead of interpreting the next caret's count at the old index.
+            let mut by_head = BTreeMap::<usize, usize>::new();
+            for (head, count) in mapped_heads.into_iter().zip(remaining) {
+                by_head
+                    .entry(head)
+                    .and_modify(|existing| *existing = (*existing).max(count))
+                    .or_insert(count);
+            }
+            remaining = self
+                .active()
+                .selection
+                .ranges()
+                .iter()
+                .map(|range| by_head.get(&range.head).copied().unwrap_or(0))
+                .collect();
+        }
     }
 
     pub(super) fn restore_replace_step(&mut self) -> bool {
@@ -757,7 +829,10 @@ impl App {
         let selection = self.active().selection.clone();
         let buffer = &self.buffers[buffer_id];
         let syntax = self.syntax[buffer_id].as_ref();
-        let unit = " ".repeat(self.config.editor.tab_width.max(1));
+        let unit = match self.config.editor.indent {
+            crate::config::IndentStyle::Spaces => " ".repeat(self.config.editor.tab_width.max(1)),
+            crate::config::IndentStyle::Tabs => "\t".to_owned(),
+        };
         let smart_newline = self.config.editor.smart_newline;
         // Every answer is derived from the same pre-edit text. This matters
         // for multi-caret insertion: an earlier caret must never change the
@@ -931,7 +1006,11 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
-    pub(super) fn insert_indentation(&mut self) {
+    pub(super) fn insert_indentation(&mut self, style: crate::config::IndentStyle) {
+        if style == crate::config::IndentStyle::Tabs {
+            self.insert_char('\t');
+            return;
+        }
         let width = self.config.editor.tab_width.max(1);
         let buffer = self.active_buffer();
         let selection = self.active().selection.clone();
@@ -2244,6 +2323,10 @@ impl App {
     pub(super) fn indent(&mut self, unindent: bool) {
         let buffer_id = self.active().buffer;
         let width = self.config.editor.tab_width.max(1);
+        let unit = match self.config.editor.indent {
+            crate::config::IndentStyle::Spaces => " ".repeat(width),
+            crate::config::IndentStyle::Tabs => "\t".to_owned(),
+        };
         let buffer = &self.buffers[buffer_id];
 
         let mut rows: Vec<usize> = self
@@ -2269,7 +2352,7 @@ impl App {
                     };
                     (removed > 0).then(|| Change::new(start, start + removed, ""))
                 } else if buffer.line_len(row) > 0 {
-                    Some(Change::new(start, start, " ".repeat(width)))
+                    Some(Change::new(start, start, unit.clone()))
                 } else {
                     None
                 }

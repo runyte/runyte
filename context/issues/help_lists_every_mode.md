@@ -16,8 +16,8 @@ Insert and Replace mode bindings missing from help include:
 
 | Key | Command |
 | --- | --- |
-| `Tab` | `insert-tab`: insert spaces to the next configured tab stop |
-| `Shift-Tab` | `insert-literal-tab`: insert a literal tab character |
+| `Tab` | `insert-indent`: insert the configured indentation style |
+| `Shift-Tab` | `insert-other-indent`: insert the other indentation style |
 | `Ctrl-x` | request language-server completions |
 | `Ctrl-u` / `Ctrl-k` | delete to line start / end |
 | `Alt-Backspace` / `Alt-Delete` | delete the previous / next word |

@@ -798,8 +798,8 @@ editor_commands! {
     DeleteCharBackward => ("delete-char-backward", "Delete the previous character"),
     DeleteCharForward => ("delete-char-forward", "Delete the next character"),
     InsertNewline => ("insert-newline", "Insert a new line"),
-    InsertTab => ("insert-tab", "Insert indentation"),
-    InsertLiteralTab => ("insert-literal-tab", "Insert a tab character"),
+    InsertTab => ("insert-indent", "Insert configured indentation"),
+    InsertLiteralTab => ("insert-other-indent", "Insert the other indentation style"),
     CommitUndoCheckpoint => ("commit-undo-checkpoint", "Commit an undo checkpoint"),
 
     GotoDefinition => ("goto-definition", "Go to definition"),
@@ -3240,6 +3240,13 @@ mod tests {
             assert!(!metadata.description.is_empty());
             assert!(names.insert(metadata.name));
         }
+        assert_eq!(EditorCommand::InsertTab.metadata().name, "insert-indent");
+        assert_eq!(
+            EditorCommand::InsertLiteralTab.metadata().name,
+            "insert-other-indent"
+        );
+        assert!(!names.contains("insert-tab"));
+        assert!(!names.contains("insert-literal-tab"));
     }
 
     /// `ColonCommand::ALL` is the identity inventory used by exhaustive

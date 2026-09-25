@@ -59,13 +59,14 @@ impl App {
     /// state of its own, and a stale one would answer keys the reader has
     /// already turned off.
     pub(super) fn sync_keymap(&mut self) {
-        self.keymap = self
+        let keymap = self
             .configured_keymaps
             .as_ref()
             .map(|maps| {
                 std::sync::Arc::clone(&maps[usize::from(self.config.editor.fast_pane_keys)])
             })
             .unwrap_or_else(|| keymap_for(self.config.editor.fast_pane_keys));
+        self.keymap = std::sync::Arc::new(keymap.with_indent_style(self.config.editor.indent));
     }
 
     /// Whether this key moves between panes on its own right now.
@@ -4312,11 +4313,13 @@ impl App {
             Command::InsertNewline if self.mode == Mode::Replace => self.replace_mode_text("\n"),
             Command::InsertNewline => self.edit_newline(),
             Command::InsertTab if self.mode == Mode::Replace => {
-                self.replace_mode_text(&" ".repeat(self.config.editor.tab_width.max(1)))
+                self.replace_mode_indentation(self.config.editor.indent)
             }
-            Command::InsertTab => self.insert_indentation(),
-            Command::InsertLiteralTab if self.mode == Mode::Replace => self.replace_mode_text("\t"),
-            Command::InsertLiteralTab => self.insert_char('\t'),
+            Command::InsertTab => self.insert_indentation(self.config.editor.indent),
+            Command::InsertLiteralTab if self.mode == Mode::Replace => {
+                self.replace_mode_indentation(self.config.editor.indent.other())
+            }
+            Command::InsertLiteralTab => self.insert_indentation(self.config.editor.indent.other()),
             Command::CommitUndoCheckpoint => {
                 let buffer_id = self.active().buffer;
                 self.buffers[buffer_id].commit_undo_group();
@@ -4472,7 +4475,8 @@ impl App {
                         | SettingType::Theme
                         | SettingType::SessionStrip
                         | SettingType::WorkspaceMode
-                        | SettingType::ExplorerSort => {
+                        | SettingType::ExplorerSort
+                        | SettingType::Indent => {
                             self.action_failed("this setting must be chosen from its list");
                             return Ok(());
                         }
