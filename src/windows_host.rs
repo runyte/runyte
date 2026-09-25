@@ -383,6 +383,8 @@ pub(super) async fn run(
     termination: &mut super::TerminationSignals,
     supervisor: Option<ForegroundParentSupervisor>,
 ) -> Result<()> {
+    let publication_deadline =
+        tokio::time::Instant::now() + runyte::workspace::windows_startup::READINESS_BUDGET;
     ensure!(
         arguments.mode == LaunchMode::Serve && arguments.detached_host == supervisor.is_none(),
         "native host launch role and parent supervision disagree"
@@ -499,7 +501,15 @@ pub(super) async fn run(
         )?);
         let location = layout.publication_location_with_lease(&project_lease)?;
         let names = NameStore::open(layout.state_root())?;
-        let prepared = location.prepare_named_with_lease(&project_lease, &names, None)?;
+        let prepared = tokio::select! {
+            biased;
+            event = termination.recv() => return Err(super::terminated(event)),
+            _ = async { match supervisor.as_ref() {
+                Some(parent) => parent.wait().await,
+                None => std::future::pending().await,
+            }} => anyhow::bail!("foreground parent exited before host publication"),
+            prepared = location.prepare_named_until(&project_lease, &names, None, publication_deadline) => prepared?,
+        };
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         server = Some(LocalServer::bind_with_names(prepared, names)?);
         project_lease.verify_live_identity()?;

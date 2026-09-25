@@ -75,7 +75,7 @@ impl ProjectLease {
         let directory = Directory::open(inventory, true)?;
         let lock_file = directory.append(OsStr::new(&lock_name))?;
         let lock_key = locking::file_key(&lock_file)?;
-        let lock = locking::Lock::acquire(lock_file)?;
+        let lock = locking::Lock::acquire(lock_file, "project ownership")?;
         let registry_file = directory.append(OsStr::new(REGISTRY_LOCK))?;
         let inventory_key = locking::file_key(&registry_file)?;
         let lease = Self(Arc::new(ProjectLeaseInner {
@@ -202,7 +202,7 @@ impl RegistrySet {
 
     fn identity_locks(&self, id: &str) -> io::Result<Vec<locking::Lock>> {
         metadata::validate_id(id)?;
-        locking::acquire(&self.0, |root| {
+        locking::acquire(&self.0, "publication identity", |root| {
             format!(".host-{}.lock", self.record_key(root, id))
         })
     }
@@ -225,7 +225,9 @@ impl RegistrySet {
     }
 
     fn registry_locks(&self) -> io::Result<Vec<locking::Lock>> {
-        locking::acquire(&self.0, |_| REGISTRY_LOCK.to_owned())
+        locking::acquire(&self.0, "publication registry", |_| {
+            REGISTRY_LOCK.to_owned()
+        })
     }
 
     fn record_key(&self, root: &RegistryRoot, id: &str) -> String {

@@ -35,6 +35,44 @@ class FakeInput:
 
 
 class ReaderTests(unittest.TestCase):
+    def test_registration_allows_cold_start_without_widening_ordinary_replies(self):
+        source = FakeInput([(4, b'{"type":"register"}\n'), (4, b'{"type":"response"}\n')])
+        self.assertEqual(source.reader.registration(0), {'type': 'register'})
+        with self.assertRaisesRegex(AssertionError, 'timed out; phase=response'):
+            source.reader.read(source.now + 3)
+        self.assertEqual(source.waits, [10, 3])
+
+    def test_registration_charges_launch_time_and_fragments_to_one_budget(self):
+        source = FakeInput([(3, b'{"type":'), (4, b'"register"}\n')])
+        source.now = 4  # Process creation and hello already consumed four seconds.
+        with self.assertRaisesRegex(AssertionError, 'launch_elapsed=10.000s'):
+            source.reader.registration(0)
+        self.assertEqual(source.waits, [6, 3])
+        self.assertEqual(source.now, 10)
+
+    def test_registration_silence_eof_and_expired_launch_have_distinct_failures(self):
+        silent = FakeInput([])
+        with self.assertRaisesRegex(AssertionError, 'timed out; phase=registration'):
+            silent.reader.registration(0)
+        self.assertEqual(silent.now, 10)
+        with self.assertRaisesRegex(AssertionError, 'exited before a response'):
+            FakeInput([(1, b'')]).reader.registration(0)
+        expired = FakeInput([(0, b'{"type":"register"}\n')])
+        expired.now = 11
+        with self.assertRaisesRegex(AssertionError, 'launch_elapsed=11.000s'):
+            expired.reader.registration(0)
+        self.assertEqual(expired.waits, [])
+
+    def test_readiness_after_deadline_does_not_admit_a_late_frame(self):
+        source = FakeInput([(0, b'{"type":"register"}\n')])
+        def late(_remaining):
+            source.now = 11
+            return True
+        source.reader.wait = late
+        with self.assertRaisesRegex(AssertionError, 'timed out'):
+            source.reader.registration(0)
+        self.assertEqual(source.validated, [])
+
     def test_coalesced_deadline_reply_is_returned_without_more_descriptor_readiness(self):
         source = FakeInput([(0, b'{"type":"request"}\n{"type":"response"}\n')])
         self.assertEqual(source.reader.read(3), {'type': 'request'})

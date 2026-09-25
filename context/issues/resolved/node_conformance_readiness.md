@@ -30,11 +30,30 @@ Coverage is in `docs/plugins/check_node_reader.py`:
   `test_stderr_snapshot_performs_only_one_bounded_nonblocking_read` verify
   bounded, distinct failure evidence.
 
-All six reader tests and all 14 tests in `docs/plugins/check_node.py` passed.
+The follow-up for CI run `36131655861` separates initial registration from
+ordinary response timing. `ResponseReader::registration` uses one ten-second
+deadline measured before process creation, matching the host registration
+allowance (and also charging interpreter launch to it). The harness applies
+the same startup allowance to release compatibility and malformed initial
+input cases. Ordinary replies remain bounded by three seconds and publication
+by nine seconds. Executable and launch-to-registration timing are logged;
+the interpreter version is queried after acceptance to avoid warming the first
+launch. Readiness arriving after the absolute deadline cannot admit a new frame.
+
+Additional coverage in `docs/plugins/check_node_reader.py`:
+
+- `test_registration_allows_cold_start_without_widening_ordinary_replies`
+- `test_registration_charges_launch_time_and_fragments_to_one_budget`
+- `test_registration_silence_eof_and_expired_launch_have_distinct_failures`
+- `test_readiness_after_deadline_does_not_admit_a_late_frame`
+
+All ten reader tests and all 14 tests in `docs/plugins/check_node.py` passed
+on Linux after the follow-up.
 
 Known limitation: the cause of the intermittent cold initial-registration
-timeout has not been established. The new diagnostics make a recurrence
-actionable but do not prevent it.
+timeout has not been established. The startup allowance removes the tighter
+fixture assumption, but does not establish why CI produced no bytes for three
+seconds or guarantee that a child cannot exceed the new bound.
 
 ## Report
 

@@ -28,6 +28,205 @@ fn publication(location: &EndpointLocation) -> Publication {
         .unwrap()
 }
 
+fn startup_lease(location: &EndpointLocation) -> ProjectLease {
+    ProjectLease::acquire(
+        &location.project,
+        &location.registries.lease_root().unwrap().path,
+    )
+    .unwrap()
+}
+
+fn startup_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn startup_preparation_waits_for_stopped_name_reader_and_releases_partial_guards() {
+    let (root, location, names) = fixture("names-startup-reader");
+    let lease = startup_lease(&location);
+    // Ensure the stable lock exists, with no stored name, just as a stopped
+    // catalog row can encounter it between host incarnations.
+    drop(names.lock().unwrap());
+    let state = root.join("configured-state");
+    let id = crate::workspace::workspace_id(&location.project);
+    let reader_id = id.clone();
+    let (entered, entered_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        NameStore::read_existing_with(&state, &reader_id, |_| {
+            entered.send(()).unwrap();
+            let _ = release_rx.recv();
+            Ok(())
+        })
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    startup_runtime().block_on(async {
+        let future = location.prepare_named_until(
+            &lease,
+            &names,
+            None,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        let mut future = std::pin::pin!(future);
+        assert!(futures_util::poll!(&mut future).is_pending());
+        // A pending attempt holds only the caller's project lease. Other
+        // operations can acquire every partially acquired publication guard.
+        drop(location.registries.identity_locks(&id).unwrap());
+        drop(location.registries.registry_locks().unwrap());
+        let competing = ProjectLease::acquire(
+            &location.project,
+            &location.registries.lease_root().unwrap().path,
+        )
+        .unwrap_err();
+        assert!(locking::is_contention(&competing));
+        assert!(competing.to_string().contains("project ownership"));
+        assert!(!location.ready_record().exists());
+        release.send(()).unwrap();
+        assert_eq!(reader.join().unwrap().unwrap(), None);
+        let mut publication = future.await.unwrap().publish().unwrap();
+        assert_eq!(
+            location.read_ready().unwrap().unwrap(),
+            publication.metadata
+        );
+        publication.cleanup().unwrap();
+    });
+}
+
+#[test]
+fn startup_preparation_times_out_with_lock_role_without_publishing() {
+    let (_root, location, names) = fixture("names-startup-timeout");
+    let lease = startup_lease(&location);
+    let held = names.lock().unwrap();
+    startup_runtime().block_on(async {
+        let error = location
+            .prepare_named_until(
+                &lease,
+                &names,
+                None,
+                tokio::time::Instant::now() + std::time::Duration::from_millis(50),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("name store lock is busy"));
+    });
+    assert!(!location.ready_record().exists());
+    assert!(
+        location
+            .registries
+            .read(&crate::workspace::workspace_id(&location.project))
+            .unwrap()
+            .is_empty()
+    );
+    drop(held);
+    // Timeout must not poison future admission or leave partial guards held.
+    drop(
+        location
+            .prepare_named_with_lease(&lease, &names, None)
+            .unwrap(),
+    );
+}
+
+#[test]
+fn startup_preparation_cancellation_releases_guards_for_each_lock_role() {
+    let (_root, location, names) = fixture("names-startup-cancel");
+    let lease = startup_lease(&location);
+    let id = crate::workspace::workspace_id(&location.project);
+    startup_runtime().block_on(async {
+        for role in ["publication identity", "publication registry", "name store"] {
+            let held = match role {
+                "publication identity" => location.registries.identity_locks(&id).unwrap(),
+                "publication registry" => location.registries.registry_locks().unwrap(),
+                _ => vec![names.lock().unwrap()],
+            };
+            let error = location
+                .prepare_named_with_lease(&lease, &names, None)
+                .unwrap_err();
+            assert!(locking::is_contention(&error));
+            assert!(error.to_string().contains(role));
+            {
+                let future = location.prepare_named_until(
+                    &lease,
+                    &names,
+                    None,
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+                );
+                let mut future = std::pin::pin!(future);
+                assert!(futures_util::poll!(&mut future).is_pending());
+                // Scope exit cancels exactly as dropping the startup select
+                // branch on termination or parent exit does.
+            }
+            drop(held);
+            assert!(!location.ready_record().exists());
+            drop(
+                location
+                    .prepare_named_with_lease(&lease, &names, None)
+                    .unwrap(),
+            );
+        }
+    });
+}
+
+#[test]
+fn startup_preparation_revalidates_vacancy_after_contention() {
+    let (_root, location, names) = fixture("names-startup-vacancy");
+    let lease = startup_lease(&location);
+    let held = names.lock().unwrap();
+    startup_runtime().block_on(async {
+        let future = location.prepare_named_until(
+            &lease,
+            &names,
+            None,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        let mut future = std::pin::pin!(future);
+        assert!(futures_util::poll!(&mut future).is_pending());
+        drop(held);
+        // Install a publication between attempts using the existing lease.
+        let mut publication = location
+            .prepare_named_with_lease(&lease, &names, None)
+            .unwrap()
+            .publish()
+            .unwrap();
+        let error = future.await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            location.read_ready().unwrap().unwrap(),
+            publication.metadata
+        );
+        publication.cleanup().unwrap();
+    });
+}
+
+#[test]
+fn startup_preparation_revalidates_project_identity_after_contention() {
+    let (root, location, names) = fixture("names-startup-identity");
+    let lease = startup_lease(&location);
+    let held = names.lock().unwrap();
+    startup_runtime().block_on(async {
+        let future = location.prepare_named_until(
+            &lease,
+            &names,
+            None,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        let mut future = std::pin::pin!(future);
+        assert!(futures_util::poll!(&mut future).is_pending());
+        fs::rename(&location.project, root.join("old-project")).unwrap();
+        fs::create_dir(&location.project).unwrap();
+        drop(held);
+        let error = future.await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("project root changed"));
+        assert!(!location.ready_record().exists());
+    });
+}
+
 fn assert_published(publication: &Publication, expected: &str) {
     assert_eq!(publication.metadata.name.as_deref(), Some(expected));
     for issued in &publication.issued {

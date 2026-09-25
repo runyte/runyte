@@ -133,8 +133,12 @@ impl Candidate {
                     .name
                     .strip_suffix(".json")
                     .expect("admitted registry filename");
-                let mut locks = locking::acquire(root, |_| format!(".host-{stem}.lock"))?;
-                locks.extend(locking::acquire(root, |_| REGISTRY_LOCK.to_owned())?);
+                let mut locks = locking::acquire(root, "publication identity", |_| {
+                    format!(".host-{stem}.lock")
+                })?;
+                locks.extend(locking::acquire(root, "publication registry", |_| {
+                    REGISTRY_LOCK.to_owned()
+                })?);
                 Ok(locks)
             }
         }

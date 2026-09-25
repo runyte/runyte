@@ -7,11 +7,12 @@ from pathlib import Path
 import selectors
 import shutil
 import subprocess
+import sys
 import time
 import unittest
 
 from jsonschema import Draft202012Validator
-from node_reader import ResponseReader, stderr_snapshot
+from node_reader import REGISTRATION_TIMEOUT, ResponseReader, stderr_snapshot
 
 DIRECTORY = Path(__file__).resolve().parent
 SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
@@ -19,12 +20,27 @@ FIXTURES = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
 HOST = [fixture['message'] for fixture in FIXTURES if fixture['direction'] == 'host']
 VALIDATOR = Draft202012Validator({**SCHEMA, 'anyOf': [{'$ref': '#/$defs/pluginMessage'}]})
 NODE = os.environ.get('NODE') or shutil.which('node')
+if NODE:
+    NODE = shutil.which(NODE) or NODE
 LIMIT = 1048576
 
 
 @unittest.skipUnless(NODE, 'Install Node.js or set NODE')
 class NodeTasksTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        print(f'Node executable: {NODE}', file=sys.stderr, flush=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Report the version after acceptance, so this does not warm the first
+        # interpreter launch and conceal the cold-start behavior under test.
+        version = subprocess.check_output([NODE, '--version'], timeout=REGISTRATION_TIMEOUT,
+                                          text=True).strip()
+        print(f'Node version: {version}', file=sys.stderr, flush=True)
+
     def setUp(self):
+        self.launched_at = time.monotonic()
         self.child = subprocess.Popen([NODE, str(DIRECTORY / 'tasks.mjs')],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         self.addCleanup(self.close)
@@ -64,6 +80,12 @@ class NodeTasksTests(unittest.TestCase):
             self.last_request = serial
         return result
 
+    def registration(self):
+        result = self.reader.registration(self.launched_at)
+        print(f'Node registration: launch_to_reply={time.monotonic() - self.launched_at:.3f}s',
+              file=sys.stderr, flush=True)
+        return result
+
     def test_supported_host_release_boundaries_and_spelling(self):
         cases = [
             ('0.3.0', True), ('0.3.9', True), ('0.3.0+build.01-x', True),
@@ -79,6 +101,7 @@ class NodeTasksTests(unittest.TestCase):
         ]
         for version, accepted in cases:
             with self.subTest(version=version):
+                launched_at = time.monotonic()
                 child = subprocess.Popen([NODE, str(DIRECTORY / 'tasks.mjs')], stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
                 try:
@@ -87,16 +110,19 @@ class NodeTasksTests(unittest.TestCase):
                     if accepted:
                         with selectors.DefaultSelector() as selector:
                             selector.register(child.stdout, selectors.EVENT_READ)
-                            self.assertTrue(selector.select(3), 'Registration timed out')
-                        line = child.stdout.readline(LIMIT + 1)
-                        self.assertTrue(line, 'Compatible host was refused')
-                        registration = json.loads(line)
-                        VALIDATOR.validate(registration)
+                            os.set_blocking(child.stderr.fileno(), False)
+                            reader = ResponseReader(selector.select,
+                                lambda maximum: os.read(child.stdout.fileno(), maximum),
+                                VALIDATOR.validate,
+                                lambda: (child.poll(), stderr_snapshot(
+                                    lambda maximum: os.read(child.stderr.fileno(), maximum))), LIMIT)
+                            registration = reader.registration(launched_at)
                         self.assertEqual(registration['runyte'], '>=0.3.0, <0.4.0')
                         self.assertEqual(registration['required_features'], [])
                         self.assertEqual(registration['optional_features'], [])
                     else:
-                        self.assertNotEqual(child.wait(timeout=3), 0)
+                        remaining = max(0, launched_at + REGISTRATION_TIMEOUT - time.monotonic())
+                        self.assertNotEqual(child.wait(timeout=remaining), 0)
                         self.assertEqual(child.stdout.read(), b'')
                 finally:
                     child.stdin.close()
@@ -111,19 +137,19 @@ class NodeTasksTests(unittest.TestCase):
 
     def test_unrequested_feature_acknowledgement_fails(self):
         self.send(HOST[0])
-        self.read()
+        self.registration()
         self.send({**HOST[1], 'capabilities': ['views'], 'features': ['unrequested']})
         self.assertNotEqual(self.child.wait(timeout=3), 0)
 
     def test_missing_required_capability_in_acknowledgement_fails(self):
         self.send(HOST[0])
-        self.read()
+        self.registration()
         self.send({**HOST[1], 'capabilities': [], 'features': []})
         self.assertNotEqual(self.child.wait(timeout=3), 0)
 
     def handshake(self):
         self.send(HOST[0])
-        registered = self.read(phase='registration')
+        registered = self.registration()
         self.assertEqual(registered['type'], 'register')
         self.assertEqual(registered['required_capabilities'], ['views'])
         self.assertEqual([command['name'] for command in registered['commands']], ['open', 'toggle'])
@@ -289,10 +315,12 @@ class NodeTasksTests(unittest.TestCase):
 
     def test_malformed_utf8_and_oversized_line_exit_without_echoing_input(self):
         for raw in [b'{not json secret}\n', b'\xff\n', b'x' * LIMIT]:
+            launched_at = time.monotonic()
             child = subprocess.Popen([NODE, str(DIRECTORY / 'tasks.mjs')], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                output, errors = child.communicate(raw, timeout=3)
+                remaining = max(0, launched_at + REGISTRATION_TIMEOUT - time.monotonic())
+                output, errors = child.communicate(raw, timeout=remaining)
                 self.assertEqual(child.returncode, 1)
                 self.assertEqual(output, b'')
                 self.assertEqual(errors, b'')

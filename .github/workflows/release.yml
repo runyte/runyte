@@ -177,6 +177,8 @@ jobs:
           Copy-Item -LiteralPath licenses -Destination $packageDir -Recurse
           New-Item -ItemType Directory -Path "$packageDir/docs" | Out-Null
           Copy-Item -LiteralPath docs/user-guide.md -Destination "$packageDir/docs/user-guide.md"
+          New-Item -ItemType Directory -Path "$packageDir/contrib" | Out-Null
+          Copy-Item -LiteralPath contrib/runyte.ps1 -Destination "$packageDir/contrib/runyte.ps1"
           Compress-Archive -LiteralPath $packageDir -DestinationPath "$env:RUNNER_TEMP/runyte-$env:RELEASE_TAG-$env:TARGET.zip"
           & "$packageDir/runyte.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

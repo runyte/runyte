@@ -193,9 +193,11 @@ fn hidden_inventory_row_cleanup_never_reconstructs_or_removes_its_namespace() {
     let b_namespace = registries_b.0.iter().find(|root| !root.inventory).unwrap();
     // Cleanup of this hidden inventory observation must not acquire B's
     // namespace lock, much less follow its reported ready path for deletion.
-    let _namespace_lock = locking::acquire(std::slice::from_ref(b_namespace), |_| {
-        REGISTRY_LOCK.to_owned()
-    })
+    let _namespace_lock = locking::acquire(
+        std::slice::from_ref(b_namespace),
+        "publication registry",
+        |_| REGISTRY_LOCK.to_owned(),
+    )
     .unwrap();
     assert_eq!(stale(hidden).remove_observed().unwrap(), Removal::Removed);
     assert!(b.ready_record().exists());

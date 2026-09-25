@@ -32,8 +32,24 @@ pub(super) fn file_key(file: &File) -> io::Result<FileKey> {
 #[derive(Debug)]
 pub(super) struct Lock(File);
 
+#[derive(Debug)]
+struct Busy(&'static str);
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "workspace {} lock is busy", self.0)
+    }
+}
+
+impl std::error::Error for Busy {}
+
+pub(super) fn is_contention(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        && error.get_ref().is_some_and(|source| source.is::<Busy>())
+}
+
 impl Lock {
-    pub(super) fn acquire(file: File) -> io::Result<Self> {
+    pub(super) fn acquire(file: File, role: &'static str) -> io::Result<Self> {
         let mut offset = offset();
         if unsafe {
             LockFileEx(
@@ -49,10 +65,7 @@ impl Lock {
             let error = io::Error::last_os_error();
             return Err(
                 if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
-                    io::Error::new(
-                        io::ErrorKind::WouldBlock,
-                        "workspace publication lock is busy",
-                    )
+                    io::Error::new(io::ErrorKind::WouldBlock, Busy(role))
                 } else {
                     error
                 },
@@ -82,6 +95,7 @@ fn offset() -> OVERLAPPED {
 
 pub(super) fn acquire(
     roots: &[RegistryRoot],
+    role: &'static str,
     name: impl Fn(&RegistryRoot) -> String,
 ) -> io::Result<Vec<Lock>> {
     let mut files = roots
@@ -97,6 +111,6 @@ pub(super) fn acquire(
     files.dedup_by_key(|(key, _)| *key);
     files
         .into_iter()
-        .map(|(_, file)| Lock::acquire(file))
+        .map(|(_, file)| Lock::acquire(file, role))
         .collect()
 }

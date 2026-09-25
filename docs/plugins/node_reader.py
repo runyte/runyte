@@ -4,6 +4,10 @@ from collections import deque
 import json
 import time
 
+# Match the host's registration allowance in src/plugin/boundary.rs. This
+# includes launching the interpreter; ordinary responses still have 3 seconds.
+REGISTRATION_TIMEOUT = 10
+
 
 def stderr_snapshot(read):
     """One nonblocking read, never a wait for the child or stderr EOF."""
@@ -39,8 +43,8 @@ class ResponseReader:
         # A preceding os.read may have returned several complete messages.
         # Never ask the descriptor for new readiness before consuming them.
         while not self.messages:
-            remaining = max(0, deadline - self.clock())
-            if not self.wait(remaining):
+            remaining = deadline - self.clock()
+            if remaining <= 0 or not self.wait(remaining) or self.clock() > deadline:
                 raise self.failure('Node response timed out', phase, started)
             data = self.read_chunk(self.limit + 1)
             if not data:
@@ -57,3 +61,11 @@ class ResponseReader:
                 self.validate(value)
                 self.messages.append(value)
         return self.messages.popleft()
+
+    def registration(self, launched_at):
+        """One startup deadline, never renewed by spawn time or partial bytes."""
+        try:
+            return self.read(launched_at + REGISTRATION_TIMEOUT, 'registration')
+        except AssertionError as error:
+            raise AssertionError(
+                f'{error}; launch_elapsed={self.clock() - launched_at:.3f}s') from error

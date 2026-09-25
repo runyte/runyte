@@ -57,7 +57,7 @@ impl NameStore {
             result => result?,
         };
         let key = locking::file_key(&lock)?;
-        let _lock = locking::Lock::acquire(lock)?;
+        let _lock = locking::Lock::acquire(lock, "name store")?;
         checkpoint(&store)?;
         store.verify_lock(key)?;
         let value = store.read_unlocked(id)?.map(|(_, _, name)| name);
@@ -86,7 +86,7 @@ impl NameStore {
     fn lock(&self) -> io::Result<locking::Lock> {
         let file = self.directory.append(OsStr::new(STORE_LOCK))?;
         let key = locking::file_key(&file)?;
-        let lock = locking::Lock::acquire(file)?;
+        let lock = locking::Lock::acquire(file, "name store")?;
         self.verify_lock(key)?;
         Ok(lock)
     }
@@ -210,6 +210,40 @@ impl EndpointLocation {
     ) -> io::Result<PreparedEndpoint> {
         let prepared = self.prepare_with_lease(lease, requested)?;
         self.finish_named_preparation(names, prepared)
+    }
+
+    /// Wait only for transient preparation locks, before any publication is
+    /// written. The caller retains the project lease and may cancel by dropping
+    /// this future. Every failed attempt drops all other guards before waiting;
+    /// the next attempt revalidates the lease, vacancy and stored name together.
+    /// Synchronous filesystem admission belongs on the startup/background owner,
+    /// never in the live editor loop. Publication itself must not be retried.
+    pub async fn prepare_named_until(
+        &self,
+        lease: &ProjectLease,
+        names: &NameStore,
+        requested: Option<String>,
+        deadline: tokio::time::Instant,
+    ) -> io::Result<PreparedEndpoint> {
+        use tokio::time::{Instant, sleep_until};
+        let mut contention = None;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    contention.map_or_else(
+                        || "workspace publication preparation deadline expired".to_owned(),
+                        |error| format!("workspace publication preparation timed out: {error}"),
+                    ),
+                ));
+            }
+            match self.prepare_named_with_lease(lease, names, requested.clone()) {
+                Ok(prepared) => return Ok(prepared),
+                Err(error) if locking::is_contention(&error) => contention = Some(error),
+                Err(error) => return Err(error),
+            }
+            sleep_until(deadline.min(Instant::now() + std::time::Duration::from_millis(25))).await;
+        }
     }
 
     fn finish_named_preparation(

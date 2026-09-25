@@ -29,7 +29,9 @@ use std::{
 use tokio::time::{Instant, sleep_until, timeout_at};
 use windows_sys::Win32::{Foundation::CompareObjectHandles, System::Threading::GetProcessId};
 
-const READINESS_BUDGET: Duration = Duration::from_secs(5);
+/// Detached parent readiness and child publication preparation use this bound.
+/// Each owns its deadline; a child never extends its parent's startup budget.
+pub const READINESS_BUDGET: Duration = Duration::from_secs(5);
 const PROBE_BUDGET: Duration = Duration::from_millis(250);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const CLEANUP_BUDGET: Duration = Duration::from_secs(5);
