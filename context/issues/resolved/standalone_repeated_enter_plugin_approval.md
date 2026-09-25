@@ -1,4 +1,39 @@
-# Repeated Enter can approve plugin interactions in standalone mode
+---
+title: "Repeated Enter can approve plugin interactions in standalone mode"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: fc30f47
+---
+
+## Resolution
+
+Commit `fc30f47` (`Preserve repeat provenance through frontend input dispatch`)
+fixed the frontend dispatch gap. The standalone loop and shared host helper
+previously sent repeated input through ordinary `HostCommand::Input` unless a
+context overlay was open. Plugin and provider approval surfaces did not meet
+that condition, so a held Enter could arrive as fresh physical input.
+
+`WorkspaceHost::execute_frontend_input` now chooses repeat-aware dispatch for
+every repeated event. The standalone and host paths share that choice while
+keeping their existing hint handling and motion dispatch counts. The Windows
+persistent path also uses it. A fresh unmodified Enter still approves the
+current surface.
+
+Coverage is in `src/workspace/host/tests/plugin_interaction.rs`:
+`frontend_repeat_cannot_approve_confirmation_presented_after_invocation` and
+`frontend_repeat_edits_plugin_form_but_waits_for_fresh_enter_to_submit`.
+`frontend_repeat_keeps_provider_reload_pending_until_fresh_enter` in
+`src/workspace/host/tests/plugin_recovery.rs` and
+`frontend_repeat_keeps_provider_overwrite_pending_until_fresh_enter` in
+`src/workspace/host/tests/plugin_provider_overwrite.rs` cover the provider
+surfaces. All four focused regressions passed, along with the frontend hint
+test and formatting check.
+
+Known limitation: native Windows physical held-Enter acceptance was not run
+in the Linux development environment.
+
+## Report
 
 The 2026-09-25 release review of `dev` at `b39bc86`, compared with `main` at
 `6e6f270`, found that the standalone frontend does not consistently preserve
