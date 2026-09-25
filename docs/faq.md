@@ -3,8 +3,8 @@
 ## Does Runyte run natively on Windows?
 
 This source tree has provisional native Windows support for standalone editing,
-file management, text clipboard and integrated ConPTY terminals. The released
-0.3.1 packages predate this work. See the [Windows guide](user-guide.md#windows-support)
+file management, text clipboard and integrated ConPTY terminals. Native Windows
+builds are available starting with 0.3.2. See the [Windows guide](user-guide.md#windows-support)
 for build requirements and the explicit feature limits.
 
 Integrated Git is available when a native Git executable is found on PATH;

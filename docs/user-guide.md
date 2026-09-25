@@ -1471,11 +1471,10 @@ cargo build --release --locked
 .\target\release\runyte.exe --standalone README.md
 ```
 
-The Windows release workflow produces a ZIP containing `runyte.exe`, the
-configuration example and license material, with its hash in `SHA256SUMS`.
-Compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with that entry before
-extracting. Executables are unsigned. No Windows archive is added retroactively
-to the 0.3.1 release by this source change.
+Releases from 0.3.2 onward include an x86-64 Windows ZIP containing
+`runyte.exe`, the configuration example and license material, with its hash in
+`SHA256SUMS`. Compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with that
+entry before extracting. Executables are unsigned.
 
 MSVC builds require the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`).
 Install Microsoft's x64 Visual C++ Redistributable if it is absent; the ZIP
