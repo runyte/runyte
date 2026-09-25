@@ -1,4 +1,30 @@
-# Git log rows show the author date without a time of day
+---
+title: "Git log rows show the author date without a time of day"
+status: resolved
+reported: 2026-09-25
+resolved: 2026-09-25
+commit: ca79bbd
+---
+
+## Resolution
+
+Commit `ca79bbd` (`Show commit author time in Git log rows`) fixed the
+history-row presentation. `git_log_view` previously printed only the `%as`
+author date, so commits made on the same day had no visible time. The Git
+requests now ask Git to format the author's date and time in the commit's own
+timezone; `CommitSummary` stores that bounded ASCII value and the row prints
+it as `YYYY-MM-DD HH:MM`. This avoids a UTC conversion shifting commits near
+midnight onto the wrong date. The date-only page heading, commit detail and
+blame view remain unchanged.
+
+Coverage is in `src/git/history.rs` and `tests/git_parsing.rs` for valid and
+malformed timestamp parsing, `tests/git_provider.rs` in
+`log_rows_keep_author_clock_time_across_utc_midnight` for a real commit whose
+author date and time differ from the UTC/committer date, and
+`src/app/tests/git.rs` for row and paging presentation. All 23 Git parsing
+tests and the real-Git timezone test passed.
+
+## Report
 
 `Space g l` opens paged commit history. Each row shows the short object ID,
 the author date as `YYYY-MM-DD`, the author, and the subject:
