@@ -175,7 +175,10 @@ them, regardless of which extensibility direction is chosen.
   column, including on the selected row and in attached-client snapshots. The
   preview column shows a content match as a numbered snippet around the
   matching row with the matched text highlighted, and does so for an open
-  buffer or a terminal row exactly as for a file on disk. The
+  buffer or a terminal row exactly as for a file on disk. The frontend fits
+  that snippet to the live preview height, keeping the match visible and
+  filling the column where retained context permits. Up to 512 context lines
+  travel with the preview, so resizing needs no fresh source read. The
   query and `Ctrl-t` preview preference survive the switch; modes are not
   separate overlays or separate stops in a picker cycle. Query text and its
   caret are immediate editor-owned state; filesystem discovery, file ranking,

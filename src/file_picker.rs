@@ -35,8 +35,10 @@ const SCAN_BATCH: usize = 128;
 /// and publishes, avoiding a whole growing-list clone for every 128 paths.
 const RANK_PUBLISH_BATCH: usize = 4_096;
 const PREVIEW_BYTES: u64 = 64 * 1024;
-const PREVIEW_CONTEXT_BEFORE: usize = 4;
-const PREVIEW_CONTEXT_LINES: usize = PREVIEW_CONTEXT_BEFORE * 2 + 1;
+// Retain bounded context independently of frontend geometry. Each renderer
+// chooses the visible window, so resizing needs no new disk read or host request.
+const PREVIEW_CONTEXT_LINES: usize = 512;
+const PREVIEW_CONTEXT_BEFORE: usize = PREVIEW_CONTEXT_LINES / 2;
 const GREP_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// How many ranking candidates a picker will hold.
 ///
@@ -336,7 +338,7 @@ impl FilePreview {
         Self::snippet_from_lines(text.lines().map(str::to_owned), focus_row, emphasis)
     }
 
-    /// The rows a content snippet shows around a match on `focus_row`.
+    /// The rows a content snippet retains around a match on `focus_row`.
     ///
     /// A source that can read one row directly, as terminal scrollback can,
     /// reads this range instead of skipping a line iterator. Every content
@@ -5374,23 +5376,23 @@ mod tests {
 
     #[test]
     fn content_preview_centers_context_and_preserves_match_emphasis() {
-        let text = (0..20)
+        let text = (0..1000)
             .map(|row| format!("line {}", row + 1))
             .collect::<Vec<_>>()
             .join("\n");
-        let FilePreview::Snippet(snippet) = FilePreview::snippet_from_text(&text, 12, vec![0, 3])
+        let FilePreview::Snippet(snippet) = FilePreview::snippet_from_text(&text, 512, vec![0, 3])
         else {
             panic!("content snippet expected");
         };
 
-        assert_eq!(snippet.start_row, 8);
-        assert_eq!(snippet.focus_row, 12);
-        assert_eq!(snippet.lines.len(), 9);
-        assert_eq!(snippet.lines[0], "line 9");
-        assert_eq!(snippet.lines[4], "line 13");
-        assert_eq!(snippet.lines[8], "line 17");
+        assert_eq!(snippet.start_row, 256);
+        assert_eq!(snippet.focus_row, 512);
+        assert_eq!(snippet.lines.len(), 512);
+        assert_eq!(snippet.lines[0], "line 257");
+        assert_eq!(snippet.lines[256], "line 513");
+        assert_eq!(snippet.lines[511], "line 768");
         assert_eq!(snippet.emphasis, vec![0, 3]);
-        assert_eq!(snippet.display_lines()[4], "› 13 │ line 13");
+        assert_eq!(snippet.display_lines()[256], "› 513 │ line 513");
         assert!(
             snippet
                 .display_lines()

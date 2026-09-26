@@ -2753,7 +2753,9 @@ rather than names. `:fuzzy-grep` opens that mode directly;
 or explorer's directory. File scanning streams non-empty UTF-8 lines from
 ignore-aware files, ranks the typed query against the line text, and displays
 `path:line` in the result list while the selected source remains in the
-preview. The preview starts with nearby context, marks the
+preview. The preview fills its available height with surrounding context and
+adjusts when the overlay is resized, keeping the matching line visible. It
+retains up to 512 context lines and marks the
 matching line with its real line number, and fills a direct match with the
 primary match colour — one that landed whole, meaning a single word on a
 contiguous span or every term of a several-word query on a span of its own. A

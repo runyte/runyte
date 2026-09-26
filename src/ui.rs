@@ -1431,6 +1431,7 @@ fn draw_snapshot_overlay(
                 *focus_row,
                 emphasis,
                 theme,
+                columns[1].height.saturating_sub(1) as usize,
             ),
             Some(OverlayPreview::Binary) => vec![Line::from("Binary file")],
             Some(OverlayPreview::Unavailable(error)) => vec![Line::from(error.clone())],
@@ -3012,6 +3013,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                 snippet.focus_row,
                 &snippet.emphasis,
                 &app.theme,
+                columns[1].height.saturating_sub(1) as usize,
             ),
             Some(crate::file_picker::FilePreview::Binary) => {
                 vec![Line::from("<Binary file>")]
@@ -3209,12 +3211,22 @@ fn draw_resource_finder(
             };
             (
                 title,
-                file_preview_lines(&picker.query, finder.selected_preview(), &app.theme),
+                file_preview_lines(
+                    &picker.query,
+                    finder.selected_preview(),
+                    &app.theme,
+                    columns[1].height.saturating_sub(1) as usize,
+                ),
             )
         } else {
             (
                 "Preview",
-                file_preview_lines(&picker.query, picker.preview.as_ref(), &app.theme),
+                file_preview_lines(
+                    &picker.query,
+                    picker.preview.as_ref(),
+                    &app.theme,
+                    columns[1].height.saturating_sub(1) as usize,
+                ),
             )
         };
         frame.render_widget(
@@ -3241,6 +3253,7 @@ fn file_preview_lines(
     query: &str,
     preview: Option<&crate::file_picker::FilePreview>,
     theme: &TuiTheme,
+    height: usize,
 ) -> Vec<Line<'static>> {
     use crate::file_picker::FilePreview;
 
@@ -3255,6 +3268,7 @@ fn file_preview_lines(
             snippet.focus_row,
             &snippet.emphasis,
             theme,
+            height,
         ),
         Some(FilePreview::Binary) => vec![Line::from("<Binary file>")],
         Some(FilePreview::Unreadable(error)) => {
@@ -3271,7 +3285,16 @@ fn fuzzy_preview_lines(
     focus_row: usize,
     emphasis: &[usize],
     theme: &TuiTheme,
+    height: usize,
 ) -> Vec<Line<'static>> {
+    // Center the match in the live preview body, shifting toward the source's
+    // beginning or end to fill every available row when context permits.
+    let offset = focus_row
+        .saturating_sub(start_row)
+        .saturating_sub(height / 2)
+        .min(lines.len().saturating_sub(height));
+    let lines = &lines[offset..lines.len().min(offset.saturating_add(height))];
+    let start_row = start_row + offset;
     let line_digits = (start_row + lines.len()).max(1).to_string().len();
     let match_background = if crate::file_picker::is_direct_match(emphasis, query) {
         theme.fuzzy_match_primary
@@ -4642,6 +4665,9 @@ fn from_tui_rect(rect: TuiRect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    #[path = "content_preview.rs"]
+    mod content_preview;
+
     use ratatui::{Terminal, backend::TestBackend};
 
     use super::*;
@@ -8924,7 +8950,7 @@ mod tests {
             "{screen}"
         );
         assert!(screen.contains("launch workspace scanner"), "{screen}");
-        assert!(!screen.contains("file head sentinel"), "{screen}");
+        assert!(screen.contains("file head sentinel"), "{screen}");
         assert_eq!(
             app.picker
                 .as_ref()
