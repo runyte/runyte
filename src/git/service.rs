@@ -253,6 +253,16 @@ impl GitMutation {
 
 #[derive(Clone, Debug)]
 pub enum GitOperation {
+    CompareRevisions {
+        repository: Repository,
+        target: super::ComparisonTarget,
+    },
+    RevisionFile {
+        repository: Repository,
+        comparison: Box<super::RevisionComparison>,
+        file: Box<super::RevisionFile>,
+        split: bool,
+    },
     Discover {
         start: PathBuf,
     },
@@ -339,6 +349,8 @@ impl GitOperation {
             Self::Status { repository }
             | Self::StagedContent { repository, .. }
             | Self::Diff { repository, .. }
+            | Self::CompareRevisions { repository, .. }
+            | Self::RevisionFile { repository, .. }
             | Self::FileComparison { repository, .. }
             | Self::Branches { repository }
             | Self::Worktrees { repository }
@@ -375,6 +387,8 @@ impl GitOperation {
             self,
             Self::CommitDetail { .. }
                 | Self::Blame { .. }
+                | Self::CompareRevisions { .. }
+                | Self::RevisionFile { .. }
                 | Self::FileComparison { .. }
                 | Self::SearchCommits { .. }
                 | Self::PreparePartial { .. }
@@ -398,6 +412,8 @@ impl GitOperation {
             Self::StagedContent { .. } => "read staged base",
             Self::Diff { .. } => "read diff",
             Self::FileComparison { .. } => "read file comparison",
+            Self::CompareRevisions { .. } => "compare committed tips",
+            Self::RevisionFile { .. } => "read committed diff",
             Self::Branches { .. } => "list branches",
             Self::Worktrees { .. } => "list worktrees",
             Self::PrepareBranchDeletion { .. } => "review branch deletion",
@@ -416,6 +432,7 @@ impl GitOperation {
 
     fn read_key(&self) -> Option<ReadKey> {
         match self {
+            Self::CompareRevisions { .. } | Self::RevisionFile { .. } => None,
             Self::Discover { start } => Some(ReadKey::Discover(start.clone())),
             Self::Status { repository } => {
                 Some(ReadKey::Status(repository.workdir().to_path_buf()))
@@ -513,6 +530,8 @@ pub struct RepositorySnapshot {
 
 #[derive(Clone, Debug)]
 pub enum GitResponse {
+    RevisionComparison(super::RevisionComparison),
+    RevisionFile(super::RevisionFileView),
     Discovered(Option<Repository>),
     Status(RepositoryStatus),
     StagedContent {
@@ -1271,6 +1290,17 @@ fn execute(
         }
     }
     match operation {
+        GitOperation::CompareRevisions { repository, target } => provider
+            .compare_revisions(repository, target)
+            .map(GitResponse::RevisionComparison),
+        GitOperation::RevisionFile {
+            repository,
+            comparison,
+            file,
+            split,
+        } => provider
+            .revision_file(repository, comparison, file, *split)
+            .map(GitResponse::RevisionFile),
         GitOperation::Discover { start } => provider.discover(start).map(GitResponse::Discovered),
         GitOperation::Status { repository } => provider.status(repository).map(GitResponse::Status),
         GitOperation::StagedContent { repository, path } => provider

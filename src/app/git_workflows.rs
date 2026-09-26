@@ -65,6 +65,7 @@ pub(super) struct GitWorkflowState {
     /// Whether repository discovery has answered for the current project.
     /// Kept separate from `GitTracker::repository`: `None` means "not a
     /// repository" only after discovery finishes.
+    pub(super) comparisons: super::git_comparison::ComparisonState,
     discovery_complete: bool,
     /// The typed discovery failure kept distinct from an authoritative
     /// non-repository result. Command discovery exposes this text so a failed
@@ -134,6 +135,7 @@ pub(super) struct GitWorkflowState {
 impl Default for GitWorkflowState {
     fn default() -> Self {
         Self {
+            comparisons: Default::default(),
             discovery_complete: false,
             discovery_error: None,
             generation: RepositoryGeneration::default(),
@@ -355,7 +357,7 @@ impl App {
         self.ports.git_service.is_some() || self.ports.git.is_some()
     }
 
-    fn request_git(&mut self, operation: GitOperation) -> Option<GitRequestId> {
+    pub(super) fn request_git(&mut self, operation: GitOperation) -> Option<GitRequestId> {
         self.request_git_for_action(operation, self.active_action_id)
     }
 
@@ -766,6 +768,13 @@ impl App {
                     self.git_state.snapshot_stale = true;
                 }
                 let action = self.git_state.action_origins.remove(&id);
+                if matches!(
+                    operation,
+                    GitOperation::CompareRevisions { .. } | GitOperation::RevisionFile { .. }
+                ) && !self.accept_revision_response(id)
+                {
+                    return;
+                }
                 let mut requested_views = RequestedGitViews {
                     index: self.git_state.index_open_requests.remove(&id),
                     commit: self.git_state.commit_open_request == Some(id),
@@ -974,6 +983,22 @@ impl App {
         #[cfg(not(any(unix, windows)))]
         let _ = request;
         match response {
+            GitResponse::RevisionComparison(comparison) => {
+                if let GitOperation::CompareRevisions { repository, .. } = operation {
+                    self.show_revision_comparison(repository, comparison);
+                }
+            }
+            GitResponse::RevisionFile(view) => {
+                if let GitOperation::RevisionFile {
+                    repository,
+                    comparison,
+                    file,
+                    ..
+                } = operation
+                {
+                    self.show_revision_file(repository, &comparison, *file, view);
+                }
+            }
             GitResponse::Discovered(repository) => {
                 let retried = self.git_state.discovery_error.is_some();
                 self.git_state.discovery_complete = true;
@@ -1905,6 +1930,9 @@ impl App {
     /// changes no other tool can see. When they disagree the header says so
     /// rather than leaving the reader to work it out.
     pub(super) fn open_git_diff(&mut self) {
+        if self.open_revision_file(false) {
+            return;
+        }
         let Some((repository, path, scope)) = self.git_diff_target() else {
             return;
         };
@@ -1930,6 +1958,9 @@ impl App {
     }
 
     pub(super) fn open_git_file_comparison(&mut self) {
+        if self.open_revision_file(true) {
+            return;
+        }
         let Some((repository, path, scope)) = self.git_diff_target() else {
             return;
         };
@@ -4724,7 +4755,7 @@ impl App {
         })
     }
 
-    fn selected_branch_row(&mut self) -> Option<crate::git::BranchRow> {
+    pub(super) fn selected_branch_row(&mut self) -> Option<crate::git::BranchRow> {
         let row = self.active_buffer().offset_to_row(self.active().head());
         let branch = self.git_state.branch_rows.get(row).cloned();
         if branch
@@ -6291,6 +6322,9 @@ impl App {
     /// switching branches outside the editor moves the text every mark is
     /// measured against, and no buffer changes when it happens.
     pub(super) fn refresh_git(&mut self) {
+        if self.refresh_revision_comparison() {
+            return;
+        }
         if self.ports.git_service.is_some() {
             if !self.git_state.discovery_complete
                 && (self.git.repository().is_none() || self.git_state.discovery_error.is_some())

@@ -12,6 +12,8 @@
 //! to hold it: the child is killed and the call fails with
 //! [`GitError::TooLarge`].
 
+mod comparison;
+
 use std::{
     ffi::{OsStr, OsString},
     io::{self, Read, Write},
@@ -3363,6 +3365,24 @@ impl GitProvider for GitCliProvider {
         String::from_utf8(content)
             .map(BaseContent::Text)
             .or(Ok(BaseContent::Binary))
+    }
+
+    fn compare_revisions(
+        &self,
+        repository: &Repository,
+        target: &super::ComparisonTarget,
+    ) -> Result<super::RevisionComparison> {
+        self.read_revision_comparison(repository, target)
+    }
+
+    fn revision_file(
+        &self,
+        repository: &Repository,
+        comparison: &super::RevisionComparison,
+        file: &super::RevisionFile,
+        split: bool,
+    ) -> Result<super::RevisionFileView> {
+        self.read_revision_file(repository, comparison, file, split)
     }
 
     fn file_comparison(

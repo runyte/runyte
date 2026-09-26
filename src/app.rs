@@ -265,6 +265,7 @@ mod external_opening;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
+mod git_comparison;
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -292,6 +293,7 @@ mod settings_workflows;
 mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
+mod view_position;
 mod workspace_workflows;
 
 use completion_support::*;
@@ -472,7 +474,7 @@ pub struct Pane {
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
     /// different predecessor in each pane without coupling it to jumps.
     buffer_history: Vec<usize>,
-    plugin_view_positions: BTreeMap<usize, plugin_views::PluginViewPosition>,
+    saved_view_positions: BTreeMap<usize, view_position::ViewPosition>,
     destination_history: Vec<OpenDestination>,
     /// The live terminal this pane shows instead of its buffer, if any.
     ///
@@ -544,7 +546,7 @@ impl Pane {
         Self {
             buffer,
             buffer_history: Vec::new(),
-            plugin_view_positions: BTreeMap::new(),
+            saved_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
             terminal: None,
             covered_terminal: None,
@@ -575,9 +577,9 @@ impl Pane {
         self.terminal = None;
         self.covered_terminal = None;
         if self.buffer != buffer {
-            if self.plugin_view_positions.contains_key(&self.buffer) {
-                self.plugin_view_positions
-                    .insert(self.buffer, plugin_views::PluginViewPosition::capture(self));
+            if self.saved_view_positions.contains_key(&self.buffer) {
+                self.saved_view_positions
+                    .insert(self.buffer, view_position::ViewPosition::capture(self));
             }
             self.remember_buffer(self.buffer);
             self.buffer = buffer;
@@ -2789,9 +2791,11 @@ pub struct App {
     /// pane that showed it, so closing a split or opening a file leaves the
     /// child running and reachable from the terminal list.
     pub terminals: TerminalSessions,
-    /// The terminal most recently shown, so a send from a document pane has an
-    /// answer when no terminal is on screen.
-    last_terminal: Option<TerminalId>,
+    /// Terminals in the order their panes last took focus, most recent last,
+    /// so a send from a document pane has an answer when no single terminal
+    /// is on screen. Exited sessions stay listed; each reader decides whether
+    /// one of those will do.
+    focused_terminals: Vec<TerminalId>,
     pub panes: HashMap<usize, Pane>,
     pub layout: Layout,
     pub active_pane: usize,
@@ -3443,7 +3447,7 @@ impl App {
             next_syntax_generation: 1,
             registry,
             terminals: TerminalSessions::new(),
-            last_terminal: None,
+            focused_terminals: Vec::new(),
             panes,
             layout: Layout::Pane(0),
             diffs: Vec::new(),

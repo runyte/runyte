@@ -362,7 +362,6 @@ impl App {
         }
         if let Some(id) = terminal {
             self.move_terminal_to_pane(id, pane_id);
-            self.last_terminal = Some(id);
         }
         self.mode = Mode::Normal;
         self.status(if backward {

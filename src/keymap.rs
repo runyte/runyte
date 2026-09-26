@@ -237,6 +237,8 @@ pub enum BindingScope {
     GitStatus,
     GitBranches,
     GitWorktrees,
+    GitComparison,
+    GitRevisionDiff,
     GitLog,
     GitBlame,
     GitStash,
@@ -273,6 +275,8 @@ impl BindingScope {
         Self::GitBranches,
         Self::Terminal,
         Self::GitWorktrees,
+        Self::GitComparison,
+        Self::GitRevisionDiff,
         Self::GitLog,
         Self::GitBlame,
         Self::GitStash,
@@ -2148,6 +2152,12 @@ fn built_in_bindings() -> Vec<Binding> {
         // buffer bindings remain available here unchanged.
         help_scope(Key::char('q'), ColonCommand::CloseBuffer),
         git_status(Key::plain(KeyCode::Enter), ColonCommand::GitDiff),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitComparison,
+            Key::plain(KeyCode::Enter),
+            ColonCommand::GitDiff,
+        ),
         git_branches(Key::plain(KeyCode::Enter), Command::CheckoutBranch),
         git_worktrees(Key::plain(KeyCode::Enter), Command::OpenWorktree),
         git_log(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
@@ -2395,6 +2405,32 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         .with_capability(CommandCapability::Syntax),
     ];
     let actions = vec![
+        ContextAction::row(
+            BindingScope::GitBranches,
+            Key::char('d'),
+            "compare",
+            ColonCommand::GitCompare,
+        )
+        .with_description("Compare committed tips with this branch"),
+        ContextAction::row(
+            BindingScope::GitWorktrees,
+            Key::char('d'),
+            "compare",
+            ColonCommand::GitCompare,
+        )
+        .with_description("Compare committed tips with this worktree"),
+        ContextAction::row(
+            BindingScope::GitComparison,
+            Key::char('d'),
+            "diff",
+            ColonCommand::GitDiffSideBySide,
+        ),
+        ContextAction::row(
+            BindingScope::GitStatus,
+            Key::char('d'),
+            "diff",
+            ColonCommand::GitDiffSideBySide,
+        ),
         // Row actions lead. Buffer-wide actions follow them, so the menu reads
         // from the object under the cursor out to the view that contains it.
         ContextAction::row(
@@ -2926,7 +2962,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 12,
+            special, 14,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }
@@ -2946,6 +2982,7 @@ mod tests {
         assert_eq!(
             actions,
             vec![
+                ("d".to_owned(), "git-diff-side-by-side", ActionContext::Row),
                 ("s".to_owned(), "git-stage", ActionContext::Row),
                 ("u".to_owned(), "git-unstage", ActionContext::Row),
                 ("D".to_owned(), "git-discard", ActionContext::Row),
@@ -3006,6 +3043,7 @@ mod tests {
         assert_eq!(
             named(BindingScope::GitBranches),
             vec![
+                ("d".to_owned(), "compare"),
                 ("n".to_owned(), "create"),
                 ("w".to_owned(), "worktree"),
                 ("D".to_owned(), "delete"),
@@ -3015,7 +3053,11 @@ mod tests {
         );
         assert_eq!(
             named(BindingScope::GitWorktrees),
-            vec![("n".to_owned(), "branch"), ("D".to_owned(), "remove"),]
+            vec![
+                ("d".to_owned(), "compare"),
+                ("n".to_owned(), "branch"),
+                ("D".to_owned(), "remove"),
+            ]
         );
         assert_eq!(
             named(BindingScope::GitStash),

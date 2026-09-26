@@ -33,6 +33,8 @@ pub enum HelpTopic {
     GitStatus,
     GitBranches,
     GitWorktrees,
+    GitComparison,
+    GitRevisionDiff,
     GitLog,
     GitBlame,
     GitStash,
@@ -51,6 +53,8 @@ impl HelpTopic {
         Self::GitStatus,
         Self::GitBranches,
         Self::GitWorktrees,
+        Self::GitComparison,
+        Self::GitRevisionDiff,
         Self::GitLog,
         Self::GitBlame,
         Self::GitStash,
@@ -73,6 +77,8 @@ impl HelpTopic {
             BindingScope::GitStatus => Self::GitStatus,
             BindingScope::GitBranches => Self::GitBranches,
             BindingScope::GitWorktrees => Self::GitWorktrees,
+            BindingScope::GitComparison => Self::GitComparison,
+            BindingScope::GitRevisionDiff => Self::GitRevisionDiff,
             BindingScope::GitLog => Self::GitLog,
             BindingScope::GitBlame => Self::GitBlame,
             BindingScope::GitStash => Self::GitStash,
@@ -112,6 +118,8 @@ impl HelpTopic {
             Self::GitStatus => "GIT STATUS",
             Self::GitBranches => "GIT BRANCHES",
             Self::GitWorktrees => "GIT WORKTREES",
+            Self::GitComparison => "COMMITTED COMPARISON",
+            Self::GitRevisionDiff => "COMMITTED DIFF",
             Self::GitLog => "GIT LOG",
             Self::GitBlame => "GIT BLAME",
             Self::GitStash => "GIT STASHES",
@@ -162,6 +170,11 @@ impl HelpTopic {
             Self::GitStatus => GIT_STATUS_OVERVIEW,
             Self::GitBranches => GIT_BRANCHES_OVERVIEW,
             Self::GitWorktrees => GIT_WORKTREES_OVERVIEW,
+            Self::GitComparison => GIT_COMPARISON_OVERVIEW,
+            Self::GitRevisionDiff => &[
+                "Read-only committed versions captured from a branch or worktree comparison. The headings identify both tips. Local edits are excluded.",
+                "Close a patch buffer to return to the file list. Closing either split side or :diff-off collapses the comparison and restores the list at the same file.",
+            ],
             Self::GitLog => GIT_LOG_OVERVIEW,
             Self::GitBlame => GIT_BLAME_OVERVIEW,
             Self::GitStash => GIT_STASH_OVERVIEW,
@@ -979,7 +992,14 @@ fn row(out: &mut String, keys: &str, description: &str) -> Range<usize> {
 
 /// The same words in both grammars: nothing here is a motion or an operator,
 /// so neither grammar has anything of its own to say about it.
+const GIT_COMPARISON_OVERVIEW: &[&str] = &[
+    "Compare committed contents at two tips. The current tip is on the left; the selected branch or worktree is on the right. Local edits are excluded.",
+    "Enter opens the file's patch; `Tab d` opens a split diff. Closing either split side or :diff-off restores this list at the same file. {binding:Space g r} captures fresh tips while preserving the selected file.",
+    "Paths on both sides show renames and absent files. Narrow panes combine the paths. Counts show added and removed lines; binary and metadata changes are labelled.",
+];
+
 const GIT_STATUS_OVERVIEW: &[&str] = &[
+    "Enter opens the selected row's patch; `Tab d` opens its complete versions in a temporary split.",
     "The changed-file list groups every file by whether a commit would take it. Rows are files: select several and one key acts on all of them.",
     "`Tab s` stages the selected rows; `Tab S` stages every unstaged or untracked row. Staging records files as written on disk and moves the base that the gutter marks are measured against.",
     "Committing takes the index — exactly what the Staged section shows. Write the message buffer to commit, or close it with `:c` / `:c!` to abandon it.",
@@ -989,6 +1009,7 @@ const GIT_STATUS_OVERVIEW: &[&str] = &[
 ];
 
 const GIT_BRANCHES_OVERVIEW: &[&str] = &[
+    "`Tab d` compares the current committed tip with this local or cached remote branch. The comparison opens a file list with patch and split diff actions.",
     "The Local section comes first and marks the current branch with an asterisk. A `[worktree: /local/path]` note identifies every registered checkout. The Remote section lists locally cached remote-tracking refs; opening or refreshing this view does not fetch.",
     "A local branch that tracks a remote one carries its drift in brackets: `[↑2 ↓1]` is two commits it has that the upstream does not and one the upstream has that it does not, `[=]` is in step, and `[gone]` is an upstream that no longer exists. Each remote row names every local branch configured to track it, or says `[not tracked locally]`.",
     "Enter on a local row checks it out. On a remote row it checks out the one local branch tracking it, asks when several do, or creates a same-named local tracking branch when none does. A conflicting local name is presented for editing rather than silently reused.",
@@ -1001,6 +1022,7 @@ const GIT_BRANCHES_OVERVIEW: &[&str] = &[
 ];
 
 const GIT_WORKTREES_OVERVIEW: &[&str] = &[
+    "`Tab d` compares the current committed tip with the selected checkout's HEAD, including detached checkouts. Local edits in either worktree are excluded.",
     "The worktree list shows every checkout registered with this repository. Paths are identities even when their display needs replacement characters.",
     "`detached` means HEAD points directly at a commit instead of a local branch. The checkout still works, but new commits do not advance a branch unless you create or switch to one.",
     "`missing` means Git still has this worktree registered, but its directory is absent from the filesystem.",

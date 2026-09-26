@@ -1851,6 +1851,65 @@ fn active_directory_explorer_selects_the_file_it_was_opened_from() {
 }
 
 #[test]
+fn space_e_uses_the_markdown_source_directory_and_selects_its_file() {
+    let root = temporary("explorer-markdown-source");
+    let directory = root.join("notes");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("alpha.md"), "# Alpha\n").unwrap();
+    let file = directory.join("target.md");
+    fs::write(&file, "# Target\n").unwrap();
+    let file = file.canonicalize().unwrap();
+
+    for rendered in [false, true] {
+        let mut app = App::new(Config::default(), Some(file.clone())).unwrap();
+        app.project_root = root.clone();
+        app.working_directory = root.clone();
+        let source = app.active().buffer;
+        if rendered {
+            press(&mut app, '?');
+            assert_eq!(app.active_buffer().markdown_render_source(), Some(source));
+        }
+
+        press(&mut app, ' ');
+        press(&mut app, 'e');
+        assert!(app.active_buffer().is_directory());
+        assert_eq!(app.active_buffer().path.as_deref(), file.parent());
+        assert_eq!(
+            app.selected_directory_entry().unwrap().as_deref(),
+            Some(file.as_path())
+        );
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.active().buffer, source);
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn space_e_from_rendered_scratch_uses_the_working_directory() {
+    let root = temporary("explorer-rendered-scratch");
+    let working = root.join("working");
+    fs::create_dir_all(&working).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.project_root = root.clone();
+    app.working_directory = working.canonicalize().unwrap();
+    seed(&mut app, "# Scratch\n");
+    let source = app.active().buffer;
+    press(&mut app, '?');
+    assert_eq!(app.active_buffer().markdown_render_source(), Some(source));
+
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    assert!(app.active_buffer().is_directory());
+    assert_eq!(
+        app.active_buffer().path.as_ref(),
+        Some(&app.working_directory)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn confirmed_active_directory_explorer_still_selects_the_file() {
     let first = temporary("explorer-focus-active-file-first");
     let second = temporary("explorer-focus-active-file-second");

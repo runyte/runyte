@@ -9,30 +9,7 @@ use crate::{
     syntax::Span,
 };
 
-#[derive(Clone, Debug)]
-pub(super) struct PluginViewPosition {
-    pub selection: Selection,
-    pub scroll_row: usize,
-    pub scroll_wrap: usize,
-    pub scroll_col: usize,
-}
-impl PluginViewPosition {
-    pub(super) fn capture(pane: &super::Pane) -> Self {
-        Self {
-            selection: pane.selection.clone(),
-            scroll_row: pane.scroll_row,
-            scroll_wrap: pane.scroll_wrap,
-            scroll_col: pane.scroll_col,
-        }
-    }
-    pub(super) fn restore(&self, pane: &mut super::Pane) {
-        pane.replace_selection(self.selection.clone());
-        pane.scroll_row = self.scroll_row;
-        pane.scroll_wrap = self.scroll_wrap;
-        pane.scroll_col = self.scroll_col;
-        pane.preserve_scroll = true;
-    }
-}
+use super::view_position::ViewPosition;
 
 impl App {
     pub(crate) fn plugin_selection_revision(&self, pane: usize) -> u64 {
@@ -332,9 +309,9 @@ impl App {
             .iter()
             .filter_map(|(&id, pane)| {
                 let saved = if pane.buffer == buffer {
-                    PluginViewPosition::capture(pane)
+                    ViewPosition::capture(pane)
                 } else {
-                    pane.plugin_view_positions.get(&buffer)?.clone()
+                    pane.saved_view_positions.get(&buffer)?.clone()
                 };
                 let positions = saved
                     .selection
@@ -388,7 +365,7 @@ impl App {
                 })
                 .collect();
             let pane = self.panes.get_mut(&id).unwrap();
-            let position = PluginViewPosition {
+            let position = ViewPosition {
                 selection: Selection::new(ranges, primary),
                 scroll_row: scroll.min(after.last_row()),
                 scroll_wrap,
@@ -397,8 +374,8 @@ impl App {
             if pane.buffer == buffer {
                 position.restore(pane);
             }
-            if pane.plugin_view_positions.contains_key(&buffer) {
-                pane.plugin_view_positions.insert(buffer, position);
+            if pane.saved_view_positions.contains_key(&buffer) {
+                pane.saved_view_positions.insert(buffer, position);
             }
         }
         for pane in self.panes.values_mut() {
@@ -428,7 +405,7 @@ impl App {
             return;
         }
         let changed = self.active().buffer != buffer;
-        let saved = self.active().plugin_view_positions.get(&buffer).cloned();
+        let saved = self.active().saved_view_positions.get(&buffer).cloned();
         self.switch_buffer(buffer);
         if changed {
             if let Some(saved) = saved {
@@ -454,11 +431,10 @@ impl App {
         let pane = self.active_mut();
         // At most 16 live views per owner and eight owners. Retired entries
         // are removed by the central buffer retirement path.
-        if pane.plugin_view_positions.len() < 128
-            || pane.plugin_view_positions.contains_key(&buffer)
+        if pane.saved_view_positions.len() < 128 || pane.saved_view_positions.contains_key(&buffer)
         {
-            pane.plugin_view_positions
-                .insert(buffer, PluginViewPosition::capture(pane));
+            pane.saved_view_positions
+                .insert(buffer, ViewPosition::capture(pane));
         }
     }
 

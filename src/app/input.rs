@@ -5583,6 +5583,10 @@ impl App {
                 self.cancel_git();
                 Ok(())
             }
+            (Colon::GitCompare, InvocationParameters::None) => {
+                self.open_revision_comparison();
+                Ok(())
+            }
             (Colon::GitBranches, InvocationParameters::None) => {
                 self.open_git_branches();
                 Ok(())

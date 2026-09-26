@@ -82,7 +82,8 @@ them, regardless of which extensibility direction is chosen.
   discarded. The editable
   explorer and commit-message buffer are special;
   pathless scratch text is not. The complete scoped set is `Directory`,
-  `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitLog`, `GitBlame`,
+  `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitComparison`,
+  `GitRevisionDiff`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
   `BindingScope`. `BindingScope::Markdown` is deliberately not in that set: it
   covers every Markdown document as well as the page rendered from one, so an
@@ -257,6 +258,16 @@ rows in a rectangle. Navigable results belong in buffers; immediate
 choose-one requests belong in pickers; source-tied assistance belongs in
 context overlays; pending operations belong in confirmations; and only short
 scalar input belongs solely on the interaction line.
+
+The **committed comparison** is a retained special buffer opened from a branch
+or worktree row's `Tab d` action. It lists changed paths at two captured commits,
+with current on the left and selected on the right. Wide panes show both paths
+and a changes column; narrow panes combine paths, with renames shown as
+`old → new`. Its rows retain typed file identities independently of the text.
+Patches and temporary paired splits read those same commits, and closing them
+returns to the file list's selected row and scroll position. Explicit refresh
+captures new tips. Committed patches and split sides have a separate binding
+scope so their help and actions do not offer index mutations.
 
 `Space g l` and `Space g f` are the reference pair. `Space g l` opens a
 retained Git-log special buffer because commit history benefits from ordinary

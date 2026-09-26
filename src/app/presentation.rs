@@ -296,6 +296,7 @@ impl App {
         } else {
             self.layout.rectangles(geometry.editor, &mut self.areas);
         }
+        self.resize_revision_comparisons();
         let mut pane_ids = self.areas.keys().copied().collect::<Vec<_>>();
         pane_ids.sort_unstable();
         let mut prepared = Vec::with_capacity(pane_ids.len());
@@ -760,7 +761,17 @@ impl App {
         {
             return BindingScope::Plugin(*owner);
         }
-        if self.active_buffer().is_directory() {
+        if matches!(
+            self.active_buffer().generated_view_identity(),
+            Some(GeneratedViewIdentity::GitComparison { .. })
+        ) {
+            BindingScope::GitComparison
+        } else if matches!(
+            self.active_buffer().generated_view_identity(),
+            Some(GeneratedViewIdentity::GitRevisionFile { .. })
+        ) {
+            BindingScope::GitRevisionDiff
+        } else if self.active_buffer().is_directory() {
             BindingScope::Directory
         } else if self.active_buffer().is_settings() {
             BindingScope::Settings

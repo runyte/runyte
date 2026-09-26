@@ -323,12 +323,19 @@ impl App {
     }
 
     pub(super) fn open_active_directory_explorer(&mut self) -> Result<()> {
-        let file = if matches!(self.active_buffer().kind, BufferKind::File) {
-            self.active_buffer().path.clone()
+        let source = self
+            .active_buffer()
+            .markdown_render_source()
+            .unwrap_or(self.active().buffer);
+        let buffer = &self.buffers[source];
+        let file = if matches!(buffer.kind, BufferKind::File) {
+            buffer.path.clone()
         } else {
             None
         };
-        let directory = self.active_directory();
+        let directory = self
+            .buffer_directory(source)
+            .unwrap_or_else(|| self.working_directory.clone());
         self.open_explorer(Some(directory))?;
         if let Some(file) = file {
             if let Some(confirmation) = &mut self.directory_reload_confirmation {
@@ -1378,7 +1385,7 @@ impl App {
             self.buffers[buffer_id].generated_view_identity(),
             Some(crate::buffer::GeneratedViewIdentity::Plugin { .. })
         );
-        let saved_plugin_position = self.active().plugin_view_positions.get(&buffer_id).cloned();
+        let saved_position = self.active().saved_view_positions.get(&buffer_id).cloned();
         let selection = self
             .take_pending_launch_selection(buffer_id)
             .unwrap_or_else(|| Selection::point(0));
@@ -1390,17 +1397,15 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
-        if let Some(saved) = saved_plugin_position {
+        if let Some(saved) = saved_position {
             saved.restore(pane);
         }
         if is_plugin_view
-            && (pane.plugin_view_positions.len() < 128
-                || pane.plugin_view_positions.contains_key(&buffer_id))
+            && (pane.saved_view_positions.len() < 128
+                || pane.saved_view_positions.contains_key(&buffer_id))
         {
-            pane.plugin_view_positions.insert(
-                buffer_id,
-                super::plugin_views::PluginViewPosition::capture(pane),
-            );
+            pane.saved_view_positions
+                .insert(buffer_id, super::view_position::ViewPosition::capture(pane));
         }
         self.lsp_touch(buffer_id);
         self.status(format!("buffer {}", self.buffers[buffer_id].display_name()));
@@ -2374,7 +2379,7 @@ impl App {
     /// restored layout and returns to the exact buffer the pair replaced; if
     /// that buffer has since gone away, the workspace explorer is the stable
     /// fallback rather than either generated comparison side.
-    fn close_temporary_comparison(&mut self, closing: usize) -> bool {
+    pub(super) fn close_temporary_comparison(&mut self, closing: usize) -> bool {
         let Some((index, other, return_buffer, compared_buffers)) =
             self.diffs.iter().enumerate().find_map(|(index, session)| {
                 let return_buffer = session.pane_close_return()?;
@@ -2636,6 +2641,9 @@ impl App {
             self.previously_focused_pane = Some(self.active_pane);
         }
         self.active_pane = pane;
+        if let Some(id) = self.terminal_of_pane(pane) {
+            self.note_terminal_focused(id);
+        }
         self.note_destination_activation();
     }
 

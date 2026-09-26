@@ -233,6 +233,17 @@ pub enum GeneratedViewIdentity {
     /// The diagnostic log owned by the process that owns `App`.
     Log,
     GitIndex,
+    GitComparison {
+        repository: PathBuf,
+        target: crate::git::ComparisonTarget,
+    },
+    GitRevisionFile {
+        repository: PathBuf,
+        left: String,
+        right: String,
+        file: crate::git::RevisionFile,
+        side: Option<bool>,
+    },
     GitDiff {
         path: PathBuf,
         scope: String,
