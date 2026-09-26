@@ -182,6 +182,13 @@ Installing from crates.io requires Rust 1.88 or newer and a C compiler:
 cargo install runyte --locked
 ```
 
+For a shorter command, add `alias ru=runyte` to `~/.bashrc` or `~/.zshrc`,
+then restart your shell. In PowerShell, add `Set-Alias ru runyte` to your
+[`$PROFILE`](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_profiles)
+and start a new PowerShell session. These aliases also use the optional
+[shell wrappers](docs/user-guide.md#change-the-shell-directory-on-exit) when
+you have configured them.
+
 Git features require `git` on `PATH`; language servers are installed separately.
 Linux clipboard integration uses the first available of `wl-clipboard`, `xclip`,
 or `xsel`.
