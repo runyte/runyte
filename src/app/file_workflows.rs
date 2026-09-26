@@ -231,7 +231,24 @@ impl App {
 
     /// The existing files and directories a relative or absolute path names,
     /// beside `directory` first and then under the project root.
+    ///
+    /// A link usually spells a space as `%20` and a non-ASCII name in escaped
+    /// UTF-8, but `%` is also an ordinary file-name character. The path as
+    /// written is tried first; only when nothing has that name is it decoded.
     fn navigation_candidates(
+        &self,
+        requested_text: &str,
+        directory: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
+        let candidates = self.literal_navigation_candidates(requested_text, directory.clone());
+        let decoded = crate::navigation_target::percent_decode(requested_text);
+        if candidates.is_empty() && decoded != requested_text {
+            return self.literal_navigation_candidates(&decoded, directory);
+        }
+        candidates
+    }
+
+    fn literal_navigation_candidates(
         &self,
         requested_text: &str,
         directory: Option<PathBuf>,

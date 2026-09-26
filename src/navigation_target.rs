@@ -104,6 +104,29 @@ pub(crate) fn under_cursor(line: &str, offset: usize) -> Option<String> {
     Some(line[start..end].to_owned())
 }
 
+/// Decodes `%XX` escapes, leaving malformed ones and invalid UTF-8 as written.
+pub(crate) fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escape = (bytes[index] == b'%')
+            .then(|| bytes.get(index + 1..index + 3))
+            .flatten()
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(byte) = escape {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| text.to_owned())
+}
+
 #[cfg(test)]
 #[path = "navigation_target/tests.rs"]
 mod tests;

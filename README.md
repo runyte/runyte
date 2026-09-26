@@ -38,7 +38,8 @@ link and image labels work too, and a link to a heading such as
 `[Setup](#setup)` or `[Setup](docs/guide.md#setup)` lands on that heading
 without a language server. Images and other binary files open in an external program you choose.
 Web links (`https://`, `http://`, and `www.`) open in your default browser,
-including links automatically wrapped across terminal review rows.
+including links automatically wrapped across terminal review rows and links
+that agents such as Codex and Claude Code break across indented rows.
 
 Project goals:
 

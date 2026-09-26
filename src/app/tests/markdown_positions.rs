@@ -530,3 +530,52 @@ fn goto_file_keeps_the_markdown_heading_through_the_choice_between_matches() {
     assert!(app.status.contains("heading not found: #install"));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn goto_file_decodes_an_escaped_link_path_only_when_it_names_nothing_as_written() {
+    let root = temporary("markdown-escaped-paths");
+    fs::create_dir_all(&root).unwrap();
+    let spaced = root.join("my notes.md");
+    let accented = root.join("café.md");
+    let literal = root.join("100%25.md");
+    fs::write(&spaced, "# Notes\n\n## Next steps\n").unwrap();
+    fs::write(&accented, "menu\n").unwrap();
+    fs::write(&literal, "literal\n").unwrap();
+    fs::write(root.join("100%.md"), "decoded\n").unwrap();
+    let source = root.join("README.md");
+    fs::write(
+        &source,
+        "[a](my%20notes.md#next-steps) [b](caf%C3%A9.md) [c](100%25.md) [d](no%20such.md)\n",
+    )
+    .unwrap();
+    let mut app = App::new(Config::default(), Some(source)).unwrap();
+    app.project_root = root.clone();
+    let readme = app.active().buffer;
+    let current = text(&app);
+    for (label, opened, head) in [
+        ("[a]", Some(&spaced), "# Notes\n\n".chars().count()),
+        ("[b]", Some(&accented), 0),
+        ("[c]", Some(&literal), 0),
+        ("[d]", None, 0),
+    ] {
+        app.switch_buffer(readme);
+        app.active_mut()
+            .replace_selection(Selection::point(offset(&current, label) + 1));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        match opened {
+            Some(path) => {
+                assert_eq!(app.active_buffer().path.as_ref(), Some(path), "{label}");
+                assert_eq!(app.active().selection.primary().head, head, "{label}");
+            }
+            None => {
+                assert_eq!(app.active().buffer, readme);
+                assert!(
+                    app.displayed_status_message()
+                        .contains("path not found: no%20such.md")
+                );
+            }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}

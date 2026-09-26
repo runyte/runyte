@@ -1263,7 +1263,7 @@ pub(crate) fn link_under_cursor(line: &str, offset: usize) -> Option<String> {
 /// them. The fragment may be percent-encoded, as a link to a non-ASCII
 /// heading usually is.
 pub(crate) fn heading_anchor(source: &str, fragment: &str) -> Option<HeadingAnchor> {
-    let fragment = percent_decode(fragment);
+    let fragment = crate::navigation_target::percent_decode(fragment);
     let wanted = fragment.to_lowercase();
     let lines = source
         .split('\n')
@@ -1389,29 +1389,6 @@ fn heading_slug(text: &str) -> String {
             _ => None,
         })
         .collect()
-}
-
-/// Decodes `%XX` escapes, leaving malformed ones and invalid UTF-8 as written.
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let escape = (bytes[index] == b'%')
-            .then(|| bytes.get(index + 1..index + 3))
-            .flatten()
-            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        if let Some(byte) = escape {
-            decoded.push(byte);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(decoded).unwrap_or_else(|_| text.to_owned())
 }
 
 /// An inline link or image starting at `index`.
@@ -1705,7 +1682,6 @@ mod tests {
             heading_anchor(source, "zażółć-gęślą").map(|found| found.line),
             Some(heading)
         );
-        assert_eq!(percent_decode("100%+1%zz%4"), "100%+1%zz%4");
     }
 
     #[test]

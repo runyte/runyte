@@ -2415,9 +2415,13 @@ existing file matches open a picker. Opening a file leaves the terminal
 process running; opening a link keeps the terminal view in place. Inferred
 targets stay within one buffer line. In terminal review, a bare caret anywhere
 on a web link follows the complete URL across rows joined by automatic terminal
-wrapping. Explicit newlines remain boundaries; links split by a program using
-newlines are not reconstructed. Resizing the live terminal width clears wrap
-information, while an already captured review keeps its original links.
+wrapping. An explicit newline is a boundary unless a program such as Codex or
+Claude Code broke a link inside indented text: the link is followed onto the
+next row when that row is indented to the same text column and the link's row
+reaches the right edge its block wraps at. A link that ends before that edge,
+or a row that starts at the left edge, is never joined. Resizing the live
+terminal width clears wrap information, while an already captured review keeps
+its original links.
 
 | Key | Action |
 | --- | --- |
@@ -2855,7 +2859,7 @@ message without affecting the internal registers.
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
-| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser |
+| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser, including links broken across rows by the terminal or by an agent's indented output |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
 | `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |

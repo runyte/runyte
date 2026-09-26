@@ -291,3 +291,97 @@ fn partial_character_shifts_preserve_the_remaining_wrapped_url() {
         Some("https://example.com/long/path")
     );
 }
+
+/// Every character of `link` in the review, which starts at its first
+/// occurrence and may be interrupted only by line breaks and indentation.
+fn link_offsets(terminal: &mut TerminalSession, link: &str) -> Vec<usize> {
+    terminal.begin_review();
+    let text = terminal.review.as_ref().unwrap().text.clone();
+    let start = text[..text.find(&link[..12]).unwrap()].chars().count();
+    let offsets = text
+        .chars()
+        .enumerate()
+        .skip(start)
+        .filter(|(_, c)| !c.is_whitespace())
+        .take(link.chars().count())
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
+    let found = offsets
+        .iter()
+        .map(|&offset| text.chars().nth(offset).unwrap())
+        .collect::<String>();
+    assert_eq!(found, link);
+    offsets
+}
+
+#[test]
+fn links_an_agent_broke_across_indented_rows_resolve_from_every_character() {
+    let link = "https://very-long-link-to-some-website-or-file.com";
+    let mut terminal = session(60, 8);
+    terminal.feed(
+        b"    Earlier prose in this block ends at its edge too.\r\n\
+          \r\n\
+          \x20   This is a section with a https://very-long-link-t\r\n\
+          \x20   o-some-website-or-file.com.\r\n",
+    );
+    for offset in link_offsets(&mut terminal, link) {
+        terminal.goto_review_offset(offset, false);
+        assert_eq!(
+            terminal.review_navigation_target().as_deref(),
+            Some(link),
+            "offset {offset}"
+        );
+    }
+    assert_eq!(target_at(&mut terminal, "section"), Some("section".into()));
+
+    // A bullet's text continues under its words rather than its marker, and
+    // a link may fill whole rows between its first and last.
+    let link = "https://example.com/a/very/long/path/that/fills/rows";
+    let mut terminal = session(30, 8);
+    terminal.feed(
+        "⏺ See https://example.com/a/v\r\n  ery/long/path/that/fills/ro\r\n  ws, then prose follows here\r\n"
+            .as_bytes(),
+    );
+    for offset in link_offsets(&mut terminal, link) {
+        terminal.goto_review_offset(offset, false);
+        assert_eq!(
+            terminal.review_navigation_target().as_deref(),
+            Some(link),
+            "offset {offset}"
+        );
+    }
+    assert_eq!(target_at(&mut terminal, "prose"), Some("prose".into()));
+}
+
+#[test]
+fn an_indented_link_ending_before_the_wrap_edge_is_not_joined() {
+    let mut terminal = session(60, 8);
+    // The link's row ends short of the edge the block wraps at, so the next
+    // word moved down for want of room: the break is an ordinary space.
+    terminal.feed(
+        b"    A longer row shows where this block wraps its lines at.\r\n\
+          \x20   see https://example.com/page\r\n\
+          \x20   for details.\r\n",
+    );
+    assert_eq!(
+        target_at(&mut terminal, "https"),
+        Some("https://example.com/page".into())
+    );
+    assert_eq!(target_at(&mut terminal, "for"), Some("for".into()));
+
+    // An unindented row is never continued, even when it is full.
+    let mut terminal = session(24, 4);
+    terminal.feed(b"https://example.com/abcd\r\nnext\r\n");
+    assert_eq!(
+        target_at(&mut terminal, "https"),
+        Some("https://example.com/abcd".into())
+    );
+
+    // Nor is a row indented differently from the text above it.
+    let mut terminal = session(30, 4);
+    terminal.feed(b"  go https://example.com/abcde\r\n    next\r\n");
+    assert_eq!(
+        target_at(&mut terminal, "https"),
+        Some("https://example.com/abcde".into())
+    );
+}
