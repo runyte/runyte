@@ -86,9 +86,12 @@ directories, and the name sits next to the row action **Open**.
   keymap registry.
 - `context/reference/ui-vocabulary.md` and the session-manager part of
   `docs/user-guide.md` describe the legend and the new Tab entries.
-- The Finder, the Navigator, and the Open with picker have similar unlisted
-  keys. They are out of scope here; if the legend works well it can become a
-  general overlay convention, recorded in `context/reference/ui-vocabulary.md`.
+- The Navigator, the buffer picker, and the terminal list adopt the same
+  legend in `navigator_buffer_terminal_list_unification.md`, which moves the
+  generic list chords into a registry scope shared with this legend. The
+  Finder and the Open with picker have similar unlisted keys and are out of
+  scope here; the legend is recorded as a general overlay convention in
+  `context/reference/ui-vocabulary.md` once both issues land.
 
 ## Reproduction
 
