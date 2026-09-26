@@ -1,4 +1,85 @@
-# Navigator, buffer picker, and terminal list use three different designs
+---
+title: "Navigator, buffer picker, and terminal list use three different designs"
+status: resolved
+reported: 2026-09-26
+resolved: 2026-09-26
+commit: 47e846a
+---
+
+## Resolution
+
+Commit `47e846a` (`Unify Navigator, buffer and terminal destination lists`)
+resolves the issue. `open_buffer_picker` and `open_terminal_list` constructed
+independent rows and actions, while `open_navigator` owned a third layout,
+fuzzy matching, recent-activation ordering and visit behavior. Their separate
+builders let the presentation and activation rules diverge for the same open
+destinations.
+
+All three entry points now use `open_destination_list` in
+`src/app/navigation_workflows.rs`, scoped to all destinations, buffers or
+terminals. The common row builder separates visibility, kind, name and state;
+refreshes metadata without changing opening order or action identity; and
+keeps every applicable buffer or terminal flag. The terminal scope retains
+exited screens after running terminals. Enter uses `visit_destination` to
+focus an existing pane, while Tab's explicit Bring into active pane action
+retains the ability to move a terminal's single view. Close hidden buffers and
+Close all exited terminals retain their workspace-wide scope.
+
+The list keymap scope introduced by the session-manager fix supplies the
+shared pinned legend. All destination scopes enable the bounded preview on
+opening and use the Navigator's fuzzy resource fields, including terminal
+IDs. Terminal program and directory details move into the preview; terminal
+pane titles expose the ID accepted by typed commands.
+
+Semantic row tints carry kind and state through snapshots, and five theme
+keys distinguish destination groups in every bundled theme. Both renderers
+shorten overlong names in the middle while preserving the trailing STATE
+column. Elision uses character offsets after cell-based column padding, and
+recognizes native Windows path separators. Protocol version 61 gates the new
+required theme fields and row presentation metadata, preventing older bundled
+clients and hosts from accepting incompatible frames. The stable plugin
+contract is unchanged.
+
+The subagent review found the missing protocol bump, Windows separator
+handling and a character/cell offset mismatch for Unicode TYPE labels. All
+three were fixed and rechecked. Linux validation passed `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, `cargo test` and the canonical
+`cargo llvm-cov --locked --workspace`, with 92.04% total line
+coverage against the unchanged 89% floor. Socket and subprocess fixtures were
+run outside the execution sandbox after a sandboxed run encountered permission
+errors. Native macOS and Windows checks remain for CI.
+
+Regression coverage:
+
+- `every_destination_list_orders_by_recent_activation_and_names_its_keys`,
+  `the_buffer_list_visits_a_buffer_where_a_pane_already_shows_it`,
+  `the_terminal_list_shows_an_exited_terminal_and_finds_terminals_by_id`,
+  `navigator_aligns_types_titles_and_flags_in_terminal_cells`, and
+  `destination_elision_starts_at_the_name_after_a_unicode_type` in
+  `src/app/tests/session_navigation.rs` cover scope, ordering, key discovery,
+  visit semantics, terminal IDs and column offsets.
+- `navigator_save_refreshes_metadata_and_preserves_order_actions_and_selection`
+  and `navigator_selected_terminal_exit_requires_a_new_selection_before_accepting`
+  in the same file preserve metadata refresh and stale-selection protection.
+- `buffer_picker_uses_names_and_project_relative_or_absolute_paths` in
+  `src/app/tests/editing_and_buffers.rs` checks modified state and semantic
+  tint; `the_terminal_list_describes_each_session_and_says_so_when_there_are_none`
+  in `src/app/tests/commands.rs` checks terminal visibility, state and preview.
+- `an_overlong_destination_name_keeps_its_file_name`,
+  `an_overlong_windows_destination_keeps_its_prefix_and_file_name` (Windows),
+  and `destination_rows_colour_their_type_and_state_in_both_renderers` in
+  `src/ui.rs` cover shortening and local/attached drawing.
+- `bundled_themes_give_each_destination_kind_its_own_colour` in `src/config.rs`
+  checks the bundled palettes; `overlay_row_availability_survives_the_wire_round_trip`
+  in `src/protocol/frame.rs` now includes tint and elision metadata.
+- `visiting_a_visible_terminal_focuses_it_and_bring_here_moves_its_single_view`
+  and `the_pane_is_named_by_the_title_the_child_sets` in `tests/terminal.rs`
+  cover pane focus, explicit movement, stable PTY geometry and terminal titles.
+- `hidden_terminal_output_while_detached_is_unread_after_reattach` in
+  `tests/persistent_host.rs` verifies the STATE column across a real host
+  detach/reattach.
+
+## Report
 
 The Navigator (`Space n`), the buffer picker (`Space b b`) and the terminal
 list (`Space t t`) all list open destinations, but each one lays out rows,
