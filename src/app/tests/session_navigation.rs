@@ -791,6 +791,7 @@ fn destination_elision_starts_at_the_name_after_a_unicode_type() {
     );
 }
 
+#[cfg(unix)]
 fn destinations(app: &App) -> Vec<OpenDestination> {
     let picker = app.list.as_ref().unwrap();
     picker
