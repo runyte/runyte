@@ -14,7 +14,7 @@ use runyte::{
     ui,
 };
 
-const DESCRIPTION: &str = "A fast modal terminal editor with selection-first editing.";
+const DESCRIPTION: &str = "A fast modal terminal editor for focused work.";
 
 fn run(app: &mut App, command: EditorCommand) {
     app.execute(CommandInvocation::editor(command, CommandExecutionContext::default()).unwrap())

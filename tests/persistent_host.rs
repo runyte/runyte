@@ -740,7 +740,7 @@ async fn a_targetless_host_starts_on_the_about_page() {
         &mut client,
         first,
         "waiting for the about page on a targetless host",
-        |frame| editor_frame_text(frame).contains("Navigate. Select. Act."),
+        |frame| editor_frame_text(frame).contains("A fast modal terminal editor for focused work."),
     )
     .await;
     assert!(

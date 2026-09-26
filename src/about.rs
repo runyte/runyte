@@ -8,20 +8,25 @@ use crate::help_document::{HelpDocument, HelpDocumentWriter, HelpRole};
 use crate::keymap::{Keymap, default_keymap};
 
 const LOGO: &str = include_str!("../logo/ascii/logo.txt");
-const DESCRIPTION: &str = "A fast modal terminal editor with selection-first editing.";
-const TAGLINE: &str = "Navigate. Select. Act.";
+const DESCRIPTION: &str = "A fast modal terminal editor for focused work.";
 const HEADING: &str = "Getting around";
 const FIRST_STEPS: &[(&str, &str)] = &[
     (":tutorial", "learn Runyte interactively"),
-    ("{binding:Space ?}", "help for the current view"),
     (":help", "open the general manual"),
+    ("{binding:Space ?}", "help for the current view"),
+    ("{binding:Space e}", "explore the active directory"),
+    ("{binding:Space n}", "list open buffers and terminals"),
     (
         "{binding:Space f}",
         "find anything (Tab to switch between files/content)",
     ),
-    ("{binding:Space e}", "explore the active directory"),
-    ("{binding:Space b b}", "list open buffers"),
+    (
+        "{binding:Space Space}",
+        "session management (persistent mode)",
+    ),
     ("Alt-o | Alt-i", "move back and forth between buffers"),
+    ("{prefix:Ctrl-w} ...", "pane management commands"),
+    (":terminal", "integrated terminal"),
     (":", "open the command palette"),
     (":q", "quit"),
 ];
@@ -47,10 +52,9 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
     let logo = LOGO.lines().map(str::to_owned).collect::<Vec<_>>();
     let version = vec![format!("Runyte {}", env!("CARGO_PKG_VERSION"))];
     let description = vec![DESCRIPTION.to_owned()];
-    let tagline = vec![TAGLINE.to_owned()];
     let heading = vec![HEADING.to_owned()];
     let steps = first_steps(keymap);
-    let blocks = [&logo, &version, &description, &tagline, &heading, &steps];
+    let blocks = [&logo, &version, &description, &heading, &steps];
     let width = blocks
         .iter()
         .map(|block| cells(block))
@@ -63,7 +67,6 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
     push_block(&mut text, &version, width);
     text.push('\n');
     push_block(&mut text, &description, width);
-    push_block(&mut text, &tagline, width);
     text.push('\n');
     push_block(&mut text, &heading, width);
     text.push('\n');
@@ -172,18 +175,48 @@ mod tests {
         assert!(rendered.contains(&format!("Runyte {}", env!("CARGO_PKG_VERSION"))));
         assert!(rendered.contains("Getting around"));
         for row in [
-            "Space ?       · help for the current view",
+            ":tutorial     · learn Runyte interactively",
             ":help         · open the general manual",
-            "Space f       · find anything (Tab to switch between files/content)",
+            "Space ?       · help for the current view",
             "Space e       · explore the active directory",
-            "Space b b     · list open buffers",
+            "Space n       · list open buffers and terminals",
+            "Space f       · find anything (Tab to switch between files/content)",
+            "Space Space   · session management (persistent mode)",
             "Alt-o | Alt-i · move back and forth between buffers",
+            "Ctrl-w ...    · pane management commands",
+            ":terminal     · integrated terminal",
             ":             · open the command palette",
             ":q            · quit",
         ] {
-            assert!(rendered.lines().any(|line| line.trim_start() == row));
+            assert!(
+                rendered.lines().any(|line| line.trim_start() == row),
+                "missing {row:?} in\n{rendered}"
+            );
         }
-        assert!(rendered.contains("Navigate. Select. Act."));
+        let rows = rendered
+            .lines()
+            .skip_while(|line| !line.contains("Getting around"))
+            .filter_map(|line| line.split_once(" · "))
+            .map(|(key, _)| key.trim().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                ":tutorial",
+                ":help",
+                "Space ?",
+                "Space e",
+                "Space n",
+                "Space f",
+                "Space Space",
+                "Alt-o | Alt-i",
+                "Ctrl-w ...",
+                ":terminal",
+                ":",
+                ":q",
+            ]
+        );
+        assert!(rendered.contains(DESCRIPTION));
     }
 
     /// The page carries no margin of its own: the widest line starts in the
@@ -232,5 +265,7 @@ mod tests {
         assert_eq!(scopes(":tutorial"), Some("function"));
         assert_eq!(scopes("Space ?"), Some("keyword"));
         assert_eq!(scopes("Space f"), Some("keyword"));
+        assert_eq!(scopes("Ctrl-w ..."), Some("keyword"));
+        assert_eq!(scopes(":terminal"), Some("function"));
     }
 }
