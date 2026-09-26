@@ -961,6 +961,13 @@ mod tests {
         assert_eq!(FrameId::from_raw(42).get(), 42);
 
         let previews = vec![
+            core::OverlayPreview::Terminal(
+                terminal_frame(1, 1, 'x').editor.panes[0]
+                    .terminal
+                    .clone()
+                    .unwrap()
+                    .into(),
+            ),
             core::OverlayPreview::Text(vec!["text".to_owned()]),
             core::OverlayPreview::MatchedText {
                 lines: vec!["match".to_owned()],
@@ -978,7 +985,9 @@ mod tests {
         ];
         for preview in previews {
             let wire = OverlayPreview::from(preview.clone());
-            assert_eq!(core::OverlayPreview::from(wire), preview);
+            let bytes = serde_json::to_vec(&wire).unwrap();
+            let decoded: OverlayPreview = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(core::OverlayPreview::from(decoded), preview);
         }
 
         let identities = vec![
@@ -1041,6 +1050,7 @@ mod tests {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OverlayPreview {
+    Terminal(TerminalView),
     Text(Vec<String>),
     MatchedText {
         lines: Vec<String>,
@@ -1059,6 +1069,7 @@ pub enum OverlayPreview {
 impl From<core::OverlayPreview> for OverlayPreview {
     fn from(value: core::OverlayPreview) -> Self {
         match value {
+            core::OverlayPreview::Terminal(view) => Self::Terminal(view.into()),
             core::OverlayPreview::Text(rows) => Self::Text(rows),
             core::OverlayPreview::MatchedText { lines, emphasis } => {
                 Self::MatchedText { lines, emphasis }
@@ -1083,6 +1094,7 @@ impl From<core::OverlayPreview> for OverlayPreview {
 impl From<OverlayPreview> for core::OverlayPreview {
     fn from(value: OverlayPreview) -> Self {
         match value {
+            OverlayPreview::Terminal(view) => Self::Terminal(view.into()),
             OverlayPreview::Text(rows) => Self::Text(rows),
             OverlayPreview::MatchedText { lines, emphasis } => {
                 Self::MatchedText { lines, emphasis }

@@ -299,6 +299,23 @@ fn reading_live_output_leaves_frozen_review_attention_and_viewport_untouched() {
     assert_eq!(terminal.review_selection_text(), review_text);
     assert_eq!(terminal.scroll(), scroll);
     assert_eq!(terminal.view(2), view);
+    let preview = terminal.preview_view();
+    assert!(!preview.review);
+    assert_eq!(preview.scrollback, 0);
+    assert_eq!(
+        preview
+            .rows
+            .iter()
+            .map(|row| row
+                .iter()
+                .map(|cell| cell.text())
+                .collect::<String>()
+                .trim_end()
+                .to_owned())
+            .collect::<Vec<_>>(),
+        ["two", "newee"]
+    );
+    assert_eq!(terminal.view(2), view);
     assert!(terminal.unread_activity());
     assert!(terminal.bell());
     let revision = terminal.read_revision();

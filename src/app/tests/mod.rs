@@ -211,6 +211,7 @@ mod prompt_input;
 mod provider_documents;
 mod search_and_pickers;
 mod session_navigation;
+mod terminal_previews;
 mod tutorial;
 #[cfg(windows)]
 mod windows_session_manager;

@@ -1413,6 +1413,9 @@ fn draw_snapshot_overlay(
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows_area);
     if show_preview {
         let preview = match overlay.preview.as_ref() {
+            Some(OverlayPreview::Terminal(view)) => {
+                terminal_preview_lines(theme, view, columns[1].height.saturating_sub(1))
+            }
             Some(OverlayPreview::Text(lines)) => {
                 lines.iter().cloned().map(Line::from).collect::<Vec<_>>()
             }
@@ -1981,6 +1984,27 @@ fn terminal_line(
         spans.push(Span::styled(cell.text(), style));
     }
     Line::from(spans)
+}
+
+/// Clip the current screen without reflowing or resizing its PTY. Keep the
+/// child's cursor row visible when the preview is shorter than that screen.
+fn terminal_preview_lines(
+    theme: &TuiTheme,
+    terminal: &TerminalView,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let height = usize::from(height);
+    let start = terminal
+        .cursor
+        .map_or(0, |(row, _)| row.saturating_add(1).saturating_sub(height));
+    terminal
+        .rows
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(height)
+        .map(|(row, cells)| terminal_line(theme, Mode::Normal, false, false, terminal, row, cells))
+        .collect()
 }
 
 fn terminal_style(theme: &TuiTheme, active: bool, cell: &TerminalCell) -> Style {
@@ -3211,11 +3235,22 @@ fn draw_resource_finder(
             };
             (
                 title,
-                file_preview_lines(
-                    &picker.query,
-                    finder.selected_preview(),
-                    &app.theme,
-                    columns[1].height.saturating_sub(1) as usize,
+                app.finder_terminal_preview().map_or_else(
+                    || {
+                        file_preview_lines(
+                            &picker.query,
+                            finder.selected_preview(),
+                            &app.theme,
+                            columns[1].height.saturating_sub(1) as usize,
+                        )
+                    },
+                    |view| {
+                        terminal_preview_lines(
+                            &app.theme,
+                            &view,
+                            columns[1].height.saturating_sub(1),
+                        )
+                    },
                 ),
             )
         } else {
@@ -3760,17 +3795,22 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let mut state = ListState::default().with_selected(selected);
     StatefulWidget::render(list, list_area, frame.buffer_mut(), &mut state);
     if show_preview {
-        let preview = picker.selected_preview().map_or_else(
-            || vec![Line::from("No preview")],
-            |preview| {
-                let lines = preview.split('\n').map(str::to_owned).collect::<Vec<_>>();
-                fuzzy_matched_text_lines(
-                    &picker.filter,
-                    &lines,
-                    &picker.selected_preview_emphasis(),
-                    &app.theme,
+        let preview = app.list_terminal_preview().map_or_else(
+            || {
+                picker.selected_preview().map_or_else(
+                    || vec![Line::from("No preview")],
+                    |preview| {
+                        let lines = preview.split('\n').map(str::to_owned).collect::<Vec<_>>();
+                        fuzzy_matched_text_lines(
+                            &picker.filter,
+                            &lines,
+                            &picker.selected_preview_emphasis(),
+                            &app.theme,
+                        )
+                    },
                 )
             },
+            |view| terminal_preview_lines(&app.theme, &view, columns[1].height.saturating_sub(1)),
         );
         if picker.purpose == crate::picker::ListPurpose::Choice {
             draw_choice_explanation(

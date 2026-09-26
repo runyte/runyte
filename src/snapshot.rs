@@ -279,6 +279,7 @@ pub struct OverlayRow {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OverlayPreview {
+    Terminal(TerminalView),
     Text(Vec<String>),
     MatchedText {
         lines: Vec<String>,

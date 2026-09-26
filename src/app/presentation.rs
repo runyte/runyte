@@ -26,6 +26,35 @@ fn paced_delay(published: Option<Instant>, interval: Duration, now: Instant) -> 
 }
 
 impl App {
+    /// Resolve the selected identity at frame time so output cannot stale the
+    /// preview or force the list to re-rank. Content matches keep their snippet.
+    pub(crate) fn list_terminal_preview(&self) -> Option<crate::terminal::TerminalView> {
+        if !self.list.as_ref()?.show_preview {
+            return None;
+        }
+        let id = match self.selected_list_action()? {
+            super::ListAction::Destination(super::OpenDestination::Terminal(id)) => id,
+            _ => return None,
+        };
+        self.terminals.get(id).map(|session| session.preview_view())
+    }
+
+    pub(crate) fn finder_terminal_preview(&self) -> Option<crate::terminal::TerminalView> {
+        if !self.picker.as_ref()?.show_preview {
+            return None;
+        }
+        let finder = self.finder.as_ref()?;
+        if finder.mode != FinderMode::Names {
+            return None;
+        }
+        let FinderTarget::Resource(crate::finder::ResourceTarget::Terminal(id)) =
+            finder.selected_target(self.picker.as_ref()?)?
+        else {
+            return None;
+        };
+        self.terminals.get(id).map(|session| session.preview_view())
+    }
+
     pub fn active(&self) -> &Pane {
         &self.panes[&self.active_pane]
     }
@@ -1609,7 +1638,10 @@ impl App {
                         ResourceKind::Buffer => "Contents".to_owned(),
                         ResourceKind::Terminal => "Output".to_owned(),
                     });
-                    snapshot.preview = Some(file_overlay_preview(finder.selected_preview()));
+                    snapshot.preview = Some(self.finder_terminal_preview().map_or_else(
+                        || file_overlay_preview(finder.selected_preview()),
+                        OverlayPreview::Terminal,
+                    ));
                 } else {
                     snapshot.preview_title = Some("Preview".to_owned());
                     snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
@@ -1810,13 +1842,17 @@ impl App {
             if picker.has_preview() {
                 snapshot.show_preview = picker.show_preview;
                 snapshot.preview_title = picker.preview_title().map(str::to_owned);
-                snapshot.preview =
-                    picker
-                        .selected_preview()
-                        .map(|preview| OverlayPreview::MatchedText {
-                            lines: preview.split('\n').map(str::to_owned).collect(),
-                            emphasis: picker.selected_preview_emphasis(),
-                        });
+                snapshot.preview = self
+                    .list_terminal_preview()
+                    .map(OverlayPreview::Terminal)
+                    .or_else(|| {
+                        picker
+                            .selected_preview()
+                            .map(|preview| OverlayPreview::MatchedText {
+                                lines: preview.split('\n').map(str::to_owned).collect(),
+                                emphasis: picker.selected_preview_emphasis(),
+                            })
+                    });
             }
             overlays.push(snapshot);
         }

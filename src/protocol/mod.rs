@@ -185,7 +185,9 @@ use crate::workspace::{
 // Version 61 carries destination kind/state tints, middle-elision metadata,
 // and five required destination theme colours for the unified lists. Older
 // peers cannot deserialize the theme or render the same destination rows.
-pub const VERSION: u32 = 61;
+// Version 62 combines those destination rows with live terminal cell previews
+// in picker overlays; version 61 peers cannot decode the new preview variant.
+pub const VERSION: u32 = 62;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1468,7 +1470,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 61);
+        assert_eq!(VERSION, 62);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

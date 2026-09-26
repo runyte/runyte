@@ -871,8 +871,8 @@ inside the home directory, or absolute otherwise, and a terminal's name; a name
 too long for its row is shortened in the middle so its file name stays. STATE
 collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
 `exited`, `unread` and `bell` for terminals — so an edit that conflicts with a
-change on disk reads `[+] [STALE]`. A terminal's program, ID and directory are
-in the preview, and its ID in its pane title (`[terminal #3] …`).
+change on disk reads `[+] [STALE]`. A terminal's preview shows its live screen,
+and its ID appears in its pane title (`[terminal #3] …`).
 
 The Navigator and buffer list include scratch and retained special buffers
 once per identity. Lists open in recent activation order; the terminal list
@@ -882,9 +882,11 @@ commands and terminal IDs (`3` or `#3`) match fuzzily; matched characters are
 emphasized. The title names Enter (visit), Tab (resource actions) and Escape,
 and a dimmed key legend at the bottom names the rest: Ctrl-n/Ctrl-p to move,
 Ctrl-d/Ctrl-u to page, Home/End, Ctrl-t to toggle the bounded preview of buffer
-contents or recent terminal output, which starts shown, and Delete while there
-is a filter to clear. Printable j, k and q filter. Escape, Ctrl-c or the
-effective leader with an empty query cancel. Cancellation from Terminal Insert
+contents or the live terminal screen, which starts shown, and Delete while there
+is a filter to clear. Terminal previews update as output arrives and as the
+selection moves, including for hidden terminals or terminals whose pane is in
+review. Previewing does not focus or resize the terminal. Printable j, k and q
+filter. Escape, Ctrl-c or the effective leader with an empty query cancel. Cancellation from Terminal Insert
 resumes child input; visiting a document enters Normal, and visiting a live
 terminal resumes Insert unless it has captured review.
 
@@ -2652,8 +2654,9 @@ terminal sessions share one ranked list. `Tab` switches to content
 mode without clearing the query; file lines, authoritative in-memory buffer
 lines including pathless buffers, and decoded terminal scrollback plus the
 current screen share that list. Both modes preview the selected item, with
-authoritative in-memory text for buffers and bounded retained output for
-terminals; `Ctrl-t` toggles the preview without changing the mode or query. A
+authoritative in-memory text for buffers. Terminal previews show the live screen
+in name mode; content mode keeps a static numbered snippet around the matching
+row. `Ctrl-t` toggles the preview without changing the mode or query. A
 content result reveals its line, including by entering terminal review at the
 matched retained row. The existing
 `Space b b` and `Space t t` managers remain available for Save, Discard,
@@ -2797,6 +2800,12 @@ Linux and other Unix systems. A missing helper produces an actionable status
 message without affecting the internal registers.
 
 ### Terminals
+
+The terminal list (`Space t t`) previews the selected terminal's live screen,
+preserving its colors and updating while you move through the list. Exited
+terminals show their final screen. `Ctrl-t` toggles the preview. A preview is
+read-only and never resizes the terminal; a screen wider than the preview is
+clipped, and a shorter preview keeps the child's visible cursor row in view.
 
 | Key | Action |
 | --- | --- |
