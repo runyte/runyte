@@ -1231,12 +1231,10 @@ impl App {
                 },
             )
             .collect();
-        let title = if self.persistent_session {
-            "Sessions · 1-9 attach · Tab actions"
-        } else {
-            "Sessions · Tab actions"
-        };
-        let mut picker = ListPicker::new(title, items)
+        // The title names only the keys needed to use the manager at all;
+        // the digits and chords are in the legend, which names them only
+        // while they act.
+        let mut picker = ListPicker::new("Sessions", items)
             .with_column_header(
                 format!("No. {:<name_width$}", "Name"),
                 format!("{:<branch_width$}  {:<directory_width$}", "Branch", "Path"),
@@ -1245,14 +1243,10 @@ impl App {
                     "Last active", "Status"
                 ),
             )
-            .with_preview("Session");
-        if cfg!(unix) {
-            picker.primary_action = Some("attach".to_owned());
-        } else if self.persistent_session {
-            picker.primary_action = Some("visit".to_owned());
-        } else {
-            picker.primary_action = None;
-        }
+            .with_preview("Session")
+            .with_key_legend();
+        picker.primary_action = (cfg!(unix) || self.persistent_session).then(|| "open".to_owned());
+        picker.secondary_action = Some(("Tab".to_owned(), "actions".to_owned()));
         picker.filter = filter;
         picker.selected = selected.min(self.workspace_rows.len().saturating_sub(1));
         picker.show_preview = show_preview;

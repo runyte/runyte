@@ -350,6 +350,35 @@ design and sit against the source text they describe, where two borrowed
 columns cost more than the marker adds; the selection ground alone says which
 candidate is selected.
 
+## Key legend
+
+A filterable list may carry a **key legend**: one or more dimmed lines of
+`key label` entries separated by ` · `, pinned to the bottom of the overlay
+below the rows and the preview, and set apart from them by one blank line.
+The legend is where a list names every key beyond the ones needed to use it
+at all; the title keeps only those, as `Enter <verb> · Tab actions · Esc close`.
+The session manager is the first list with a legend.
+
+- **Registry-backed.** The list's own keys are `Mode::List` bindings in the
+  keymap registry: the generic list keys in the global scope, and a list's
+  chords in a scope of its own (`BindingScope::SessionManager`) that inherits
+  the generic keys rather than the editor's. Dispatch and the legend both
+  read them there, so the legend cannot name a key the list does not answer.
+  Enter, Tab, Backspace, printable filter text, and the empty-filter session
+  digits are the list's fixed grammar, not bindings.
+- **Current state only.** An entry appears only while its key acts: `Delete
+  clear filter` only while there is a filter, `1-9 attach` only while the
+  filter is empty in a persistent editor, `Ctrl-t preview` only on a list with
+  a preview, and a chord whose command is unavailable (a persistent-session
+  chord in a standalone editor, Git worktrees outside a repository) not at all.
+- **One spelling per command.** Each command is named by its primary
+  binding; the arrow and paging keys that reach the same moves are platform
+  spellings and are left out. Paired commands share an entry:
+  `Ctrl-n/Ctrl-p move`, `Ctrl-d/Ctrl-u page`, `Home/End first/last`.
+- **Rows first.** When the overlay is too short for its rows and the legend,
+  the blank line goes first and then the whole legend, before any row is
+  hidden. The legend never scrolls the list.
+
 ## Notifications
 
 A **notification** is retained feedback that should remain inspectable after
@@ -435,6 +464,14 @@ the overlay open with these temporary choices; the initial selection returns
 to the temporary refusal. That refusal does not change a remembered decision.
 
 ## Session strip and Navigator
+
+The **session manager** is titled `Sessions · Enter open · Tab actions · Esc
+close` and carries a key legend. Its Tab menu lists the selected row's actions
+first and then, under a non-selectable **Manager** heading, the manager-wide
+**Open directory…**, **Open destinations** (running rows only), and **Git
+worktrees**, each with its chord as a pinned trailing column. An entry whose
+command is unavailable is drawn unavailable with the reason and refuses
+without closing the manager; a chord refuses the same way.
 
 The **session manager** keeps each displayed row's identity across catalog
 polls, previews, action menus, and rename or number prompts. Separate live

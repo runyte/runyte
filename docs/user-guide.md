@@ -636,12 +636,27 @@ hidden.
 `Space Space` is the complete binding,
 not a prefix with subcommands. A third `Space` closes the manager, just like
 Escape or `Ctrl-c`; once the filter holds any text, `Space` is filter text and
-Escape or `Ctrl-c` is what closes. Tab opens one manager menu listing only the
-actions the selected row's own state can answer: a running row offers Open,
-Rename, Renumber, Close, and Force close, and a stopped row offers Open,
-Rename, and Forget. Open is identical to Enter. Close stops the host
-and leaves the workspace listed as a stopped row; nothing below the session is
-touched, because a session is the only level that means nothing on its own.
+Escape or `Ctrl-c` is what closes. The title reads
+`Sessions · Enter open · Tab actions · Esc close`. Tab opens one manager menu
+listing first the actions the selected row's own state can answer: a running
+row offers Open, Rename, Renumber, Close, and Force close, and a stopped row
+offers Open, Rename, and Forget. Open is identical to Enter. Close stops the
+host and leaves the workspace listed as a stopped row; nothing below the session
+is touched, because a session is the only level that means nothing on its own.
+Below a **Manager** heading the menu then lists the manager's own actions, each
+with the key that reaches it directly: **Open directory…** (`Ctrl-o`), **Open
+destinations** (`Ctrl-e`, only while a running row is selected), and **Git
+worktrees** (`Ctrl-g`). An entry that cannot act in this editor, such as Git
+worktrees outside a Git repository, is dimmed with the reason and refuses
+without closing the manager.
+
+A dimmed key legend is pinned to the bottom of the manager. It names only the
+keys that act in the current state: `1-9 attach` while the filter is empty in
+a persistent editor, the `Ctrl-o`, `Ctrl-e`, and `Ctrl-g` chords while they can
+act, `Ctrl-n`/`Ctrl-p` and `Ctrl-d`/`Ctrl-u` to move and page, `Home`/`End`,
+`Ctrl-t` for the preview, and `Delete` while there is a filter to clear. Rows
+take priority: when the manager is too short for its rows and the legend, the
+legend gives up its spacing line and then disappears before any row is hidden.
 
 Each row reads as six columns, padded to the widest value or heading in the
 list so they line up down it:
@@ -875,7 +890,8 @@ returning to a host whose cached list predates a newly started session.
 
 The session manager (`Space Space`) offers Ctrl-o **Open directory…**, Ctrl-g
 for the existing Git worktree workflow, and Ctrl-e to inspect the selected
-running session's open destinations. Escape returns from that inventory.
+running session's open destinations; its key legend and Tab menu both name
+them. Escape returns from that inventory.
 Choosing an inventory resource attaches and revalidates its identity; a resource
 closed meanwhile leaves the restored layout intact and reports the loss.
 

@@ -11,8 +11,8 @@ use crate::{
     key_hints::{KeyHintRow, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     layout::Rect,
     snapshot::{
-        EditorSnapshot, OverlayKind, OverlayLayout, OverlayPreview, OverlaySnapshot, PaneSnapshot,
-        SnapshotRow, StatusSnapshot, TextRole, TextRunKind,
+        EditorSnapshot, OverlayAction, OverlayKind, OverlayLayout, OverlayPreview, OverlaySnapshot,
+        PaneSnapshot, SnapshotRow, StatusSnapshot, TextRole, TextRunKind,
     },
     terminal::{Cell as TerminalCell, TerminalView},
     workspace::HostFrame,
@@ -150,7 +150,7 @@ impl TuiTheme {
             Mode::Insert => self.cursor_insert,
             Mode::Replace => self.cursor_replace,
             Mode::Select => self.cursor_select,
-            Mode::Command => self.cursor_command,
+            Mode::Command | Mode::List => self.cursor_command,
             Mode::Normal => self.cursor_normal,
         }
     }
@@ -952,8 +952,15 @@ fn draw_snapshot_overlay(
         .message
         .as_deref()
         .map_or(0, |message| wrapped_text_rows(message, message_width));
+    let legend = legend_lines(&overlay.legend, usize::from(content_width));
+    let legend_height = legend_height(
+        legend.len(),
+        area.height.saturating_sub(2 + query_height as u16),
+        overlay.total_rows.max(overlay.rows.len()).max(1) + header_height + message_height,
+    );
     let row_capacity = usize::from(area.height)
         .saturating_sub(2 + query_height + header_height + message_height)
+        .saturating_sub(usize::from(legend_height))
         .max(1);
     let anchor = overlay
         .scroll_anchor
@@ -1043,6 +1050,7 @@ fn draw_snapshot_overlay(
         inner.width,
         inner.height.saturating_sub(query_height),
     );
+    let content = draw_legend(frame, &legend, legend_height, content, theme);
     let show_preview =
         overlay.layout == OverlayLayout::Preview && overlay.show_preview && content.width >= 72;
     let columns = if show_preview {
@@ -3189,6 +3197,85 @@ fn matched_path_line(
     Line::from(spans)
 }
 
+/// A key legend wrapped into lines no wider than `width`, its entries
+/// separated the way the title separates its keys.
+fn legend_lines(legend: &[OverlayAction], width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for action in legend {
+        let entry = format!("{} {}", action.key_hint, action.label);
+        if line.is_empty() {
+            line = entry;
+        } else if line.width() + " · ".width() + entry.width() <= width {
+            line.push_str(" · ");
+            line.push_str(&entry);
+        } else {
+            lines.push(std::mem::replace(&mut line, entry));
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// How many rows at the bottom of a list the legend takes.
+///
+/// Rows come first: the blank line that sets the legend apart is given up
+/// before the legend is, and the legend is given up before any row, so a
+/// list never scrolls to make room for keys that describe it.
+fn legend_height(lines: usize, available: u16, rows: usize) -> u16 {
+    let available = usize::from(available);
+    let height = if lines == 0 {
+        0
+    } else if rows + lines < available {
+        lines + 1
+    } else if rows + lines <= available {
+        lines
+    } else {
+        0
+    };
+    u16::try_from(height).unwrap_or(0)
+}
+
+/// Draws the last `height` rows of `area` as the legend and returns what is
+/// left above it.
+fn draw_legend(
+    frame: &mut Frame<'_>,
+    lines: &[String],
+    height: u16,
+    area: TuiRect,
+    theme: &TuiTheme,
+) -> TuiRect {
+    if height == 0 {
+        return area;
+    }
+    let shown = usize::from(height).min(lines.len());
+    frame.render_widget(
+        Paragraph::new(
+            lines[..shown]
+                .iter()
+                .map(|line| Line::styled(line.clone(), Style::default().fg(theme.muted)))
+                .collect::<Vec<_>>(),
+        ),
+        TuiRect::new(
+            area.x,
+            area.y
+                + area
+                    .height
+                    .saturating_sub(u16::try_from(shown).unwrap_or(0)),
+            area.width,
+            u16::try_from(shown).unwrap_or(0),
+        ),
+    );
+    TuiRect::new(
+        area.x,
+        area.y,
+        area.width,
+        area.height.saturating_sub(height),
+    )
+}
+
 /// Symbols, references, diagnostics, and code actions.
 fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     let Some(picker) = &app.list else {
@@ -3223,7 +3310,7 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     if let Some((key, action)) = &picker.secondary_action {
         hints.push(format!("{key} {action}"));
     }
-    if preview_layout {
+    if preview_layout && !picker.has_key_legend() {
         hints.push("Ctrl-t preview".to_owned());
     }
     if picker.purpose == crate::picker::ListPurpose::Report {
@@ -3231,6 +3318,8 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     }
     hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
         "Esc dismiss".to_owned()
+    } else if picker.has_key_legend() {
+        "Esc close".to_owned()
     } else {
         "Esc cancel".to_owned()
     });
@@ -3267,6 +3356,15 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     } else {
         inner
     };
+    let legend = legend_lines(&app.list_legend(), usize::from(content.width));
+    let rows = picker.display_rows().len().max(1) + usize::from(picker.column_header.is_some());
+    let content = draw_legend(
+        frame,
+        &legend,
+        legend_height(legend.len(), content.height, rows),
+        content,
+        &app.theme,
+    );
     let show_preview = preview_layout && picker.show_preview && content.width >= 72;
     let columns = if show_preview {
         TuiLayout::default()
@@ -7236,6 +7334,110 @@ mod tests {
             .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect::<String>();
         assert_headings(&attached);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_list_legend_gives_way_before_any_row() {
+        // Room for everything, including the blank line above the legend.
+        assert_eq!(legend_height(2, 10, 5), 3);
+        // Room for the rows and the legend only: the blank line goes first.
+        assert_eq!(legend_height(2, 7, 5), 2);
+        // Showing the legend would hide a row, so it is not shown.
+        assert_eq!(legend_height(2, 6, 5), 0);
+        assert_eq!(legend_height(0, 10, 5), 0);
+
+        let legend = [
+            OverlayAction::new("Ctrl-n/Ctrl-p", "move"),
+            OverlayAction::new("Ctrl-t", "preview"),
+        ];
+        assert_eq!(
+            legend_lines(&legend, 80),
+            ["Ctrl-n/Ctrl-p move · Ctrl-t preview"]
+        );
+        assert_eq!(
+            legend_lines(&legend, 20),
+            ["Ctrl-n/Ctrl-p move", "Ctrl-t preview"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_manager_pins_its_key_legend_below_the_rows_in_both_renderers() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-ui-session-legend-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let current = root.join("current");
+        std::fs::create_dir_all(&current).unwrap();
+        let current = current.canonicalize().unwrap();
+        let mut app = App::new(Config::default(), Some(current.clone())).unwrap();
+        app.enable_persistent_session();
+        app.execute(crate::command::parse_named_command("sl", None).unwrap())
+            .unwrap();
+        app.apply_workspace_event(crate::workspace::WorkspaceEvent::Refreshed {
+            generation: 1,
+            result: Ok(vec![crate::workspace::WorkspaceRow {
+                publication_key: None,
+                unread_terminals: None,
+                terminal_bell: None,
+                number: Some(1),
+                last_active_unix_seconds: None,
+                id: "aaaaaaaaaaaaaaaa".to_owned(),
+                name: Some("current".to_owned()),
+                project_root: current,
+                running: true,
+                incompatible_protocol: None,
+                unsaved_buffers: None,
+                pending_wait_requests: None,
+                plugin_jobs: None,
+                activity_leases: None,
+                activities: Vec::new(),
+                live_terminals: None,
+                terminal_sessions: None,
+                terminal_line_activity_unix_seconds: None,
+                interactive_attached: None,
+                open_buffers: None,
+                git: None,
+                missing_directory: false,
+            }]),
+        });
+        app.list.as_mut().unwrap().show_preview = false;
+
+        let row_of = |screen: &str, width: usize, needle: &str| {
+            screen
+                .find(needle)
+                .map(|index| screen[..index].chars().count() / width)
+                .unwrap_or_else(|| panic!("{needle:?} missing from {screen}"))
+        };
+        let screen = rendered(&mut app, 160, 24);
+        assert!(screen.contains("Sessions · Enter open · Tab actions · Esc close"));
+        assert!(!screen.contains("Ctrl-t toggle preview"));
+        let legend = row_of(&screen, 160, "1-9 attach · Ctrl-o open directory…");
+        assert!(legend > row_of(&screen, 160, "current"));
+        // Pinned to the bottom: only the border lies below the legend.
+        let border = row_of(&screen, 160, "└");
+        assert!(legend + 3 >= border, "legend {legend}, border {border}");
+
+        let overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.title.starts_with("Sessions"))
+            .unwrap();
+        let theme = TuiTheme::new(&app.theme);
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+        let attached = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect::<String>();
+        let legend = row_of(&attached, 100, "Ctrl-n/Ctrl-p move");
+        assert!(legend > row_of(&attached, 100, "current"));
 
         std::fs::remove_dir_all(root).unwrap();
     }

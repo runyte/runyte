@@ -258,6 +258,9 @@ pub enum BindingScope {
     /// lend it scoped bindings, while terminal-only escapes stay out of
     /// ordinary editor hints.
     Terminal,
+    /// The session manager overlay. Its chords are [`Mode::List`] bindings
+    /// layered on the generic list keys, not on the editor's.
+    SessionManager,
 }
 
 impl BindingScope {
@@ -278,6 +281,7 @@ impl BindingScope {
         Self::CommitMessage,
         Self::Diff,
         Self::Markdown,
+        Self::SessionManager,
     ];
 
     /// Whether the scope belongs to a generated view rather than to a document
@@ -287,7 +291,10 @@ impl BindingScope {
     /// rendered from it, so counting it would claim an ordinary document as a
     /// view of the editor's own.
     pub const fn is_special_buffer_scope(self) -> bool {
-        !matches!(self, Self::Global | Self::Terminal | Self::Markdown)
+        !matches!(
+            self,
+            Self::Global | Self::Terminal | Self::Markdown | Self::SessionManager
+        )
     }
 }
 
@@ -960,6 +967,18 @@ impl Keymap {
         })
     }
 
+    /// What one key does in an open list with `scope`.
+    ///
+    /// A list reads one key at a time: it has no prefixes, counts, or
+    /// operands, so it needs no input grammar between the key and the
+    /// registry.
+    pub fn list_binding(&self, scope: BindingScope, key: Key) -> Option<&Binding> {
+        match self.lookup_in(Mode::List, scope, &KeySequence::from(key)) {
+            Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => Some(binding),
+            Lookup::Prefix(_) | Lookup::NoMatch => None,
+        }
+    }
+
     pub fn lookup(&self, mode: Mode, sequence: &KeySequence) -> Lookup<'_> {
         self.lookup_in(mode, BindingScope::Global, sequence)
     }
@@ -988,6 +1007,7 @@ impl Keymap {
 
 const MODAL: &[Mode] = &[Mode::Normal, Mode::Select];
 const INSERT: &[Mode] = &[Mode::Insert, Mode::Replace];
+const LIST: &[Mode] = &[Mode::List];
 
 fn modal(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
     let sequence = sequence.into();
@@ -2187,6 +2207,51 @@ fn built_in_bindings() -> Vec<Binding> {
         // Preserve Runyte's original global shortcuts in Insert mode.
         insert(Key::ctrl('s'), Command::Save),
     ]
+    .into_iter()
+    .chain(list_bindings())
+    .collect()
+}
+
+/// Keys a filterable list answers while it owns input.
+///
+/// Only chords and keys that type nothing: a printable key is filter text in
+/// every list, so none can be bound here. Enter, Tab and Backspace are the
+/// list's own grammar rather than commands, and the digits that attach a
+/// numbered session are filter text as soon as anything has been typed.
+///
+/// The chord is each command's primary spelling, which is the one a list's
+/// key legend shows; the arrow and paging keys are the platform's own
+/// spellings of the same moves and are left for the reader to assume.
+fn list_bindings() -> Vec<Binding> {
+    use EditorCommand as Command;
+
+    let list = |sequence: Key, command: Command| Binding::implemented(LIST, sequence, command);
+    let platform = |sequence: Key, command: Command| {
+        list(sequence, command).with_role(BindingRole::Compatibility)
+    };
+    let manager = |sequence: Key, target: BindingTarget| {
+        Binding::implemented_in(LIST, BindingScope::SessionManager, sequence, target)
+    };
+    vec![
+        list(Key::ctrl('n'), Command::ListNext),
+        platform(Key::plain(KeyCode::Down), Command::ListNext),
+        list(Key::ctrl('p'), Command::ListPrevious),
+        platform(Key::plain(KeyCode::Up), Command::ListPrevious),
+        platform(Key::plain(KeyCode::BackTab), Command::ListPrevious),
+        list(Key::ctrl('d'), Command::ListPageDown),
+        platform(Key::plain(KeyCode::PageDown), Command::ListPageDown),
+        list(Key::ctrl('u'), Command::ListPageUp),
+        platform(Key::plain(KeyCode::PageUp), Command::ListPageUp),
+        list(Key::plain(KeyCode::Home), Command::ListFirst),
+        list(Key::plain(KeyCode::End), Command::ListLast),
+        list(Key::ctrl('t'), Command::ListTogglePreview),
+        list(Key::plain(KeyCode::Delete), Command::ListClearFilter),
+        list(Key::plain(KeyCode::Escape), Command::ListClose),
+        platform(Key::ctrl('c'), Command::ListClose),
+        manager(Key::ctrl('o'), Command::OpenSessionDirectory.into()),
+        manager(Key::ctrl('e'), Command::OpenSessionDestinations.into()),
+        manager(Key::ctrl('g'), ColonCommand::GitWorktrees.into()),
+    ]
 }
 
 /// The four keys single-key pane movement claims, and where each one goes.
@@ -2784,6 +2849,71 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A list's filter owns every key that types something, and a list is not
+    /// a buffer: it answers its own keys and none of the editor's.
+    #[test]
+    fn list_keys_leave_typing_to_the_filter_and_editor_keys_to_the_editor() {
+        for (keymap_name, keymap) in built_in_keymaps() {
+            for binding in keymap
+                .bindings()
+                .iter()
+                .filter(|b| b.is_active_in(Mode::List))
+            {
+                assert_eq!(binding.modes, [Mode::List], "{keymap_name} {binding:?}");
+                assert_eq!(binding.sequence.len(), 1, "{keymap_name} {binding:?}");
+                let key = binding.sequence.as_slice()[0];
+                assert!(
+                    !matches!(key.code, KeyCode::Char(_))
+                        || key.modifiers.contains(Modifiers::CONTROL),
+                    "{keymap_name} list binding {} would take filter text",
+                    key.label()
+                );
+                assert!(
+                    !matches!(key.code, KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace),
+                    "{keymap_name} list binding {} is list grammar",
+                    key.label()
+                );
+            }
+            // Pane movement and saving are editor keys, not list keys.
+            assert!(
+                keymap
+                    .list_binding(BindingScope::Global, Key::ctrl('w'))
+                    .is_none()
+            );
+            assert!(
+                keymap
+                    .list_binding(BindingScope::Global, Key::ctrl('s'))
+                    .is_none()
+            );
+            assert!(
+                keymap
+                    .list_binding(BindingScope::Global, Key::char('j'))
+                    .is_none()
+            );
+        }
+
+        let keymap = default_keymap();
+        let target = |scope, key| keymap.list_binding(scope, key).map(|b| b.target);
+        assert_eq!(
+            target(BindingScope::Global, Key::ctrl('n')),
+            Some(EditorCommand::ListNext.into())
+        );
+        // The manager's chords are its own, and it still has the list's.
+        assert_eq!(target(BindingScope::Global, Key::ctrl('o')), None);
+        assert_eq!(
+            target(BindingScope::SessionManager, Key::ctrl('o')),
+            Some(EditorCommand::OpenSessionDirectory.into())
+        );
+        assert_eq!(
+            target(BindingScope::SessionManager, Key::ctrl('g')),
+            Some(ColonCommand::GitWorktrees.into())
+        );
+        assert_eq!(
+            target(BindingScope::SessionManager, Key::ctrl('t')),
+            Some(EditorCommand::ListTogglePreview.into())
+        );
     }
 
     #[test]

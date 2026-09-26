@@ -1111,7 +1111,7 @@ impl InputGrammar for RunyteGrammar {
                     Ok(GrammarOutput::default())
                 }
             },
-            Mode::Command => Ok(GrammarOutput::default()),
+            Mode::Command | Mode::List => Ok(GrammarOutput::default()),
         }
     }
 
@@ -2235,7 +2235,7 @@ impl InputGrammar for VimGrammar {
                     Ok(GrammarOutput::default())
                 }
             },
-            Mode::Command => Ok(GrammarOutput::default()),
+            Mode::Command | Mode::List => Ok(GrammarOutput::default()),
         }
     }
 

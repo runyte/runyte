@@ -73,6 +73,10 @@ pub struct OverlaySnapshot {
     /// Ordered user-visible actions. The first action is primary when one
     /// exists; reports deliberately have only navigation/dismiss actions.
     pub actions: Vec<OverlayAction>,
+    /// Keys that act on the surface in its current state, beyond the ones
+    /// `actions` names in the title. Frontends draw them as a dimmed legend
+    /// pinned to the bottom of the overlay, and drop it before any row.
+    pub legend: Vec<OverlayAction>,
     pub title: String,
     pub query: String,
     /// What the query line reads while the query is empty. Frontends draw it

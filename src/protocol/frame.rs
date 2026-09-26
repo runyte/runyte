@@ -63,7 +63,7 @@ macro_rules! unit_enum {
 unit_enum!(
     Mode,
     crate::command::Mode,
-    [Normal, Insert, Replace, Select, Command]
+    [Normal, Insert, Replace, Select, Command, List]
 );
 unit_enum!(
     NotificationSeverity,
@@ -454,6 +454,8 @@ pub struct OverlaySnapshot {
     pub input: OverlayInput,
     pub layout: OverlayLayout,
     pub actions: Vec<OverlayAction>,
+    #[serde(default)]
+    pub legend: Vec<OverlayAction>,
     pub title: String,
     pub query: String,
     #[serde(default)]
@@ -532,6 +534,7 @@ impl From<core::OverlaySnapshot> for OverlaySnapshot {
             input: value.input.into(),
             layout: value.layout.into(),
             actions: value.actions.into_iter().map(Into::into).collect(),
+            legend: value.legend.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
             query_placeholder: value.query_placeholder,
@@ -560,6 +563,7 @@ impl TryFrom<OverlaySnapshot> for core::OverlaySnapshot {
             input: value.input.into(),
             layout: value.layout.into(),
             actions: value.actions.into_iter().map(Into::into).collect(),
+            legend: value.legend.into_iter().map(Into::into).collect(),
             title: value.title,
             query: value.query,
             query_placeholder: value.query_placeholder,
@@ -728,6 +732,7 @@ mod tests {
             input: OverlayInput::Filter,
             layout: OverlayLayout::Standard,
             actions: Vec::new(),
+            legend: Vec::new(),
             title: "Files".to_owned(),
             query: String::new(),
             query_placeholder: String::new(),

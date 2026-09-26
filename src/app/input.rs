@@ -1658,6 +1658,9 @@ impl App {
             Mode::Insert | Mode::Replace | Mode::Normal | Mode::Select => {
                 self.handle_editor_input(InputEvent::Key(key))
             }
+            // Lists read their keys in `handle_list_key`; the editor never
+            // enters this mode itself.
+            Mode::List => Ok(()),
         }
     }
 
@@ -1862,7 +1865,7 @@ impl App {
                 self.command_cursor += text.chars().count();
                 self.command_selection = 0;
             }
-            Mode::Normal | Mode::Select => {}
+            Mode::Normal | Mode::Select | Mode::List => {}
         }
         Ok(())
     }
@@ -3949,7 +3952,7 @@ impl App {
             .replace_selection(Selection::point(offset));
     }
 
-    fn execute_editor_command(&mut self, command: EditorCommand) -> Result<()> {
+    pub(super) fn execute_editor_command(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
         if let Some(reason) = CommandId::Editor(command).platform_unavailable() {
             self.mark_unavailable(reason);
@@ -4379,6 +4382,22 @@ impl App {
             Command::JumpForwardBuffer => self.jump_in(false, true),
             Command::NewBuffer => self.open_scratch_buffer(),
             Command::OpenNavigator => self.open_navigator(),
+            Command::ListNext
+            | Command::ListPrevious
+            | Command::ListPageDown
+            | Command::ListPageUp
+            | Command::ListFirst
+            | Command::ListLast
+            | Command::ListTogglePreview
+            | Command::ListClearFilter
+            | Command::ListClose => self.run_list_command(command),
+            Command::OpenSessionDestinations =>
+            {
+                #[cfg(any(unix, windows))]
+                if self.session_manager_open() {
+                    self.open_session_inventory();
+                }
+            }
             Command::PreviousDestination => self.previous_destination(),
             Command::PreviousSession => self.previous_persistent_session(),
             Command::Session1 => self.attach_numbered_session('1'),
@@ -5480,10 +5499,11 @@ impl App {
                         self.session_manager_selection_lost = false;
                     }
                     #[cfg_attr(windows, allow(unused_mut))]
-                    let mut picker = ListPicker::new("Sessions · loading…", Vec::new());
+                    let mut picker =
+                        ListPicker::new("Sessions · loading…", Vec::new()).with_key_legend();
                     #[cfg(unix)]
                     {
-                        picker.primary_action = Some("attach".to_owned());
+                        picker.primary_action = Some("open".to_owned());
                     }
                     self.list = Some(picker);
                     self.request_workspace_refresh();

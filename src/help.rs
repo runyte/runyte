@@ -87,7 +87,11 @@ impl HelpTopic {
             // A Markdown document is ordinary text with one key of its own, so
             // it reads the text overview too; the key table below that prose is
             // generated from the scope and carries the extra row.
+            //
+            // The session manager is an overlay, and the leader that would
+            // open help closes it first.
             BindingScope::Help
+            | BindingScope::SessionManager
             | BindingScope::Global
             | BindingScope::Markdown
             | BindingScope::Plugin(_) => Self::Text,

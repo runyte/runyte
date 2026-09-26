@@ -182,7 +182,7 @@ use crate::workspace::{
 // destination visit with prepared native switches, so a drifted frontend
 // cannot commit a switch without visiting the selected resource. This private
 // bundled frontend version is independent of the stable runyte-1 plugin API.
-pub const VERSION: u32 = 59;
+pub const VERSION: u32 = 60;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1465,7 +1465,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 59);
+        assert_eq!(VERSION, 60);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

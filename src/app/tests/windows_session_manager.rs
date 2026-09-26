@@ -326,10 +326,15 @@ fn native_persistent_manager_visits_only_exact_running_selection() {
     let second = row(&project, b"second", "second");
     let expected = second.selection();
     let mut app = persistent_manager(vec![first, second]);
-    assert!(app.list.as_ref().unwrap().title.contains("1-9 attach"));
+    assert_eq!(app.list.as_ref().unwrap().title, "Sessions");
+    assert!(
+        app.list_legend()
+            .iter()
+            .any(|action| action.key_hint == "1-9" && action.label == "attach")
+    );
     assert_eq!(
         app.list.as_ref().unwrap().primary_action.as_deref(),
-        Some("visit")
+        Some("open")
     );
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -686,9 +691,17 @@ fn native_manager_keeps_two_publications_and_captures_exact_menu_subject() {
     let mut app = manager(vec![first, second]);
     let picker = app.list.as_ref().unwrap();
     assert_eq!(picker.items.len(), 2);
-    assert!(picker.title.contains("Tab actions"));
+    assert_eq!(
+        picker.secondary_action,
+        Some(("Tab".to_owned(), "actions".to_owned()))
+    );
     assert!(!picker.title.contains("attach"));
     assert!(picker.primary_action.is_none());
+    assert!(
+        !app.list_legend()
+            .iter()
+            .any(|action| action.key_hint == "1-9")
+    );
     assert!(picker.items.iter().all(|item| !item.label.contains('*')));
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -700,7 +713,10 @@ fn native_manager_keeps_two_publications_and_captures_exact_menu_subject() {
             SessionAction::Rename,
             SessionAction::Number,
             SessionAction::Close,
-            SessionAction::ForceClose
+            SessionAction::ForceClose,
+            SessionAction::OpenDirectory,
+            SessionAction::Destinations,
+            SessionAction::Worktrees,
         ]
     );
 }
@@ -764,7 +780,12 @@ fn native_stopped_preview_and_incompatible_menu_make_no_attachment_claim() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(
         app.session_action_menu.as_ref().unwrap().actions,
-        vec![SessionAction::Rename, SessionAction::Forget]
+        vec![
+            SessionAction::Rename,
+            SessionAction::Forget,
+            SessionAction::OpenDirectory,
+            SessionAction::Worktrees,
+        ]
     );
 
     let mut incompatible = row(&project, b"incompatible", "incompatible");
@@ -773,7 +794,12 @@ fn native_stopped_preview_and_incompatible_menu_make_no_attachment_claim() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(
         app.session_action_menu.as_ref().unwrap().actions,
-        vec![SessionAction::ForceClose]
+        vec![
+            SessionAction::ForceClose,
+            SessionAction::OpenDirectory,
+            SessionAction::Destinations,
+            SessionAction::Worktrees,
+        ]
     );
 }
 
@@ -793,7 +819,9 @@ fn native_persistent_stopped_row_opens_only_its_frozen_history_selection() {
         vec![
             SessionAction::Open,
             SessionAction::Rename,
-            SessionAction::Forget
+            SessionAction::Forget,
+            SessionAction::OpenDirectory,
+            SessionAction::Worktrees,
         ]
     );
     key(&mut app, KeyCode::Enter, Modifiers::NONE);

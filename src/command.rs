@@ -13,6 +13,13 @@ pub enum Mode {
     Replace,
     Select,
     Command,
+    /// Keys read by a filterable list overlay while it owns input.
+    ///
+    /// The editor never enters this mode: a list opens over whichever mode
+    /// was active. It exists so the list's own chords live in the same
+    /// registry as every other binding, and so a list scope inherits the
+    /// generic list keys rather than the editor's.
+    List,
 }
 
 impl Mode {
@@ -23,6 +30,7 @@ impl Mode {
             Self::Replace => "REP",
             Self::Select => "SEL",
             Self::Command => "CMD",
+            Self::List => "LST",
         }
     }
 }
@@ -825,6 +833,19 @@ editor_commands! {
     OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
     OpenExplorerSession => ("open-explorer-session", "Open persistent session here"),
     OpenBufferPicker => ("open-buffer-picker", "Open the buffer picker"),
+    ListNext => ("list-next", "Select the next row"),
+    ListPrevious => ("list-previous", "Select the previous row"),
+    ListPageDown => ("list-page-down", "Move the selection one page down"),
+    ListPageUp => ("list-page-up", "Move the selection one page up"),
+    ListFirst => ("list-first", "Select the first row"),
+    ListLast => ("list-last", "Select the last row"),
+    ListTogglePreview => ("list-toggle-preview", "Show or hide the preview"),
+    ListClearFilter => ("list-clear-filter", "Clear the filter"),
+    ListClose => ("list-close", "Close the list"),
+    OpenSessionDestinations => (
+        "open-session-destinations",
+        "Open the selected running session's destinations"
+    ),
     GlobalSearch => ("global-search", "Search the workspace, ignoring case"),
     GlobalSearchRegex => (
         "global-search-regex",
@@ -1177,7 +1198,17 @@ impl EditorCommand {
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
             | Self::OpenExplorerSession
+            | Self::OpenSessionDestinations
             | Self::OpenBufferPicker => CommandCategory::File,
+            Self::ListNext
+            | Self::ListPrevious
+            | Self::ListPageDown
+            | Self::ListPageUp
+            | Self::ListFirst
+            | Self::ListLast
+            | Self::ListTogglePreview
+            | Self::ListClearFilter
+            | Self::ListClose => CommandCategory::View,
             Self::SplitVertical
             | Self::SplitHorizontal
             | Self::FocusWindowLeft

@@ -502,6 +502,7 @@ impl App {
             purpose: OverlayPurpose::Confirmation,
             input: OverlayInput::None,
             layout: OverlayLayout::Standard,
+            legend: Vec::new(),
             actions,
             title: surface.title.clone(),
             query: String::new(),

@@ -178,6 +178,8 @@ pub struct ListPicker {
     /// Which group is shown; `None` shows every row.
     tag: Option<usize>,
     fuzzy: bool,
+    /// Whether the list draws a legend of the keys that act on it.
+    key_legend: bool,
 }
 
 /// Rows for drawing a picker. Selection continues to index only matching items.
@@ -243,6 +245,7 @@ impl ListPicker {
             tags: Vec::new(),
             tag: None,
             fuzzy: false,
+            key_legend: false,
         }
     }
 
@@ -270,6 +273,16 @@ impl ListPicker {
             trailing_detail: trailing_detail.into(),
         });
         self
+    }
+
+    /// Draws a legend of the keys that act on the list below its rows.
+    pub fn with_key_legend(mut self) -> Self {
+        self.key_legend = true;
+        self
+    }
+
+    pub fn has_key_legend(&self) -> bool {
+        self.key_legend
     }
 
     /// Offers Tab-cycled narrowing to each named group in turn, starting from

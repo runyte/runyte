@@ -1684,7 +1684,7 @@ fn session_picker_keeps_filter_and_routes_enter_and_tab_by_workspace_identity() 
             .unwrap()
             .contains("Active: 5days ago")
     );
-    assert_eq!(picker.primary_action.as_deref(), Some("attach"));
+    assert_eq!(picker.primary_action.as_deref(), Some("open"));
     let overlay = app
         .overlay_snapshots()
         .into_iter()
@@ -2747,6 +2747,9 @@ fn workspace_actions_match_the_selected_session_state() {
             SessionAction::Number,
             SessionAction::Close,
             SessionAction::ForceClose,
+            SessionAction::OpenDirectory,
+            SessionAction::Destinations,
+            SessionAction::Worktrees,
         ]
     );
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
@@ -2761,6 +2764,8 @@ fn workspace_actions_match_the_selected_session_state() {
             SessionAction::Open,
             SessionAction::Rename,
             SessionAction::Forget,
+            SessionAction::OpenDirectory,
+            SessionAction::Worktrees,
         ]
     );
     let labels = app
@@ -2775,7 +2780,17 @@ fn workspace_actions_match_the_selected_session_state() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
-    assert_eq!(labels, vec!["Open", "Rename", "Forget"]);
+    assert_eq!(
+        labels,
+        vec![
+            "Open",
+            "Rename",
+            "Forget",
+            "Manager",
+            "Open directory…",
+            "Git worktrees"
+        ]
+    );
 
     // No session service is attached in an isolated project, so the
     // request cannot be served; what matters here is that Forget asks to
@@ -4162,4 +4177,204 @@ fn session_strip_host_rejects_clicks_from_frames_with_replaced_identities() {
     let request = host.app_mut().take_workspace_switch().unwrap();
     assert_eq!(switch_target_path(&request), target);
     assert!(request.running_only);
+}
+
+#[cfg(unix)]
+fn legend_session_row(id: &str, name: &str, root: &Path, running: bool) -> WorkspaceRow {
+    WorkspaceRow {
+        publication_key: None,
+        unread_terminals: None,
+        terminal_bell: None,
+        id: id.to_owned(),
+        name: Some(name.to_owned()),
+        number: None,
+        last_active_unix_seconds: None,
+        project_root: root.to_path_buf(),
+        running,
+        incompatible_protocol: None,
+        unsaved_buffers: None,
+        pending_wait_requests: None,
+        plugin_jobs: None,
+        activity_leases: None,
+        activities: Vec::new(),
+        live_terminals: None,
+        terminal_sessions: None,
+        terminal_line_activity_unix_seconds: None,
+        interactive_attached: None,
+        open_buffers: None,
+        git: None,
+        missing_directory: false,
+    }
+}
+
+/// A session manager over one running and one stopped session, in a project
+/// that is not a Git repository.
+#[cfg(unix)]
+fn session_manager_with_running_and_stopped_rows(name: &str, persistent: bool) -> (App, PathBuf) {
+    let root = temporary(name);
+    let current = root.join("current");
+    let stopped = root.join("stopped");
+    fs::create_dir_all(&current).unwrap();
+    fs::create_dir_all(&stopped).unwrap();
+    let current = current.canonicalize().unwrap();
+    let stopped = stopped.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &current,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    if persistent {
+        app.enable_persistent_session();
+    }
+    app.workspace_generation = 4;
+    open_session_manager_for_refresh(&mut app);
+    app.apply_workspace_event(WorkspaceEvent::Refreshed {
+        generation: 4,
+        result: Ok(vec![
+            legend_session_row("aaaaaaaaaaaaaaaa", "current", &current, true),
+            legend_session_row("bbbbbbbbbbbbbbbb", "archive", &stopped, false),
+        ]),
+    });
+    (app, root)
+}
+
+#[cfg(unix)]
+fn session_manager_overlay(app: &App) -> crate::snapshot::OverlaySnapshot {
+    app.overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.title.starts_with("Sessions"))
+        .unwrap()
+}
+
+#[cfg(unix)]
+fn spelled(actions: &[crate::snapshot::OverlayAction]) -> Vec<String> {
+    actions
+        .iter()
+        .map(|action| format!("{} {}", action.key_hint, action.label))
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn session_manager_legend_names_only_the_keys_that_act_now() {
+    let (mut app, root) =
+        session_manager_with_running_and_stopped_rows("session-manager-legend", true);
+
+    let overlay = session_manager_overlay(&app);
+    assert_eq!(overlay.title, "Sessions");
+    assert_eq!(
+        spelled(&overlay.actions),
+        ["Enter open", "Tab actions", "Esc close"]
+    );
+    // Not a Git repository, so the worktree chord would only refuse.
+    assert_eq!(
+        spelled(&overlay.legend),
+        [
+            "1-9 attach",
+            "Ctrl-o open directory…",
+            "Ctrl-e destinations",
+            "Ctrl-n/Ctrl-p move",
+            "Ctrl-d/Ctrl-u page",
+            "Home/End first/last",
+            "Ctrl-t preview",
+        ]
+    );
+
+    // A stopped row has no destinations to browse.
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    let legend = spelled(&session_manager_overlay(&app).legend);
+    assert!(!legend.iter().any(|entry| entry.starts_with("Ctrl-e")));
+
+    // Once anything is typed, a digit is filter text and Delete has a
+    // filter to clear.
+    key(&mut app, KeyCode::Char('c'), Modifiers::NONE);
+    let legend = spelled(&session_manager_overlay(&app).legend);
+    assert!(!legend.contains(&"1-9 attach".to_owned()));
+    assert!(legend.contains(&"Delete clear filter".to_owned()));
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert!(app.list.as_ref().unwrap().filter.is_empty());
+    assert!(spelled(&session_manager_overlay(&app).legend).contains(&"1-9 attach".to_owned()));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn standalone_session_manager_legend_omits_persistent_only_keys() {
+    let (app, root) =
+        session_manager_with_running_and_stopped_rows("session-manager-legend-standalone", false);
+
+    let legend = spelled(&session_manager_overlay(&app).legend);
+    assert!(!legend.contains(&"1-9 attach".to_owned()));
+    assert!(!legend.iter().any(|entry| entry.starts_with("Ctrl-o")));
+    assert!(legend.contains(&"Ctrl-t preview".to_owned()));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn session_actions_end_with_the_manager_chords_whichever_row_is_selected() {
+    let (mut app, root) =
+        session_manager_with_running_and_stopped_rows("session-manager-tab-chords", true);
+
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let menu = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
+        .unwrap();
+    let rows = menu
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.heading,
+                row.label.as_str(),
+                row.trailing_detail.as_str(),
+                row.available,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        [
+            (false, "Open", "", true),
+            (false, "Rename", "", true),
+            (false, "Renumber", "", true),
+            (false, "Close", "", true),
+            (false, "Force close", "", true),
+            (true, "Manager", "", true),
+            (false, "Open directory…", "Ctrl-o", true),
+            (false, "Open destinations", "Ctrl-e", true),
+            (false, "Git worktrees", "Ctrl-g", false),
+        ]
+    );
+    // The heading is not an action: the last action is drawn one row down.
+    let menu_state = app.session_action_menu.as_mut().unwrap();
+    menu_state.selected = menu_state.actions.len() - 1;
+    let menu = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
+        .unwrap();
+    assert_eq!(menu.selected, Some(8));
+
+    // An entry that cannot act here refuses and leaves the manager open.
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.session_action_menu.is_none());
+    assert!(app.list.is_some());
+    let reason = app.command_capabilities().git_project;
+    assert_eq!(Some(app.status.as_str()), reason.reason());
+
+    // Choosing one that can runs its chord's command, not a row action.
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    app.session_action_menu.as_mut().unwrap().selected = 5;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.session_action_menu.is_none());
+    assert!(app.session_directory_chooser_open());
+
+    fs::remove_dir_all(root).unwrap();
 }

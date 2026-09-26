@@ -23,6 +23,26 @@ use super::{
 };
 #[cfg(any(unix, windows))]
 use super::{SessionAction, SessionActionMenu};
+#[cfg(any(unix, windows))]
+use crate::command::ColonCommand;
+use crate::command::EditorCommand;
+use crate::keymap::{BindingScope, BindingTarget};
+
+/// Whether a list binding only moves the selection.
+#[cfg(windows)]
+fn is_list_movement(target: BindingTarget) -> bool {
+    matches!(
+        target,
+        BindingTarget::Editor(
+            EditorCommand::ListNext
+                | EditorCommand::ListPrevious
+                | EditorCommand::ListPageDown
+                | EditorCommand::ListPageUp
+                | EditorCommand::ListFirst
+                | EditorCommand::ListLast
+        )
+    )
+}
 
 #[derive(Debug)]
 enum DocumentEditFailure {
@@ -2599,106 +2619,33 @@ impl App {
         if self.session_action_menu.is_some() {
             return self.handle_session_action_key(key);
         }
+        let bound = self.list_binding_for(key);
         #[cfg(windows)]
-        if self.session_manager_selection_lost
-            && self
-                .list
-                .as_ref()
-                .is_some_and(|list| list.title.starts_with("Sessions"))
-        {
+        if self.session_manager_selection_lost && self.session_manager_open() {
             if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
                 self.action_failed("selected session changed; select a session again");
                 return Ok(());
             }
-            if matches!(
-                key.code,
-                KeyCode::Up
-                    | KeyCode::Down
-                    | KeyCode::BackTab
-                    | KeyCode::PageUp
-                    | KeyCode::PageDown
-                    | KeyCode::Home
-                    | KeyCode::End
-            ) || matches!(key.code, KeyCode::Char('n' | 'p' | 'd' | 'u') if key.modifiers.contains(Modifiers::CONTROL))
-            {
+            if bound.is_some_and(is_list_movement) {
                 self.session_manager_selection_lost = false;
             }
         }
         if self.buffer_action_menu.is_some() {
             return self.handle_buffer_action_key(key);
         }
-        #[cfg(any(unix, windows))]
-        if self
-            .list
-            .as_ref()
-            .is_some_and(|list| list.title.starts_with("Sessions"))
-            && key.modifiers.contains(Modifiers::CONTROL)
-        {
-            match key.code {
-                KeyCode::Char('o') => {
-                    self.open_session_directory_chooser();
-                    return Ok(());
-                }
-                KeyCode::Char('e') => {
-                    self.open_session_inventory();
-                    return Ok(());
-                }
-                KeyCode::Char('g') => {
-                    self.list = None;
-                    self.open_git_worktrees();
-                    return Ok(());
-                }
-                _ => {}
-            }
+        if let Some(target) = bound {
+            return self.run_list_binding(target);
         }
-        if self
+        let report = self
             .list
             .as_ref()
-            .is_some_and(|list| list.purpose == ListPurpose::Report)
-        {
-            let page = 10;
-            let control = key.modifiers.contains(Modifiers::CONTROL);
-            match (key.code, control) {
-                (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => self.list = None,
-                (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
-                    self.list.as_mut().unwrap().report_down();
-                }
-                (KeyCode::Up, _) | (KeyCode::Char('p'), true) => {
-                    self.list.as_mut().unwrap().report_up();
-                }
-                (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
-                    self.list.as_mut().unwrap().report_page_down(page);
-                }
-                (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
-                    self.list.as_mut().unwrap().report_page_up(page);
-                }
-                (KeyCode::Home, _) => self.list.as_mut().unwrap().report_first(),
-                (KeyCode::End, _) => self.list.as_mut().unwrap().report_last(),
-                _ => {}
-            }
+            .is_some_and(|list| list.purpose == ListPurpose::Report);
+        if report {
             return Ok(());
         }
-        let page = 10;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
         let mut preview_changed = false;
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
-                if self.settings_view.is_some() {
-                    self.cancel_settings_picker();
-                } else {
-                    self.list = None;
-                }
-                return Ok(());
-            }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
-                self.list.as_mut().unwrap().down();
-                preview_changed = true;
-            }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
-                self.list.as_mut().unwrap().up();
-                preview_changed = true;
-            }
-            (KeyCode::Tab, _) => {
+        match key.code {
+            KeyCode::Tab => {
                 if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
                     self.open_plugin_manager_actions(index);
                     return Ok(());
@@ -2731,41 +2678,17 @@ impl App {
                     preview_changed = true;
                 }
             }
-            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
-                self.list.as_mut().unwrap().page_down(page);
-                preview_changed = true;
-            }
-            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
-                self.list.as_mut().unwrap().page_up(page);
-                preview_changed = true;
-            }
-            (KeyCode::Home, _) => {
-                self.list.as_mut().unwrap().first();
-                preview_changed = true;
-            }
-            (KeyCode::End, _) => {
-                self.list.as_mut().unwrap().last();
-                preview_changed = true;
-            }
-            (KeyCode::Char('t'), true)
-                if self.list.as_ref().is_some_and(ListPicker::has_preview) =>
-            {
-                let picker = self.list.as_mut().unwrap();
-                picker.show_preview = !picker.show_preview;
-            }
-            (KeyCode::Backspace, _) => {
+            KeyCode::Backspace => {
                 self.list.as_mut().unwrap().pop_filter();
                 preview_changed = true;
             }
-            (KeyCode::Delete, _) => {
-                self.list.as_mut().unwrap().clear_filter();
-                preview_changed = true;
-            }
-            (KeyCode::Enter, _) => {
+            KeyCode::Enter => {
                 self.activate_list_selection()?;
             }
-            (KeyCode::Char(character), false)
-                if !key.modifiers.intersects(Modifiers::ALT | Modifiers::SUPER) =>
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
                 #[cfg(any(unix, windows))]
                 if ('1'..='9').contains(&character) && self.session_number_shortcut_is_armed() {
@@ -2786,11 +2709,120 @@ impl App {
             _ => {}
         }
         if preview_changed {
-            self.preview_selected_setting_value();
-            #[cfg(any(unix, windows))]
-            self.request_selected_workspace_preview();
+            self.list_selection_changed();
         }
         Ok(())
+    }
+
+    /// The registry scope the open list reads its keys from.
+    pub(super) fn list_binding_scope(&self) -> BindingScope {
+        #[cfg(any(unix, windows))]
+        if self.session_manager_open() {
+            return BindingScope::SessionManager;
+        }
+        BindingScope::Global
+    }
+
+    /// What `key` does in the open list, from the same registry that draws
+    /// the list's key legend.
+    fn list_binding_for(&self, key: KeyStroke) -> Option<BindingTarget> {
+        self.keymap
+            .list_binding(self.list_binding_scope(), key)
+            .map(|binding| binding.target)
+    }
+
+    fn run_list_binding(&mut self, target: BindingTarget) -> Result<()> {
+        // Refused before anything moves, so a chord that cannot act here
+        // leaves the list where it was rather than closing it on the way to
+        // an error.
+        if let Some(reason) = target
+            .id()
+            .platform_unavailable()
+            .map(str::to_owned)
+            .or_else(|| {
+                let capability = target.id().capability()?;
+                self.command_capabilities()
+                    .capability_availability(capability)
+                    .reason()
+                    .map(str::to_owned)
+            })
+        {
+            self.action_failed(reason);
+            return Ok(());
+        }
+        match target {
+            BindingTarget::Editor(command) => self.execute_editor_command(command),
+            #[cfg(any(unix, windows))]
+            BindingTarget::Colon(ColonCommand::GitWorktrees) => {
+                // The worktree view is a buffer, not a layer over the
+                // manager, so the manager steps aside for it.
+                self.list = None;
+                self.open_git_worktrees();
+                Ok(())
+            }
+            BindingTarget::Colon(_) | BindingTarget::Plugin(_) => Ok(()),
+        }
+    }
+
+    /// Runs one of the generic list commands against the open list. Without
+    /// one, the command has nothing to act on and does nothing.
+    pub(super) fn run_list_command(&mut self, command: EditorCommand) {
+        let Some(picker) = self.list.as_mut() else {
+            return;
+        };
+        let page = 10;
+        if picker.purpose == ListPurpose::Report {
+            match command {
+                EditorCommand::ListClose => self.list = None,
+                EditorCommand::ListNext => picker.report_down(),
+                EditorCommand::ListPrevious => picker.report_up(),
+                EditorCommand::ListPageDown => picker.report_page_down(page),
+                EditorCommand::ListPageUp => picker.report_page_up(page),
+                EditorCommand::ListFirst => picker.report_first(),
+                EditorCommand::ListLast => picker.report_last(),
+                _ => {}
+            }
+            return;
+        }
+        match command {
+            EditorCommand::ListClose => {
+                if self.settings_view.is_some() {
+                    self.cancel_settings_picker();
+                } else {
+                    self.list = None;
+                }
+                return;
+            }
+            EditorCommand::ListTogglePreview => {
+                if picker.has_preview() {
+                    picker.show_preview = !picker.show_preview;
+                }
+                return;
+            }
+            EditorCommand::ListNext => picker.down(),
+            EditorCommand::ListPrevious => picker.up(),
+            EditorCommand::ListPageDown => picker.page_down(page),
+            EditorCommand::ListPageUp => picker.page_up(page),
+            EditorCommand::ListFirst => picker.first(),
+            EditorCommand::ListLast => picker.last(),
+            EditorCommand::ListClearFilter => picker.clear_filter(),
+            _ => return,
+        }
+        self.list_selection_changed();
+    }
+
+    /// Keeps what depends on the selected row in step with it.
+    fn list_selection_changed(&mut self) {
+        self.preview_selected_setting_value();
+        #[cfg(any(unix, windows))]
+        self.request_selected_workspace_preview();
+    }
+
+    #[cfg(any(unix, windows))]
+    pub(super) fn session_manager_open(&self) -> bool {
+        self.list
+            .as_ref()
+            .is_some_and(|list| list.title.starts_with("Sessions"))
     }
 
     /// Whether a digit in the session manager is a shortcut rather than text.
@@ -2803,7 +2835,7 @@ impl App {
     /// so
     /// the rule is the state of the filter rather than a mode to keep track of.
     #[cfg(any(unix, windows))]
-    fn session_number_shortcut_is_armed(&self) -> bool {
+    pub(super) fn session_number_shortcut_is_armed(&self) -> bool {
         self.list
             .as_ref()
             .is_some_and(|list| list.title.starts_with("Sessions") && list.filter.is_empty())
@@ -2828,7 +2860,7 @@ impl App {
         // belong to a running session, forgetting the history record to a
         // stopped one. A stopped session holds no digit to change, so offering
         // to set one would be an answer nothing in the manager could show.
-        let actions = if cfg!(windows) {
+        let mut actions = if cfg!(windows) {
             if entry.running && entry.incompatible_protocol.is_some() {
                 vec![SessionAction::ForceClose]
             } else if entry.running {
@@ -2866,6 +2898,13 @@ impl App {
                 SessionAction::Forget,
             ]
         };
+        // What the manager's chords do, whichever row is selected; only
+        // browsing destinations needs a running session under the cursor.
+        actions.push(SessionAction::OpenDirectory);
+        if entry.running {
+            actions.push(SessionAction::Destinations);
+        }
+        actions.push(SessionAction::Worktrees);
         self.session_action_menu = Some(SessionActionMenu {
             selection,
             actions,
@@ -2896,6 +2935,15 @@ impl App {
                 }
             }
             (KeyCode::Enter, _) => {
+                if let Some(target) = self
+                    .session_action_menu
+                    .as_ref()
+                    .and_then(SessionActionMenu::selected_action)
+                    .and_then(SessionAction::manager_target)
+                {
+                    self.session_action_menu = None;
+                    return self.run_list_binding(target);
+                }
                 let chosen = self.session_action_menu.as_ref().and_then(|menu| {
                     let action = menu.selected_action()?;
                     let index = self.workspace_row_index(&menu.selection).ok().flatten()?;
@@ -2981,6 +3029,13 @@ impl App {
                     (true, SessionAction::Forget) => {
                         self.status("stop this session before forgetting it")
                     }
+                    // Answered above, before the row is consulted.
+                    (
+                        _,
+                        SessionAction::OpenDirectory
+                        | SessionAction::Destinations
+                        | SessionAction::Worktrees,
+                    ) => {}
                 }
             }
             _ => {}

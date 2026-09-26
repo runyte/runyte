@@ -654,6 +654,94 @@ impl App {
         self.quit_directory_handoff = enabled;
     }
 
+    /// The keys the open list's legend names, in the order it names them.
+    ///
+    /// Read from the same registry `handle_list_key` dispatches through, so
+    /// the legend cannot advertise a key the list does not answer. Only keys
+    /// that act on the list as it stands are named: a key that would refuse
+    /// here is worse than one left out, and the legend is short enough to be
+    /// read at a glance only while it says nothing else.
+    pub fn list_legend(&self) -> Vec<crate::snapshot::OverlayAction> {
+        use crate::command::{ColonCommand, EditorCommand};
+        use crate::keymap::{BindingAvailability, BindingRole, BindingTarget};
+
+        let Some(picker) = self.list.as_ref().filter(|list| list.has_key_legend()) else {
+            return Vec::new();
+        };
+        let scope = self.list_binding_scope();
+        let capabilities = self.command_capabilities();
+        let filtering = !picker.filter.is_empty();
+        let mut legend: Vec<(String, &'static str)> = Vec::new();
+        #[cfg(any(unix, windows))]
+        if self.persistent_session && self.session_number_shortcut_is_armed() {
+            legend.push(("1-9".to_owned(), "attach"));
+        }
+        for binding in self.keymap.bindings_for_scope(Mode::List, scope) {
+            if binding.role != BindingRole::Primary
+                || binding.availability != BindingAvailability::Implemented
+                || binding.target.id().platform_unavailable().is_some()
+                || binding.target.id().capability().is_some_and(|capability| {
+                    !capabilities
+                        .capability_availability(capability)
+                        .is_available()
+                })
+            {
+                continue;
+            }
+            let label = match binding.target {
+                BindingTarget::Editor(EditorCommand::ListNext | EditorCommand::ListPrevious) => {
+                    "move"
+                }
+                BindingTarget::Editor(EditorCommand::ListPageDown | EditorCommand::ListPageUp) => {
+                    "page"
+                }
+                BindingTarget::Editor(EditorCommand::ListFirst | EditorCommand::ListLast) => {
+                    "first/last"
+                }
+                BindingTarget::Editor(EditorCommand::ListTogglePreview) if picker.has_preview() => {
+                    "preview"
+                }
+                BindingTarget::Editor(EditorCommand::ListClearFilter) if filtering => {
+                    "clear filter"
+                }
+                BindingTarget::Editor(EditorCommand::OpenSessionDirectory) => "open directory…",
+                BindingTarget::Editor(EditorCommand::OpenSessionDestinations)
+                    if self.selected_session_is_running() =>
+                {
+                    "destinations"
+                }
+                BindingTarget::Colon(ColonCommand::GitWorktrees) => "worktrees",
+                // The title already names Esc, and a key this list does not
+                // act on in its current state has nothing to say.
+                _ => continue,
+            };
+            let spelling = binding.sequence.to_string();
+            match legend.iter_mut().find(|(_, existing)| *existing == label) {
+                Some((keys, _)) => {
+                    keys.push('/');
+                    keys.push_str(&spelling);
+                }
+                None => legend.push((spelling, label)),
+            }
+        }
+        legend
+            .into_iter()
+            .map(|(keys, label)| crate::snapshot::OverlayAction::new(keys, label))
+            .collect()
+    }
+
+    /// Whether the session manager's selected row is a running session.
+    fn selected_session_is_running(&self) -> bool {
+        #[cfg(any(unix, windows))]
+        if let Some(super::ListAction::Workspace(index)) = self.selected_list_action() {
+            return self
+                .workspace_rows
+                .get(index)
+                .is_some_and(|row| row.running);
+        }
+        false
+    }
+
     pub fn key_binding_scope(&self) -> BindingScope {
         // A terminal pane's buffer is the document behind it, not what the
         // keys are acting on. Reading its scope would give a pane showing a
@@ -1263,6 +1351,7 @@ impl App {
                 purpose,
                 input,
                 layout,
+                legend: Vec::new(),
                 actions,
                 title: title.into(),
                 query: query.into(),
@@ -1690,6 +1779,11 @@ impl App {
             if picker.purpose == ListPurpose::Report {
                 snapshot.actions.push(OverlayAction::new("↑/↓", "scroll"));
                 snapshot.actions.push(OverlayAction::new("Esc", "dismiss"));
+            } else if picker.has_key_legend() {
+                // Everything past the keys needed to use the list at all is
+                // the legend's to name.
+                snapshot.actions.push(OverlayAction::new("Esc", "close"));
+                snapshot.legend = self.list_legend();
             } else {
                 if picker.has_preview() {
                     snapshot
@@ -1771,6 +1865,55 @@ impl App {
         }
         #[cfg(any(unix, windows))]
         if let Some(menu) = &self.session_action_menu {
+            let capabilities = self.command_capabilities();
+            let mut rows = Vec::new();
+            let mut selected = None;
+            for (index, action) in menu.actions.iter().enumerate() {
+                let mut result = row(
+                    action.label().to_ascii_lowercase(),
+                    action.label(),
+                    action.description(),
+                );
+                if let Some(target) = action.manager_target() {
+                    // The row actions end where the manager's own begin; a
+                    // heading keeps the two from reading as one list about
+                    // the selected session.
+                    if !rows
+                        .iter()
+                        .any(|row: &crate::snapshot::OverlayRow| row.heading)
+                    {
+                        let mut heading = row("manager", "Manager", "");
+                        heading.heading = true;
+                        rows.push(heading);
+                    }
+                    if let Some(binding) = self
+                        .keymap
+                        .bindings_for_scope(Mode::List, BindingScope::SessionManager)
+                        .find(|binding| binding.target == target)
+                    {
+                        result.trailing_detail = binding.sequence.to_string();
+                    }
+                    let unavailable = target
+                        .id()
+                        .platform_unavailable()
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            let capability = target.id().capability()?;
+                            capabilities
+                                .capability_availability(capability)
+                                .reason()
+                                .map(str::to_owned)
+                        });
+                    if let Some(reason) = unavailable {
+                        result.available = false;
+                        result.detail = reason;
+                    }
+                }
+                if index == menu.selected {
+                    selected = Some(rows.len());
+                }
+                rows.push(result);
+            }
             overlays.push(bounded(
                 OverlayKind::BufferActions,
                 self.workspace_row_index(&menu.selection)
@@ -1779,17 +1922,8 @@ impl App {
                     .and_then(|index| self.workspace_rows.get(index))
                     .map_or_else(|| "Session actions".to_owned(), WorkspaceRow::display_name),
                 "",
-                menu.actions
-                    .iter()
-                    .map(|action| {
-                        row(
-                            action.label().to_ascii_lowercase(),
-                            action.label(),
-                            action.description(),
-                        )
-                    })
-                    .collect(),
-                Some(menu.selected),
+                rows,
+                selected,
                 None,
             ));
         }

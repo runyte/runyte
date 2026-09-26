@@ -1889,7 +1889,8 @@ impl ContextActionMenu {
     }
 }
 
-/// What the workspace picker offers for one row.
+/// What the workspace picker offers for one row, followed by what it offers
+/// whichever row is selected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(unix), allow(dead_code))]
 enum SessionAction {
@@ -1899,6 +1900,9 @@ enum SessionAction {
     Close,
     ForceClose,
     Forget,
+    OpenDirectory,
+    Destinations,
+    Worktrees,
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -1911,6 +1915,9 @@ impl SessionAction {
             Self::Close => "Close",
             Self::ForceClose => "Force close",
             Self::Forget => "Forget",
+            Self::OpenDirectory => "Open directory…",
+            Self::Destinations => "Open destinations",
+            Self::Worktrees => "Git worktrees",
         }
     }
 
@@ -1922,6 +1929,25 @@ impl SessionAction {
             Self::Close => "Stop this persistent session",
             Self::ForceClose => "End protected buffers, waiters, and live terminals",
             Self::Forget => "Remove this stopped session's visited-history record",
+            Self::OpenDirectory => "Visit or start the persistent session of a directory",
+            Self::Destinations => "Browse this running session's open buffers and terminals",
+            Self::Worktrees => "Open the Git worktree workflow",
+        }
+    }
+
+    /// The manager chord this action shares, for the actions that do not
+    /// depend on the selected row. Row actions have none.
+    fn manager_target(self) -> Option<crate::keymap::BindingTarget> {
+        match self {
+            Self::OpenDirectory => Some(EditorCommand::OpenSessionDirectory.into()),
+            Self::Destinations => Some(EditorCommand::OpenSessionDestinations.into()),
+            Self::Worktrees => Some(crate::command::ColonCommand::GitWorktrees.into()),
+            Self::Open
+            | Self::Rename
+            | Self::Number
+            | Self::Close
+            | Self::ForceClose
+            | Self::Forget => None,
         }
     }
 }

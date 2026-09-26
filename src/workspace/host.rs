@@ -1303,6 +1303,7 @@ impl WorkspaceHost {
                 purpose: crate::snapshot::OverlayPurpose::Context,
                 input: crate::snapshot::OverlayInput::None,
                 layout: crate::snapshot::OverlayLayout::Bottom,
+                legend: Vec::new(),
                 actions: vec![
                     crate::snapshot::OverlayAction::new(scroll_keys, "scroll"),
                     crate::snapshot::OverlayAction::new("Esc", "dismiss"),
