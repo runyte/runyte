@@ -65,3 +65,11 @@ fn only_web_addresses_use_the_browser_and_www_defaults_to_https() {
         Some("http://example.com/a?q=1#b")
     );
 }
+
+#[test]
+fn percent_decoding_leaves_malformed_escapes_and_invalid_utf8_as_written() {
+    assert_eq!(percent_decode("my%20notes.md"), "my notes.md");
+    assert_eq!(percent_decode("caf%C3%A9"), "café");
+    assert_eq!(percent_decode("100%+1%zz%4"), "100%+1%zz%4");
+    assert_eq!(percent_decode("bad%FF.md"), "bad%FF.md");
+}

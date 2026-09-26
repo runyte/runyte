@@ -449,6 +449,179 @@ struct TerminalReview {
     bottom_padding: usize,
 }
 
+/// How far a hard-broken web link is followed across rows, in either
+/// direction from the caret.
+const INDENTED_LINK_ROWS: usize = 16;
+
+/// How many rows around a break are read to find the right edge its block
+/// wraps at.
+const WRAP_EDGE_WINDOW: usize = 64;
+
+impl ReviewLine {
+    fn characters<'a>(&self, text: &'a [char]) -> &'a [char] {
+        // Blank rows at the end of the snapshot are trimmed from its text.
+        text.get(self.text_start..self.text_end).unwrap_or_default()
+    }
+
+    /// The column after the last visible character.
+    fn end_column(&self) -> Option<usize> {
+        let column = *self.char_columns.last()?;
+        Some(column + usize::from(self.cells[column].width.max(1)))
+    }
+
+    /// The columns this row's text can continue at on the row below: where
+    /// the text itself starts, and, after a short leading marker such as
+    /// `-`, `1.`, or a TUI's `⏺`, where the words after it start.
+    fn block_columns(&self, text: &[char]) -> [Option<usize>; 2] {
+        let characters = self.characters(text);
+        let Some(first) = characters.iter().position(|c| !c.is_whitespace()) else {
+            return [None, None];
+        };
+        let marker = characters[first..]
+            .iter()
+            .position(|c| c.is_whitespace())
+            .map(|length| (length, &characters[first..first + length]));
+        let after_marker = marker
+            .filter(|(length, marker)| {
+                *length <= 3
+                    && (marker.iter().all(|c| !c.is_alphanumeric())
+                        || marker.last().is_some_and(|c| matches!(c, '.' | ')'))
+                            && marker[..length - 1].iter().all(char::is_ascii_digit))
+            })
+            .and_then(|(length, _)| {
+                characters[first + length..]
+                    .iter()
+                    .position(|c| !c.is_whitespace())
+                    .map(|offset| self.char_columns[first + length + offset])
+            });
+        [Some(self.char_columns[first]), after_marker]
+    }
+
+    fn indentation(&self, text: &[char]) -> Option<usize> {
+        self.characters(text)
+            .iter()
+            .position(|c| !c.is_whitespace())
+    }
+}
+
+impl TerminalReview {
+    /// Whether row `upper + 1` carries on a web link that a program, rather
+    /// than the terminal, broke at the end of row `upper`.
+    ///
+    /// Agents such as Codex and Claude Code lay out indented text themselves
+    /// and move to each row explicitly, so the terminal records no wrap. The
+    /// break is recognised by its shape instead: the lower row is indented to
+    /// the column the upper row's text is aligned to, starts with a word
+    /// rather than a space, and the upper row ends in part of a link at the
+    /// right edge its block wraps at. A row that ends short of that edge ended
+    /// because the next word did not fit, which is an ordinary space, not a
+    /// break inside a link. Rows starting at the left edge are never joined:
+    /// there a line break is the program's own.
+    fn continues_indented_link(&self, text: &[char], upper: usize, link_row: bool) -> bool {
+        let (Some(line), Some(next)) = (self.lines.get(upper), self.lines.get(upper + 1)) else {
+            return false;
+        };
+        if next.continuation_columns.is_some() {
+            return false;
+        }
+        let Some(first) = next.indentation(text) else {
+            return false;
+        };
+        let column = next.char_columns[first];
+        if column == 0 || !line.block_columns(text).contains(&Some(column)) {
+            return false;
+        }
+        let characters = line.characters(text);
+        let last_word = characters
+            .iter()
+            .rposition(|c| c.is_whitespace())
+            .map_or(characters, |space| &characters[space + 1..]);
+        let is_link = || {
+            let word = last_word.iter().collect::<String>();
+            (0..last_word.len()).any(|start| {
+                crate::navigation_target::under_cursor(&word, start)
+                    .is_some_and(|target| crate::navigation_target::web_url(&target).is_some())
+            })
+        };
+        let single_word = last_word.len() + line.indentation(text).unwrap_or(0) == characters.len();
+        if last_word.is_empty() || !(is_link() || link_row && single_word) {
+            return false;
+        }
+        let Some(end) = line.end_column() else {
+            return false;
+        };
+        // Rows the terminal wrapped itself end at its width, not at the
+        // program's, and would hide the edge being looked for.
+        let window = upper.saturating_sub(WRAP_EDGE_WINDOW)
+            ..(upper + WRAP_EDGE_WINDOW).min(self.lines.len());
+        let edge = window
+            .filter(|&index| {
+                self.lines
+                    .get(index + 1)
+                    .is_none_or(|below| below.continuation_columns.is_none())
+                    && self.lines[index].continuation_columns.is_none()
+                    && self.lines[index]
+                        .block_columns(text)
+                        .contains(&Some(column))
+            })
+            .filter_map(|index| self.lines[index].end_column())
+            .max()
+            .unwrap_or(end);
+        end >= edge && end * 2 >= line.cells.len()
+    }
+
+    /// A web link a program broke across indented rows, read with the
+    /// indentation of every continuation row left out.
+    fn indented_web_link(&self, row: usize, head: usize) -> Option<String> {
+        let text = self.text.chars().collect::<Vec<_>>();
+        // Each break is judged knowing whether the row above it is itself
+        // part of a link, so a link filling whole middle rows is followed.
+        // That is only known from the top down: look upward leniently for
+        // where a chain could begin, then decide every break in order.
+        let mut top = row;
+        while row - top < INDENTED_LINK_ROWS
+            && top > 0
+            && self.continues_indented_link(&text, top - 1, true)
+        {
+            top -= 1;
+        }
+        let mut first = top;
+        let mut last = top;
+        while last - row.min(last) < INDENTED_LINK_ROWS {
+            if self.continues_indented_link(&text, last, last > first) {
+                last += 1;
+            } else if last < row {
+                last += 1;
+                first = last;
+            } else {
+                break;
+            }
+        }
+        if first == last {
+            return None;
+        }
+        let mut joined = String::new();
+        let mut caret = None;
+        for index in first..=last {
+            let line = &self.lines[index];
+            let characters = line.characters(&text);
+            let skip = if index == first {
+                0
+            } else {
+                line.indentation(&text).unwrap_or(characters.len())
+            };
+            if index == row {
+                caret = (head - line.text_start)
+                    .checked_sub(skip)
+                    .map(|offset| joined.chars().count() + offset);
+            }
+            joined.extend(&characters[skip..]);
+        }
+        let target = crate::navigation_target::under_cursor(&joined, caret?)?;
+        crate::navigation_target::web_url(&target).map(|_| target)
+    }
+}
+
 /// Text Runyte itself put into a child's input, described only as much as
 /// taking it back again needs.
 #[derive(Clone, Copy, Debug)]
@@ -858,6 +1031,9 @@ impl TerminalSession {
             {
                 return Some(target);
             }
+        }
+        if let Some(target) = review.indented_web_link(row, range.head) {
+            return Some(target);
         }
         let text: String = review
             .text
