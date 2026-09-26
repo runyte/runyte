@@ -10,10 +10,10 @@ https://github.com/user-attachments/assets/cc77a90c-25e5-4b15-a1c9-f5da7f3f12fb
 **Runyte** is a terminal workspace built around a modal text editor.
 
 It supports **standalone** and **persistent** modes.
-In standalone mode when you exit Runyte you quit everything it was running.
+In standalone mode, when you exit Runyte you quit everything it was running.
 In persistent mode you can **detach and return later**, while a local host keeps
 your terminal processes and language servers running, and unsaved buffers open.
-The persistent mode is more powerful and preferred for focused work across
+Persistent mode is more powerful and preferred for focused work across
 many projects.
 
 Runyte integrates text editing, a file explorer, and terminal multiplexing under one
@@ -46,14 +46,21 @@ Project goals:
   see the next keys.
 - One consistent theme for editing and terminals.
 
-Linux and macOS provide the full feature set. Windows support in this source
-tree includes standalone editing, `--wait`, file management,
-integrated terminals, clipboard, language services, Git when installed, and the
-optional context bridge, configured plugins and direct persistent attachment.
-Configured bare launches attach when a project is discoverable. Native session
-controls, the session strip, directory and worktree session switching, and foreground hosts
-are available. See the
-[Windows scope and requirements](docs/user-guide.md#windows-support).
+Runyte runs on Linux, macOS, and Windows 11.
+
+| CPU    | System     | Automated tests | Prebuilt release | Hands-on use |
+|--------|------------|:---------------:|:----------------:|:------------:|
+| x86-64 | Linux      | ✅ | ✅ | ✅ |
+| ARM64  | Linux      | ❌ | ✅ | ❌ |
+| x86-64 | macOS      | ❌ | ✅ | ❌ |
+| ARM64  | macOS      | ✅ | ✅ | ✅ |
+| x86-64 | Windows 11 | ✅ | ✅ | ✅ |
+| ARM64  | Windows 11 | ❌ | ❌ | ❌ |
+
+Automated tests run in CI on pushes to `main` and `dev`. Every prebuilt
+release is built natively on its own platform and checked to start. A few
+features are missing or work differently on Windows; see
+[Windows support](docs/user-guide.md#windows-support).
 
 Website: [runyte.com](https://runyte.com) ·
 Documentation: [user guide](docs/user-guide.md) ·
@@ -174,7 +181,8 @@ or the [application authoring guide](docs/plugins/authoring.md).
 ## Installation
 
 GitHub Releases provide archives and checksums for x86-64 and ARM64 Linux and
-macOS. The macOS executables are currently unsigned and not notarized.
+macOS, and for x86-64 Windows. The executables are currently unsigned, and the
+macOS ones are not notarized.
 
 Installing from crates.io requires Rust 1.88 or newer and a C compiler:
 

@@ -49,7 +49,7 @@ For the project overview and quick start, see the [main README](../README.md).
 - A bounded, searchable notification center under `:notifications` / `:not`
 - Terminal panes running any interactive program — a shell, `htop`, `vim`, a
   coding agent — with scrollback, modal navigation over it, and a command that
-  sends a buffer's selection to one as a single paste (Unix only)
+  sends a buffer's selection to one as a single paste
 - Binary files handed to a program you name, with recent choices remembered
 - YAML configuration
 - Differential, flicker-free terminal rendering through Ratatui
@@ -1424,8 +1424,8 @@ The active theme is not among them; `Space o t` shows and changes it.
 
 ## Install and run
 
-Linux and macOS provide the full feature set.
-[Native Windows support](#windows-support) is provisional.
+Runyte runs on Linux, macOS, and Windows 11. [Windows support](#windows-support)
+lists what is missing or different there.
 
 Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
 [GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
@@ -1460,188 +1460,100 @@ To build from a clone instead:
 
 ### Windows support
 
-The initial native target is x86-64 Windows 11 24H2 or later, in Windows
-Terminal, using `x86_64-pc-windows-msvc`. Windows support is provisional;
-ARM64, MinGW, older Windows and other outer terminals have not been validated.
-Build with Rust 1.88 or newer and Visual Studio Build Tools with the C++
-toolchain and Windows SDK. The bundled grammars require the C compiler.
+Runyte runs natively on x86-64 Windows 11 24H2 or later, inside Windows
+Terminal. The rest of this guide applies to Windows too; this section lists
+what is missing, what is limited, and what works differently.
+
+Releases from 0.3.2 onward include an x86-64 Windows ZIP containing
+`runyte.exe`, the configuration example and license material, with its hash in
+`SHA256SUMS`. Compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with that
+entry before extracting. Executables are unsigned. The ZIP does not bundle the
+x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`); install Microsoft's x64
+Visual C++ Redistributable if it is absent.
+
+To build from source, install Rust 1.88 or newer and Visual Studio Build Tools
+with the C++ toolchain and Windows SDK. The bundled grammars require the C
+compiler.
 
 ```powershell
 cargo build --release --locked
 .\target\release\runyte.exe --standalone README.md
 ```
 
-Releases from 0.3.2 onward include an x86-64 Windows ZIP containing
-`runyte.exe`, the configuration example and license material, with its hash in
-`SHA256SUMS`. Compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with that
-entry before extracting. Executables are unsigned.
+#### Not available on Windows
 
-MSVC builds require the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`).
-Install Microsoft's x64 Visual C++ Redistributable if it is absent; the ZIP
-does not bundle that runtime.
+- The recent-root and worktree shortcuts in the session manager's `Ctrl-o`
+  directory chooser. The chooser itself accepts drive paths and backslashes.
+- `:session-stop` and `--session-stop` without a workspace. Name the workspace
+  by ID, name, or path.
+- Git and language servers installed as `.cmd`, `.bat`, or `.ps1` wrappers.
+  Only native `.exe` and `.com` executables are used. To run a script-based
+  language server, configure its interpreter as the executable and pass the
+  script in `args`.
+- Working directories whose ordinary Windows spelling is 260 UTF-16 units or
+  longer. The workspace, terminals, Git, language servers, `:pipe`, and the
+  `:quit-here` destination all refuse them. Opening files at such paths is not
+  affected.
+- UNC working directories for `cmd.exe` terminals. Use a shell that supports
+  them.
+- Language-server file URIs for network shares, device paths, and alternate
+  data streams.
+- Private runtime storage (logs, language-server approvals, the context bridge,
+  the `:quit-here` handoff) anywhere other than local NTFS.
+- Preserving unsaved editor state when the outer console window is closed.
+  `Ctrl+C` and `Ctrl+Break` in the outer console request an orderly shutdown,
+  but Windows may end the process before cleanup finishes after a close.
+- Starting a detached persistent host when the launching process runs in a job
+  that forbids breakaway. `-a` and `--session-restart` report the refusal and
+  leave no new host running, and a restart checks this before stopping the old
+  host. Attaching to a host that is already running still works.
 
-| Area | Native Windows support |
-| --- | --- |
-| Editing | Unicode text, selections, search, undo/redo, save, LF/CRLF, buffers and panes |
-| Files | Explorer, create, rename, move, copy, confirmed deletion and collision refusal |
-| Syntax | Bundled Tree-sitter highlighting and syntax tools |
-| Input | Native console input, bracketed paste, Unicode text clipboard and image paste |
-| Terminals | Independent ConPTY terminal sessions, splits, resize, scrollback and process-tree cleanup |
-| Git | Optional installed Git: status, diffs, staging, commits, history, branches, stashes, remotes and worktree management |
-| Diagnostics | Private standalone logs, bounded rotation, `--log` and `:log-open` on local NTFS |
-| Language services | Installed native language servers, workspace approval, diagnostics, navigation and edits |
-| Shell filters | Windows PowerShell commands with bounded UTF-8 input/output, cancellation and process-tree cleanup |
-| External opening | Default file manager, file associations and HTTP(S) browser links; explicit native viewer programs |
-| Editor wait | `--wait FILE...` uses the current persistent session from an ordinary shell, starting it if needed; inside an authenticated persistent integrated terminal it waits on the parent session's requested buffers |
-| Shell directory handoff | `:quit-here` through the Windows PowerShell 5.1 wrapper in standalone and persistent mode, including after a session switch |
-| Session controls | CLI list, rename, selected stop, stop-all, clean and restart; `Space Space` or `:session-list` opens the manager, which can visit running sessions and start selected stopped sessions in persistent mode; the persistent editor shows a clickable session strip with numbered and cyclic navigation |
-| Foreground host | `--serve` retains a persistent session while its original launching process remains alive |
-| Persistent attachment | `runyte -a [WORKSPACE]` or `runyte --persistent [WORKSPACE]` attaches to an exact native host, starting a missing workspace host |
-| Agent context | Context bridge over private named pipes, `:context-access`, and bounded `--context-list --json` discovery |
-| Plugins | Configured plugin discovery, startup, stop and restart; managed helper processes with bounded binary pipes and process-tree cleanup |
-| Session directory navigation | Explorer `Tab s`, manager Ctrl-o directory chooser, terminal reported directory, and Git worktree open/create can visit or start an exact directory's persistent session |
+#### Not validated
 
-The outer Windows console's Ctrl+C and Ctrl+Break events request orderly editor
-or detached-host shutdown. Closing that console follows the same cleanup path,
-but Windows may end the process before cleanup finishes; unsaved editor state
-cannot be promised on console close. These console events are separate from
-keys delivered to an integrated ConPTY terminal session.
+ARM64 Windows, MinGW builds, Windows versions older than 11 24H2, outer
+terminals other than Windows Terminal, network shares, long-path filesystem
+operations, PowerShell 7 for the `:quit-here` wrapper, and keyboard layouts or
+IMEs beyond the automated input cases. When one of these fails, recoverable
+edits are preserved.
 
-With `workspace.mode: persistent`, a bare Windows `runyte` attaches to its
-discovered project. It refuses without creating a workspace when no project is
-discoverable; use explicit `-a` to initialize the current directory or
-`--init` for an exact standalone workspace. `--standalone`, file and directory
-targets retain standalone behavior. `--wait` selects a persistent session
-independently of the bare-launch mode setting.
-Plugins can request the `processes` capability on Windows for managed native
-helpers; required and optional grants follow the same configuration rules.
-Use `:notifications`
-and `:service-health` for diagnostics. Git integration is enabled when a native
-`git.exe` or `git.com` is found on an absolute `PATH` entry accepted by `PATHEXT`.
-Git is optional: if it is absent, Git commands are disabled with a clear reason,
-and editing still works. Restart Runyte after installing Git or changing `PATH`.
-Shell-wrapper installations (`.cmd`, `.bat`, `.ps1`) are not selected.
+#### Differences from Linux and macOS
 
-On Windows, existing-file saves preserve replacement metadata through
-`ReplaceFileW`. Concurrent pathname opens can briefly fail with missing-file
-or sharing errors during replacement. A successful `wrote` acknowledgement
-means the complete document has been installed; tools checking saved bytes
-should wait for completion. This is not a guarantee of uninterrupted pathname
-visibility while a save is in progress.
-
-Native session controls work from a directory outside any project. The CLI
-uses captured cache/runtime settings and a complete session catalog; an
-unavailable catalog fails the command instead of showing an empty list.
-`--session-stop` requires an explicit workspace ID, name, or path on Windows.
-Normal stop and restart respect protected editor state, and `--force` requests
-its loss. `--session-restart [WORKSPACE]` selects one running session, confirms
-its stop and starts its replacement without attaching. Without a selector it
-uses a discoverable current project; it never creates a project. On Windows,
-restart first checks that the current process can create a detached host and
-leaves the selected host running if the inherited job policy denies that
-preflight. A later replacement startup can still fail after a confirmed stop;
-the command reports that failure and does not claim a running replacement.
-`--include-hidden` with listing or stop-all includes separately published
-hosts from isolated environments. If two live Windows publications have the
-same project path and ID, both remain visible; selecting by that path or ID
-fails as ambiguous. An unambiguous name can select one of them. A stopped
-session is reported only after
-its original host process exits. Foreground `--serve` discovers an existing
-project workspace or accepts an explicit `--project-root`; if neither is
-available it refuses startup without prompting. It retires the host when its
-original launching process exits. A detached host is independent of its
-short-lived launcher.
-Explicit `--persistent` attachment uses the complete native catalog. An ID,
-name or path must resolve unambiguously; a live selection retains its exact
-publication, while a stopped or new workspace starts a host before attaching.
-Omitting `WORKSPACE` discovers the current project or initializes the current
-directory as one. A second TUI cannot take over an occupied attachment.
-`:detach` leaves the host and its editor state running. The persistent editor
-can visit a selected running session through the session manager or visit the
-Explorer's displayed directory with `Tab s`.
-The configured bare launch also attaches to a discoverable project; without
-one it reports the missing project and creates no workspace. Explicit `-a`
-retains its exact-current-directory initialization behavior.
-Starting a missing host requires Windows to permit a detached process outside
-the launcher's inherited job. If that process policy denies the launch, `-a`
-reports the refusal and leaves no new host running. Attaching to an already
-published host remains available under that policy.
-
-On Windows, `Space Space` and `:session-list` show the native catalog. Distinct
-live publications for one project remain separate rows. In a persistent
-editor, Enter or Tab > Open visits the selected compatible running publication
-or starts the selected stopped session. A fresh catalog must still match that
-exact row; a replaced publication or changed stopped record is refused. In a
-standalone editor, the manager provides controls without attaching. Tab offers
-Open, Rename, Renumber, Close, and Force close for a compatible running row;
-Open, Rename, and Forget for a stopped row; and Force close for an incompatible
-running row. Force close requires a second Enter. The manager marks the current
-publication and shows assigned numbers. With an empty filter, `1`–`9` visit
-numbered running sessions. Preview reads only the selected compatible
-publication.
-
-The Windows session strip shows running publications above the editor when
-`workspace.session_strip` is `auto` and more than one is running, or when it is
-`always`. It remains hidden in zen mode or with `hidden`. The current entry is
-identified by the host's exact publication, so two live publications for the
-same directory remain separate. Left-clicking another entry visits that exact
-running publication; replacement before the switch is refused. The strip
-refreshes asynchronously on attachment and while the editor is active.
-Explorer `Tab s` visits the displayed directory's persistent session, starting
-a missing host when detached process policy permits it. The switch keeps the
-source editor attached if directory preparation fails or the destination
-cannot accept the TUI. An unambiguous selection of the current publication is
-a no-op; multiple live publications for one directory require an explicit
-selection in the session manager.
-The manager's Ctrl-o chooser accepts Windows drive paths and backslash
-separators. A terminal action can use its last validated OSC 7 directory; Git
-worktree open and successful creation use the same directory handoff.
-
-`:session-stop WORKSPACE` and `:session-rename WORKSPACE NAME` use a fresh
-complete catalog and require an unambiguous selector; `:session-stop` without
-one refuses on Windows. `:session-clean` cleans only verified stopped history
-and applies to the whole catalog. `Space 1`–`Space 9` and `:session-1` through
-`:session-9` visit assigned running sessions; `Shift-Left` and `Shift-Right`
-cycle through running sessions. These shortcuts do not restart stopped rows.
-
-Language servers also use native `.exe` or `.com` executables, specified by an
-absolute path or discovered through absolute `PATH` entries. To run a script,
-configure its native interpreter as the executable and supply the script in
-`args`. Servers start only after [workspace approval](#language-servers).
-Missing servers leave editing available and report their failure through LSP
-status. File URIs support local drive paths, including equivalent extended
-paths, Unicode and spaces; network authorities, device paths and alternate
-data streams are refused. Remembered decisions use the Windows account's
-profile and local application-data folders, with private storage on local NTFS.
-The workspace working directory must have an equivalent ordinary Windows
-spelling shorter than 260 UTF-16 units, as for Git and terminal processes;
-unsupported working directories report a server launch failure.
-
-Git working directories and worktree destinations need an equivalent ordinary
-Windows spelling shorter than 260 UTF-16 units. Unsupported paths are refused
-before worktree creation creates a branch. Worktree switching requires persistent
-sessions. Deleting a branch checked out in a registered worktree uses one
-guarded confirmation for its session, worktree, and branch. The session stops
-first; a failure leaves the remaining levels intact.
-
-Configuration defaults to `%APPDATA%\runyte\config.yaml`; a nonempty
-`XDG_CONFIG_HOME` takes precedence. `--config` selects an explicit file.
-`COMSPEC` selects the default terminal shell, with `cmd.exe` as the fallback.
-PowerShell and Git Bash are optional. See [terminals](#terminals) for command
-quoting and terminal working-directory limits. Network shares and long-path
-filesystem operations remain unvalidated; failures preserve recoverable edits.
-
-The outer terminal can reserve shortcuts such as `Ctrl-v` or `Ctrl-Shift-v`
-for paste.
-Bracketed text paste is delivered as text, including in Normal mode, so pasted
-command-looking lines do not execute editor commands. `Ctrl-v` and `Alt-v` use
-the native clipboard for text and images. Windows Terminal reserves `Ctrl-v`
-for its paste action. Runyte recognizes the empty paste event that some
-versions send for an image; if the terminal sends no event, use `Alt-v`.
-An empty image paste is handled as a clipboard action even when a multi-key
-editor command is waiting for its next key.
-Keyboard-layout and IME behavior
-beyond the automated input cases still needs reports from native setups.
+- **Configuration** defaults to `%APPDATA%\runyte\config.yaml`. A nonempty
+  `XDG_CONFIG_HOME` takes precedence, and `--config` selects an explicit file.
+- **Terminals** use ConPTY and start `%COMSPEC%`, falling back to `cmd.exe`.
+  Command lines use native Windows quoting; see [terminals](#terminals).
+- **`:pipe`** runs Windows PowerShell rather than `/bin/sh`; see `:pipe` under
+  [files and splits](#files-and-splits).
+- **`:quit-here`** needs the PowerShell 5.1 wrapper
+  [runyte.ps1](../contrib/runyte.ps1); see
+  [change the shell directory on exit](#change-the-shell-directory-on-exit).
+- **Git** is enabled when `git.exe` or `git.com` is found on an absolute `PATH`
+  entry accepted by `PATHEXT`. Without Git, Git commands are disabled with a
+  reason and editing still works. Restart Runyte after installing Git or
+  changing `PATH`.
+- **Paste:** Windows Terminal reserves `Ctrl-v` for its own paste action.
+  Runyte recognizes the empty paste event some versions send for an image,
+  even while a multi-key command waits for its next key; if the terminal sends
+  nothing, use `Alt-v`. Bracketed paste arrives as text in every mode, so
+  pasted lines never run editor commands.
+- **Saves** replace existing files with `ReplaceFileW`, which keeps their
+  metadata. Another program opening the file during a save can briefly get a
+  missing-file or sharing error. The `wrote` message means the whole document
+  is on disk.
+- **Two hosts for one project** can run at the same time. The session
+  manager and the session strip show them as separate rows, and selecting one
+  by path or ID is refused as ambiguous; use its name or pick the row.
+- **`:session-clean`** is available inside the editor. On Linux and macOS use
+  `runyte --session-clean`.
+- **A bare `runyte`** with `workspace.mode: persistent` attaches only to a
+  project it can discover, and otherwise refuses without creating a workspace.
+  `-a` initializes the current directory; `--init` creates an exact standalone
+  workspace.
+- **`--serve`** stops the host when the process that launched it exits.
+- **Plugins** can request the `processes` capability for managed native helper
+  processes.
+- **`workspace.state_anchor`** chooses where retained state lives; see
+  [configuration](#configuration).
 
 ### Startup files and input
 
@@ -4122,7 +4034,7 @@ $XDG_CONFIG_HOME/runyte/config.yaml
 
 When `XDG_CONFIG_HOME` is unset or empty, Linux and macOS use
 `~/.config/runyte/config.yaml`. The Windows port uses
-`%APPDATA%\runyte\config.yaml`; Windows support is provisional.
+`%APPDATA%\runyte\config.yaml`.
 Empty environment values are ignored. If neither the override nor the
 platform default is available, no default configuration file is selected.
 Use `--config <path>` to load another file. A relative path is anchored to the
