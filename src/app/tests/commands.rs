@@ -3734,6 +3734,101 @@ fn sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// With two terminals on screen, a send goes to the one worked in last rather
+/// than the one brought into its pane last, and a finished program on screen
+/// does not count as a second choice.
+#[test]
+fn sending_without_a_target_follows_the_terminal_focused_last() {
+    let root = temporary("terminal-send-focus-recency");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "echo composed\n");
+    let document = app.active_pane;
+    app.split(Axis::Horizontal, None).unwrap();
+    let first_pane = app.active_pane;
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    let first = app.active_terminal().expect("a terminal opened");
+    app.rename_terminal_id(first, "first");
+    app.split(Axis::Horizontal, None).unwrap();
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    let second = app.active_terminal().expect("a terminal opened");
+    app.rename_terminal_id(second, "second");
+    assert_ne!(first, second);
+
+    app.activate_pane(first_pane);
+    app.activate_pane(document);
+    app.send_to_terminal();
+    assert!(
+        !app.status_error && app.status.ends_with("to first"),
+        "the terminal focused last receives the send, not the one shown last: {}",
+        app.status
+    );
+
+    let cleanup = terminal_cleanup(&app, second);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: second,
+        code: Some(0),
+    });
+    cleanup();
+    app.activate_pane(document);
+    app.send_to_terminal();
+    assert!(
+        !app.status_error && app.status.ends_with("to first"),
+        "an exited terminal on screen leaves the live one as the only choice: {}",
+        app.status
+    );
+
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// No terminal on screen: the most recently focused one that can still take
+/// a paste is chosen, skipping any whose program has exited.
+#[test]
+fn sending_without_a_target_skips_a_focused_terminal_that_has_exited() {
+    let root = temporary("terminal-send-skips-exited");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "echo composed\n");
+    let document = app.active_pane;
+    app.split(Axis::Horizontal, None).unwrap();
+    let mut opened = Vec::new();
+    for name in ["oldest", "middle", "newest"] {
+        app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+        let id = app.active_terminal().expect("a terminal opened");
+        app.rename_terminal_id(id, name);
+        opened.push(id);
+    }
+    app.leave_terminal();
+    app.activate_pane(document);
+
+    let newest = opened[2];
+    let cleanup = terminal_cleanup(&app, newest);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: newest,
+        code: Some(0),
+    });
+    cleanup();
+    app.send_to_terminal();
+    assert!(
+        !app.status_error && app.status.ends_with("to middle"),
+        "the next most recently focused live terminal receives the send: {}",
+        app.status
+    );
+
+    app.send_to_terminal_target(Some("newest"));
+    assert!(
+        app.status_error && app.status.contains("program has exited"),
+        "naming the exited terminal is still refused: {}",
+        app.status
+    );
+
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn a_buffer_with_nothing_in_it_is_not_sent_to_a_terminal() {
     let root = temporary("terminal-send-nothing");

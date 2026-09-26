@@ -2636,6 +2636,9 @@ impl App {
             self.previously_focused_pane = Some(self.active_pane);
         }
         self.active_pane = pane;
+        if let Some(id) = self.terminal_of_pane(pane) {
+            self.note_terminal_focused(id);
+        }
         self.note_destination_activation();
     }
 

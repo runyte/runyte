@@ -231,7 +231,6 @@ impl App {
             self.push_jump();
         }
         self.move_terminal_to_pane(id, self.active_pane);
-        self.last_terminal = Some(id);
         // Showing a terminal changes which content the pane owns; it is not
         // itself an input command. Preserve a review captured before the
         // session was hidden or moved, while a still-live terminal starts in
@@ -267,7 +266,30 @@ impl App {
         if resized {
             self.note_terminal_finder_change(id);
         }
+        if pane_id == self.active_pane {
+            self.note_terminal_focused(id);
+        }
         true
+    }
+
+    /// Records that `id` now holds focus, making it the first answer to a
+    /// send that names no terminal.
+    pub(super) fn note_terminal_focused(&mut self, id: TerminalId) {
+        self.focused_terminals.retain(|other| *other != id);
+        self.focused_terminals.push(id);
+    }
+
+    /// The terminal most recently focused that still exists and satisfies
+    /// `accept`.
+    fn last_focused_terminal(
+        &self,
+        accept: impl Fn(&TerminalSession) -> bool,
+    ) -> Option<TerminalId> {
+        self.focused_terminals
+            .iter()
+            .rev()
+            .copied()
+            .find(|id| self.terminals.get(*id).is_some_and(&accept))
     }
 
     /// Shows the pane's buffer again, leaving the child running.
@@ -324,7 +346,6 @@ impl App {
         if let Some(id) = self.covered_terminal(pane_id, document)
             && self.move_terminal_to_pane(id, pane_id)
         {
-            self.last_terminal = Some(id);
             if pane_id == self.active_pane {
                 self.settle_terminal_focus(id);
             }
@@ -405,9 +426,7 @@ impl App {
                 pane.terminal = None;
             }
         }
-        if self.last_terminal == Some(id) {
-            self.last_terminal = None;
-        }
+        self.focused_terminals.retain(|other| *other != id);
         self.mode = Mode::Normal;
         self.status(format!("{name} ended"));
     }
@@ -484,7 +503,10 @@ impl App {
     /// the cells are a picture of the child's text, not the text — but a
     /// frozen copy is real text, and everything works on it.
     pub(super) fn copy_terminal_output(&mut self) {
-        let Some(id) = self.active_terminal().or(self.last_terminal) else {
+        let Some(id) = self
+            .active_terminal()
+            .or_else(|| self.last_focused_terminal(|_| true))
+        else {
             self.action_failed("no terminal to copy output from");
             return;
         };
@@ -567,25 +589,32 @@ impl App {
         }
     }
 
-    /// Which terminal a send goes to.
+    /// Which terminal a send that names none goes to.
     ///
-    /// A terminal on screen is the one being worked with, so it wins over the
-    /// one used last; the single terminal in the editor wins over nothing.
+    /// A terminal on screen is the one being worked with, so the only one
+    /// visible in another pane wins; otherwise the one focused most recently,
+    /// and otherwise the single terminal in the editor. An exited program
+    /// cannot take a paste, so every rule looks past it rather than choosing
+    /// a target only to refuse it: only a send that names one reaches that
+    /// refusal.
     fn send_target_terminal(&self) -> Option<TerminalId> {
+        let live = |id: &TerminalId| self.terminals.get(*id).is_some_and(TerminalSession::live);
         let mut visible = self
             .panes
             .iter()
             .filter(|(pane_id, _)| **pane_id != self.active_pane)
             .filter_map(|(_, pane)| pane.terminal)
-            .filter(|id| self.terminals.get(*id).is_some());
+            .filter(live);
         if let Some(id) = visible.next()
             && visible.next().is_none()
         {
             return Some(id);
         }
-        self.last_terminal
-            .filter(|id| self.terminals.get(*id).is_some())
-            .or_else(|| (self.terminals.len() == 1).then(|| self.terminals.ids()[0]))
+        self.last_focused_terminal(TerminalSession::live)
+            .or_else(|| {
+                let mut running = self.terminals.ids().into_iter().filter(live);
+                running.next().filter(|_| running.next().is_none())
+            })
     }
 
     /// Applies output a child produced.
