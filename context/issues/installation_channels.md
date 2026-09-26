@@ -1,12 +1,26 @@
 # Add quick install and package manager options
 
-Installation currently requires a manual download of a GitHub Release archive,
-`cargo install runyte --locked`, or a build from a clone. The release workflow
-already publishes versioned archives and `SHA256SUMS` for x86-64 and ARM64
-Linux and macOS, and x86-64 Windows. There is no documented one-command
-install using a shell script, Homebrew, or WinGet.
+The curl installation path is implemented in the repository-root `install.sh`.
+The same script installs and updates Runyte on x86-64 and ARM64 Linux/macOS,
+verifies the selected release archive against `SHA256SUMS`, and replaces the
+executable in `$HOME/.local/bin` or an explicit `--install-dir`.
+`--version` selects a fixed release; omitting it selects the latest release.
+The README and user guide document the command, runtime requirements, upgrade
+behavior, and script review. The public command becomes available when the
+script reaches `main`. Offline acceptance lives in
+`tests/installer/test_install.py` and runs on Linux and macOS in CI.
 
-Provide these three installation paths first:
+Homebrew and WinGet remain open and are outside the curl implementation scope.
+
+## Original requirements
+
+At the time of the report, installation required a manual download of a GitHub
+Release archive, `cargo install runyte --locked`, or a build from a clone. The
+release workflow already published versioned archives and `SHA256SUMS` for
+x86-64 and ARM64 Linux and macOS, and x86-64 Windows. There was no documented
+one-command install using a shell script, Homebrew, or WinGet.
+
+The initial installation paths requested were:
 
 - A `curl` command on Linux, and preferably macOS, that obtains a reviewed
   installer script. The script should select a supported OS and architecture,

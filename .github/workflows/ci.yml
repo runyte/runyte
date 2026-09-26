@@ -23,6 +23,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  installer:
+    name: Installer (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check shell syntax
+        run: sh -n install.sh
+      - name: Test installation and updates offline
+        run: python3 -m unittest discover -s tests/installer -v
+
   windows:
     name: Native Windows
     runs-on: windows-latest

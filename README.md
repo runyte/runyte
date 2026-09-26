@@ -187,6 +187,19 @@ GitHub Releases provide archives and checksums for x86-64 and ARM64 Linux and
 macOS, and for x86-64 Windows. The executables are currently unsigned, and the
 macOS ones are not notarized.
 
+Install or update to the latest release on Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh
+```
+
+The [installer](install.sh) selects the x86-64 or ARM64 archive, verifies its
+SHA-256 checksum, and installs to `~/.local/bin/runyte` without sudo. Run the
+same command again to update. Add `~/.local/bin` to your `PATH` if needed.
+Linux requires glibc 2.35 or newer; Alpine/musl is unsupported. See the
+[installation guide](docs/user-guide.md#install-and-update-with-curl) for
+requirements, script review, version selection, and custom install locations.
+
 Installing from crates.io requires Rust 1.88 or newer and a C compiler:
 
 ```sh

@@ -298,6 +298,29 @@ six expected assets, and neither recreates nor moves the tag. Build-provenance
 attestations are deliberately omitted for now because they require additional
 permissions; archive checksums and exact-tag validation add no such authority.
 
+### Curl installation and updates
+
+The repository-root `install.sh`, served from `main`, installs and updates the
+same executable. Its default resolves GitHub's `/releases/latest` redirect to
+one stable version, then fetches that version's archive and `SHA256SUMS` using
+the names above. `--version X.Y.Z` bypasses latest-release discovery.
+`--install-dir` chooses an absolute destination directory; the default is
+`$HOME/.local/bin`. Downloads and checks complete before a staged executable
+replaces the old file through a rename on the destination filesystem.
+
+Installer changes land with ordinary code before the version-only release
+commit. No installer version or embedded archive hash needs updating at release
+time: each invocation verifies against the chosen release's manifest. The
+existing crates.io, tag, and binary workflow order remains unchanged. A release
+whose binary assets are not yet available fails installation clearly and can
+be retried after its binary workflow completes.
+
+The `installer` CI job runs `python3 -m unittest discover -s tests/installer -v`
+on Linux and macOS. It exercises the shell script using real compressed
+archives, checksum programs and filesystem replacements, with offline network
+and platform fixtures. Changes to archive names, layout, compression or Linux
+runtime requirements must keep the installer and its tests aligned.
+
 ### One-time 0.1.7 backfill
 
 The workflow entered the repository after `v0.1.7`, so pushing that existing

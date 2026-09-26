@@ -1478,6 +1478,66 @@ The active theme is not among them; `Space o t` shows and changes it.
 Runyte runs on Linux, macOS, and Windows 11. [Windows support](#windows-support)
 lists what is missing or different there.
 
+### Install and update with curl
+
+On x86-64 or ARM64 Linux and macOS, install the latest release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh
+```
+
+Run the same command again to update. The [installer source](../install.sh)
+is maintained in this repository and served from `main`. It resolves the
+latest GitHub Release once, then downloads that version's archive and
+`SHA256SUMS` over HTTPS. It checks the archive's SHA-256 before staging the
+executable and replacing `~/.local/bin/runyte`. A failed download, checksum,
+or extraction leaves an existing installation intact. The checksums establish
+integrity against the release manifest; they are not independent signatures.
+
+No sudo is needed. The script requires `curl`, `tar` with xz support, either
+`sha256sum` or `shasum`, and standard Unix utilities. Some Linux distributions
+package xz support separately as `xz-utils` or `xz`. Linux requires glibc 2.35
+or newer; Alpine/musl and other operating systems or architectures are rejected.
+macOS binaries remain unsigned and unnotarized; the script does not change
+Gatekeeper settings.
+
+To read the script before running it, download it first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+The same script accepts a release version (with or without `v`) and an absolute
+install directory. For example:
+
+```sh
+sh install.sh --version 0.3.0 --install-dir "$HOME/.local/bin"
+```
+
+Omit `--version` to install or update to the latest release. Keep the same
+`--install-dir` when updating a custom installation. A pinned version can also
+reinstall or downgrade to any release with matching archives and checksums.
+The script refuses a symlink or directory at the destination `runyte` path.
+
+If the install directory is absent from `PATH`, add it to your shell startup
+file. For the default location in a POSIX shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Check `command -v runyte` and `runyte --version` after installation, especially
+if another copy was installed through Cargo or manually. The installer only
+updates the copy in its chosen directory. Already running editors and
+persistent sessions keep using the old executable until restarted; save your
+work before restarting them. The script installs the executable only and does
+not change configuration or shell startup files. To uninstall that copy,
+remove `~/.local/bin/runyte` (or the corresponding file in a custom directory).
+
+### Manual download and source installation
+
 Prebuilt archives for x86-64 and ARM64 Linux and macOS are available from the
 [GitHub Releases page](https://github.com/runyte/runyte/releases). Download the
 archive for the machine and `SHA256SUMS`, then compare the archive's
