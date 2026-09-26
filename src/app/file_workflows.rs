@@ -323,12 +323,19 @@ impl App {
     }
 
     pub(super) fn open_active_directory_explorer(&mut self) -> Result<()> {
-        let file = if matches!(self.active_buffer().kind, BufferKind::File) {
-            self.active_buffer().path.clone()
+        let source = self
+            .active_buffer()
+            .markdown_render_source()
+            .unwrap_or(self.active().buffer);
+        let buffer = &self.buffers[source];
+        let file = if matches!(buffer.kind, BufferKind::File) {
+            buffer.path.clone()
         } else {
             None
         };
-        let directory = self.active_directory();
+        let directory = self
+            .buffer_directory(source)
+            .unwrap_or_else(|| self.working_directory.clone());
         self.open_explorer(Some(directory))?;
         if let Some(file) = file {
             if let Some(confirmation) = &mut self.directory_reload_confirmation {

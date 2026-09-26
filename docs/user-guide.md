@@ -180,6 +180,8 @@ position. Moving around the page before returning takes you to that new place
 in the source. `:render` (also `:markdown`) does the same from the command line.
 `g f` on a link or image label opens its destination, just as in the source.
 Relative paths resolve beside the source document and at the project root.
+`Space e` opens the source document's directory and selects its file, just as
+in the source view.
 The page is a generated read-only buffer beside the document rather than a mode
 the document is in, so both stay open and the source keeps every editing key.
 
@@ -3707,7 +3709,8 @@ The working directory starts at the directory where Runyte was launched.
 `:cd <path>` changes it; relative paths are resolved from the current working
 directory. When an explorer is active, `:cd` also retargets that explorer.
 From a normal file buffer it leaves the file open. `Space e` opens the active
-buffer's directory and selects that file, so Enter returns to its buffer;
+buffer's directory and selects that file, so Enter returns to its buffer.
+From a rendered Markdown page, it uses the source document's directory and file.
 `Space E` opens the working directory. A pathless buffer falls back to the
 working directory. `Space f` (or `Space / f`) always opens the stable-project
 Finder in name mode, while `:fuzzy-grep` opens its content mode.
