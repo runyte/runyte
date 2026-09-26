@@ -1970,7 +1970,7 @@ context; scoped explorer keys are documented under
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
-| `gf` | Open the selected path, or infer the complete path under a bare cursor |
+| `gf` | Open the selected path, or infer the complete path under a bare cursor; on a Markdown link to `#heading` or `file.md#heading`, land on that heading |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |

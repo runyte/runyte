@@ -3713,6 +3713,8 @@ enum ListAction {
     },
     Jump(crate::lsp::Location),
     OpenPath(PathBuf),
+    /// A file offered for a Markdown link, and the heading it names.
+    OpenPathAtHeading(PathBuf, String),
     CodeAction(usize),
     Buffer(usize),
     SettingValue {

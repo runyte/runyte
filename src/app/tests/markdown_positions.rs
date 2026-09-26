@@ -395,3 +395,138 @@ fn markdown_maps_crlf_paragraph_breaks_to_the_source_newline() {
         offset(source, "\n")
     );
 }
+
+#[test]
+fn goto_file_follows_markdown_heading_anchors_in_the_same_and_other_documents() {
+    let root = temporary("markdown-anchor-navigation");
+    let docs = root.join("docs");
+    fs::create_dir_all(&docs).unwrap();
+    let guide = docs.join("user-guide.md");
+    fs::write(
+        &guide,
+        "# Guide\n\n```sh\n# Windows support\n```\n\n## Windows support\n\nDetails\n",
+    )
+    .unwrap();
+    let source_path = root.join("README.md");
+    fs::write(
+        &source_path,
+        "[Native Windows support](#windows-support), \
+         [Windows scope](docs/user-guide.md#windows-support), \
+         [missing](#nowhere) and [elsewhere](docs/user-guide.md#nowhere)\n\n\
+         ## Intro\n\n## Windows support\n\nBody\n",
+    )
+    .unwrap();
+    let mut app = App::new(Config::default(), Some(source_path)).unwrap();
+    app.project_root = root.clone();
+    let source = app.active().buffer;
+    let guide_heading = {
+        let text = fs::read_to_string(&guide).unwrap();
+        offset(&text, "## Windows support")
+    };
+    for rendered in [false, true] {
+        app.switch_buffer(source);
+        if rendered {
+            press(&mut app, '?');
+        }
+        let page = app.active().buffer;
+        let current = text(&app);
+        let heading = current[..current.rfind("Windows support").unwrap()]
+            .chars()
+            .count();
+        let heading = if rendered {
+            heading
+        } else {
+            heading - "## ".len()
+        };
+
+        app.active_mut()
+            .replace_selection(Selection::point(offset(&current, "Native")));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active().buffer, page);
+        assert_eq!(
+            app.active().selection.primary().head,
+            heading,
+            "rendered={rendered}"
+        );
+        key(&mut app, KeyCode::Char('o'), Modifiers::CONTROL);
+        assert_eq!(
+            app.active().selection.primary().head,
+            offset(&current, "Native"),
+            "the anchor jump is recorded, rendered={rendered}"
+        );
+
+        app.active_mut()
+            .replace_selection(Selection::point(offset(&current, "missing")));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active().buffer, page);
+        assert!(
+            app.displayed_status_message()
+                .contains("heading not found: #nowhere")
+        );
+
+        app.active_mut()
+            .replace_selection(Selection::point(offset(&current, "elsewhere")));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_ref(), Some(&guide));
+        assert_eq!(app.active().selection.primary().head, 0);
+        assert!(
+            app.displayed_status_message()
+                .contains("heading not found: #nowhere")
+        );
+
+        app.switch_buffer(page);
+        app.active_mut()
+            .replace_selection(Selection::point(offset(&current, "Windows scope")));
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_ref(), Some(&guide));
+        assert_eq!(app.active().selection.primary().head, guide_heading);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn goto_file_keeps_the_markdown_heading_through_the_choice_between_matches() {
+    let root = temporary("markdown-anchor-choice");
+    let notes = root.join("notes");
+    fs::create_dir_all(notes.join("docs")).unwrap();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    let beside = notes.join("docs/guide.md");
+    let project = root.join("docs/guide.md");
+    fs::write(&beside, "# Beside\n").unwrap();
+    fs::write(&project, "# Guide\n\n## Install\n").unwrap();
+    let source = notes.join("README.md");
+    fs::write(&source, "[Install](docs/guide.md#install)\n").unwrap();
+
+    let mut app = App::new(Config::default(), Some(source)).unwrap();
+    app.project_root = root.clone();
+    let readme = app.active().buffer;
+    app.active_mut().replace_selection(Selection::point(2));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    let picker = app.list.as_ref().expect("two matches open a picker");
+    assert_eq!(picker.items.len(), 2);
+
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&project));
+    assert_eq!(
+        app.active().selection.primary().head,
+        "# Guide\n\n".chars().count()
+    );
+
+    app.switch_buffer(readme);
+    app.active_mut().replace_selection(Selection::point(2));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&beside));
+    assert_eq!(app.active().selection.primary().head, 0);
+    // A choice made in the picker continues `gf`, whose echo stays on the
+    // interaction line; the failure is the status and a notification.
+    assert!(app.status.contains("heading not found: #install"));
+    fs::remove_dir_all(root).unwrap();
+}

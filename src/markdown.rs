@@ -1252,6 +1252,168 @@ pub(crate) fn link_under_cursor(line: &str, offset: usize) -> Option<String> {
     None
 }
 
+/// Where the heading a link fragment such as `#windows-support` names
+/// starts, or `None` when no heading has that anchor.
+///
+/// Anchors are spelled the way GitHub and most Markdown tools spell them:
+/// the heading's rendered text, lowercased, with punctuation other than `-`
+/// and `_` removed and each space turned into `-`. A repeated heading takes
+/// `-1`, `-2`, … in document order. Headings inside front matter and fenced
+/// code are text rather than headings and are skipped, as the renderer skips
+/// them. The fragment may be percent-encoded, as a link to a non-ASCII
+/// heading usually is.
+pub(crate) fn heading_anchor(source: &str, fragment: &str) -> Option<HeadingAnchor> {
+    let fragment = percent_decode(fragment);
+    let wanted = fragment.to_lowercase();
+    let lines = source
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect::<Vec<_>>();
+    let starts = source
+        .split('\n')
+        .scan(0, |offset, line| {
+            let start = *offset;
+            *offset += line.chars().count() + 1;
+            Some(start)
+        })
+        .collect::<Vec<_>>();
+    let palette = Palette::new();
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    let mut index = front_matter_end(&lines).map_or(0, |end| end + 1);
+    let mut in_list = false;
+    // The blocks are told apart in the order `render` tries them, so a line
+    // is a heading here exactly when the page draws it as one. Anything else
+    // would leave a visible heading unreachable and shift the numbering of
+    // every repeated heading after it.
+    while index < lines.len() {
+        let line = lines[index];
+        let row = index;
+        index += 1;
+        if let Some(fence) = code_fence(line) {
+            while index < lines.len() && !closes_fence(lines[index], fence) {
+                index += 1;
+            }
+            index += usize::from(index < lines.len());
+            in_list = false;
+            continue;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let text = if let Some((_, text)) = atx_heading(line) {
+            text
+        } else if is_thematic_break(line) || block_quote(line).is_some() {
+            in_list = false;
+            continue;
+        } else if list_item(line).is_some() {
+            in_list = true;
+            continue;
+        } else if line.trim_start().starts_with('|') {
+            while index < lines.len() && lines[index].trim_start().starts_with('|') {
+                index += 1;
+            }
+            in_list = false;
+            continue;
+        } else if !in_list && is_indented_code(line) && starts_block(&lines, row) {
+            while index < lines.len()
+                && (is_indented_code(lines[index]) || lines[index].trim().is_empty())
+            {
+                index += 1;
+            }
+            continue;
+        } else if is_html_comment(line) {
+            continue;
+        } else if setext_underline(lines.get(index).copied()).is_some() {
+            index += 1;
+            line.trim()
+        } else {
+            // A paragraph swallows the lines that continue it, so an
+            // underline below one of those is not a heading.
+            while index < lines.len() && continues_paragraph(lines[index]) {
+                index += 1;
+            }
+            continue;
+        };
+        in_list = false;
+        // GitHub builds the anchor from the heading's text alone; a link in
+        // it contributes its label, not the destination the page appends.
+        let plain = inline(text, None, palette)
+            .iter()
+            .filter(|piece| piece.scope != Some(palette.link_url))
+            .map(|piece| piece.text.as_str())
+            .collect::<String>();
+        let base = heading_slug(&plain);
+        let count = seen.entry(base.clone()).or_insert(0);
+        let slug = if *count == 0 {
+            base
+        } else {
+            format!("{base}-{count}")
+        };
+        *count += 1;
+        if slug == fragment || slug == wanted {
+            let indent = line
+                .chars()
+                .take_while(|value| value.is_whitespace())
+                .count();
+            // `text` is a slice of `line`, so its distance is its column.
+            let column = line[..text.as_ptr() as usize - line.as_ptr() as usize]
+                .chars()
+                .count();
+            return Some(HeadingAnchor {
+                line: starts[row] + indent,
+                text: starts[row] + column,
+            });
+        }
+    }
+    None
+}
+
+/// A heading found by its anchor, as character offsets into the source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HeadingAnchor {
+    /// The start of the heading's own line, where the source puts a caret.
+    pub line: usize,
+    /// The start of its text, the only part a rendered page still shows.
+    pub text: usize,
+}
+
+/// The GitHub-style anchor of a heading's rendered text.
+fn heading_slug(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .filter_map(|character| match character {
+            ' ' => Some('-'),
+            '-' | '_' => Some(character),
+            _ if character.is_alphanumeric() => Some(character),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Decodes `%XX` escapes, leaving malformed ones and invalid UTF-8 as written.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let escape = (bytes[index] == b'%')
+            .then(|| bytes.get(index + 1..index + 3))
+            .flatten()
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(byte) = escape {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| text.to_owned())
+}
+
 /// An inline link or image starting at `index`.
 fn link(characters: &[char], index: usize) -> Option<ParsedLink> {
     let image = characters[index] == '!';
@@ -1421,6 +1583,129 @@ mod tests {
                 &rendered.text()[start..end]
             })
             .collect()
+    }
+
+    #[test]
+    fn a_heading_anchor_is_its_rendered_text_as_a_github_slug() {
+        let source = "# Runyte\n\n## Native **Windows** support!\n\n### `gf` & links_2\n";
+        let at = |needle: &str| source[..source.find(needle).unwrap()].chars().count();
+        assert_eq!(
+            heading_anchor(source, "runyte").map(|found| found.line),
+            Some(0)
+        );
+        assert_eq!(
+            heading_anchor(source, "native-windows-support").map(|found| found.line),
+            Some(at("## Native"))
+        );
+        assert_eq!(
+            heading_anchor(source, "gf--links_2").map(|found| found.line),
+            Some(at("### `gf`"))
+        );
+        assert_eq!(
+            heading_anchor(source, "Native-Windows-Support").map(|found| found.line),
+            Some(at("## Native"))
+        );
+        assert_eq!(
+            heading_anchor(source, "native").map(|found| found.line),
+            None
+        );
+    }
+
+    #[test]
+    fn a_repeated_heading_is_numbered_and_code_is_not_a_heading() {
+        let source =
+            "---\ntitle: x\n---\n# Setup\n\n```sh\n# Setup\n```\n\n  Setup\n  -----\n\n## Setup\n";
+        let at = |needle: &str| source[..source.find(needle).unwrap()].chars().count();
+        assert_eq!(
+            heading_anchor(source, "title-x").map(|found| found.line),
+            None
+        );
+        assert_eq!(
+            heading_anchor(source, "setup").map(|found| found.line),
+            Some(at("# Setup\n\n"))
+        );
+        assert_eq!(
+            heading_anchor(source, "setup-1").map(|found| found.line),
+            Some(at("Setup\n  -"))
+        );
+        assert_eq!(
+            heading_anchor(source, "setup-2").map(|found| found.line),
+            Some(at("## Setup"))
+        );
+        assert_eq!(
+            heading_anchor(source, "setup-3").map(|found| found.line),
+            None
+        );
+    }
+
+    #[test]
+    fn a_heading_is_found_exactly_where_the_page_draws_one() {
+        let source = "> quote\nQuoted\n===\n\n- item\nListed\n---\n\n\
+                      | a |\n| - |\nTabled\n===\n\n<!-- note -->\nNoted\n===\n\n\
+                      Prose\nContinued\n===\n\n    # indented\n\n## Tail\n";
+        let rendered = render(source);
+        let drawn = scoped(&rendered, "markup.heading");
+        for (fragment, heading) in [
+            ("quoted", "Quoted"),
+            ("listed", "Listed"),
+            ("tabled", "Tabled"),
+            ("noted", "Noted"),
+            ("tail", "## Tail"),
+        ] {
+            let at = source[..source.find(&format!("{heading}\n")).unwrap()]
+                .chars()
+                .count();
+            assert_eq!(
+                heading_anchor(source, fragment).map(|found| found.line),
+                Some(at),
+                "{fragment}"
+            );
+            assert!(
+                drawn.iter().any(|text| heading.ends_with(text.trim())),
+                "{fragment}"
+            );
+        }
+        for fragment in ["continued", "prose", "indented"] {
+            assert_eq!(heading_anchor(source, fragment), None, "{fragment}");
+            assert!(
+                !drawn
+                    .iter()
+                    .any(|text| text.to_lowercase().contains(fragment))
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_in_a_heading_contributes_its_label_but_not_its_destination() {
+        let source = "## See [the guide](docs/user-guide.md) first\r\n\r\nText\r\n## Next\r\n";
+        assert_eq!(
+            heading_anchor(source, "see-the-guide-first"),
+            Some(HeadingAnchor { line: 0, text: 3 })
+        );
+        let next = source[..source.find("## Next").unwrap()].chars().count();
+        assert_eq!(
+            heading_anchor(source, "next"),
+            Some(HeadingAnchor {
+                line: next,
+                text: next + 3
+            })
+        );
+    }
+
+    #[test]
+    fn a_percent_encoded_fragment_names_a_non_ascii_heading() {
+        let source = "text\n\n## Zażółć gęślą\n";
+        let heading = source[..source.find("##").unwrap()].chars().count();
+        assert_eq!(
+            heading_anchor(source, "za%C5%BC%C3%B3%C5%82%C4%87-g%C4%99%C5%9Bl%C4%85")
+                .map(|found| found.line),
+            Some(heading)
+        );
+        assert_eq!(
+            heading_anchor(source, "zażółć-gęślą").map(|found| found.line),
+            Some(heading)
+        );
+        assert_eq!(percent_decode("100%+1%zz%4"), "100%+1%zz%4");
     }
 
     #[test]

@@ -94,6 +94,12 @@ impl App {
             } else {
                 None
             };
+            if let Some(link) = &markdown_link
+                && crate::navigation_target::web_url(link).is_none()
+                && let Some((path, fragment)) = link.split_once('#')
+            {
+                return self.follow_markdown_anchor(path, fragment, directory);
+            }
             let row = self.buffers[buffer].offset_to_row(range.head);
             let start = self.buffers[buffer].line_to_offset(row);
             let line =
@@ -112,6 +118,86 @@ impl App {
             Some(self.buffers[buffer].slice(from, to))
         };
         self.open_navigation_target(requested_text, directory)
+    }
+
+    /// Follows a Markdown link that names a heading: `#heading` in the
+    /// document under the cursor, or `file.md#heading` in another one. The
+    /// file part resolves exactly as any other `gf` path; the heading is found
+    /// by its anchor in the Markdown source, so no language server is needed.
+    fn follow_markdown_anchor(
+        &mut self,
+        path: &str,
+        fragment: &str,
+        directory: Option<PathBuf>,
+    ) -> Result<()> {
+        if path.is_empty() {
+            let page = self.active().buffer;
+            let source = self.buffers[page].markdown_render_source().unwrap_or(page);
+            let text = self.buffers[source].text().to_string();
+            let Some(offset) = crate::markdown::heading_anchor(&text, fragment) else {
+                self.action_failed(format!("heading not found: #{fragment}"));
+                return Ok(());
+            };
+            let offset = if source == page {
+                offset.line
+            } else {
+                self.markdown_positions
+                    .get(&page)
+                    .map_or(offset.line, |positions| positions.to_page(offset.text))
+            };
+            self.push_jump();
+            let pane = self.active_mut();
+            pane.replace_selection(Selection::point(offset));
+            pane.preserve_scroll = false;
+            return Ok(());
+        }
+        let candidates = self.navigation_candidates(path, directory);
+        match candidates.as_slice() {
+            [file] => self.open_file_at_heading(file.clone(), fragment),
+            [] => self.open_navigation_candidates(path, candidates),
+            _ => {
+                self.open_navigation_candidates(path, candidates)?;
+                // The choice still has a heading to land on once it is made.
+                for action in &mut self.list_actions {
+                    if let ListAction::OpenPath(file) = action {
+                        *action = ListAction::OpenPathAtHeading(
+                            std::mem::take(file),
+                            fragment.to_owned(),
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Opens `file` and puts the caret on the heading `fragment` names. A
+    /// directory opens as an explorer with nothing to look for.
+    pub(super) fn open_file_at_heading(&mut self, file: PathBuf, fragment: &str) -> Result<()> {
+        if !file.is_file() {
+            return self.open_file(file);
+        }
+        self.open_file(file.clone())?;
+        let buffer = self.active().buffer;
+        // A binary file is handed to an external program instead and leaves
+        // no document to look for the heading in.
+        let opened = self.buffers[buffer]
+            .path
+            .as_deref()
+            .and_then(|opened| opened.canonicalize().ok());
+        if opened != Some(file) {
+            return Ok(());
+        }
+        let text = self.buffers[buffer].text().to_string();
+        match crate::markdown::heading_anchor(&text, fragment) {
+            Some(offset) => {
+                let pane = self.active_mut();
+                pane.replace_selection(Selection::point(offset.line));
+                pane.preserve_scroll = false;
+            }
+            None => self.action_failed(format!("heading not found: #{fragment}")),
+        }
+        Ok(())
     }
 
     fn markdown_link_at(&self, buffer: usize, offset: usize) -> Option<String> {
@@ -139,8 +225,19 @@ impl App {
             return Ok(());
         }
 
+        let candidates = self.navigation_candidates(&requested_text, directory);
+        self.open_navigation_candidates(&requested_text, candidates)
+    }
+
+    /// The existing files and directories a relative or absolute path names,
+    /// beside `directory` first and then under the project root.
+    fn navigation_candidates(
+        &self,
+        requested_text: &str,
+        directory: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
         let requested = expand_home_path(
-            PathBuf::from(&requested_text),
+            PathBuf::from(requested_text),
             self.home_directory.as_deref(),
         );
         let mut unresolved = Vec::new();
@@ -154,12 +251,19 @@ impl App {
         }
 
         let mut seen = HashSet::new();
-        let candidates = unresolved
+        unresolved
             .into_iter()
             .filter_map(|path| path.canonicalize().ok())
             .filter(|path| path.is_file() || path.is_dir())
             .filter(|path| seen.insert(path.clone()))
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    fn open_navigation_candidates(
+        &mut self,
+        requested_text: &str,
+        candidates: Vec<PathBuf>,
+    ) -> Result<()> {
         match candidates.as_slice() {
             [] => self.action_failed(format!("path not found: {requested_text}")),
             [path] => self.open_file(path.clone())?,

@@ -3921,6 +3921,9 @@ impl App {
             }
             Some(ListAction::Jump(location)) => self.jump_to(&location)?,
             Some(ListAction::OpenPath(path)) => self.open_file(path)?,
+            Some(ListAction::OpenPathAtHeading(path, fragment)) => {
+                self.open_file_at_heading(path, &fragment)?;
+            }
             Some(ListAction::CodeAction(index)) => self.run_code_action(index),
             Some(ListAction::Destination(destination)) => {
                 self.visit_open_destination(destination);
