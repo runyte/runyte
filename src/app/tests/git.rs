@@ -4964,7 +4964,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .iter()
             .map(|row| row.label.as_str())
             .collect::<Vec<_>>(),
-        ["s", "u", "D", "o", "S", "c", "i", "p", "P"]
+        ["d", "s", "u", "D", "o", "S", "c", "i", "p", "P"]
     );
     // Each row's detail is three columns padded to the widest entry in the
     // menu, so the action word, the context and the sentence all line up
@@ -4976,6 +4976,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .map(|row| row.detail.as_str())
             .collect::<Vec<_>>(),
         [
+            "diff     row     Compare the two complete versions of the active file",
             "stage    row     Stage every file the selection covers",
             "unstage  row     Unstage every file the selection covers",
             "discard  row     Discard every selected file's changes, after a confirmation",
@@ -4997,7 +4998,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
             .unwrap()
             .selected,
-        Some(8)
+        Some(9)
     );
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.context_action_menu.is_none());
@@ -5018,6 +5019,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     // Arrow/j/k navigation and Enter reach the same actions as mnemonics.
     open_list(&mut app);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');

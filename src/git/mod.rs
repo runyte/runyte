@@ -22,6 +22,7 @@ use std::{
 pub mod blame;
 pub mod branch_view;
 pub mod cli;
+pub mod comparison;
 pub mod diff;
 pub mod history;
 pub mod patch;
@@ -38,6 +39,7 @@ pub use blame::{BlameLine, BlameRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES,
 pub(crate) use branch_view::display_path;
 pub use branch_view::{BranchRow, branch_rows};
 pub use cli::GitCliProvider;
+pub use comparison::{ComparisonTarget, RevisionComparison, RevisionFile, RevisionFileView};
 pub use diff::{DiffLine, LineChange, RowChange, changed_rows, classify_line};
 pub use history::{
     CommitDetail, CommitSearchEntry, CommitSearchResult, CommitSummary, DEFAULT_LOG_PAGE_SIZE,
@@ -697,6 +699,31 @@ pub enum DiffScope {
 /// for today, which is what keeps a fake implementation honest and a real one
 /// small.
 pub trait GitProvider {
+    /// Capture committed tips and list their differences without reading local edits.
+    fn compare_revisions(
+        &self,
+        _repository: &Repository,
+        _target: &ComparisonTarget,
+    ) -> Result<RevisionComparison> {
+        Err(GitError::Malformed {
+            command: "compare revisions".into(),
+            detail: "provider does not support revision comparisons".into(),
+        })
+    }
+
+    fn revision_file(
+        &self,
+        _repository: &Repository,
+        _comparison: &RevisionComparison,
+        _file: &RevisionFile,
+        _split: bool,
+    ) -> Result<RevisionFileView> {
+        Err(GitError::Malformed {
+            command: "compare revisions".into(),
+            detail: "provider does not support revision files".into(),
+        })
+    }
+
     /// The repository owning `start`, or `None` when nothing does.
     fn discover(&self, start: &Path) -> Result<Option<Repository>>;
 
@@ -1953,6 +1980,25 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
         path: Option<&Path>,
     ) -> Result<String> {
         self.as_ref().diff(repository, scope, path)
+    }
+
+    fn compare_revisions(
+        &self,
+        repository: &Repository,
+        target: &ComparisonTarget,
+    ) -> Result<RevisionComparison> {
+        self.as_ref().compare_revisions(repository, target)
+    }
+
+    fn revision_file(
+        &self,
+        repository: &Repository,
+        comparison: &RevisionComparison,
+        file: &RevisionFile,
+        split: bool,
+    ) -> Result<RevisionFileView> {
+        self.as_ref()
+            .revision_file(repository, comparison, file, split)
     }
 
     fn file_comparison(

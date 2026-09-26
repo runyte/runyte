@@ -577,7 +577,7 @@ fn rich_projection_return_restores_saved_selection_and_scroll_after_hidden_reord
     assert!(
         app.panes
             .values()
-            .all(|pane| !pane.plugin_view_positions.contains_key(&buffer))
+            .all(|pane| !pane.saved_view_positions.contains_key(&buffer))
     );
 }
 

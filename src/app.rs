@@ -265,6 +265,7 @@ mod external_opening;
 mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
+mod git_comparison;
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -291,6 +292,7 @@ mod settings_workflows;
 mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
+mod view_position;
 mod workspace_workflows;
 
 use completion_support::*;
@@ -471,7 +473,7 @@ pub struct Pane {
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
     /// different predecessor in each pane without coupling it to jumps.
     buffer_history: Vec<usize>,
-    plugin_view_positions: BTreeMap<usize, plugin_views::PluginViewPosition>,
+    saved_view_positions: BTreeMap<usize, view_position::ViewPosition>,
     destination_history: Vec<OpenDestination>,
     /// The live terminal this pane shows instead of its buffer, if any.
     ///
@@ -543,7 +545,7 @@ impl Pane {
         Self {
             buffer,
             buffer_history: Vec::new(),
-            plugin_view_positions: BTreeMap::new(),
+            saved_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
             terminal: None,
             covered_terminal: None,
@@ -574,9 +576,9 @@ impl Pane {
         self.terminal = None;
         self.covered_terminal = None;
         if self.buffer != buffer {
-            if self.plugin_view_positions.contains_key(&self.buffer) {
-                self.plugin_view_positions
-                    .insert(self.buffer, plugin_views::PluginViewPosition::capture(self));
+            if self.saved_view_positions.contains_key(&self.buffer) {
+                self.saved_view_positions
+                    .insert(self.buffer, view_position::ViewPosition::capture(self));
             }
             self.remember_buffer(self.buffer);
             self.buffer = buffer;

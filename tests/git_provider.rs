@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use runyte::git::{
@@ -4297,4 +4297,375 @@ fn submit_discard(
             _ => {}
         }
     }
+}
+
+#[test]
+fn committed_comparisons_capture_tips_paths_counts_and_immutable_file_versions() {
+    use runyte::git::{ComparisonTarget, RevisionFileView};
+    let repo = TempRepository::new("revision-comparison");
+    repo.write("modified.txt", "before\n");
+    repo.write("old.txt", "rename me\n");
+    repo.write("deleted.txt", "gone\n");
+    repo.write("binary.dat", "old\0bytes");
+    repo.commit("base");
+    repo.git(&["branch", "baseline"]);
+    repo.git(&["checkout", "-qb", "feature"]);
+    repo.write("modified.txt", "after\nextra\n");
+    repo.git(&["mv", "old.txt", "renamed.txt"]);
+    repo.git(&["rm", "deleted.txt"]);
+    repo.write("added.txt", "new\n");
+    repo.write("empty.txt", "");
+    repo.write("binary.dat", "new\0bytes");
+    repo.commit("feature");
+    repo.git(&["checkout", "-q", "baseline"]);
+    repo.write("modified.txt", "uncommitted\n");
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let target = ComparisonTarget::Branch {
+        reference: "refs/heads/feature".into(),
+        label: "feature".into(),
+    };
+    let comparison = provider.compare_revisions(&repository, &target).unwrap();
+    assert_eq!(comparison.files.len(), 6);
+    let find = |path: &str| {
+        comparison
+            .files
+            .iter()
+            .find(|file| file.right.as_deref().or(file.left.as_deref()) == Some(Path::new(path)))
+            .unwrap()
+    };
+    let modified = find("modified.txt");
+    assert_eq!(modified.stats, Some(runyte::git::LineStats::new(2, 1)));
+    assert_eq!(
+        find("renamed.txt").left.as_deref(),
+        Some(Path::new("old.txt"))
+    );
+    assert!(find("added.txt").left.is_none());
+    assert!(find("deleted.txt").right.is_none());
+    assert!(find("binary.dat").stats.is_none());
+    assert!(comparison.render(120).contains("added (empty)"));
+    assert!(comparison.render(25).contains("old.txt → renamed.txt"));
+    repo.git(&["update-ref", "refs/heads/feature", &comparison.left_oid]);
+    let RevisionFileView::Split(contents) = provider
+        .revision_file(&repository, &comparison, modified, true)
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(contents.previous, BaseContent::Text("before\n".into()));
+    assert_eq!(contents.current, BaseContent::Text("after\nextra\n".into()));
+    let RevisionFileView::Patch(patch) = provider
+        .revision_file(&repository, &comparison, modified, false)
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(patch.contains("-before\n+after\n+extra"));
+    assert!(!patch.contains("uncommitted"));
+    let RevisionFileView::Patch(rename) = provider
+        .revision_file(&repository, &comparison, find("renamed.txt"), false)
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(rename.contains("rename from old.txt"));
+    assert!(
+        provider
+            .compare_revisions(&repository, &target)
+            .unwrap()
+            .files
+            .is_empty()
+    );
+    for name in ["added.txt", "deleted.txt", "binary.dat"] {
+        let RevisionFileView::Split(contents) = provider
+            .revision_file(&repository, &comparison, find(name), true)
+            .unwrap()
+        else {
+            panic!()
+        };
+        match name {
+            "added.txt" => assert_eq!(contents.previous, BaseContent::Absent),
+            "deleted.txt" => assert_eq!(contents.current, BaseContent::Absent),
+            _ => assert_eq!(contents.current, BaseContent::Binary),
+        }
+    }
+}
+
+#[test]
+fn committed_comparisons_support_cached_remote_refs_and_detached_worktrees() {
+    use runyte::git::ComparisonTarget;
+    let repo = TempRepository::new("revision-targets");
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let target = ComparisonTarget::Branch {
+        reference: "refs/remotes/origin/review".into(),
+        label: "origin/review".into(),
+    };
+    assert!(provider.compare_revisions(&repository, &target).is_err());
+    repo.write("a", "base\n");
+    repo.commit("base");
+    let base = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_owned();
+    repo.write("a", "changed\n");
+    repo.commit("changed");
+    repo.git(&["update-ref", "refs/remotes/origin/review", &base]);
+    let remote = provider.compare_revisions(&repository, &target).unwrap();
+    assert_eq!(remote.right_oid, base);
+    assert_eq!(remote.right_label, "origin/review");
+    let linked = repo.path().join("linked");
+    repo.git(&[
+        "worktree",
+        "add",
+        "--detach",
+        linked.to_str().unwrap(),
+        &base,
+    ]);
+    fs::write(linked.join("a"), "dirty worktree\n").unwrap();
+    let detached = provider
+        .compare_revisions(&repository, &ComparisonTarget::Worktree(linked))
+        .unwrap();
+    assert_eq!(detached.right_oid, base);
+    assert!(detached.right_label.starts_with("detached "));
+    assert_eq!(remote.files, detached.files);
+    assert!(
+        provider
+            .compare_revisions(
+                &repository,
+                &ComparisonTarget::Worktree(repo.path().join("missing"))
+            )
+            .is_err()
+    );
+    let same = provider
+        .compare_revisions(
+            &repository,
+            &ComparisonTarget::Worktree(repo.path().to_owned()),
+        )
+        .unwrap();
+    assert!(same.files.is_empty());
+    assert!(same.render(80).contains("No committed differences."));
+}
+
+#[test]
+fn committed_comparison_service_reads_both_formats_and_reports_bounded_failures() {
+    use runyte::git::{
+        ComparisonTarget, GitOperation, GitResponse, GitService, GitServiceEvent, RevisionFileView,
+    };
+    let repo = TempRepository::new("comparison-service");
+    repo.write("a.txt", "old\n");
+    repo.commit("base");
+    repo.git(&["branch", "baseline"]);
+    repo.write("a.txt", "new\n");
+    repo.commit("new");
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let target = ComparisonTarget::Branch {
+        reference: "refs/heads/baseline".into(),
+        label: "baseline".into(),
+    };
+    let (service, mut events) = GitService::spawn(provider);
+    let mut response = || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(GitServiceEvent::Completed { result, .. }) = events.try_recv() {
+                return result.unwrap();
+            }
+            assert!(Instant::now() < deadline, "comparison service timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    service
+        .try_submit(GitOperation::CompareRevisions {
+            repository: repository.clone(),
+            target: target.clone(),
+        })
+        .unwrap();
+    let GitResponse::RevisionComparison(comparison) = response() else {
+        panic!()
+    };
+    for split in [false, true] {
+        service
+            .try_submit(GitOperation::RevisionFile {
+                repository: repository.clone(),
+                comparison: Box::new(comparison.endpoints()),
+                file: Box::new(comparison.files[0].clone()),
+                split,
+            })
+            .unwrap();
+        match (split, response()) {
+            (false, GitResponse::RevisionFile(RevisionFileView::Patch(patch))) => {
+                assert!(patch.contains("-new\n+old"))
+            }
+            (true, GitResponse::RevisionFile(RevisionFileView::Split(contents))) => {
+                assert_eq!(contents.current, BaseContent::Text("old\n".into()))
+            }
+            _ => panic!("wrong comparison response"),
+        }
+    }
+    let bounded = GitCliProvider::new("git").with_max_output_bytes(32);
+    assert!(matches!(
+        bounded.compare_revisions(&repository, &target),
+        Err(GitError::TooLarge { .. })
+    ));
+}
+
+#[test]
+fn committed_comparison_paths_are_literal_and_metadata_is_retained() {
+    use runyte::git::{ComparisonTarget, RevisionFileView};
+    let repo = TempRepository::new("comparison-literal-paths");
+    let names = [
+        "literal[1].txt",
+        "literal1.txt",
+        "a space.txt",
+        "日本語.txt",
+    ];
+    for name in names {
+        repo.write(name, "old\n");
+    }
+    repo.commit("base");
+    repo.git(&["branch", "baseline"]);
+    for name in names {
+        repo.write(name, "new\n");
+    }
+    repo.commit("new");
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let comparison = provider
+        .compare_revisions(
+            &repository,
+            &ComparisonTarget::Branch {
+                reference: "refs/heads/baseline".into(),
+                label: "baseline".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(comparison.files.len(), names.len());
+    for file in &comparison.files {
+        let RevisionFileView::Patch(patch) = provider
+            .revision_file(&repository, &comparison, file, false)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(patch.matches("diff --git ").count(), 1);
+        assert!(patch.contains("-new\n+old"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            repo.path().join("literal1.txt"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        repo.git(&["config", "core.filemode", "true"]);
+        repo.git(&["commit", "-qam", "mode"]);
+        let comparison = provider
+            .compare_revisions(
+                &repository,
+                &ComparisonTarget::Branch {
+                    reference: "HEAD~1".into(),
+                    label: "previous".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(comparison.files.len(), 1);
+        assert!(comparison.render(120).contains("mode changed"));
+    }
+}
+
+#[test]
+fn committed_comparison_rename_patch_excludes_descendants_of_the_old_file_path() {
+    use runyte::git::{ComparisonTarget, RevisionFileView};
+    let repo = TempRepository::new("comparison-rename-directory");
+    repo.write("a", "rename me\n");
+    repo.commit("base");
+    repo.git(&["branch", "baseline"]);
+    repo.git(&["mv", "a", "b"]);
+    repo.write("a/child", "unrelated addition\n");
+    repo.commit("rename and directory");
+    repo.git(&["config", "diff.noprefix", "true"]);
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let comparison = provider
+        .compare_revisions(
+            &repository,
+            &ComparisonTarget::Branch {
+                reference: "refs/heads/baseline".into(),
+                label: "baseline".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(comparison.files.len(), 2);
+    let rename = comparison
+        .files
+        .iter()
+        .find(|file| file.left.as_deref() == Some(Path::new("b")))
+        .unwrap();
+    let RevisionFileView::Patch(patch) = provider
+        .revision_file(&repository, &comparison, rename, false)
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(patch.contains("rename from b"));
+    assert!(patch.contains("rename to a"));
+    assert!(!patch.contains("child"));
+    assert_eq!(patch.matches("diff --git ").count(), 1);
+}
+
+#[test]
+fn committed_comparison_submodule_patch_normalizes_configured_log_format() {
+    use runyte::git::{ComparisonTarget, RevisionFileView};
+    let repo = TempRepository::new("comparison-submodule-format");
+    repo.write("a", "first\n");
+    repo.commit("first");
+    let first = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_owned();
+    repo.write("a", "second\n");
+    repo.commit("second");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{first},sub"),
+    ]);
+    repo.git(&["commit", "-qm", "first submodule"]);
+    repo.git(&["branch", "baseline"]);
+    repo.git(&[
+        "update-index",
+        "--cacheinfo",
+        &format!("160000,{second},sub"),
+    ]);
+    repo.git(&["commit", "-qm", "second submodule"]);
+    let provider = GitCliProvider::new("git");
+    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let comparison = provider
+        .compare_revisions(
+            &repository,
+            &ComparisonTarget::Branch {
+                reference: "refs/heads/baseline".into(),
+                label: "baseline".into(),
+            },
+        )
+        .unwrap();
+    for format in ["log", "diff"] {
+        repo.git(&["config", "diff.submodule", format]);
+        let RevisionFileView::Patch(patch) = provider
+            .revision_file(&repository, &comparison, &comparison.files[0], false)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(patch.contains(&format!("-Subproject commit {second}")));
+        assert!(patch.contains(&format!("+Subproject commit {first}")));
+    }
+    let RevisionFileView::Split(contents) = provider
+        .revision_file(&repository, &comparison, &comparison.files[0], true)
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        contents.previous,
+        BaseContent::Text(format!("Subproject commit {second}\n"))
+    );
 }

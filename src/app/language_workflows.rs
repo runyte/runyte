@@ -3526,6 +3526,14 @@ impl App {
             return;
         }
         let buffer = self.active().buffer;
+        if matches!(
+            self.buffers[buffer].generated_view_identity(),
+            Some(crate::buffer::GeneratedViewIdentity::GitRevisionFile { side: Some(_), .. })
+        ) && self.close_temporary_comparison(self.active_pane)
+        {
+            self.close_buffer(buffer);
+            return;
+        }
         if self.buffers[buffer].dirty && !force {
             self.action_warning(
                 "Close refused",
@@ -3668,6 +3676,10 @@ impl App {
         }
         let mut uncover = Vec::new();
         for (pane_id, fallback) in replacements {
+            let saved_position = self.panes[&pane_id]
+                .saved_view_positions
+                .get(&fallback)
+                .cloned();
             let selection = self
                 .take_pending_launch_selection(fallback)
                 .unwrap_or_else(|| Selection::point(0));
@@ -3678,6 +3690,9 @@ impl App {
             pane.scroll_wrap = 0;
             pane.scroll_col = 0;
             pane.preserve_scroll = false;
+            if let Some(position) = saved_position {
+                position.restore(pane);
+            }
             uncover.push(pane_id);
         }
         // A document an external request put over a terminal is done with the
@@ -3695,8 +3710,9 @@ impl App {
             *page != buffer && self.buffers[*page].markdown_render_source() != Some(buffer)
         });
         self.closed_buffers.insert(buffer);
+        self.forget_revision_comparison(buffer);
         for pane in self.panes.values_mut() {
-            pane.plugin_view_positions.remove(&buffer);
+            pane.saved_view_positions.remove(&buffer);
         }
         if let Some(path) = git_path
             && !self.buffers.iter().enumerate().any(|(candidate, entry)| {

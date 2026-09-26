@@ -66,6 +66,7 @@ pub enum ColonCommand {
     DiffThis,
     ForceCloseBuffer,
     Format,
+    GitCompare,
     GitBranches,
     GitBlame,
     GitBlameFile,
@@ -236,6 +237,7 @@ impl ColonCommand {
         Self::DiffThis,
         Self::ForceCloseBuffer,
         Self::Format,
+        Self::GitCompare,
         Self::GitBranches,
         Self::GitBlame,
         Self::GitBlameFile,
@@ -320,7 +322,8 @@ impl ColonCommand {
             Self::Format | Self::LspTrust | Self::LspRestart | Self::LspStatus => {
                 CommandCategory::Language
             }
-            Self::GitBranches
+            Self::GitCompare
+            | Self::GitBranches
             | Self::GitBlame
             | Self::GitBlameFile
             | Self::GitCancel
@@ -1887,6 +1890,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::GitCompare),
+        "git-compare",
+        [],
+        "git-compare",
+        "Compare with this branch or worktree",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::GitBranches),
         "git-branches",
         [],
@@ -2622,6 +2633,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::DiffThis
             | Colon::ForceCloseBuffer
             | Colon::Format
+            | Colon::GitCompare
             | Colon::GitBranches
             | Colon::GitBlame
             | Colon::GitBlameFile
@@ -3004,6 +3016,7 @@ fn invocation_from_parts(
                 | ColonCommand::DiffThis
                 | ColonCommand::ForceCloseBuffer
                 | ColonCommand::Format
+                | ColonCommand::GitCompare
                 | ColonCommand::GitBranches
                 | ColonCommand::GitBlame
                 | ColonCommand::GitBlameFile

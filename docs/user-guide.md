@@ -2851,6 +2851,7 @@ confirmation apply to the resolved local branch.
 | `Enter` | Check out this local or remote branch locally |
 | `Tab n` | Start a new branch here and switch to it |
 | `Tab w` | Create a worktree for this branch; attach in persistent mode |
+| `Tab d` | Compare committed tips with this branch |
 | `Tab D` | Delete this local branch, with its worktree and session, after a confirmation |
 | `Tab p` | Fast-forward the current local branch onto what it tracks |
 | `Tab P` | Publish this local branch to what it tracks |
@@ -2907,6 +2908,7 @@ display uses replacement characters.
 | --- | --- |
 | `Enter` | Attach to this root's persistent session, starting it if necessary |
 | `Tab n` | Name a new branch at this checkout's tip and create its worktree; attach in persistent mode |
+| `Tab d` | Compare committed tips with this worktree |
 | `Tab D` | Remove this worktree and its session after confirmation; keep its branch |
 | `Space g r` | Re-read the registered worktrees |
 
@@ -2955,6 +2957,35 @@ path. Other clean removals use Enter. Git status, worktree identity, upstream
 state, and persistent-session health are checked again after confirmation. The
 current Runyte root, locked, bare, missing, and otherwise unavailable worktrees
 are refused before confirmation.
+
+`Tab d` in the branch or worktree list opens a read-only **committed comparison**
+file list. The current tip is on the left; the selected local branch, cached
+remote branch, or worktree HEAD is on the right. This compares the contents at
+the two tips directly. Uncommitted disk changes, staged changes, and unsaved
+buffers are excluded. Detached worktrees are labelled with their commit ID;
+a worktree without an available commit cannot be compared. No fetch or checkout
+is performed.
+
+The heading names both sides and their captured commit IDs. Each row shows the
+path on each side and added/removed line counts. Renames show both names; `—`
+marks an absent side. Narrow panes combine the two paths into one column.
+Binary changes and changes only to file metadata are labelled, and empty added
+or deleted files remain visible. Identical tips open an empty comparison with
+`No committed differences.`
+
+| Key | Action in the committed comparison list |
+| --- | --- |
+| `Enter` | Open this file's unified patch |
+| `Tab d` | Open this file's complete versions in a temporary split |
+| `Space g r` | Capture fresh tips and refresh the list |
+
+The list, line counts, patches, and split versions all use the captured commits,
+even if a branch moves while browsing. Explicit refresh retains the selected
+file when possible. Closing a patch buffer returns to the list at the same file
+and scroll position. Closing either split side or running `:diff-off` collapses
+the temporary pair and restores that position too. Normal movement, search,
+selection, and copying remain available. Binary files can be inspected through
+their patch metadata but cannot open as a text split.
 
 `Space g l` opens commit history in pages of up to 10,000 commits, newest first
 in Git's topological order. The first line gives the current and total page
@@ -3066,6 +3097,7 @@ open.
 | `Tab s` / `Tab u` | Stage / unstage every file the selection covers |
 | `Tab S` | Stage every unstaged and untracked file in the list |
 | `Enter` | Show this row's diff |
+| `Tab d` | Compare this row's complete versions in a temporary split |
 | `Tab o` | Open the file on this line |
 | `Tab D` | Discard the selected files' changes |
 | `Tab c` | Write a message and commit what is staged |
@@ -3601,6 +3633,7 @@ inserts a newline.
 :git-unstage            unstage the active file, or every file selected in the list
 :git-unstage-hunk       unstage the exact staged hunk under the cursor
 :git-worktrees          open the repository worktree list
+:git-compare            compare committed tips with the selected branch or worktree
 :grammar [runyte]       report the active Runyte editing grammar
 :help [topic]           open the general manual, optionally at a named section (alias: ?)
 :log-open               open the diagnostic log owned by the process that
