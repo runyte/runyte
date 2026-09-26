@@ -801,11 +801,11 @@ fn parent_attach_host_fixture() {
     if project.ends_with("project-cancel") {
         let identity =
             runyte::workspace::windows_process_identity::ProcessIdentity::current().unwrap();
-        fs::write(
-            root.join("directory-cancel-process.json"),
-            serde_json::to_vec(&identity).unwrap(),
-        )
-        .unwrap();
+        // The parent treats the final name as readiness, so publish only after
+        // the complete identity has been written and the writer has closed.
+        let pending = root.join("directory-cancel-process.pending");
+        fs::write(&pending, serde_json::to_vec(&identity).unwrap()).unwrap();
+        fs::rename(pending, root.join("directory-cancel-process.json")).unwrap();
         while root.join("hold-directory-cancel").exists() {
             thread::sleep(Duration::from_millis(15));
         }

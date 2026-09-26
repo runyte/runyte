@@ -9,8 +9,8 @@ durable belongs in `issues/resolved/` or a `reference/` register instead.
 The Windows CI blocker is cleared at `39c8d8c` on `dev`.
 [CI run 36255051583, Native Windows](https://github.com/runyte/runyte/actions/runs/36255051583/job/108440216289)
 passed on 2026-09-26 with all three original fixes below. A separate native
-run then exposed the intermittent language-server fixture failure described
-in section 4. The passing CI job includes:
+run then exposed the intermittent fixture failures described in sections 4
+and 5. The passing CI job includes:
 
 - formatting, warnings-as-errors all-target Clippy, and the full ordinary
   native editing, Git and ConPTY suite;
@@ -30,8 +30,8 @@ Local verification uses Rust and rust-analyzer 1.97.1 on
 `x86_64-pc-windows-msvc`, with `CARGO_BUILD_JOBS=1` and
 `RUST_TEST_THREADS=2` as in CI. Formatting, all-target Clippy, the ordinary
 suite, restart/save acceptances, both Rust context-bridge acceptances, and the
-Python checks pass. The fixed language-server acceptance also passed ten
-consecutive runs. Python 3.13.7 was provisioned in temporary storage for the
+Python checks pass. The fixed language-server and session-switch acceptances
+each passed ten consecutive runs. Python 3.13.7 was provisioned in temporary storage for the
 adapter checks. The three local clipboard acceptances were refused when
 creating their private window stations (`Access is denied`, OS error 5):
 the local process lacks administrator privileges. Their successful evidence
@@ -171,6 +171,23 @@ bounded event deadline still fails if the server never acknowledges that
 version; no sleep or retry masks a formatting failure. The real-server
 acceptance continues to verify returned edits, restart and revocation cleanup.
 This changes only the Windows acceptance fixture, not editor behavior.
+
+### 5. Session-switch cancellation read an unfinished fixture record
+
+A subsequent native ordinary-suite run failed
+`windows_frontend_acceptance::native_frontend_switches_between_exact_running_hosts`
+in `src/tui/windows_frontend_acceptance.rs`. Its reexecuted
+`switch_parent_fixture` observed `directory-cancel-process.json` and then
+failed to deserialize it with `EOF while parsing a value`, line 1, column 0.
+
+`parent_attach_host_fixture` used `fs::write` directly on that final path.
+The parent waited for path existence, which could become true after file
+creation but before the JSON bytes were written. The child now writes and
+closes `directory-cancel-process.pending`, then renames it to the final name.
+This follows the existing switch-target and directory-request fixture
+publication pattern. The parent still fails on malformed published data;
+there is no parse retry. The real session-switch acceptance covers cancellation
+of the provisional host and retirement of its publication.
 
 ## Steps skipped in the failing runs
 
