@@ -1966,11 +1966,21 @@ impl TerminalSession {
                 self.revision,
             );
         }
+        self.live_view(rows, self.scroll)
+    }
+
+    /// A read-only view of the current screen, independent of pane review or
+    /// scroll position. Previewing never resizes the child or changes focus.
+    pub fn preview_view(&self) -> TerminalView {
+        self.live_view(self.emulator.grid().rows().min(200), 0)
+    }
+
+    fn live_view(&self, rows: usize, scroll: usize) -> TerminalView {
         let grid = self.emulator.grid();
         let columns = grid.columns();
         let rows = rows.max(1);
         let history = grid.scrollback_len();
-        let scroll = self.scroll.min(history);
+        let scroll = scroll.min(history);
         // The view is the last `rows` lines of history-then-screen, moved back
         // by however far the reader has scrolled.
         let total = history + grid.rows();

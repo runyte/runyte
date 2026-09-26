@@ -501,6 +501,13 @@ closed. Terminal output does not reorder it, and the picker does not extend
 special-buffer lifetime. Structural labels and `[+]`, `[STALE]`, `[RO]` follow
 pane vocabulary; transient pane references describe visibility.
 
+Terminal previews in the Navigator, terminal list and name-mode Finder read
+the selected terminal's current styled screen at frame time, independently of
+pane review or scroll position. They never focus, resize or mark the terminal
+viewed. Output updates the preview without reordering the list. Content-mode
+Finder previews remain static numbered match snippets. Exited terminals retain
+their final screen in the terminal list and name-mode Finder.
+
 Enter focuses an already-visible destination, preferring the active pane then
 the most recently activated pane. Otherwise it uses the active pane. A Tab
 **Bring into active pane** action is explicit; one PTY never gains two views.

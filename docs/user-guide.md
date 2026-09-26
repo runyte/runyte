@@ -839,7 +839,10 @@ activation order with the current destination selected. That order stays fixed
 while filtering. Names, paths, terminal titles and launch commands match fuzzily;
 matched characters are emphasized. Arrows, Ctrl-p/Ctrl-n and paging select;
 Enter visits; Tab offers resource actions. Ctrl-t toggles a bounded preview of
-buffer contents or recent terminal output, initially hidden. Printable j, k and q filter.
+buffer contents or the live terminal screen, initially hidden. Terminal previews
+update as output arrives and as the selection moves, including for hidden
+terminals or terminals whose pane is in review. Previewing does not focus or
+resize the terminal. Printable j, k and q filter.
 Escape, Ctrl-c or the effective leader with an empty query cancel. Cancellation
 from Terminal Insert resumes child input; visiting a document enters Normal,
 and visiting a live terminal resumes Insert unless it has captured review.
@@ -2607,8 +2610,9 @@ terminal sessions share one ranked list. `Tab` switches to content
 mode without clearing the query; file lines, authoritative in-memory buffer
 lines including pathless buffers, and decoded terminal scrollback plus the
 current screen share that list. Both modes preview the selected item, with
-authoritative in-memory text for buffers and bounded retained output for
-terminals; `Ctrl-t` toggles the preview without changing the mode or query. A
+authoritative in-memory text for buffers. Terminal previews show the live screen
+in name mode; content mode keeps a static numbered snippet around the matching
+row. `Ctrl-t` toggles the preview without changing the mode or query. A
 content result reveals its line, including by entering terminal review at the
 matched retained row. The existing
 `Space b b` and `Space t t` managers remain available for Save, Discard,
@@ -2750,6 +2754,12 @@ Linux and other Unix systems. A missing helper produces an actionable status
 message without affecting the internal registers.
 
 ### Terminals
+
+The terminal list (`Space t t`) previews the selected terminal's live screen,
+preserving its colors and updating while you move through the list. Exited
+terminals show their final screen. `Ctrl-t` toggles the preview. A preview is
+read-only and never resizes the terminal; a screen wider than the preview is
+clipped, and a shorter preview keeps the child's visible cursor row in view.
 
 | Key | Action |
 | --- | --- |

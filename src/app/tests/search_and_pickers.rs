@@ -1592,8 +1592,8 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
     assert_eq!(overlay.preview_title.as_deref(), Some("Output"));
     assert!(matches!(
         overlay.preview,
-        Some(crate::snapshot::OverlayPreview::Text(ref lines))
-            if lines.iter().any(|line| line.contains("combined finder terminal preview"))
+        Some(crate::snapshot::OverlayPreview::Terminal(ref view))
+            if view.rows.iter().any(|row| row.iter().map(|cell| cell.text()).collect::<String>().contains("combined finder terminal preview"))
     ));
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -3911,6 +3911,31 @@ fn terminal_content_preview_highlights_the_matched_text() {
     );
     let preview = app.finder.as_ref().unwrap().selected_preview().unwrap();
     assert_eq!(previewed_match(preview), "needle");
+    let before = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap()
+        .preview;
+    assert!(matches!(
+        before,
+        Some(crate::snapshot::OverlayPreview::Snippet { .. })
+    ));
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[2J\x1b[Hnew live screen".to_vec(),
+    });
+    let after = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap()
+        .preview;
+    assert_eq!(
+        after, before,
+        "content previews stay tied to the ranked match"
+    );
+    assert!(app.finder_terminal_preview().is_none());
     app.close_file_picker();
     close_test_terminal(&mut app, terminal);
     close_test_terminals(&mut app);
