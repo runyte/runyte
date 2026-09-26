@@ -846,7 +846,7 @@ fn public_manager_visit_fixture() {
     source_editor.send("\x1b");
     source_editor.until("NOR");
     source_editor.send(":session-list\r");
-    source_editor.until("Enter visit ·");
+    source_editor.until("Enter open ·");
     source_editor.send("visit-destination\r");
     source_editor.until("DESTINATION_VISIT_MARKER");
     assert!(source_host.0.try_wait().unwrap().is_none());
@@ -857,7 +857,7 @@ fn public_manager_visit_fixture() {
     let mut source_editor = Console::spawn(&args, &source);
     source_editor.until("dirty SOURCE_VISIT_MARKER");
     source_editor.send(":session-list\r");
-    source_editor.until("Enter visit ·");
+    source_editor.until("Enter open ·");
     source_editor.send("visit-destination");
     stop_visit_host(&root, &destination, &config, &mut destination_host);
     let mut replacement = start_visit_host(&root, &destination, &config, "replacement");
@@ -869,7 +869,7 @@ fn public_manager_visit_fixture() {
     source_editor.until_screen_after("manager closes after stale visit", |screen| {
         screen.contains("dirty SOURCE_VISIT_MARKER")
             && screen.contains("NOR")
-            && !screen.contains("Enter visit ·")
+            && !screen.contains("Enter open ·")
     });
     // The interaction line can be replaced by a catalog refresh. The host
     // retains the exact-publication rejection in the notification buffer.
