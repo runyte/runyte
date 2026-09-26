@@ -4319,6 +4319,9 @@ fn buffer_picker_columns(buffer: &Buffer, project_root: &Path, active: bool) -> 
     if active {
         label = format!("*{label}*");
     }
+    if buffer.dirty {
+        label.push_str(" [+]");
+    }
     if buffer.external_file_status().is_stale() {
         label.push_str(" [STALE]");
     }

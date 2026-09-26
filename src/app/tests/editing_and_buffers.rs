@@ -2086,7 +2086,7 @@ fn buffer_picker_uses_names_and_project_relative_or_absolute_paths() {
     app.open_buffer_picker();
 
     let items = &app.list.as_ref().unwrap().items;
-    assert_eq!(items[0].label, "lorem_ipsum.md");
+    assert_eq!(items[0].label, "lorem_ipsum.md [+]");
     assert_eq!(
         items[0].detail,
         Path::new("src")
