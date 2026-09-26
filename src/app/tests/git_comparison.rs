@@ -3,6 +3,13 @@
 use super::*;
 use crate::git::{GitCliProvider, GitProvider, RevisionFileView};
 
+/// The Git this machine has, resolved to the absolute path Windows requires of
+/// a background program.
+fn git() -> GitCliProvider {
+    GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+        .expect("these tests need `git` on PATH")
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -47,7 +54,7 @@ impl Fixture {
         let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
             String::new(),
         )))));
-        ports.replace_git(Box::new(GitCliProvider::new("git")));
+        ports.replace_git(Box::new(git()));
         App::new_in_isolated_project(&self.0, ports).unwrap()
     }
 }
@@ -374,9 +381,7 @@ fn committed_comparison_async_results_preserve_foreground_ownership() {
     let GitOperation::CompareRevisions { repository, target } = &operation else {
         panic!()
     };
-    let comparison = GitCliProvider::new("git")
-        .compare_revisions(repository, target)
-        .unwrap();
+    let comparison = git().compare_revisions(repository, target).unwrap();
     app.open_scratch_buffer();
     let scratch = app.active().buffer;
     app.apply_git_service_event(GitServiceEvent::Completed {
@@ -407,7 +412,7 @@ fn committed_comparison_async_results_preserve_foreground_ownership() {
         panic!()
     };
     assert!(comparison.files.is_empty());
-    let view = GitCliProvider::new("git")
+    let view = git()
         .revision_file(repository, comparison, file, *split)
         .unwrap();
     assert!(matches!(view, RevisionFileView::Split(_)));

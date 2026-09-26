@@ -4319,7 +4319,7 @@ fn committed_comparisons_capture_tips_paths_counts_and_immutable_file_versions()
     repo.commit("feature");
     repo.git(&["checkout", "-q", "baseline"]);
     repo.write("modified.txt", "uncommitted\n");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let repository = provider.discover(repo.path()).unwrap().unwrap();
     let target = ComparisonTarget::Branch {
         reference: "refs/heads/feature".into(),
@@ -4395,7 +4395,7 @@ fn committed_comparisons_capture_tips_paths_counts_and_immutable_file_versions()
 fn committed_comparisons_support_cached_remote_refs_and_detached_worktrees() {
     use runyte::git::ComparisonTarget;
     let repo = TempRepository::new("revision-targets");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let repository = provider.discover(repo.path()).unwrap().unwrap();
     let target = ComparisonTarget::Branch {
         reference: "refs/remotes/origin/review".into(),
@@ -4455,13 +4455,13 @@ fn committed_comparison_service_reads_both_formats_and_reports_bounded_failures(
     repo.git(&["branch", "baseline"]);
     repo.write("a.txt", "new\n");
     repo.commit("new");
-    let provider = GitCliProvider::new("git");
-    let repository = provider.discover(repo.path()).unwrap().unwrap();
+    let git = provider();
+    let repository = git.discover(repo.path()).unwrap().unwrap();
     let target = ComparisonTarget::Branch {
         reference: "refs/heads/baseline".into(),
         label: "baseline".into(),
     };
-    let (service, mut events) = GitService::spawn(provider);
+    let (service, mut events) = GitService::spawn(git);
     let mut response = || {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -4500,7 +4500,7 @@ fn committed_comparison_service_reads_both_formats_and_reports_bounded_failures(
             _ => panic!("wrong comparison response"),
         }
     }
-    let bounded = GitCliProvider::new("git").with_max_output_bytes(32);
+    let bounded = provider().with_max_output_bytes(32);
     assert!(matches!(
         bounded.compare_revisions(&repository, &target),
         Err(GitError::TooLarge { .. })
@@ -4526,7 +4526,7 @@ fn committed_comparison_paths_are_literal_and_metadata_is_retained() {
         repo.write(name, "new\n");
     }
     repo.commit("new");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let repository = provider.discover(repo.path()).unwrap().unwrap();
     let comparison = provider
         .compare_revisions(
@@ -4583,7 +4583,7 @@ fn committed_comparison_rename_patch_excludes_descendants_of_the_old_file_path()
     repo.write("a/child", "unrelated addition\n");
     repo.commit("rename and directory");
     repo.git(&["config", "diff.noprefix", "true"]);
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let repository = provider.discover(repo.path()).unwrap().unwrap();
     let comparison = provider
         .compare_revisions(
@@ -4636,7 +4636,7 @@ fn committed_comparison_submodule_patch_normalizes_configured_log_format() {
         &format!("160000,{second},sub"),
     ]);
     repo.git(&["commit", "-qm", "second submodule"]);
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let repository = provider.discover(repo.path()).unwrap().unwrap();
     let comparison = provider
         .compare_revisions(
