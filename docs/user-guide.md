@@ -845,17 +845,46 @@ input in Terminal Insert. No filesystem scan or content search runs here;
 `Space f` remains the Finder. Exited terminals stay in `Space t t`, whose Tab
 menu offers **Close all exited terminals** without touching live children.
 
-The Navigator includes scratch and retained special buffers once per identity,
-aligns buffer type, title, modification/read-only markers and destination details
-in columns, shows visible panes, and opens in recent
-activation order with the current destination selected. That order stays fixed
-while filtering. Names, paths, terminal titles and launch commands match fuzzily;
-matched characters are emphasized. Arrows, Ctrl-p/Ctrl-n and paging select;
-Enter visits; Tab offers resource actions. Ctrl-t toggles a bounded preview of
-buffer contents or recent terminal output, initially hidden. Printable j, k and q filter.
-Escape, Ctrl-c or the effective leader with an empty query cancel. Cancellation
-from Terminal Insert resumes child input; visiting a document enters Normal,
-and visiting a live terminal resumes Insert unless it has captured review.
+The Navigator, the buffer list (`Space b b`) and the terminal list
+(`Space t t`) are one list over three scopes: every open destination, the
+buffers, or the terminals including exited ones. All three draw the same
+columns under dim `TYPE`, `NAME` and `STATE` headings:
+
+```text
+    TYPE        NAME                           STATE
+  * [scratch]   scratch                        [+]
+  * [file]      README.md                      [+]
+    [about]     about                          [RO]
+    [file]      /tmp/prompt-8e155cfe…90d4.md   [STALE]
+    [explorer]  .
+  * [terminal]  ✳ Article usage in mode descriptions
+    [terminal]  user@host:~/code/runyte-dev    exited
+```
+
+A `*` marks a destination some pane is showing. TYPE is the bracketed kind a
+pane title uses, coloured by kind: files, explorers, generated pages such as
+`[about]`, `[config]` and `[help]`, scratch buffers, and terminals each have
+their own theme colour. NAME is a path relative to the workspace, under `~`
+inside the home directory, or absolute otherwise, and a terminal's name; a name
+too long for its row is shortened in the middle so its file name stays. STATE
+collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
+`exited`, `unread` and `bell` for terminals — so an edit that conflicts with a
+change on disk reads `[+] [STALE]`. A terminal's program, ID and directory are
+in the preview, and its ID in its pane title (`[terminal #3] …`).
+
+The Navigator and buffer list include scratch and retained special buffers
+once per identity. Lists open in recent activation order; the terminal list
+keeps running terminals ahead of exited ones, which are dimmed.
+That order stays fixed while filtering. Names, paths, terminal titles, launch
+commands and terminal IDs (`3` or `#3`) match fuzzily; matched characters are
+emphasized. The title names Enter (visit), Tab (resource actions) and Escape,
+and a dimmed key legend at the bottom names the rest: Ctrl-n/Ctrl-p to move,
+Ctrl-d/Ctrl-u to page, Home/End, Ctrl-t to toggle the bounded preview of buffer
+contents or recent terminal output, which starts shown, and Delete while there
+is a filter to clear. Printable j, k and q filter. Escape, Ctrl-c or the
+effective leader with an empty query cancel. Cancellation from Terminal Insert
+resumes child input; visiting a document enters Normal, and visiting a live
+terminal resumes Insert unless it has captured review.
 
 Visiting a destination already visible focuses its pane. **Bring into active
 pane** explicitly places it here instead. A PTY always has one live view.
@@ -1129,14 +1158,15 @@ long prompts for a coding agent worth writing in the editor.
 
 A session outlives the pane showing it. `Space t q` shows the pane's buffer
 again and leaves the program running; so does opening a file in that pane or
-closing the split. `Space t t` (`:terminals`) lists stable running and exited
-sessions with their state, user name, child-title detail, safe directory,
-unread output, and bell activity. Running sessions come first in identity
-order and the exited ones follow, dimmed. Picking a running session shows it
-here, while picking an exited one opens its retained output in Normal/review
-mode. If that session is already visible in another pane, it moves here and
-the old pane reveals its underlying buffer—one PTY is never resized by two
-visible panes. `Space t r` (`:terminal-rename <name>`) names the active
+closing the split. `Space t t` (`:terminals`) lists running and exited
+sessions in the Navigator's columns, with `exited`, `unread` and `bell` in
+STATE and the program, ID and directory in the preview. Running sessions come
+first and the exited ones follow, dimmed, each group most recently activated
+first. Enter visits a session: a pane already showing it takes focus, and
+otherwise it is shown here. Visiting an exited session opens its retained
+output in Normal/review mode. **Bring into active pane** in its Tab menu moves
+a session shown elsewhere to this pane instead, and the old pane reveals its
+underlying buffer—one PTY is never resized by two visible panes. `Space t r` (`:terminal-rename <name>`) names the active
 session, `:terminal-show <id|name>` targets one deterministically,
 and child termination stays explicit: type `exit` in the child, or choose Close
 from the terminal manager's Tab menu. An exited session remains listed and
@@ -1153,8 +1183,9 @@ Rename asks for the new name and returns to the list, leaving every pane
 showing what it showed before. Neither `:close[!]` nor any `:quit…` command terminates
 a terminal.
 
-Terminal sessions use the `[terminal] <name>` prefix in pane and manager
-titles. The active pane adds `[insert]` while keys go to the child; NORMAL is
+A terminal pane's title reads `[terminal #<id>] <name>`: the ID is the one
+`:terminal-send` and `:terminal-show` accept, and is also available in the list preview. Action menu titles use the `[terminal] <name>` prefix. The active
+pane adds `[insert]` while keys go to the child; NORMAL is
 unmarked, because the mode line already says it and the title's job here is to
 answer whether typing reaches the child. The name itself is user-assigned when
 present, otherwise whatever the program calls itself — the title a shell sets
@@ -2365,7 +2396,7 @@ its original links.
 | `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
-| `Space b b` | Open the filterable buffer picker; `Ctrl-t` toggles preview and `Tab` shows valid actions |
+| `Space b b` | Open the buffer list; Enter visits, `Ctrl-t` toggles the preview and `Tab` shows valid actions |
 | `Space b c` | Close the active buffer safely (`:close`, `:c`) without changing the pane layout |
 | `Space b d` | Compare a fresh immutable disk revision with the active file buffer (`:diff-disk`) |
 | `Space b n` | Open a new scratch buffer in the current pane (`:buffer-new`, `:new`) |
@@ -2580,20 +2611,18 @@ for a second view of. The terminal stays where it is, in its live or reviewed
 state, and the new pane opens the working directory as an explorer, exactly as
 `Space E` would.
 
-In the buffer picker, Enter opens the selected buffer, `Ctrl-t` toggles its
-bounded preview of authoritative in-memory text, and Tab opens contextual
-actions. **Close hidden buffers** closes clean buffers that are not visible in
+In the buffer list, Enter visits the selected buffer the way the Navigator does,
+focusing a pane that already shows it; `Ctrl-t` toggles its bounded preview of
+authoritative in-memory text, and Tab opens contextual actions, starting with
+**Bring into active pane**. **Close hidden buffers** closes clean buffers that are not visible in
 any pane, preserving unsaved edits and pending saves. It applies to the whole
 workspace even when the picker is filtered. A modified file offers Save and Discard changes; discard
 requires a separate Enter confirmation. Close appears only after a buffer is
 clean, never discards edits implicitly, and redirects every pane that shared
-the closed buffer. The first column shows a file or directory name, or the
-existing structural name of another buffer type; the active name is surrounded
-by `*`, and read-only types carry `[RO]`. The second column is reserved for file
-and directory paths, relative to the project root when they are inside it and
-absolute otherwise. Explorer buffers expose no per-buffer management
-actions in this view: filesystem changes remain available only by editing the
-explorer and confirming its `:write` plan.
+the closed buffer. Rows use the Navigator's columns. Explorer buffers offer only
+**Bring into active pane** and **Close hidden buffers** in this view:
+filesystem changes remain available only by editing the explorer and
+confirming its `:write` plan.
 
 Runyte retains the eight most recently active clean generated and special
 buffers, including explorers, after their last pane moves elsewhere. Activating
@@ -2768,7 +2797,7 @@ message without affecting the internal registers.
 | Key | Action |
 | --- | --- |
 | `Space t n` or `Ctrl-w t` | Run `$SHELL` in this pane (`:terminal`, `:term`, `:t`; `:terminal <command>` runs something else) |
-| `Space t t` | List the running terminals and show the chosen one here (`:terminals`) |
+| `Space t t` | List the running and exited terminals and visit the chosen one (`:terminals`) |
 | `Space t r` | Rename this pane's terminal (`:terminal-rename <name>`) |
 | `Space t q` | Show this pane's buffer again, leaving the program running |
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
@@ -4416,6 +4445,11 @@ themes:
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"
+    destination_file: "#d8dee9"
+    destination_explorer: "#8be9fd"
+    destination_generated: "#65737e"
+    destination_scratch: "#5fd7e7"
+    destination_terminal: "#8ddb8c"
     selection: "#2e3440"
     selection_primary: "#694b37"
     fuzzy_match_secondary: "#2e3440"
@@ -4502,6 +4536,15 @@ changed rows distinct green, red, and purple grounds instead of blending them
 quietly into each palette; custom themes can still choose their own. A theme
 that omits them leaves those lines unfilled and lets the gutter marks carry the
 comparison on their own.
+
+`destination_file`, `destination_explorer`, `destination_generated`,
+`destination_scratch`, and `destination_terminal` colour the TYPE column of the
+Navigator, the buffer list, and the terminal list, so each kind of destination
+reads apart at a glance. Omitted, they use `foreground`, `directory`, `muted`,
+`jump_label_primary`, and `change_added`; every built-in theme resolves the
+five to distinct colours. The STATE column uses existing roles: `[+]`
+`change_modified`, `[STALE]` and `bell` `warning`, `[RO]` and `exited` `muted`,
+and `unread` `info`.
 
 `error`, `warning`, and `info` colour notification headings and unread status
 counts. Custom themes that omit `warning` use `change_modified` (then terminal

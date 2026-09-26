@@ -21,8 +21,11 @@ marker by the same change.
 
 `buffer_picker_uses_names_and_project_relative_or_absolute_paths` in
 `src/app/tests/editing_and_buffers.rs` edits one of two open files and checks
-that the edited row reads `lorem_ipsum.md [+]` while the clean row stays
-unmarked.
+that the edited row carries `[+]` while the clean row stays unmarked. The
+subsequent destination-list unification builds buffer-list rows through
+`buffer_destination_row` in `src/app/navigation_workflows.rs`, with the marker
+in STATE; `buffer_picker_columns` continues to label Finder rows. The test
+checks the STATE column and its semantic modified tint.
 
 ## Report
 

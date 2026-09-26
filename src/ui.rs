@@ -64,6 +64,11 @@ struct TuiTheme {
     cursor_select: ratatui::style::Color,
     cursor_command: ratatui::style::Color,
     directory: ratatui::style::Color,
+    destination_file: ratatui::style::Color,
+    destination_explorer: ratatui::style::Color,
+    destination_generated: ratatui::style::Color,
+    destination_scratch: ratatui::style::Color,
+    destination_terminal: ratatui::style::Color,
     selection: ratatui::style::Color,
     selection_primary: ratatui::style::Color,
     fuzzy_match_secondary: ratatui::style::Color,
@@ -121,6 +126,11 @@ impl TuiTheme {
             cursor_select: color(theme.cursor_select),
             cursor_command: color(theme.cursor_command),
             directory: color(theme.directory),
+            destination_file: color(theme.destination_file),
+            destination_explorer: color(theme.destination_explorer),
+            destination_generated: color(theme.destination_generated),
+            destination_scratch: color(theme.destination_scratch),
+            destination_terminal: color(theme.destination_terminal),
             selection: color(theme.selection),
             selection_primary: color(theme.selection_primary),
             fuzzy_match_secondary: color(theme.fuzzy_match_secondary),
@@ -458,17 +468,35 @@ fn fit_row_with_trailing(
     width: usize,
     ground: Option<Style>,
 ) -> Line<'static> {
-    let Some(trailing) = trailing.filter(|span| !span.content.is_empty()) else {
+    fit_row_with_trailing_spans(spans, trailing.into_iter().collect(), width, ground)
+}
+
+/// [`fit_row_with_trailing`] for a trailing run drawn in more than one style.
+fn fit_row_with_trailing_spans(
+    spans: Vec<Span<'static>>,
+    trailing: Vec<Span<'static>>,
+    width: usize,
+    ground: Option<Style>,
+) -> Line<'static> {
+    let trailing = trailing
+        .into_iter()
+        .filter(|span| !span.content.is_empty())
+        .collect::<Vec<_>>();
+    if trailing.is_empty() {
         return fit_row(spans, width, ground);
-    };
-    let trailing_width = UnicodeWidthStr::width(trailing.content.as_ref()).min(width);
+    }
+    let trailing_width = trailing
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum::<usize>()
+        .min(width);
     let main_width = width.saturating_sub(trailing_width);
     let mut fitted = fit_row(spans, main_width, None).spans;
     let used = fitted
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
-    fitted.extend(fit_row(vec![trailing], width.saturating_sub(used), None).spans);
+    fitted.extend(fit_row(trailing, width.saturating_sub(used), None).spans);
     let used = fitted
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
@@ -479,6 +507,146 @@ fn fit_row_with_trailing(
         fitted.push(Span::styled(" ".repeat(width - used), ground));
     }
     Line::from(fitted)
+}
+
+/// The characters of a row label to draw, each with the position it came
+/// from, or `None` for the ellipsis standing in for what was left out.
+///
+/// A label wider than `budget` cells is shortened in the middle of the run
+/// starting at `elide_from`, keeping everything before that run and as much
+/// of its end as fits: the end of a path is its file name, which is the part
+/// a reader is looking for. A shortened label is padded back to exactly
+/// `budget` cells, so every row's trailing column still starts in one place.
+/// Without `elide_from`, or with too little room to say anything useful, the
+/// label is returned whole for ordinary clipping.
+fn elided_label(
+    label: &str,
+    elide_from: Option<usize>,
+    budget: usize,
+) -> Vec<(Option<usize>, char)> {
+    let characters = label.chars().enumerate().map(|(index, c)| (Some(index), c));
+    let whole = || characters.clone().collect::<Vec<_>>();
+    let width = |run: &[(Option<usize>, char)]| {
+        run.iter()
+            .map(|(_, character)| character.width().unwrap_or(0))
+            .sum::<usize>()
+    };
+    let all = whole();
+    let Some(from) = elide_from.filter(|from| *from < all.len()) else {
+        return all;
+    };
+    if width(&all) <= budget {
+        return all;
+    }
+    let (head, name) = all.split_at(from);
+    // Padding that aligns a short name with a long one is the first thing a
+    // row too narrow for it gives up, before any character of the name.
+    let name = &name[..name
+        .iter()
+        .rposition(|(_, character)| *character != ' ')
+        .map_or(0, |last| last + 1)];
+    let fill = |mut kept: Vec<(Option<usize>, char)>| {
+        let used = width(&kept);
+        kept.extend(std::iter::repeat_n(
+            (None, ' '),
+            budget.saturating_sub(used),
+        ));
+        kept
+    };
+    if width(head) + width(name) <= budget {
+        let mut kept = head.to_vec();
+        kept.extend_from_slice(name);
+        return fill(kept);
+    }
+    let room = budget.saturating_sub(width(head));
+    // One cell for the ellipsis and at least one for the end of the name.
+    if room < 2 {
+        return all;
+    }
+    let base_start = name
+        .iter()
+        .rposition(|(_, character)| *character == '/' || (cfg!(windows) && *character == '\\'))
+        .map_or(0, |slash| slash + 1);
+    let tail_room = width(&name[base_start..]).max((room - 1) / 2).min(room - 1);
+    let mut tail_start = name.len();
+    let mut tail_width = 0;
+    while tail_start > 0 {
+        let next = name[tail_start - 1].1.width().unwrap_or(0);
+        if tail_width + next > tail_room {
+            break;
+        }
+        tail_width += next;
+        tail_start -= 1;
+    }
+    let head_room = room - 1 - tail_width;
+    let mut front_end = 0;
+    let mut front_width = 0;
+    while front_end < tail_start {
+        let next = name[front_end].1.width().unwrap_or(0);
+        if front_width + next > head_room {
+            break;
+        }
+        front_width += next;
+        front_end += 1;
+    }
+    let mut kept = head.to_vec();
+    kept.extend_from_slice(&name[..front_end]);
+    kept.push((None, '…'));
+    kept.extend_from_slice(&name[tail_start..]);
+    fill(kept)
+}
+
+/// The tint covering character `position` of a row's label, or of its
+/// trailing detail when `trailing` is set.
+fn tint_at(
+    tints: &[crate::snapshot::TintedRun],
+    trailing: bool,
+    position: usize,
+) -> Option<crate::snapshot::RowTint> {
+    tints
+        .iter()
+        .find(|run| {
+            run.trailing == trailing && (run.start..run.start + run.len).contains(&position)
+        })
+        .map(|run| run.tint)
+}
+
+fn tint_color(theme: &TuiTheme, tint: crate::snapshot::RowTint) -> ratatui::style::Color {
+    use crate::snapshot::RowTint;
+    match tint {
+        RowTint::File => theme.destination_file,
+        RowTint::Explorer => theme.destination_explorer,
+        RowTint::Generated => theme.destination_generated,
+        RowTint::Scratch => theme.destination_scratch,
+        RowTint::Terminal => theme.destination_terminal,
+        RowTint::Modified => theme.change_modified,
+        RowTint::Stale | RowTint::Bell => theme.warning,
+        RowTint::ReadOnly | RowTint::Exited => theme.muted,
+        RowTint::Unread => theme.info,
+    }
+}
+
+/// A trailing detail, after its two-cell separator, split into styled runs
+/// by its tints.
+fn tinted_trailing(
+    text: &str,
+    tints: &[crate::snapshot::TintedRun],
+    style: Style,
+    tinted: bool,
+    theme: &TuiTheme,
+) -> Vec<Span<'static>> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut spans = vec![Span::styled("  ", style)];
+    spans.extend(text.chars().enumerate().map(|(position, character)| {
+        let style = match tint_at(tints, true, position).filter(|_| tinted) {
+            Some(tint) => style.fg(tint_color(theme, tint)),
+            None => style,
+        };
+        Span::styled(character.to_string(), style)
+    }));
+    spans
 }
 
 /// Draws a list's non-selectable column labels in the same three regions as
@@ -1157,16 +1325,38 @@ fn draw_snapshot_overlay(
                 ground.fg(theme.accent),
             ));
         }
-        spans.extend(row.label.chars().enumerate().map(|(position, character)| {
-            let mut character_style = style;
-            if muted.contains(&position) {
-                character_style = character_style.fg(theme.muted);
-            }
-            if emphasized.contains(&position) {
-                character_style = character_style.fg(emphasis_color).bold();
-            }
-            Span::styled(character.to_string(), character_style)
-        }));
+        // A dormant row gives up its tints with the rest of its colours,
+        // except where the reader is about to act on it.
+        let tinted = row.available && (!row.dimmed || selected);
+        let reserved = usize::from(marker) * SELECTION_GUTTER.width()
+            + [&row.detail, &row.trailing_detail]
+                .into_iter()
+                .filter(|text| !text.is_empty())
+                .map(|text| text.width() + 2)
+                .sum::<usize>();
+        spans.extend(
+            elided_label(
+                &row.label,
+                row.elide_from,
+                row_width.saturating_sub(reserved),
+            )
+            .into_iter()
+            .map(|(source, character)| {
+                let mut character_style = style;
+                if let Some(position) = source {
+                    if let Some(tint) = tint_at(&row.tints, false, position).filter(|_| tinted) {
+                        character_style = character_style.fg(tint_color(theme, tint));
+                    }
+                    if muted.contains(&position) {
+                        character_style = character_style.fg(theme.muted);
+                    }
+                    if emphasized.contains(&position) {
+                        character_style = character_style.fg(emphasis_color).bold();
+                    }
+                }
+                Span::styled(character.to_string(), character_style)
+            }),
+        );
         let mut detail_style = ground.fg(if row.dimmed && !selected {
             theme.jump_text_muted
         } else {
@@ -1191,9 +1381,14 @@ fn draw_snapshot_overlay(
                 Span::styled(character.to_string(), style)
             }));
         }
-        let trailing = (!row.trailing_detail.is_empty())
-            .then(|| Span::styled(format!("  {}", row.trailing_detail), detail_style));
-        lines.push(fit_row_with_trailing(
+        let trailing = tinted_trailing(
+            &row.trailing_detail,
+            &row.tints,
+            detail_style,
+            tinted,
+            theme,
+        );
+        lines.push(fit_row_with_trailing_spans(
             spans,
             trailing,
             row_width,
@@ -3465,19 +3660,36 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                         .item_label_emphasis(item)
                         .into_iter()
                         .collect::<std::collections::HashSet<_>>();
-                    let mut spans = item
-                        .label
-                        .chars()
-                        .enumerate()
-                        .map(|(position, character)| {
-                            let style = if emphasized.contains(&position) {
+                    // A dormant row gives up its tints with the rest of its
+                    // colours, except where the reader is about to act on it.
+                    let tinted = !item.is_dimmed() || selected == Some(position);
+                    let reserved = [&item.detail, &item.trailing_detail]
+                        .into_iter()
+                        .filter(|text| !text.is_empty())
+                        .map(|text| text.width() + 2)
+                        .sum::<usize>();
+                    let mut spans = elided_label(
+                        &item.label,
+                        item.elide_from,
+                        row_width.saturating_sub(reserved),
+                    )
+                    .into_iter()
+                    .map(|(source, character)| {
+                        let style = match source {
+                            Some(index) if emphasized.contains(&index) => {
                                 Style::default().fg(app.theme.accent).bold()
-                            } else {
-                                Style::default().fg(text_color)
-                            };
-                            Span::styled(character.to_string(), style)
-                        })
-                        .collect::<Vec<_>>();
+                            }
+                            Some(index) => {
+                                match tint_at(&item.tints, false, index).filter(|_| tinted) {
+                                    Some(tint) => Style::default().fg(tint_color(&app.theme, tint)),
+                                    None => Style::default().fg(text_color),
+                                }
+                            }
+                            None => Style::default().fg(text_color),
+                        };
+                        Span::styled(character.to_string(), style)
+                    })
+                    .collect::<Vec<_>>();
                     // A row's detail is the muted half of what it says, in
                     // both layouts. The snapshot renderer an attached client
                     // uses has always drawn it here; dropping it in this one
@@ -3489,13 +3701,16 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                             Style::default().fg(detail_color),
                         ));
                     }
-                    let trailing = (!item.trailing_detail.is_empty()).then(|| {
-                        Span::styled(
-                            format!("  {}", item.trailing_detail),
-                            Style::default().fg(detail_color),
-                        )
-                    });
-                    ListItem::new(fit_row_with_trailing(spans, trailing, row_width, None))
+                    let trailing = tinted_trailing(
+                        &item.trailing_detail,
+                        &item.tints,
+                        Style::default().fg(detail_color),
+                        tinted,
+                        &app.theme,
+                    );
+                    ListItem::new(fit_row_with_trailing_spans(
+                        spans, trailing, row_width, None,
+                    ))
                 } else {
                     let spans = vec![
                         Span::styled(
@@ -5118,6 +5333,8 @@ mod tests {
             muted: Vec::new(),
             emphasis: Vec::new(),
             detail_emphasis: Vec::new(),
+            tints: Vec::new(),
+            elide_from: None,
         };
         let plain_width = snapshot_row_width(OverlayKind::ResultList, &row);
         assert_eq!(
@@ -6592,6 +6809,8 @@ mod tests {
                 muted: Vec::new(),
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
+                tints: Vec::new(),
+                elide_from: None,
             })
             .collect();
         overlay.kind = OverlayKind::BufferActions;
@@ -7360,6 +7579,132 @@ mod tests {
             legend_lines(&legend, 20),
             ["Ctrl-n/Ctrl-p move", "Ctrl-t preview"]
         );
+    }
+
+    #[test]
+    fn an_overlong_destination_name_keeps_its_file_name() {
+        let drawn = |label: &str, from, budget| {
+            elided_label(label, from, budget)
+                .into_iter()
+                .map(|(_, character)| character)
+                .collect::<String>()
+        };
+        // Shortened labels fill their budget exactly, so rows stay aligned.
+        assert_eq!(
+            drawn("* [file]  a/b/notes.txt", Some(10), 20)
+                .chars()
+                .count(),
+            20
+        );
+        let drawn = |label: &str, from, budget| drawn(label, from, budget).trim_end().to_owned();
+        let label = "* [file]  /tmp/claude-1000/claude-prompt-8e15.md";
+        // It fits: nothing changes.
+        assert_eq!(drawn(label, Some(10), 80), label);
+        // It does not: the middle of the name goes, TYPE and the file name stay.
+        assert_eq!(
+            drawn(label, Some(10), 36),
+            "* [file]  /tmp…claude-prompt-8e15.md"
+        );
+        // A file name wider than the room keeps its end.
+        assert_eq!(drawn(label, Some(10), 20), "* [file]  …t-8e15.md");
+        // Without a place to shorten, clipping is the renderer's.
+        assert_eq!(drawn(label, None, 20), label);
+        // Alignment padding goes before any of the name does.
+        assert_eq!(
+            drawn("* [file]  a/notes.txt      ", Some(10), 22),
+            "* [file]  a/notes.txt"
+        );
+        assert_eq!(
+            drawn("* [file]  abc/notes.txt    ", Some(10), 20),
+            "* [file]  …notes.txt"
+        );
+        // Positions survive so emphasis and tints still land where they were.
+        let kept = elided_label(label, Some(10), 36);
+        assert_eq!(kept[10], (Some(10), '/'));
+        assert_eq!(kept[14], (None, '…'));
+        assert_eq!(kept.last(), Some(&(Some(label.chars().count() - 1), 'd')));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_overlong_windows_destination_keeps_its_prefix_and_file_name() {
+        let label = r"* [file]  C:\long-directory\nested\notes.txt";
+        let drawn = elided_label(label, Some(10), 30)
+            .into_iter()
+            .map(|(_, character)| character)
+            .collect::<String>();
+        assert!(drawn.starts_with(r"* [file]  C:\"), "{drawn}");
+        assert!(drawn.contains('…'), "{drawn}");
+        assert!(drawn.ends_with("notes.txt"), "{drawn}");
+        assert_eq!(drawn.width(), 30);
+    }
+
+    #[test]
+    fn destination_rows_colour_their_type_and_state_in_both_renderers() {
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-ui-destination-tints-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = directory.join("a-rather-long-directory-name/that-keeps-going");
+        std::fs::create_dir_all(&nested).unwrap();
+        let path = nested.join("notes.txt");
+        std::fs::write(&path, "notes").unwrap();
+        let mut app = App::new(Config::default(), Some(path)).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "edited "));
+        app.open_buffer_picker();
+        let theme = TuiTheme::new(&app.theme);
+
+        let check = |buffer: &ratatui::buffer::Buffer, width: u16| {
+            let screen = buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+                .collect::<String>();
+            let row = screen
+                .find("[file]")
+                .map(|index| screen[..index].chars().count() / usize::from(width))
+                .unwrap_or_else(|| panic!("no [file] row in {screen}"));
+            let line = (0..width)
+                .map(|x| buffer[(x, row as u16)].clone())
+                .collect::<Vec<_>>();
+            let text = line
+                .iter()
+                .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+                .collect::<String>();
+            let at = |needle: &str| text.find(needle).map(|index| text[..index].chars().count());
+            let kind = at("[file]").unwrap();
+            assert_eq!(line[kind].fg, theme.destination_file, "{text}");
+            let flag = at("[+]").unwrap_or_else(|| panic!("{text}"));
+            assert_eq!(line[flag].fg, theme.change_modified, "{text}");
+            assert!(text.contains("notes.txt"), "the file name survives: {text}");
+            assert!(
+                text.contains('…'),
+                "the middle of the path gave way: {text}"
+            );
+        };
+
+        // The local renderer, narrow enough that the path cannot fit.
+        let mut terminal = Terminal::new(TestBackend::new(72, 20)).unwrap();
+        let hints = KeyHintState::default();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &hints))
+            .unwrap();
+        check(terminal.backend().buffer(), 72);
+
+        // The attached renderer, from the snapshot.
+        let overlay = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.title.starts_with("Buffers — "))
+            .unwrap();
+        let buffer = draw_overlay_alone(&mut app, &theme, &overlay);
+        check(&buffer, 100);
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]

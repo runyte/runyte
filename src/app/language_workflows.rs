@@ -4,22 +4,21 @@
 
 // Application-module dependencies:
 use super::{
-    ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferActionMenu, BufferKind, Change,
-    ChangeSync, Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu,
-    DocumentEdit, DocumentState, Encoding, FailureClass, HashMap, HashSet, HoverState,
-    InputGrammar, KeyCode, KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent,
-    LspHandle, LspRange, Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path,
-    PathActionMenu, PathBuf, PathClipboardTarget, PathPopup, PendingRequest, PickerItem,
-    PromptKind, Range, Register, RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT,
-    SearchMode, Selection, SelectionSemantics, ServerState, SignatureContext, SignatureState,
-    TerminalAction, TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent,
-    TrackedRequest, Transaction, WORD_COMPLETION_ITEM_LIMIT, WorkspaceMatch, WorkspaceSearchEvent,
+    ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferKind, Change, ChangeSync,
+    Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu, DocumentEdit,
+    DocumentState, Encoding, FailureClass, HashMap, HashSet, HoverState, InputGrammar, KeyCode,
+    KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent, LspHandle, LspRange,
+    Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf,
+    PathClipboardTarget, PathPopup, PendingRequest, PickerItem, PromptKind, Range, Register,
+    RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT, SearchMode, Selection,
+    SelectionSemantics, ServerState, SignatureContext, SignatureState, TerminalAction,
+    TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent, TrackedRequest,
+    Transaction, WORD_COMPLETION_ITEM_LIMIT, WorkspaceMatch, WorkspaceSearchEvent,
     WorkspaceSearchRequest, WorkspaceSearchService, WorkspaceSearchSnapshot, WorkspaceSearchTarget,
-    buffer_language, buffer_picker_columns, buffer_preview, checked_lsp_range, display_path,
-    edit_summary, from_lsp_position, from_lsp_range, is_word_completion_character,
-    language_completion_prefix_start, open_or_new, operative_span, path_token_before,
-    push_matching_words, response_name, row_is_not_before, to_lsp_position, word_bounds,
-    word_token_before, workspace_edit_path_identity,
+    buffer_language, checked_lsp_range, display_path, edit_summary, from_lsp_position,
+    from_lsp_range, is_word_completion_character, language_completion_prefix_start, open_or_new,
+    operative_span, path_token_before, push_matching_words, response_name, row_is_not_before,
+    to_lsp_position, word_bounds, word_token_before, workspace_edit_path_identity,
 };
 #[cfg(any(unix, windows))]
 use super::{SessionAction, SessionActionMenu};
@@ -1131,37 +1130,8 @@ impl App {
         self.list = Some(ListPicker::new("Diagnostics", items).with_primary_action("jump"));
     }
 
-    pub(super) fn open_buffer_picker(&mut self) {
-        self.rebuild_buffer_picker(String::new(), 0);
-    }
-
-    fn rebuild_buffer_picker(&mut self, filter: String, selected: usize) {
-        let active = self
-            .active_terminal()
-            .is_none()
-            .then(|| self.active().buffer);
-        let mut items = Vec::new();
-        let mut actions = Vec::new();
-        for (index, buffer) in self.buffers.iter().enumerate() {
-            if !self.buffer_is_discoverable(index) {
-                continue;
-            }
-            let (label, detail) =
-                buffer_picker_columns(buffer, &self.project_root, active == Some(index));
-            let action_index = actions.len();
-            items.push(
-                PickerItem::new(label, detail, action_index).with_preview(buffer_preview(buffer)),
-            );
-            actions.push(ListAction::Buffer(index));
-        }
-        self.list_actions = actions;
-        let mut picker = ListPicker::new("Buffers", items)
-            .with_preview("Contents")
-            .as_manager("open", "Tab", "actions");
-        picker.filter = filter;
-        picker.selected = selected.min(picker.visible_indices().len().saturating_sub(1));
-        self.list = Some(picker);
-        self.buffer_action_menu = None;
+    pub(crate) fn open_buffer_picker(&mut self) {
+        self.open_destination_list(super::DestinationScope::Buffers);
     }
 
     pub(super) fn buffer_is_discoverable(&self, index: usize) -> bool {
@@ -2659,18 +2629,12 @@ impl App {
                     self.open_session_actions();
                     return Ok(());
                 }
-                if self
-                    .list
-                    .as_ref()
-                    .is_some_and(|list| list.title == "Terminals")
-                    || matches!(self.selected_list_action(), Some(ListAction::Terminal(_)))
-                {
+                // An empty terminal list still offers to start a terminal.
+                if self.destination_scope() == Some(super::DestinationScope::Terminals) {
                     self.open_terminal_actions();
                     return Ok(());
                 }
-                if matches!(self.selected_list_action(), Some(ListAction::Buffer(_))) {
-                    self.open_buffer_actions();
-                } else if self.list.as_ref().is_some_and(ListPicker::has_tags) {
+                if self.list.as_ref().is_some_and(ListPicker::has_tags) {
                     self.list.as_mut().unwrap().cycle_tag();
                     preview_changed = true;
                 } else {
@@ -3045,7 +3009,7 @@ impl App {
 
     fn open_terminal_actions(&mut self) {
         let id = match self.selected_list_action() {
-            Some(ListAction::Terminal(id)) => id,
+            Some(ListAction::Destination(super::OpenDestination::Terminal(id))) => id,
             _ => {
                 self.terminal_action_menu = Some(TerminalActionMenu {
                     id: super::TerminalId::from_raw(0),
@@ -3147,14 +3111,15 @@ impl App {
                         self.open_listed_terminal_rename_prompt(id);
                     }
                     TerminalAction::Close | TerminalAction::ForceKill => {
-                        let navigator = self.navigator_open();
                         self.close_terminal_id(id);
-                        if navigator {
-                            self.refresh_navigator();
-                        } else if self.terminals.is_empty() {
+                        self.refresh_navigator();
+                        // Closing the last terminal leaves the terminal list
+                        // nothing to show, unlike clearing out exited ones,
+                        // which keeps it open to start another.
+                        if self.destination_scope() == Some(super::DestinationScope::Terminals)
+                            && self.terminals.is_empty()
+                        {
                             self.list = None;
-                        } else {
-                            self.open_terminal_list();
                         }
                     }
                     TerminalAction::Create => {
@@ -3383,29 +3348,6 @@ impl App {
         }
     }
 
-    fn open_buffer_actions(&mut self) {
-        let Some(ListAction::Buffer(buffer)) = self.selected_list_action() else {
-            return;
-        };
-        let mut actions = self.available_buffer_actions(buffer);
-        if (0..self.buffers.len()).any(|id| self.can_close_hidden_buffer(id)) {
-            actions.push(BufferAction::CloseHidden);
-        }
-        if actions.is_empty() {
-            if self.buffers[buffer].is_directory() {
-                self.status("explorer buffers have no management actions here");
-            } else {
-                self.status("this modified buffer must be opened before it can be managed");
-            }
-            return;
-        }
-        self.buffer_action_menu = Some(BufferActionMenu {
-            buffer,
-            actions,
-            selected: 0,
-        });
-    }
-
     pub(super) fn available_buffer_actions(&self, buffer: usize) -> Vec<BufferAction> {
         let Some(buffer_state) = self.buffers.get(buffer) else {
             return Vec::new();
@@ -3435,6 +3377,10 @@ impl App {
             | BufferKind::Help
             | BufferKind::Directory => Vec::new(),
         }
+    }
+
+    pub(super) fn hidden_buffers_can_close(&self) -> bool {
+        (0..self.buffers.len()).any(|id| self.can_close_hidden_buffer(id))
     }
 
     fn can_close_hidden_buffer(&self, buffer: usize) -> bool {
@@ -3481,26 +3427,14 @@ impl App {
                 self.status(format!(
                     "closed {count} hidden buffers; unsaved buffers kept"
                 ));
+                self.refresh_navigator();
             }
         }
         Ok(())
     }
 
     fn refresh_buffer_picker(&mut self) {
-        if self.navigator_open() {
-            self.refresh_navigator();
-            return;
-        }
-        let Some(picker) = self
-            .list
-            .as_ref()
-            .filter(|picker| picker.purpose == ListPurpose::Manager)
-        else {
-            return;
-        };
-        let filter = picker.filter.clone();
-        let selected = picker.selected;
-        self.rebuild_buffer_picker(filter, selected);
+        self.refresh_navigator();
     }
 
     pub(super) fn discard_buffer_changes(&mut self, buffer: usize) -> Result<()> {
@@ -4010,7 +3944,6 @@ impl App {
                     self.invoke_plugin(command)?;
                 }
             }
-            Some(ListAction::Buffer(buffer)) => self.switch_buffer(buffer),
             Some(ListAction::SyntaxOutline { buffer, target }) => {
                 self.jump_to_syntax_outline(buffer, target)
             }
@@ -4022,7 +3955,6 @@ impl App {
             Some(ListAction::WorktreeGitBranch(branch)) => {
                 self.create_branch_worktree_for_local(&branch)
             }
-            Some(ListAction::Terminal(id)) => self.show_terminal(id),
             Some(ListAction::TutorialMotionHints(_)) => {
                 unreachable!("tutorial choices return before closing the shared picker")
             }

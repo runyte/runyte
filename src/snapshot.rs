@@ -208,6 +208,35 @@ impl OverlayKind {
     ];
 }
 
+/// What a coloured run of a row says. Frontends choose the colour; the
+/// snapshot names only the meaning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowTint {
+    /// A destination's type cell, by kind.
+    File,
+    Explorer,
+    Generated,
+    Scratch,
+    Terminal,
+    /// A state flag.
+    Modified,
+    Stale,
+    ReadOnly,
+    Exited,
+    Unread,
+    Bell,
+}
+
+/// `len` characters of a row's label, or of its trailing detail when
+/// `trailing` is set, starting at character `start`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TintedRun {
+    pub trailing: bool,
+    pub start: usize,
+    pub len: usize,
+    pub tint: RowTint,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OverlayRow {
     /// Non-selectable section heading supplied by a grouped picker.
@@ -240,6 +269,12 @@ pub struct OverlayRow {
     pub emphasis: Vec<usize>,
     /// Character positions emphasized in the separate detail column.
     pub detail_emphasis: Vec<usize>,
+    /// Runs of the label or trailing detail coloured for what they say.
+    pub tints: Vec<TintedRun>,
+    /// Character position in `label` from which a label too wide for its row
+    /// is shortened in the middle rather than cut at its end, so the end of a
+    /// path — the file name — stays readable.
+    pub elide_from: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1613,12 +1648,15 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// looking at history rather than at the live screen, and that the child has
 /// gone. Neither is a buffer property, so neither has a field of its own.
 ///
+/// The title exposes the ID accepted by `:terminal-send` without requiring
+/// the terminal list preview.
+///
 /// Only `[insert]` is named. The marker answers one question — whether typing
 /// reaches the child — and NORMAL is where every other pane already lives, so
 /// spelling it out here would repeat the mode line on the title of the one
 /// pane that has other things to say.
 fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Option<Mode>) -> String {
-    let mut name = session.display_name();
+    let mut name = format!("[terminal #{}] {}", session.id(), session.name());
     if active_mode == Some(Mode::Insert) {
         name.push_str(" [insert]");
     }

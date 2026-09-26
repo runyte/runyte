@@ -47,6 +47,11 @@ pub struct PickerItem {
     /// exactly like any other; only its weight changes.
     dimmed: bool,
     resource: Option<crate::finder::ResourceItem>,
+    /// Runs of the label or trailing detail coloured for what they say.
+    pub tints: Vec<crate::snapshot::TintedRun>,
+    /// Where an overlong label is shortened in the middle instead of at its
+    /// end; see [`crate::snapshot::OverlayRow::elide_from`].
+    pub elide_from: Option<usize>,
 }
 
 /// Non-selectable column labels drawn above a list's rows.
@@ -76,6 +81,8 @@ impl PickerItem {
             tag: None,
             dimmed: false,
             resource: None,
+            tints: Vec::new(),
+            elide_from: None,
         }
     }
 
@@ -96,6 +103,8 @@ impl PickerItem {
             tag: None,
             dimmed: false,
             resource: None,
+            tints: Vec::new(),
+            elide_from: None,
         }
     }
 

@@ -28,6 +28,11 @@ fn nordfox_theme() -> ThemeDefinition {
         cursor_select: Some("#c9826b".into()),
         cursor_command: Some("#b48ead".into()),
         directory: Some("#81a1c1".into()),
+        destination_file: None,
+        destination_explorer: None,
+        destination_generated: None,
+        destination_scratch: None,
+        destination_terminal: None,
         selection: "#3e4a5b".into(),
         selection_primary: Some("#4f6074".into()),
         fuzzy_match_secondary: None,
@@ -110,6 +115,11 @@ fn terafox_theme() -> ThemeDefinition {
         cursor_select: Some("#ff8349".into()),
         cursor_command: Some("#ad5c7c".into()),
         directory: Some("#5a93aa".into()),
+        destination_file: None,
+        destination_explorer: None,
+        destination_generated: None,
+        destination_scratch: None,
+        destination_terminal: None,
         // Canonical `#293e40` is barely a shade off the background, so a match
         // or a secondary range highlighted with it did not read as highlighted
         // at all. This is the same teal carrying enough saturation to be seen.

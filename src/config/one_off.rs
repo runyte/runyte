@@ -29,6 +29,11 @@ fn github_light_theme() -> ThemeDefinition {
         cursor_select: Some("#bc4c00".into()),
         cursor_command: Some("#6639ba".into()),
         directory: Some("#6639ba".into()),
+        destination_file: None,
+        destination_explorer: None,
+        destination_generated: None,
+        destination_scratch: None,
+        destination_terminal: None,
         selection: "#dae9f9".into(),
         selection_primary: Some("#e1d1b3".into()),
         fuzzy_match_secondary: Some("#c2e2ff".into()),
@@ -123,6 +128,11 @@ fn atom_one_light_theme() -> ThemeDefinition {
         cursor_select: Some("#986801".into()),
         cursor_command: Some("#a626a4".into()),
         directory: Some("#4078f2".into()),
+        destination_file: None,
+        destination_explorer: None,
+        destination_generated: None,
+        destination_scratch: None,
+        destination_terminal: None,
         // Atom has one neutral selection colour. Runyte distinguishes primary
         // and secondary selections, so these are light tints of Atom blue and
         // orange while preserving the palette's source-text contrast.

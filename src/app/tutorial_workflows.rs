@@ -251,10 +251,11 @@ impl App {
             && let Some(selected) = self
                 .list_actions
                 .iter()
-                .position(|action| matches!(action, ListAction::Terminal(id) if *id == terminal))
+                .position(|action| matches!(action, ListAction::Destination(super::OpenDestination::Terminal(id)) if *id == terminal))
             && let Some(list) = self.list.as_mut()
+            && let Some(row) = list.visible_indices().iter().position(|index| list.items[*index].index == selected)
         {
-            list.selected = selected;
+            list.selected = row;
         }
         let complete = match lesson {
             1 => text == "Hi hello\n" && self.mode == Mode::Normal,

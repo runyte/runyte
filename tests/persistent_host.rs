@@ -1326,20 +1326,20 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
             frame
                 .overlays
                 .iter()
-                .any(|overlay| overlay.title == "Terminals")
+                .any(|overlay| overlay.title.starts_with("Terminals — "))
         },
     )
     .await;
     let terminals = manager
         .overlays
         .iter()
-        .find(|overlay| overlay.title == "Terminals")
+        .find(|overlay| overlay.title.starts_with("Terminals — "))
         .unwrap();
     assert!(
         terminals
             .rows
             .iter()
-            .any(|row| row.detail.contains("unread")),
+            .any(|row| row.trailing_detail.contains("unread")),
         "detached output was marked viewed without an attached observer"
     );
 

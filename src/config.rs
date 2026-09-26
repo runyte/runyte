@@ -479,6 +479,21 @@ pub struct ThemeDefinition {
     pub cursor_command: Option<String>,
     /// Directory entries in explorer buffers. An omitted value uses `accent`.
     pub directory: Option<String>,
+    /// The `[file]` type cell in the Navigator, buffer list, and terminal
+    /// list. An omitted value uses `foreground`: a file is the ordinary case.
+    pub destination_file: Option<String>,
+    /// The `[explorer]` type cell. An omitted value uses `directory`, the
+    /// colour an explorer already gives the directories it lists.
+    pub destination_explorer: Option<String>,
+    /// The type cell of a generated buffer such as `[about]`, `[config]`, or
+    /// `[help]`. An omitted value uses `muted`: these are the editor's own
+    /// pages rather than documents someone is writing.
+    pub destination_generated: Option<String>,
+    /// The `[scratch]` type cell. An omitted value uses `jump_label_primary`,
+    /// which every theme already keeps distinct from its text colours.
+    pub destination_scratch: Option<String>,
+    /// The `[terminal]` type cell. An omitted value uses `change_added`.
+    pub destination_terminal: Option<String>,
     pub selection: String,
     /// Primary and ordinary Select-mode ranges. An omitted value uses
     /// `selection`, preserving custom themes written before this field existed.
@@ -658,6 +673,11 @@ pub struct Theme {
     pub cursor_select: Color,
     pub cursor_command: Color,
     pub directory: Color,
+    pub destination_file: Color,
+    pub destination_explorer: Color,
+    pub destination_generated: Color,
+    pub destination_scratch: Color,
+    pub destination_terminal: Color,
     pub selection: Color,
     pub selection_primary: Color,
     pub fuzzy_match_secondary: Color,
@@ -939,6 +959,11 @@ impl Default for ThemeDefinition {
             cursor_select: None,
             cursor_command: None,
             directory: None,
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             selection: "#383838".into(),
             selection_primary: None,
             fuzzy_match_secondary: None,
@@ -1234,9 +1259,12 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 [cursor_normal, cursor_insert, cursor_select, cursor_command],
             ),
         };
+        let foreground = parse_color(&value.foreground)?;
+        let directory = optional_color(value.directory.as_deref(), accent)?;
+        let change_added = optional_color(value.change_added.as_deref(), Color::Green)?;
         Ok(Self {
             background,
-            foreground: parse_color(&value.foreground)?,
+            foreground,
             muted,
             whitespace,
             jump_text_muted: value
@@ -1257,12 +1285,18 @@ impl TryFrom<&ThemeDefinition> for Theme {
             cursor_replace,
             cursor_select,
             cursor_command,
-            directory: value
-                .directory
-                .as_deref()
-                .map(parse_color)
-                .transpose()?
-                .unwrap_or(accent),
+            directory,
+            destination_file: optional_color(value.destination_file.as_deref(), foreground)?,
+            destination_explorer: optional_color(value.destination_explorer.as_deref(), directory)?,
+            destination_generated: optional_color(value.destination_generated.as_deref(), muted)?,
+            destination_scratch: optional_color(
+                value.destination_scratch.as_deref(),
+                parse_color(&value.jump_label_primary)?,
+            )?,
+            destination_terminal: optional_color(
+                value.destination_terminal.as_deref(),
+                change_added,
+            )?,
             selection,
             selection_primary,
             fuzzy_match_secondary: value
@@ -1290,7 +1324,7 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 .unwrap_or(error),
             jump_label_primary: parse_color(&value.jump_label_primary)?,
             jump_label_secondary: parse_color(&value.jump_label_secondary)?,
-            change_added: optional_color(value.change_added.as_deref(), Color::Green)?,
+            change_added,
             change_modified: optional_color(value.change_modified.as_deref(), Color::Magenta)?,
             change_removed: optional_color(value.change_removed.as_deref(), Color::Red)?,
             diff_added: value.diff_added.as_deref().map(parse_color).transpose()?,
@@ -3244,6 +3278,34 @@ mod tests {
                 Some(Color::Rgb(mauve.0, mauve.1, mauve.2))
             );
         }
+    }
+
+    /// The Navigator, buffer list, and terminal list tell destination kinds
+    /// apart by the colour of their type cell, which only works while no two
+    /// kinds share one.
+    #[test]
+    fn bundled_themes_give_each_destination_kind_its_own_colour() {
+        let config = Config::default();
+        let mut clashes = Vec::new();
+        for name in config.theme_names() {
+            let theme = config.resolve_theme(name).unwrap();
+            let kinds = [
+                ("file", theme.destination_file),
+                ("explorer", theme.destination_explorer),
+                ("generated", theme.destination_generated),
+                ("scratch", theme.destination_scratch),
+                ("terminal", theme.destination_terminal),
+                ("background", theme.background),
+            ];
+            for (index, (kind, color)) in kinds.iter().enumerate() {
+                for (other, other_color) in &kinds[index + 1..] {
+                    if color == other_color {
+                        clashes.push(format!("{name}: {kind} = {other} = {color:?}"));
+                    }
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{clashes:#?}");
     }
 
     #[test]

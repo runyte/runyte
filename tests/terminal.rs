@@ -1523,15 +1523,22 @@ fn the_pane_is_named_by_the_title_the_child_sets() {
             .and_then(|id| app.terminals.get(id))
             .is_some_and(|session| session.name() == "agent")
     }));
+    let id = session.app.active_terminal().unwrap();
     let insert = session.screen(60, 12);
-    assert!(insert.contains("[terminal] agent [insert]"), "{insert}");
+    assert!(
+        insert.contains(&format!("[terminal #{id}] agent [insert]")),
+        "{insert}"
+    );
 
     // NORMAL is the unmarked state: leaving input drops the marker rather
     // than replacing it, so the title only ever answers whether typing
     // reaches the child.
     session.leave_input();
     let normal = session.screen(60, 12);
-    assert!(normal.contains("[terminal] agent"), "{normal}");
+    assert!(
+        normal.contains(&format!("[terminal #{id}] agent")),
+        "{normal}"
+    );
     assert!(!normal.contains("[insert]"), "{normal}");
     assert!(!normal.contains("[normal]"), "{normal}");
 }
@@ -1913,6 +1920,7 @@ fn force_kill_rechecks_the_selected_terminal_after_exit() {
     let other = session.app.active_terminal().unwrap();
     session.leave_input();
     session.type_text(" tt");
+    session.press(KeyCode::Down);
     session.press(KeyCode::Tab);
     for _ in 0..3 {
         session.press(KeyCode::Down);
@@ -1950,8 +1958,8 @@ fn renaming_a_listed_terminal_leaves_every_pane_showing_what_it_showed() {
 
     session.leave_input();
     session.type_text(" tt");
-    // The first terminal is the row the list opens on, and it is not the one
-    // the pane is showing.
+    // Recent activation puts the shown terminal first. Select the hidden one.
+    session.press(KeyCode::Down);
     session.press(KeyCode::Tab);
     session.press(KeyCode::Down);
     session.press(KeyCode::Enter);
@@ -1965,13 +1973,12 @@ fn renaming_a_listed_terminal_leaves_every_pane_showing_what_it_showed() {
     // Naming a terminal is not a way of reaching it: the pane still shows the
     // terminal it showed, and the list is still what the person is looking at.
     assert_eq!(session.app.active_terminal(), Some(second));
-    assert_eq!(
+    assert!(
         session
             .app
             .list
             .as_ref()
-            .map(|picker| picker.title.as_str()),
-        Some("Terminals")
+            .is_some_and(|picker| picker.title.starts_with("Terminals — "))
     );
 }
 
@@ -1984,6 +1991,7 @@ fn abandoning_a_listed_terminal_rename_changes_nothing_and_returns_to_the_list()
 
     session.leave_input();
     session.type_text(" tt");
+    session.press(KeyCode::Down);
     session.press(KeyCode::Tab);
     session.press(KeyCode::Down);
     session.press(KeyCode::Enter);
@@ -1992,13 +2000,12 @@ fn abandoning_a_listed_terminal_rename_changes_nothing_and_returns_to_the_list()
 
     assert_eq!(session.app.terminals.get(first).unwrap().user_name(), None);
     assert_eq!(session.app.active_terminal(), Some(second));
-    assert_eq!(
+    assert!(
         session
             .app
             .list
             .as_ref()
-            .map(|picker| picker.title.as_str()),
-        Some("Terminals")
+            .is_some_and(|picker| picker.title.starts_with("Terminals — "))
     );
 }
 
@@ -2163,7 +2170,7 @@ fn terminal_manager_tab_draws_actions_and_space_t_r_renames() {
         manager
             .rows
             .iter()
-            .any(|row| row.label.starts_with("[terminal] "))
+            .any(|row| row.label.starts_with("* [terminal] "))
     );
     session.press(KeyCode::Tab);
     let screen = session.screen(60, 12);
@@ -2182,7 +2189,7 @@ fn terminal_manager_tab_draws_actions_and_space_t_r_renames() {
 }
 
 #[test]
-fn showing_a_visible_terminal_in_another_pane_moves_its_single_view() {
+fn visiting_a_visible_terminal_focuses_it_and_bring_here_moves_its_single_view() {
     let mut session = Session::start("/bin/cat");
     let id = session.app.active_terminal().unwrap();
     let source = session.app.active_pane;
@@ -2194,6 +2201,16 @@ fn showing_a_visible_terminal_in_another_pane_moves_its_single_view() {
 
     session.type_text(" tt");
     session.press(KeyCode::Enter);
+    assert_eq!(session.app.active_pane, source);
+    assert_eq!(session.app.terminal_of_pane(source), Some(id));
+    assert_eq!(session.app.terminal_of_pane(target), None);
+
+    session.app.handle_key(KeyStroke::ctrl('w')).unwrap();
+    session.press(KeyCode::Char('w'));
+    assert_eq!(session.app.active_pane, target);
+    session.type_text(" tt");
+    session.press(KeyCode::Tab);
+    session.press(KeyCode::Enter); // Bring into active pane.
 
     assert_eq!(session.app.active_terminal(), Some(id));
     assert_eq!(session.app.terminal_of_pane(source), None);
@@ -2240,7 +2257,12 @@ fn detached_output_for_a_hidden_terminal_stays_unread() {
         .iter()
         .find(|overlay| overlay.kind == OverlayKind::ResultList)
         .expect("terminal manager overlay");
-    assert!(manager.rows.iter().any(|row| row.detail.contains("unread")));
+    assert!(
+        manager
+            .rows
+            .iter()
+            .any(|row| row.trailing_detail.contains("unread"))
+    );
 }
 
 #[test]

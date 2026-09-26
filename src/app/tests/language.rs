@@ -736,6 +736,8 @@ fn closing_a_buffer_closes_its_language_server_document() {
 
     app.open_buffer_picker();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    // Past Bring into active pane, to Close.
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert!(drain(&mut queue).into_iter().any(|command| {

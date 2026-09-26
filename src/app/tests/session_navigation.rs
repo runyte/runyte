@@ -48,7 +48,10 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
         .into_iter()
         .find(|overlay| overlay.title.starts_with("Navigator —"))
         .unwrap();
-    assert!(!overlay.show_preview);
+    assert!(
+        overlay.show_preview,
+        "every destination list opens with its preview"
+    );
     let row = &overlay.rows[overlay.selected.unwrap()];
     assert_eq!(
         row.emphasis
@@ -56,8 +59,10 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
             .map(|position| row.label.chars().nth(*position).unwrap())
             .collect::<String>(),
         "sprs",
-        "the rendered picker highlights fuzzy path matches without a preview"
+        "the rendered picker highlights fuzzy path matches"
     );
+    key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
+    assert!(!app.list.as_ref().unwrap().show_preview);
     key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
     let picker = app.list.as_ref().unwrap();
     assert!(picker.show_preview);
@@ -146,7 +151,7 @@ fn navigator_save_refreshes_metadata_and_preserves_order_actions_and_selection()
             .unwrap()
             .selected_item()
             .unwrap()
-            .label
+            .trailing_detail
             .contains("[+]")
     );
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -165,7 +170,13 @@ fn navigator_save_refreshes_metadata_and_preserves_order_actions_and_selection()
     assert!(app.navigator_open());
     assert_eq!(selected_destination(&app), OpenDestination::Buffer(beta));
     let picker = app.list.as_ref().unwrap();
-    assert!(!picker.selected_item().unwrap().label.contains("[+]"));
+    assert!(
+        !picker
+            .selected_item()
+            .unwrap()
+            .trailing_detail
+            .contains("[+]")
+    );
     assert_eq!(picker.filter, "txt");
     assert_eq!(
         picker
@@ -285,7 +296,7 @@ fn navigator_terminal_prefix_remapping_cancel_and_focus_preserve_input_context()
 
 #[cfg(unix)]
 #[test]
-fn navigator_launch_command_match_highlights_visible_terminal_detail() {
+fn navigator_finds_a_terminal_by_its_launch_command_without_showing_it() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
@@ -307,22 +318,21 @@ fn navigator_launch_command_match_highlights_visible_terminal_detail() {
         .into_iter()
         .find(|overlay| overlay.title.starts_with("Navigator —"))
         .unwrap();
-    assert!(!overlay.show_preview);
+    assert!(
+        overlay.show_preview,
+        "every destination list opens with its preview"
+    );
+    // The launch program moved to the preview; the row names the terminal.
     let row = &overlay.rows[overlay.selected.unwrap()];
     assert!(row.label.contains("agent"));
     assert!(!row.label.contains("cat"));
-    assert_eq!(
-        row.detail_emphasis
-            .iter()
-            .map(|position| row.detail.chars().nth(*position).unwrap())
-            .collect::<String>(),
-        "cat"
-    );
+    assert!(row.detail.is_empty());
+    assert!(overlay.preview.is_some());
 }
 
 #[cfg(unix)]
 #[test]
-fn navigator_refreshes_terminal_details_and_searchable_names() {
+fn navigator_refreshes_terminal_names_and_searchable_titles() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
@@ -341,7 +351,6 @@ fn navigator_refreshes_terminal_details_and_searchable_names() {
     let item = app.list.as_ref().unwrap().selected_item().unwrap();
     assert_eq!(item.index, selected_index);
     assert!(item.label.contains("renamed-agent"));
-    assert!(item.detail.contains("updated-job-title"));
     for character in "renamed-agent".chars() {
         press(&mut app, character);
     }
@@ -649,7 +658,7 @@ fn terminal_manager_cleaning_last_exited_entry_keeps_empty_manager_and_disabled_
         .list
         .as_ref()
         .expect("empty terminal manager remains open");
-    assert_eq!(picker.title, "Terminals");
+    assert!(picker.title.starts_with("Terminals — "));
     assert!(picker.selected_item().is_none());
     assert_eq!(app.panes.len(), 1);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -706,20 +715,276 @@ fn navigator_aligns_types_titles_and_flags_in_terminal_cells() {
     let items = &app.list.as_ref().unwrap().items;
     let file = items
         .iter()
-        .find(|item| item.label.starts_with("[file]"))
+        .find(|item| item.label[2..].starts_with("[file]"))
         .unwrap();
     let help = items
         .iter()
-        .find(|item| item.label.starts_with("[help]"))
+        .find(|item| item.label[2..].starts_with("[help]"))
         .unwrap();
+    // A double-width name pads by cells, so both rows end in the same column
+    // and their STATE runs line up after them.
     assert_eq!(file.label.width(), help.label.width());
-    assert!(file.label.contains("[+]"));
-    assert!(help.label.ends_with("[RO]"));
-    let file_title = file.label.find(directory.to_str().unwrap()).unwrap();
-    assert!(file_title > "[file]".len());
+    assert_eq!(file.trailing_detail.width(), help.trailing_detail.width());
+    assert_eq!(file.trailing_detail.trim_end(), "[+]");
+    assert!(help.trailing_detail.trim_end().ends_with("[RO]"));
+    // NAME starts two columns after the widest TYPE on both rows, and that
+    // is where an overlong name is shortened.
+    let name = file.elide_from.unwrap();
+    assert_eq!(help.elide_from, Some(name));
     assert_eq!(
-        file.label[..file_title].width(),
-        "[file]".width().max("[help]".width()) + 2
+        file.label.chars().take(name).collect::<String>().width(),
+        2 + "[file]".width().max("[help]".width()) + 2
+    );
+    assert!(
+        file.label
+            .chars()
+            .skip(name)
+            .collect::<String>()
+            .trim_end()
+            .ends_with("界.rs")
     );
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn destination_elision_starts_at_the_name_after_a_unicode_type() {
+    use unicode_width::UnicodeWidthStr as _;
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.buffers.push(Buffer::virtual_text(
+        "[界界e\u{301} output]",
+        "captured output",
+    ));
+    app.open_buffer_picker();
+    let items = &app.list.as_ref().unwrap().items;
+    let generated = items
+        .iter()
+        .find(|item| item.label.contains("[界界e\u{301} output]"))
+        .unwrap();
+    let scratch = items
+        .iter()
+        .find(|item| item.label.contains("[scratch]"))
+        .unwrap();
+    let prefix = |item: &PickerItem| {
+        item.label
+            .chars()
+            .take(item.elide_from.unwrap())
+            .collect::<String>()
+    };
+    assert_eq!(prefix(generated).width(), prefix(scratch).width());
+    assert_eq!(
+        generated
+            .label
+            .chars()
+            .skip(generated.elide_from.unwrap())
+            .collect::<String>()
+            .trim_end(),
+        "界界e\u{301} output"
+    );
+    assert_eq!(
+        scratch
+            .label
+            .chars()
+            .skip(scratch.elide_from.unwrap())
+            .collect::<String>()
+            .trim_end(),
+        "scratch"
+    );
+}
+
+fn destinations(app: &App) -> Vec<OpenDestination> {
+    let picker = app.list.as_ref().unwrap();
+    picker
+        .visible_indices()
+        .iter()
+        .map(
+            |index| match &app.list_actions[picker.items[*index].index] {
+                ListAction::Destination(destination) => *destination,
+                other => panic!("unexpected action {other:?}"),
+            },
+        )
+        .collect()
+}
+
+/// The Navigator, the buffer list, and the terminal list are one list over
+/// three scopes: the same order, the same key legend, and the same Enter.
+#[cfg(unix)]
+#[test]
+fn every_destination_list_orders_by_recent_activation_and_names_its_keys() {
+    let directory = temporary("destination-list-order");
+    fs::create_dir_all(&directory).unwrap();
+    for name in ["alpha.txt", "beta.txt"] {
+        fs::write(directory.join(name), name).unwrap();
+    }
+    let mut app = App::new(Config::default(), Some(directory.join("alpha.txt"))).unwrap();
+    let alpha = app.active().buffer;
+    app.open_file(directory.join("beta.txt")).unwrap();
+    let beta = app.active().buffer;
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let first = app.active_terminal().unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let second = app.active_terminal().unwrap();
+    app.leave_terminal();
+    // Activation order, most recent last: second, beta, first, alpha.
+    for destination in [
+        OpenDestination::Terminal(second),
+        OpenDestination::Buffer(beta),
+        OpenDestination::Terminal(first),
+        OpenDestination::Buffer(alpha),
+    ] {
+        assert!(app.visit_open_destination(destination));
+        app.leave_terminal();
+    }
+
+    app.open_buffer_picker();
+    let buffers = destinations(&app);
+    assert_eq!(
+        &buffers[..2],
+        [
+            OpenDestination::Buffer(alpha),
+            OpenDestination::Buffer(beta)
+        ]
+    );
+    assert!(
+        buffers
+            .iter()
+            .all(|destination| matches!(destination, OpenDestination::Buffer(_)))
+    );
+    let overlay = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.title.starts_with("Buffers — "))
+        .unwrap();
+    assert!(overlay.show_preview);
+    assert_eq!(
+        overlay
+            .actions
+            .iter()
+            .map(|action| format!("{} {}", action.key_hint, action.label))
+            .collect::<Vec<_>>(),
+        ["Enter visit", "Tab actions", "Esc close"]
+    );
+    assert!(
+        overlay
+            .legend
+            .iter()
+            .any(|action| action.key_hint == "Ctrl-t" && action.label == "preview")
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // The exited terminal sinks below the running one in the terminal list,
+    // and leaves the Navigator.
+    let cleanup = terminal_cleanup(&app, first);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: first,
+        code: Some(0),
+    });
+    cleanup();
+    app.open_terminal_list();
+    assert_eq!(
+        destinations(&app),
+        [
+            OpenDestination::Terminal(second),
+            OpenDestination::Terminal(first)
+        ]
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    app.open_navigator();
+    let all = destinations(&app);
+    assert!(!all.contains(&OpenDestination::Terminal(first)));
+    let position = |destination| all.iter().position(|d| *d == destination).unwrap();
+    assert!(
+        position(OpenDestination::Buffer(beta)) < position(OpenDestination::Terminal(second)),
+        "beta was activated after the second terminal"
+    );
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn the_buffer_list_visits_a_buffer_where_a_pane_already_shows_it() {
+    let directory = temporary("buffer-list-visit");
+    fs::create_dir_all(&directory).unwrap();
+    for name in ["left.txt", "right.txt"] {
+        fs::write(directory.join(name), name).unwrap();
+    }
+    let mut app = App::new(Config::default(), Some(directory.join("left.txt"))).unwrap();
+    let left_pane = app.active_pane;
+    app.split(Axis::Vertical, Some(directory.join("right.txt")))
+        .unwrap();
+    let right_pane = app.active_pane;
+    let right = app.active().buffer;
+    app.activate_pane(left_pane);
+    let left = app.active().buffer;
+
+    // Fuzzy, like the Navigator: the letters need not be contiguous.
+    app.open_buffer_picker();
+    for character in "rgt".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(selected_destination(&app), OpenDestination::Buffer(right));
+    assert!(
+        app.list
+            .as_ref()
+            .unwrap()
+            .selected_item()
+            .unwrap()
+            .label
+            .starts_with("* [file]"),
+        "a buffer a pane shows is marked"
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+
+    assert!(app.list.is_none());
+    assert_eq!(app.active_pane, right_pane);
+    assert_eq!(app.panes[&left_pane].buffer, left);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn the_terminal_list_shows_an_exited_terminal_and_finds_terminals_by_id() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let exited = app.active_terminal().unwrap();
+    app.leave_terminal();
+    // A second, running terminal the ID filter has to rule out.
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, exited);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: exited,
+        code: Some(0),
+    });
+    cleanup();
+
+    // The ID left the rows but still filters; the pane title carries it.
+    app.open_terminal_list();
+    for character in format!("#{exited}").chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(destinations(&app), [OpenDestination::Terminal(exited)]);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active_terminal(), Some(exited));
+
+    let view = app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 24,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 22,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    let title = app.snapshot(&view).panes[0].title.name.clone();
+    assert!(
+        title.starts_with(&format!("[terminal #{exited}] ")),
+        "{title}"
+    );
+    assert!(title.ends_with("[exited]"), "{title}");
+    close_test_terminals(&mut app);
 }

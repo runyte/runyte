@@ -3843,8 +3843,8 @@ fn renaming_a_terminal_refuses_an_absent_session_and_an_unusable_name() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// The terminal list is a manager over sessions rather than a way of reaching
-/// one, so it says what each session is doing and where.
+/// The terminal list says what each session is doing in its STATE column,
+/// marks the ones a pane shows, and keeps where it runs in the preview.
 #[test]
 fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
     let root = temporary("terminal-list");
@@ -3872,41 +3872,45 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
 
     app.open_terminal_list();
     let list = app.list.as_ref().expect("the list opened");
-    assert_eq!(list.title, "Terminals");
+    assert!(list.title.starts_with("Terminals — "), "{}", list.title);
     assert_eq!(list.items.len(), 2);
     assert_eq!(
         app.list_actions
             .iter()
             .map(|action| match action {
-                ListAction::Terminal(id) => *id,
+                ListAction::Destination(OpenDestination::Terminal(id)) => *id,
                 other => panic!("{other:?} is not a terminal row"),
             })
             .collect::<Vec<_>>(),
         vec![shown, exited]
     );
 
-    let details = list
+    let states = list
         .items
         .iter()
-        .map(|item| item.detail.clone())
+        .map(|item| item.trailing_detail.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert!(details[0].contains("running"), "{:?}", details[0]);
-    assert!(details[0].contains(&root.display().to_string()));
+    assert_eq!(states[0], "", "a running session has nothing to flag");
     assert!(
-        details[0].contains("shown"),
+        list.items[0].label.starts_with("* [terminal]"),
         "a session a pane is showing says so: {:?}",
-        details[0]
+        list.items[0].label
     );
     assert!(
         list.items[0].label.contains("builder"),
         "the list carries the name it was given: {:?}",
         list.items[0].label
     );
-    assert!(details[1].contains("exited"), "{:?}", details[1]);
     assert!(
-        details[1].contains("unread"),
-        "a session nobody has looked at since it wrote says so: {:?}",
-        details[1]
+        !list.items[0].label.contains(&format!("#{shown}")),
+        "the ID lives in the pane title, not the row"
+    );
+    let preview = list.items[0].preview().unwrap();
+    assert!(preview.contains(&format!("#{shown}")), "{preview}");
+    assert!(preview.contains(&root.display().to_string()), "{preview}");
+    assert_eq!(
+        states[1], "exited unread",
+        "a session nobody has looked at since it wrote says so"
     );
 
     close_test_terminals(&mut app);
@@ -3944,7 +3948,7 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
         app.list_actions
             .iter()
             .map(|action| match action {
-                ListAction::Terminal(id) => *id,
+                ListAction::Destination(OpenDestination::Terminal(id)) => *id,
                 other => panic!("{other:?} is not a terminal row"),
             })
             .collect::<Vec<_>>(),
@@ -3954,7 +3958,7 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
     let states = list
         .items
         .iter()
-        .map(|item| (item.detail.contains("running"), item.is_dimmed()))
+        .map(|item| (!item.trailing_detail.contains("exited"), item.is_dimmed()))
         .collect::<Vec<_>>();
     assert_eq!(
         states,

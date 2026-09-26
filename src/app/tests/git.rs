@@ -5925,13 +5925,13 @@ fn retained_clean_special_buffers_remain_discoverable_after_their_panes_leave() 
     app.open_buffer_picker();
     assert!(
         app.list_actions.iter().any(
-            |action| matches!(action, ListAction::Buffer(buffer) if *buffer == contextual_help)
+            |action| matches!(action, ListAction::Destination(OpenDestination::Buffer(buffer)) if *buffer == contextual_help)
         )
     );
     assert!(
         app.list_actions
             .iter()
-            .any(|action| matches!(action, ListAction::Buffer(buffer) if *buffer == manual))
+            .any(|action| matches!(action, ListAction::Destination(OpenDestination::Buffer(buffer)) if *buffer == manual))
     );
 
     fs::remove_dir_all(directory).unwrap();
@@ -6070,7 +6070,7 @@ fn a_dirty_special_buffer_remains_discoverable_after_its_last_view_leaves() {
     assert!(
         app.list_actions
             .iter()
-            .any(|action| matches!(action, ListAction::Buffer(buffer) if *buffer == explorer))
+            .any(|action| matches!(action, ListAction::Destination(OpenDestination::Buffer(buffer)) if *buffer == explorer))
     );
     fs::remove_dir_all(directory).unwrap();
 }

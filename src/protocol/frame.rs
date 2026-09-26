@@ -602,6 +602,49 @@ pub struct OverlayRow {
     pub emphasis: Vec<usize>,
     #[serde(default)]
     pub detail_emphasis: Vec<usize>,
+    #[serde(default)]
+    pub tints: Vec<TintedRun>,
+    #[serde(default)]
+    pub elide_from: Option<usize>,
+}
+
+unit_enum!(
+    RowTint,
+    core::RowTint,
+    [
+        File, Explorer, Generated, Scratch, Terminal, Modified, Stale, ReadOnly, Exited, Unread,
+        Bell
+    ]
+);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TintedRun {
+    pub trailing: bool,
+    pub start: usize,
+    pub len: usize,
+    pub tint: RowTint,
+}
+
+impl From<core::TintedRun> for TintedRun {
+    fn from(value: core::TintedRun) -> Self {
+        Self {
+            trailing: value.trailing,
+            start: value.start,
+            len: value.len,
+            tint: value.tint.into(),
+        }
+    }
+}
+
+impl From<TintedRun> for core::TintedRun {
+    fn from(value: TintedRun) -> Self {
+        Self {
+            trailing: value.trailing,
+            start: value.start,
+            len: value.len,
+            tint: value.tint.into(),
+        }
+    }
 }
 
 impl From<core::OverlayRow> for OverlayRow {
@@ -617,6 +660,8 @@ impl From<core::OverlayRow> for OverlayRow {
             muted: value.muted,
             emphasis: value.emphasis,
             detail_emphasis: value.detail_emphasis,
+            tints: value.tints.into_iter().map(Into::into).collect(),
+            elide_from: value.elide_from,
         }
     }
 }
@@ -634,6 +679,8 @@ impl TryFrom<OverlayRow> for core::OverlayRow {
             muted: value.muted,
             emphasis: value.emphasis,
             detail_emphasis: value.detail_emphasis,
+            tints: value.tints.into_iter().map(Into::into).collect(),
+            elide_from: value.elide_from,
         })
     }
 }
@@ -748,6 +795,8 @@ mod tests {
                 muted: Vec::new(),
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
+                tints: Vec::new(),
+                elide_from: None,
             }],
             selected: Some(0),
             scroll_anchor: None,
@@ -868,6 +917,21 @@ mod tests {
             muted: vec![0, 1],
             emphasis: Vec::new(),
             detail_emphasis: vec![3, 4],
+            tints: vec![
+                core::TintedRun {
+                    trailing: false,
+                    start: 0,
+                    len: 5,
+                    tint: core::RowTint::File,
+                },
+                core::TintedRun {
+                    trailing: true,
+                    start: 0,
+                    len: 4,
+                    tint: core::RowTint::Stale,
+                },
+            ],
+            elide_from: Some(6),
         };
 
         let wire = OverlayRow::from(row.clone());
@@ -1739,6 +1803,11 @@ pub struct Theme {
     pub cursor_select: Color,
     pub cursor_command: Color,
     pub directory: Color,
+    pub destination_file: Color,
+    pub destination_explorer: Color,
+    pub destination_generated: Color,
+    pub destination_scratch: Color,
+    pub destination_terminal: Color,
     pub selection: Color,
     pub selection_primary: Color,
     pub fuzzy_match_secondary: Color,
@@ -1776,6 +1845,11 @@ macro_rules! theme {
             cursor_select: $map($value.cursor_select),
             cursor_command: $map($value.cursor_command),
             directory: $map($value.directory),
+            destination_file: $map($value.destination_file),
+            destination_explorer: $map($value.destination_explorer),
+            destination_generated: $map($value.destination_generated),
+            destination_scratch: $map($value.destination_scratch),
+            destination_terminal: $map($value.destination_terminal),
             selection: $map($value.selection),
             selection_primary: $map($value.selection_primary),
             fuzzy_match_secondary: $map($value.fuzzy_match_secondary),

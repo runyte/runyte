@@ -2024,7 +2024,7 @@ fn buffer_picker_filters_and_switches_the_active_pane() {
     press(&mut app, ' ');
     press(&mut app, 'b');
     press(&mut app, 'b');
-    assert_eq!(app.list.as_ref().unwrap().title, "Buffers");
+    assert!(app.list.as_ref().unwrap().title.starts_with("Buffers — "));
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active().buffer, 1);
@@ -2085,22 +2085,51 @@ fn buffer_picker_uses_names_and_project_relative_or_absolute_paths() {
 
     app.open_buffer_picker();
 
-    let items = &app.list.as_ref().unwrap().items;
-    assert_eq!(items[0].label, "lorem_ipsum.md [+]");
+    // Most recently activated first; the shown buffer carries the marker.
+    let picker = app.list.as_ref().unwrap();
+    let items = &picker.items;
     assert_eq!(
-        items[0].detail,
-        Path::new("src")
-            .join("lorem_ipsum.md")
-            .display()
-            .to_string()
+        items[0].label.trim_end(),
+        format!("* [file]  {}", outside.display())
     );
-    assert_eq!(items[1].label, "*outside.md*");
-    assert_eq!(items[1].detail, outside.display().to_string());
+    assert_eq!(items[0].trailing_detail.trim_end(), "");
+    assert_eq!(
+        items[1].label.trim_end(),
+        format!(
+            "  [file]  {}",
+            Path::new("src").join("lorem_ipsum.md").display()
+        )
+    );
+    assert_eq!(items[1].trailing_detail.trim_end(), "[+]");
+    assert!(items.iter().all(|item| item.detail.is_empty()));
+    let header = picker.column_header.as_ref().unwrap();
+    assert_eq!(header.label.trim_end(), "  TYPE    NAME");
+    assert_eq!(header.trailing_detail.trim_end(), "STATE");
+
+    use crate::snapshot::{RowTint, TintedRun};
+    assert_eq!(
+        items[1].tints,
+        [
+            TintedRun {
+                trailing: false,
+                start: 2,
+                len: "[file]".len(),
+                tint: RowTint::File,
+            },
+            TintedRun {
+                trailing: true,
+                start: 0,
+                len: "[+]".len(),
+                tint: RowTint::Modified,
+            },
+        ]
+    );
+    assert_eq!(items[1].elide_from, Some("  [file]  ".len()));
     fs::remove_dir_all(fixture).unwrap();
 }
 
 #[test]
-fn buffer_picker_uses_directory_names_and_paths() {
+fn finder_buffer_rows_use_directory_names_and_paths() {
     let fixture = temporary("buffer-picker-directory-columns");
     let project = fixture.join("project");
     let inside = project.join("assets");
@@ -2141,8 +2170,9 @@ fn buffer_picker_keeps_special_names_and_marks_read_only_types() {
 
     let items = &app.list.as_ref().unwrap().items;
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "*[notes]* [RO]");
-    assert_eq!(items[0].detail, "");
+    assert_eq!(items[0].label.trim_end(), "* [notes]  notes");
+    assert_eq!(items[0].trailing_detail.trim_end(), "[RO]");
+    assert_eq!(items[0].tints[0].tint, crate::snapshot::RowTint::Generated);
 }
 
 #[test]
@@ -2223,6 +2253,15 @@ fn buffer_picker_discard_requires_confirmation_and_keeps_the_file_open() {
 
     app.open_buffer_picker();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.buffer_action_menu.as_ref().unwrap().actions,
+        [
+            BufferAction::BringHere,
+            BufferAction::Save,
+            BufferAction::Discard
+        ]
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.buffer_discard_confirmation, Some(file));
@@ -2248,7 +2287,7 @@ fn buffer_picker_discard_requires_confirmation_and_keeps_the_file_open() {
 }
 
 #[test]
-fn explorer_rows_have_no_buffer_management_actions() {
+fn explorer_rows_offer_only_to_be_brought_here() {
     let directory = temporary("buffer-actions-explorer");
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("keep.txt"), "keep").unwrap();
@@ -2258,11 +2297,14 @@ fn explorer_rows_have_no_buffer_management_actions() {
     app.open_buffer_picker();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
 
-    assert!(app.buffer_action_menu.is_none());
-    assert!(
-        app.status
-            .contains("explorer buffers have no management actions")
-    );
+    // Saving, discarding and closing are file actions; the explorer's own
+    // edits are applied through its confirmation, not from here.
+    let actions = &app.buffer_action_menu.as_ref().unwrap().actions;
+    assert_eq!(actions[0], BufferAction::BringHere);
+    assert!(!actions.iter().any(|action| matches!(
+        action,
+        BufferAction::Save | BufferAction::Discard | BufferAction::Close
+    )));
     assert!(!app.closed_buffers.contains(&explorer));
     assert_eq!(
         fs::read_to_string(directory.join("keep.txt")).unwrap(),
@@ -2283,6 +2325,8 @@ fn closing_a_shared_buffer_redirects_every_pane() {
 
     app.open_buffer_picker();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    // Past Bring into active pane, to Close.
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert!(app.closed_buffers.contains(&file));

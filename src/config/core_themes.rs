@@ -25,6 +25,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
         cursor_select: Some("#dc9656".into()),
         cursor_command: Some("#ba8baf".into()),
         directory: Some("#7cafc2".into()),
+        destination_file: None,
+        destination_explorer: None,
+        destination_generated: None,
+        destination_scratch: None,
+        destination_terminal: None,
         selection: "#365864".into(),
         selection_primary: Some("#5a3b2a".into()),
         jump_label_immediate: Some("#e65c57".into()),
@@ -102,6 +107,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#f07ab4".into()),
             cursor_command: Some("#6cb6ff".into()),
             directory: None,
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // The branded pair separates its two selection grounds by hue
             // alone rather than by the cool-against-warm every other
             // Runyte-original theme uses: the primary range answers Select
@@ -175,6 +185,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#a4276f".into()),
             cursor_command: Some("#1f65a6".into()),
             directory: None,
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // See `ember-dark`: the same pink primary and vivid blue
             // secondary, carried down to hold their contrast against a light
             // ground instead of a dark one.
@@ -220,6 +235,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#f0a868".into()),
             cursor_command: Some("#d2a8ff".into()),
             directory: Some("#6cb6ff".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             selection: "#34506a".into(),
             selection_primary: Some("#5a3f2b".into()),
             fuzzy_match_secondary: None,
@@ -276,6 +296,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#953800".into()),
             cursor_command: Some("#8250df".into()),
             directory: Some("#0550ae".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             selection: "#cfe3ff".into(),
             selection_primary: Some("#ffe2c2".into()),
             fuzzy_match_secondary: None,
@@ -332,6 +357,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#d75f00".into()),
             cursor_command: Some("#8700af".into()),
             directory: Some("#005faf".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             selection: "#afd7ff".into(),
             selection_primary: Some("#ffd7af".into()),
             fuzzy_match_secondary: None,
@@ -388,6 +418,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#fe8019".into()),
             cursor_command: Some("#d3869b".into()),
             directory: Some("#83a598".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             selection: "#3c5154".into(),
             selection_primary: Some("#66502f".into()),
             fuzzy_match_secondary: None,
@@ -473,6 +508,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#25f5b0".into()),
             cursor_command: Some("#4d9fff".into()),
             directory: Some("#4d9fff".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // The usual cool-secondary, warm-primary split has no warm half
             // to spend here, so the pair separates by the palette's own two
             // families instead: ordinary ranges sit on deep green, and the
@@ -585,6 +625,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#3f9de9".into()),
             cursor_command: Some("#677dea".into()),
             directory: Some("#3f9de9".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // The usual cool-secondary, warm-primary split has no warm half to
             // spend here, so the pair separates by the palette's own two
             // families instead: ordinary ranges sit on deep water blue, and
@@ -673,6 +718,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#0053b1".into()),
             cursor_command: Some("#5455d6".into()),
             directory: Some("#0053b1".into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // The dark variant's two grounds carried across: deep water blue
             // for ordinary ranges and the wave's teal for the primary one.
             // These are the one pair mirrored on how far they look from the
@@ -771,6 +821,11 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             cursor_select: Some("#7fbf18".into()),
             cursor_command: Some("#4d9fff".into()),
             directory: Some(neon_cyan.into()),
+            destination_file: None,
+            destination_explorer: None,
+            destination_generated: None,
+            destination_scratch: None,
+            destination_terminal: None,
             // The primary range answers the Select caret above it: the caret
             // is the acid green, and the ground under the range it marks is
             // the same green banked down to a ground. That has to be kept

@@ -537,5 +537,7 @@ fn review_row(label: String, muted: Vec<usize>, emphasis: Vec<usize>) -> Overlay
         muted,
         emphasis,
         detail_emphasis: Vec::new(),
+        tints: Vec::new(),
+        elide_from: None,
     }
 }

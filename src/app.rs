@@ -272,6 +272,7 @@ mod lsp_trust_workflows;
 mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
+use navigation_workflows::DestinationScope;
 mod picker_workflows;
 pub(crate) mod pipe;
 mod plugin_documents;
@@ -3742,7 +3743,6 @@ enum ListAction {
     /// A file offered for a Markdown link, and the heading it names.
     OpenPathAtHeading(PathBuf, String),
     CodeAction(usize),
-    Buffer(usize),
     SettingValue {
         setting: SettingId,
         value: SettingValue,
@@ -3764,7 +3764,6 @@ enum ListAction {
     GitCommit(String),
     CheckoutGitBranch(String),
     WorktreeGitBranch(String),
-    Terminal(TerminalId),
     TutorialMotionHints(MotionHints),
     #[cfg(any(unix, windows))]
     Workspace(usize),

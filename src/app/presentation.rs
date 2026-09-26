@@ -1388,6 +1388,8 @@ impl App {
                 muted: Vec::new(),
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
+                tints: Vec::new(),
+                elide_from: None,
             }
         }
         /// Footer for path hints while Enter would finish an unfinished
@@ -1688,6 +1690,8 @@ impl App {
                     let mut row = row(item.index, item.label.clone(), item.detail.clone());
                     row.trailing_detail = item.trailing_detail.clone();
                     row.dimmed = item.is_dimmed();
+                    row.tints = item.tints.clone();
+                    row.elide_from = item.elide_from;
                     if picker.has_preview() || item.resource().is_some() {
                         row.emphasis = picker.item_label_emphasis(item);
                         row.detail_emphasis = picker.item_detail_emphasis(item);
@@ -2522,6 +2526,8 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
                 muted: Vec::new(),
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
+                tints: Vec::new(),
+                elide_from: None,
             }
         })
         .collect()

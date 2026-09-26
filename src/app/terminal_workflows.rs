@@ -5,9 +5,9 @@
 // Application-module dependencies:
 use super::{
     App, ContentAlignment, EditorCommand, GeneratedViewIdentity, HashSet, InputGrammar, JumpLabels,
-    KeyStroke, ListAction, ListPicker, Mode, OsString, Path, PathBuf, PickerItem, PromptKind,
-    Range, Register, Result, SearchMode, SentTextUndo, TerminalId, TerminalOutput, TerminalRequest,
-    TerminalSession, default_terminal_program, program_label, terminal_preview, terminal_refuses,
+    KeyStroke, Mode, OsString, Path, PathBuf, PromptKind, Range, Register, Result, SearchMode,
+    SentTextUndo, TerminalId, TerminalOutput, TerminalRequest, TerminalSession,
+    default_terminal_program, program_label, terminal_refuses,
 };
 
 impl App {
@@ -420,61 +420,7 @@ impl App {
             ));
             return;
         }
-        self.rebuild_terminal_list();
-    }
-
-    pub(super) fn rebuild_terminal_list(&mut self) {
-        let mut items = Vec::new();
-        let mut actions = Vec::new();
-        // Running sessions come first because they are the ones that can still
-        // be typed into; an exited screen is history, so it sinks to the end
-        // and is dimmed there rather than hidden. Identity order is kept
-        // within each group, so a terminal never moves except when its own
-        // child exits.
-        let ordered = self
-            .terminals
-            .iter()
-            .filter(|session| session.live())
-            .chain(self.terminals.iter().filter(|session| !session.live()));
-        for session in ordered {
-            let mut detail = format!(
-                "#{} · {} · {}",
-                session.id(),
-                if session.live() { "running" } else { "exited" },
-                session.directory().display()
-            );
-            if session.user_name().is_some()
-                && let Some(title) = session.child_title()
-            {
-                detail.push_str(&format!(" · child {title}"));
-            }
-            if self
-                .panes
-                .values()
-                .any(|pane| pane.terminal == Some(session.id()))
-            {
-                detail.push_str(" · shown");
-            }
-            if session.unread_activity() {
-                detail.push_str(" · unread");
-            }
-            if session.bell() {
-                detail.push_str(" · bell");
-            }
-            items.push(
-                PickerItem::new(session.display_name(), detail, actions.len())
-                    .with_preview(terminal_preview(session))
-                    .dimmed(!session.live()),
-            );
-            actions.push(ListAction::Terminal(session.id()));
-        }
-        self.list_actions = actions;
-        self.list = Some(
-            ListPicker::new("Terminals", items)
-                .with_preview("Output")
-                .as_manager("show", "Tab", "actions"),
-        );
-        self.terminal_action_menu = None;
+        self.open_destination_list(super::DestinationScope::Terminals);
     }
 
     /// Freezes the session's output into an ordinary read-only buffer.
@@ -642,10 +588,6 @@ impl App {
             _ => crate::log_debug!("terminal", "terminal child exited"; "session" => id),
         }
         let was_active = self.active_terminal() == Some(id);
-        let manager_open = self
-            .list
-            .as_ref()
-            .is_some_and(|list| list.title == "Terminals");
         for pane in self.panes.values_mut() {
             if pane.terminal == Some(id) {
                 pane.terminal = None;
@@ -657,24 +599,8 @@ impl App {
             }
             self.mode = Mode::Normal;
         }
-        if manager_open {
-            let filter = self
-                .list
-                .as_ref()
-                .map(|list| list.filter.clone())
-                .unwrap_or_default();
-            let selected = match self.selected_list_action() {
-                Some(ListAction::Terminal(id)) => Some(id),
-                _ => None,
-            };
-            let menu = self.terminal_action_menu.take();
-            self.open_terminal_list();
-            if let Some(list) = &mut self.list {
-                list.filter = filter;
-                list.selected = selected.and_then(|id| list.visible_indices().iter().position(|index| matches!(self.list_actions.get(list.items[*index].index), Some(ListAction::Terminal(found)) if *found == id))).unwrap_or(0);
-            }
-            self.terminal_action_menu = menu;
-        }
+        // An open destination list says the terminal exited, in place.
+        self.refresh_navigator();
         self.note_terminal_finder_change(id);
         self.status(message);
     }

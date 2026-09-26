@@ -1274,6 +1274,8 @@ impl WorkspaceHost {
                         muted: Vec::new(),
                         emphasis: Vec::new(),
                         detail_emphasis: Vec::new(),
+                        tints: Vec::new(),
+                        elide_from: None,
                     }
                 })
                 .collect::<Vec<_>>();

@@ -524,8 +524,14 @@ buffers and terminals`, with workspace/session context. It holds only already
 open resource identities, including scratch and retained special buffers and
 running terminals. Its opening recent-activation order remains stable until
 closed. Terminal output does not reorder it, and the picker does not extend
-special-buffer lifetime. Structural labels and `[+]`, `[STALE]`, `[RO]` follow
-pane vocabulary; transient pane references describe visibility.
+special-buffer lifetime. The buffer list (`Space b b`) and the terminal list
+(`Space t t`, which also holds exited terminals) are the same list over a
+narrower scope. All three draw `*` for a destination some pane shows, a TYPE
+cell coloured by kind from the `destination_*` theme keys, a NAME that is
+shortened in the middle when too long, and a pinned STATE run holding `[+]`,
+`[STALE]`, `[RO]`, `exited`, `unread` and `bell`; they carry a key legend and
+open with the preview shown. A terminal's ID appears in its pane title as
+`[terminal #<id>]`.
 
 Enter focuses an already-visible destination, preferring the active pane then
 the most recently activated pane. Otherwise it uses the active pane. A Tab
