@@ -457,7 +457,7 @@ pub enum TextRunKind {
         directory: bool,
         /// This run contains display-only markers for buffer whitespace.
         whitespace: bool,
-        /// Which of the changed-file list's two counts this run stands in, so
+        /// Which of a Git list's two line counts this run stands in, so
         /// a frontend can paint it in the palette Git changes already use.
         count: Option<CountKind>,
     },
@@ -1292,10 +1292,12 @@ impl App {
         } else {
             false
         };
-        // The changed-file list's counts are read from the projection that
+        // Git line counts are read from the projection that
         // wrote them rather than found again in the row: the padding that
         // aligns the column is what would have to be parsed back out.
-        let counts = self.git_status_count_columns(prepared.buffer_id, context.row);
+        let counts = self
+            .git_status_count_columns(prepared.buffer_id, context.row)
+            .or_else(|| self.git_comparison_count_columns(prepared.buffer_id, context.row));
 
         for (col, character) in buffer
             .text()

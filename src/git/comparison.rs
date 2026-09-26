@@ -2,7 +2,7 @@
 
 //! Immutable committed comparisons and their searchable file-list projection.
 
-use super::{FileComparison, LineStats};
+use super::{CountColumns, FileComparison, LineStats};
 use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
 
@@ -54,6 +54,12 @@ impl RevisionComparison {
 
     /// Every projection has four header rows, so resizing preserves row identity.
     pub fn render(&self, width: usize) -> String {
+        self.render_with_counts(width).0
+    }
+
+    /// Count ranges are recorded with the text, in character columns rather
+    /// than display cells or bytes, so paths never need to be parsed for signs.
+    pub(crate) fn render_with_counts(&self, width: usize) -> (String, Vec<Option<CountColumns>>) {
         let names: Vec<_> = self
             .files
             .iter()
@@ -88,15 +94,16 @@ impl RevisionComparison {
             format!("{text}{}", " ".repeat(columns.saturating_sub(text.width())))
         };
         let mut text = format!(
-            "Comparing {} ({}) → {} ({}) · committed changes\n{} files · +{} -{}\n\n",
+            "Comparing {} ({}) → {} ({}) · committed changes\n",
             self.left_label,
             &self.left_oid[..8],
             self.right_label,
-            &self.right_oid[..8],
-            self.files.len(),
-            total.added,
-            total.removed
+            &self.right_oid[..8]
         );
+        let mut summary = format!("{} files · ", self.files.len());
+        let mut counts = vec![None, Some(append_counts(&mut summary, total)), None, None];
+        text.push_str(&summary);
+        text.push_str("\n\n");
         if wide {
             text.push_str(&format!(
                 "{}  {}  Changes\n",
@@ -107,44 +114,60 @@ impl RevisionComparison {
             text.push_str("File · Changes\n");
         }
         for (file, (left, right)) in self.files.iter().zip(names) {
-            let changes = match file.stats {
-                None => "binary".into(),
-                Some(LineStats {
-                    added: 0,
-                    removed: 0,
-                }) if file.left.is_none() => "added (empty)".into(),
-                Some(LineStats {
-                    added: 0,
-                    removed: 0,
-                }) if file.right.is_none() => "deleted (empty)".into(),
-                Some(LineStats {
-                    added: 0,
-                    removed: 0,
-                }) if file.left_mode != file.right_mode => "mode changed".into(),
-                Some(LineStats {
-                    added: 0,
-                    removed: 0,
-                }) => "renamed".into(),
-                Some(count) => format!("+{} -{}", count.added, count.removed),
-            };
-            if wide {
-                text.push_str(&format!(
-                    "{}  {}  {changes}\n",
-                    pad(&left, left_width),
-                    pad(&right, right_width)
-                ));
+            let mut row = if wide {
+                format!("{}  {}  ", pad(&left, left_width), pad(&right, right_width))
+            } else if left == right {
+                format!("{left}  ")
             } else {
-                let name = if left == right {
-                    left
-                } else {
-                    format!("{left} → {right}")
-                };
-                text.push_str(&format!("{name}  {changes}\n"));
-            }
+                format!("{left} → {right}  ")
+            };
+            let label = match file.stats {
+                None => "binary",
+                Some(LineStats {
+                    added: 0,
+                    removed: 0,
+                }) if file.left.is_none() => "added (empty)",
+                Some(LineStats {
+                    added: 0,
+                    removed: 0,
+                }) if file.right.is_none() => "deleted (empty)",
+                Some(LineStats {
+                    added: 0,
+                    removed: 0,
+                }) if file.left_mode != file.right_mode => "mode changed",
+                Some(LineStats {
+                    added: 0,
+                    removed: 0,
+                }) => "renamed",
+                Some(count) => {
+                    counts.push(Some(append_counts(&mut row, count)));
+                    text.push_str(&row);
+                    text.push('\n');
+                    continue;
+                }
+            };
+            counts.push(None);
+            text.push_str(&row);
+            text.push_str(label);
+            text.push('\n');
         }
         if self.files.is_empty() {
             text.push_str("No committed differences.\n");
         }
-        text
+        (text, counts)
+    }
+}
+
+fn append_counts(row: &mut String, stats: LineStats) -> CountColumns {
+    let start = row.chars().count();
+    let added = format!("+{}", stats.added);
+    let removed = format!("-{}", stats.removed);
+    let end = start + added.len();
+    row.push_str(&added);
+    row.push(' ');
+    row.push_str(&removed);
+    CountColumns {
+        added: start..end,
+        removed: end + 1..end + 1 + removed.len(),
     }
 }

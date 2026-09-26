@@ -92,6 +92,170 @@ fn geometry(width: u16) -> FrameGeometry {
     }
 }
 
+fn assert_count_runs(app: &mut App, width: u16, expected: &[(usize, &str, &str)]) {
+    use crate::{
+        git::CountKind,
+        snapshot::{SnapshotRow, TextRunKind},
+    };
+    let prepared = app.prepare_view(geometry(width));
+    let snapshot = app.snapshot(&prepared);
+    let mut actual = std::collections::BTreeMap::<usize, (String, String)>::new();
+    for row in &snapshot.pane(app.active_pane).unwrap().rows {
+        let SnapshotRow::Text(row) = row else {
+            continue;
+        };
+        for run in &row.runs {
+            if let TextRunKind::Text {
+                count: Some(kind), ..
+            } = run.kind
+            {
+                let counts = actual.entry(row.document_row).or_default();
+                match kind {
+                    CountKind::Added => counts.0.push_str(&run.text),
+                    CountKind::Removed => counts.1.push_str(&run.text),
+                }
+            }
+        }
+    }
+    assert_eq!(
+        actual,
+        expected
+            .iter()
+            .map(|(row, added, removed)| { (*row, (added.to_string(), removed.to_string())) })
+            .collect()
+    );
+}
+
+#[test]
+fn committed_comparison_count_colors_follow_branch_and_worktree_refresh() {
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    let fixture = Fixture::new();
+    let linked = fixture.0.join("linked");
+    fixture.git(&["worktree", "add", linked.to_str().unwrap(), "feature"]);
+    for source in ['b', 'w'] {
+        let mut app = fixture.app();
+        app.theme.change_added = crate::config::Color::Green;
+        app.theme.change_removed = crate::config::Color::Red;
+        for ch in [' ', 'g', source] {
+            press(&mut app, ch);
+        }
+        row(&mut app, "feature");
+        context_action(&mut app, 'd');
+        for width in [120, 35, 120] {
+            assert_count_runs(
+                &mut app,
+                width,
+                &[(1, "+2", "-2"), (4, "+1", "-1"), (5, "+1", "-1")],
+            );
+            let mut terminal = Terminal::new(TestBackend::new(width, 25)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let prepared = app.prepare_view(crate::ui::frame_geometry(frame.area()));
+                    let snapshot = app.snapshot(&prepared);
+                    crate::ui::render_exact_colors_for_test(
+                        frame,
+                        &app,
+                        &snapshot,
+                        &crate::key_hints::KeyHintState::default(),
+                    );
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let mut counted_rows = 0;
+            for y in 0..25 {
+                let line: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+                for counts in ["+2 -2", "+1 -1"] {
+                    if let Some(start) = line.find(counts) {
+                        let x = line[..start].chars().count() as u16;
+                        for offset in [0, 1] {
+                            assert_eq!(buffer[(x + offset, y)].fg, Color::Green);
+                        }
+                        for offset in [3, 4] {
+                            assert_eq!(buffer[(x + offset, y)].fg, Color::Red);
+                        }
+                        assert_ne!(buffer[(x + 2, y)].fg, Color::Green);
+                        assert_ne!(buffer[(x + 2, y)].fg, Color::Red);
+                        counted_rows += 1;
+                    }
+                }
+            }
+            assert_eq!(counted_rows, 3);
+        }
+        fs::write(linked.join("a.txt"), "feature\nextra\n").unwrap();
+        fixture.git(&["-C", linked.to_str().unwrap(), "commit", "-qam", "extra"]);
+        app.execute_command("git-refresh").unwrap();
+        assert_count_runs(
+            &mut app,
+            120,
+            &[(1, "+3", "-2"), (4, "+2", "-1"), (5, "+1", "-1")],
+        );
+        fixture.git(&["-C", linked.to_str().unwrap(), "reset", "--hard", "HEAD~1"]);
+    }
+}
+
+#[test]
+fn committed_comparison_count_ranges_exclude_paths_labels_and_metadata() {
+    use crate::git::{ComparisonTarget, LineStats, RevisionComparison, RevisionFile};
+    let fixture = Fixture::new();
+    let mut app = fixture.app();
+    let file = |left: Option<&str>, right: Option<&str>, stats| RevisionFile {
+        left: left.map(PathBuf::from),
+        right: right.map(PathBuf::from),
+        left_object: "a".repeat(40),
+        right_object: "b".repeat(40),
+        left_mode: "100644".into(),
+        right_mode: "100644".into(),
+        stats,
+    };
+    let mut comparison = RevisionComparison {
+        target: ComparisonTarget::Branch {
+            reference: "refs/heads/feature".into(),
+            label: "feature".into(),
+        },
+        left_label: "main+22".into(),
+        right_label: "feature-33".into(),
+        left_oid: "a".repeat(40),
+        right_oid: "b".repeat(40),
+        files: vec![
+            file(
+                Some("界é+34"),
+                Some("改e\u{301}-16"),
+                Some(LineStats::new(3032, 810)),
+            ),
+            file(None, Some("added+1"), Some(LineStats::new(34, 0))),
+            file(Some("removed-1"), None, Some(LineStats::new(0, 16))),
+            file(Some("binary+1"), Some("binary+1"), None),
+            file(None, Some("empty+1"), Some(LineStats::default())),
+            file(Some("empty-1"), None, Some(LineStats::default())),
+            file(Some("old+1"), Some("new-1"), Some(LineStats::default())),
+            file(Some("mode+1"), Some("mode+1"), Some(LineStats::default())),
+        ],
+    };
+    comparison.files[7].right_mode = "100755".into();
+    let repository = crate::git::Repository::new(&fixture.0);
+    app.show_revision_comparison(repository.clone(), comparison.clone());
+    for width in [160, 42, 160] {
+        assert_count_runs(
+            &mut app,
+            width,
+            &[
+                (1, "+3066", "-826"),
+                (4, "+3032", "-810"),
+                (5, "+34", "-0"),
+                (6, "+0", "-16"),
+            ],
+        );
+    }
+    comparison.files.clear();
+    app.show_revision_comparison(repository, comparison);
+    assert_count_runs(&mut app, 120, &[(1, "+0", "-0")]);
+    assert!(
+        app.active_buffer()
+            .to_string()
+            .contains("No committed differences.")
+    );
+}
+
 #[test]
 fn committed_comparison_keys_restore_file_and_scroll_from_patch_and_both_split_sides() {
     let fixture = Fixture::new();

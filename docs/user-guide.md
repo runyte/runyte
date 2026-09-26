@@ -3085,7 +3085,9 @@ a worktree without an available commit cannot be compared. No fetch or checkout
 is performed.
 
 The heading names both sides and their captured commit IDs. Each row shows the
-path on each side and added/removed line counts. Renames show both names; `—`
+path on each side and added/removed line counts. The summary totals and per-file
+counts use the theme's `change_added` and `change_removed` colors: green and red
+in built-in themes. Only the signed counts are colored. Renames show both names; `—`
 marks an absent side. Narrow panes combine the two paths into one column.
 Binary changes and changes only to file metadata are labelled, and empty added
 or deleted files remain visible. Identical tips open an empty comparison with

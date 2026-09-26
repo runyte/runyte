@@ -16,9 +16,24 @@ struct ComparisonDocument {
     repository: Repository,
     comparison: RevisionComparison,
     width: usize,
+    counts: Vec<Option<crate::git::CountColumns>>,
 }
 
 impl App {
+    pub(crate) fn git_comparison_count_columns(
+        &self,
+        buffer: usize,
+        row: usize,
+    ) -> Option<&crate::git::CountColumns> {
+        self.git_state
+            .comparisons
+            .documents
+            .get(&buffer)?
+            .counts
+            .get(row)?
+            .as_ref()
+    }
+
     pub(super) fn open_revision_comparison(&mut self) {
         let Some(repository) = self.git.repository().cloned() else {
             self.action_failed("this project is not in a Git repository");
@@ -108,7 +123,7 @@ impl App {
         comparison: RevisionComparison,
     ) {
         let width = self.comparison_width();
-        let text = comparison.render(width);
+        let (text, counts) = comparison.render_with_counts(width);
         let identity = GeneratedViewIdentity::GitComparison {
             repository: repository.workdir().to_path_buf(),
             target: comparison.target.clone(),
@@ -138,6 +153,7 @@ impl App {
                 repository,
                 comparison,
                 width,
+                counts,
             },
         );
         if !self.active().saved_view_positions.contains_key(&buffer) {
@@ -429,7 +445,8 @@ impl App {
             return;
         }
         document.width = width;
-        let text = document.comparison.render(width);
+        let (text, counts) = document.comparison.render_with_counts(width);
+        document.counts = counts;
         self.reproject_revision_list(buffer, &text, None);
     }
 }

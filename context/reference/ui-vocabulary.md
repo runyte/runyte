@@ -267,6 +267,8 @@ or worktree row's `Tab d` action. It lists changed paths at two captured commits
 with current on the left and selected on the right. Wide panes show both paths
 and a changes column; narrow panes combine paths, with renames shown as
 `old → new`. Its rows retain typed file identities independently of the text.
+The summary totals and per-file signed counts use `change_added` and
+`change_removed`; paths and other labels retain their usual colors.
 Patches and temporary paired splits read those same commits, and closing them
 returns to the file list's selected row and scroll position. Explicit refresh
 captures new tips. Committed patches and split sides have a separate binding
