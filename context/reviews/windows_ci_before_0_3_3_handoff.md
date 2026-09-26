@@ -4,6 +4,40 @@ Recorded: 2026-09-26. This is a handoff for work on a native Windows machine.
 Remove it once Windows CI is green on `dev` and 0.3.3 is released; anything
 durable belongs in `issues/resolved/` or a `reference/` register instead.
 
+## Windows verification
+
+The Windows CI blocker is cleared at `39c8d8c` on `dev`.
+[CI run 36255051583, Native Windows](https://github.com/runyte/runyte/actions/runs/36255051583/job/108440216289)
+passed on 2026-09-26 with all three original fixes below. A separate native
+run then exposed the intermittent language-server fixture failure described
+in section 4. The passing CI job includes:
+
+- formatting, warnings-as-errors all-target Clippy, and the full ordinary
+  native editing, Git and ConPTY suite;
+- successful persistent-host replacement, refusal without breakaway policy,
+  and complete save contents after acknowledgement;
+- the Python context adapter checks, the real native-host MCP bridge, and
+  the public Windows context round trip;
+- all three isolated native clipboard acceptances; and
+- rust-analyzer provisioning and the real permission, diagnostics, edits,
+  restart and cleanup acceptance.
+
+This verifies the previously skipped language-server steps as well as the
+original failures. It does not publish 0.3.3 or settle the `main` history
+decision below. The handoff remains until the release is complete.
+
+Local verification uses Rust and rust-analyzer 1.97.1 on
+`x86_64-pc-windows-msvc`, with `CARGO_BUILD_JOBS=1` and
+`RUST_TEST_THREADS=2` as in CI. Formatting, all-target Clippy, the ordinary
+suite, restart/save acceptances, both Rust context-bridge acceptances, and the
+Python checks pass. The fixed language-server acceptance also passed ten
+consecutive runs. Python 3.13.7 was provisioned in temporary storage for the
+adapter checks. The three local clipboard acceptances were refused when
+creating their private window stations (`Access is denied`, OS error 5):
+the local process lacks administrator privileges. Their successful evidence
+is the required CI step above; the fixtures were not weakened or redirected
+to a shared clipboard.
+
 ## Release state
 
 Version 0.3.3 is **not** published. `cargo publish` ran only with `--dry-run`,
@@ -34,10 +68,11 @@ including the three test fixes below only if they turn out to affect users
 ## What failed on Windows
 
 `Native Windows` was already red on `dev` from `42a6f36` onward; the last green
-Windows run on `dev` is at `64ac2ca`. Every Linux and macOS job passed at
-`addb538`. The failures fell into three independent groups. Each now has a
-fix on `dev` that passes `cargo fmt --check`, `cargo clippy --all-targets -- -D
-warnings` and `cargo test` on Linux, but **none has been run on Windows**.
+Windows run before these fixes was at `64ac2ca`. Every Linux and macOS job
+passed at `addb538`. The failures fell into three independent groups. Each had a
+fix on `dev` that passed `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings` and `cargo test` on Linux when this handoff was written. Their native
+Windows verification is now recorded above.
 
 ### 1. Lint: a Unix-only test helper was dead code
 
@@ -113,16 +148,38 @@ this Windows-only fixture still waited for `Enter visit ·`.
 
 Fix: `0c2fcf6` (`Wait for the session manager's current title in the Windows
 visit fixture`) replaces the three occurrences with `Enter open ·`. This file
-does not compile on Linux, so the change has not been built at all.
+does not compile on Linux; its build and execution are now verified by the
+passing native Windows job above.
 
-## Steps that never ran
+### 4. Native language-server formatting raced document processing
+
+The local explicit
+`real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup`
+acceptance in `tests/lsp_windows_acceptance.rs` failed in its reexecuted
+`native_lsp_fixture` with:
+
+```text
+formatting failed: Failed("formatting: content modified")
+```
+
+`manager` sent `LspCommand::Change` for version 2 and immediately requested
+formatting. Queue order alone did not establish that rust-analyzer had
+processed the changed document before starting the formatting request.
+The fixture now waits for `LspEvent::Diagnostics` with version 2 and the
+same canonical document path before requesting formatting. The existing
+bounded event deadline still fails if the server never acknowledges that
+version; no sleep or retry masks a formatting failure. The real-server
+acceptance continues to verify returned edits, restart and revocation cleanup.
+This changes only the Windows acceptance fixture, not editor behavior.
+
+## Steps skipped in the failing runs
 
 The `Native Windows` job stops after `Test native editing, Git and ConPTY`
 fails. In the failing runs the steps `Provision the required native language
 server` and `Accept native language-server approval and lifecycle` were
-skipped, so those acceptances are unverified for everything since `64ac2ca`.
+skipped. Both now pass at `39c8d8c` in the job linked above.
 
-## To do on Windows
+## Reproducing Windows verification
 
 From the `dev` worktree at `0c2fcf6` or later:
 
@@ -132,8 +189,16 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked --no-fail-fast
 ```
 
-then the ignored acceptances the workflow runs explicitly, as listed in the
+Then run the ignored acceptances the workflow runs explicitly, as listed in the
 `Native Windows` job of `.github/workflows/ci.yml`, including the language
-server provisioning and acceptance steps. Fix whatever fails, push to `dev`,
-and confirm a green `Native Windows` job on GitHub for the exact head commit
-before returning to the release decision above.
+server provisioning and acceptance steps. A restricted sandbox can refuse the
+private named-pipe connections these tests require; use a normal native
+process environment. The isolated clipboard fixtures additionally require
+administrator privileges and must never fall back to the user's clipboard.
+
+## Remaining release work
+
+Confirm the required CI results for the final `dev` head, then obtain the
+maintainer's decision about `main` above and follow
+`context/reference/releasing.md` for the release candidate. A green Windows
+job on `dev` does not make the failed `addb538` release candidate publishable.

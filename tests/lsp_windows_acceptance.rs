@@ -257,6 +257,18 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
             text: "fn main(){let value=1;println!(\"{value}\");}\n".into(),
         }],
     }));
+    // didChange is queued before the request, but rust-analyzer can still be
+    // applying it when formatting starts and return ContentModified. A
+    // diagnostic publication for this version proves it has processed the edit.
+    event(&mut events, |event| match event {
+        LspEvent::Diagnostics {
+            path: returned,
+            version: Some(2),
+            ..
+        } if returned.canonicalize().ok().as_ref() == Some(&path) => Some(()),
+        _ => None,
+    })
+    .await;
     assert!(handle.send(LspCommand::Request {
         token: 1,
         language: "rust".into(),
