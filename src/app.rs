@@ -289,6 +289,7 @@ mod presentation;
 mod prompt_editing;
 mod search_history;
 mod search_preview;
+mod selection_history;
 mod settings_workflows;
 mod syntax_workflows;
 mod terminal_workflows;
@@ -498,6 +499,7 @@ pub struct Pane {
     /// other buffer must not reveal a terminal nobody asked for.
     covered_terminal: Option<(usize, TerminalId)>,
     pub selection: Selection,
+    selection_history: BTreeMap<usize, selection_history::History>,
     markdown_origin: Option<MarkdownOrigin>,
     /// The model used by the operation that most recently produced this
     /// selection. This is provenance, not a coordinate witness: two different
@@ -551,6 +553,7 @@ impl Pane {
             terminal: None,
             covered_terminal: None,
             selection: Selection::point(0),
+            selection_history: BTreeMap::new(),
             markdown_origin: None,
             selection_semantics: SelectionSemantics::Runyte,
             selection_revision: 0,
@@ -3098,6 +3101,10 @@ pub struct App {
     /// ends. Unlike `v`, a line selection is transient: it survives only
     /// consecutive `x`/`X` presses, and any other command drops it.
     line_select: Option<Mode>,
+    selection_action_depth: usize,
+    selection_history_epoch: u64,
+    selection_drag_origin: Option<selection_history::Origin>,
+    selection_prompt_origin: Option<selection_history::PromptOrigin>,
     pub(crate) pipe: pipe::State,
     pub(crate) plugins: plugin_workflows::Plugins,
     keymap: Arc<Keymap>,
@@ -3601,6 +3608,10 @@ impl App {
             macro_replay: None,
             jump: None,
             line_select: None,
+            selection_action_depth: 0,
+            selection_history_epoch: 0,
+            selection_drag_origin: None,
+            selection_prompt_origin: None,
             keymap,
             pipe: Default::default(),
             plugins: Default::default(),

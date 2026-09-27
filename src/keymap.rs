@@ -1159,6 +1159,18 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('r'), Command::ReplaceChar),
         modal(Key::char('R'), Command::EnterReplaceMode),
         modal(Key::char('~'), Command::ToggleCase),
+        modal(Key::alt('u'), Command::SelectionUndo),
+        modal(Key::alt('U'), Command::SelectionRedo),
+        primary_modal(
+            [Key::char(' '), Key::char('s'), Key::char('u')],
+            Command::SelectionUndo,
+        )
+        .with_alias(Key::alt('u')),
+        primary_modal(
+            [Key::char(' '), Key::char('s'), Key::char('U')],
+            Command::SelectionRedo,
+        )
+        .with_alias(Key::alt('U')),
         modal(Key::char('u'), Command::Undo),
         modal(Key::char('U'), Command::Redo),
         modal(Key::char('y'), Command::Yank),

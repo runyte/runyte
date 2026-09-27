@@ -2018,6 +2018,7 @@ context; scoped explorer keys are documented under
 | `>` / `<` | Indent / unindent |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
+| `Alt-u` / `Alt-U`; `Space s u` / `Space s U` | Undo / redo selection changes, back to the last text edit |
 | `s` / `/` | Search with an escaped literal, ignoring case / with a regular expression |
 | `n` / `N` | Step to the next / previous match |
 | `*` | Select every occurrence of the word or selection under the caret |
@@ -2034,6 +2035,22 @@ context; scoped explorer keys are documented under
 | `mm` | Jump to the matching bracket |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
+
+`Alt-u` (`:selection-undo`) recovers a selection lost to a motion, Escape,
+collapse, or removal of extra cursors. `Alt-U` (`Alt-Shift-u`,
+`:selection-redo`) reapplies that selection change. The same commands live on
+`Space s u` and `Space s U`. They restore every range, its direction, the primary
+range, and selection mode, including the whole-line behavior of `x`/`X`.
+They never change text. A counted motion, accepted search, or mouse drag is one
+step; cancelled search previews add none. A new selection change clears redo.
+
+History belongs to each pane and buffer independently, works in read-only
+buffers, and survives switching buffers. Any text change, including ordinary
+undo/redo or an edit in another pane, starts a new history. Restoring a selection
+never enters Insert/Replace mode or reopens a prompt. Up to 128 states and 4,096
+total ranges are retained
+per history, for up to 32 buffers per pane; an oversized selection ends that
+history. Terminal review is not supported by these commands.
 
 `p` reads the selection the same way `d` and `c` do. With a bare caret it
 pastes after the caret, as it always has; with a range that holds text it

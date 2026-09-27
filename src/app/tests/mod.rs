@@ -210,6 +210,7 @@ mod presentation_and_settings;
 mod prompt_input;
 mod provider_documents;
 mod search_and_pickers;
+mod selection_history;
 mod session_navigation;
 mod terminal_previews;
 mod tutorial;

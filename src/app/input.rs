@@ -704,6 +704,10 @@ impl App {
     }
 
     fn handle_input_inner(&mut self, input: InputEvent, replaying: bool) -> Result<()> {
+        self.with_selection_action(|app| app.handle_input_action(input, replaying))
+    }
+
+    fn handle_input_action(&mut self, input: InputEvent, replaying: bool) -> Result<()> {
         // A selected-line request belongs to the exact interaction state that
         // produced it. Later keyboard or text intent makes that selection
         // stale even when it did not edit the buffer.
@@ -955,6 +959,7 @@ impl App {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 };
+                self.selection_drag_origin = self.capture_selection_origin();
                 let previous_mode = self.mode;
                 let anchor = if extend {
                     self.pointer_anchor(pane_id)
@@ -1088,7 +1093,9 @@ impl App {
                 }
                 None => {}
             },
-            PointerEventKind::Up(_) => self.pointer_drag = None,
+            PointerEventKind::Up(_) => {
+                self.cancel_pointer_drag();
+            }
             PointerEventKind::ScrollUp | PointerEventKind::ScrollDown => {
                 let Some(pane) = pointer_pane(view, event.column, event.row) else {
                     return Ok(PointerOutcome::Changed);
@@ -3953,6 +3960,10 @@ impl App {
     }
 
     pub(super) fn execute_editor_command(&mut self, command: EditorCommand) -> Result<()> {
+        self.with_selection_action(|app| app.execute_editor_command_action(command))
+    }
+
+    fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
         if let Some(reason) = CommandId::Editor(command).platform_unavailable() {
             self.mark_unavailable(reason);
@@ -4001,8 +4012,13 @@ impl App {
         // A line selection lives only for as long as `x`/`X` keep arriving.
         // Anything else ends it and hands the mode back, so `j` after `x` is a
         // plain motion rather than an extension.
-        if !matches!(command, Command::SelectLine | Command::SelectLineUp)
-            && let Some(mode) = self.line_select.take()
+        if !matches!(
+            command,
+            Command::SelectLine
+                | Command::SelectLineUp
+                | Command::SelectionUndo
+                | Command::SelectionRedo
+        ) && let Some(mode) = self.line_select.take()
         {
             self.mode = mode;
         }
@@ -4073,6 +4089,8 @@ impl App {
             Command::OpenLineBelow => self.open_line(false),
             Command::OpenLineAbove => self.open_line(true),
             Command::ToggleCase => self.toggle_case(),
+            Command::SelectionUndo => self.restore_selection_history(false),
+            Command::SelectionRedo => self.restore_selection_history(true),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
             Command::Yank => self.yank(transient_line_selection),
@@ -4521,7 +4539,7 @@ impl App {
                         return Ok(());
                     }
                     if self.persist_selected_setting(setting, value) {
-                        self.close_prompt();
+                        self.finish_prompt();
                     }
                     return Ok(());
                 }
@@ -4541,7 +4559,7 @@ impl App {
                 // Taken so closing does not scroll back to where the prompt
                 // opened: an accepted search keeps the view it previewed.
                 let search_preview = self.take_search_preview();
-                self.close_prompt();
+                self.finish_prompt();
                 if kind == PromptKind::ExternalProgram {
                     if let Some(target) = target {
                         self.open_externally(&target, value);
@@ -4923,6 +4941,11 @@ impl App {
     }
 
     pub(super) fn close_prompt(&mut self) {
+        self.cancel_selection_prompt();
+        self.finish_prompt();
+    }
+
+    fn finish_prompt(&mut self) {
         self.abandon_search_preview();
         self.prompt_input_error = None;
         #[cfg(any(unix, windows))]
@@ -5049,6 +5072,13 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.with_selection_action(|app| app.execute_selection_action(invocation))
+    }
+
+    fn execute_selection_action(
+        &mut self,
+        invocation: CommandInvocation,
+    ) -> Result<CommandOutcome> {
         self.plugins.foreground_generation += 1;
         self.sync_provider_reload();
         self.sync_provider_overwrite();

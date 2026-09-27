@@ -3702,6 +3702,7 @@ impl App {
         self.forget_revision_comparison(buffer);
         for pane in self.panes.values_mut() {
             pane.saved_view_positions.remove(&buffer);
+            pane.selection_history.remove(&buffer);
         }
         if let Some(path) = git_path
             && !self.buffers.iter().enumerate().any(|(candidate, entry)| {

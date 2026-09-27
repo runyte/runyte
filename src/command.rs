@@ -455,6 +455,8 @@ macro_rules! editor_commands {
                         | Self::PasteBefore
                         | Self::ClipboardPasteAfter
                         | Self::ClipboardPasteBefore
+                        | Self::SelectionUndo
+                        | Self::SelectionRedo
                         | Self::Undo
                         | Self::Redo
                         | Self::ReplayMacro
@@ -519,6 +521,8 @@ editor_commands! {
     OpenLineAbove => ("open-line-above", "Open a line above"),
     ReplaceChar => ("replace-char", "Replace selection with a character"),
     ToggleCase => ("toggle-case", "Switch case of the selection"),
+    SelectionUndo => ("selection-undo", "Undo the last selection change"),
+    SelectionRedo => ("selection-redo", "Redo the last selection change"),
     Undo => ("undo", "Undo the last change"),
     Redo => ("redo", "Redo the last change"),
     Yank => ("yank", "Yank the selection or character"),
@@ -1081,7 +1085,9 @@ impl EditorCommand {
             | Self::InsertLiteralTab
             | Self::CommitUndoCheckpoint
             | Self::ShellPipe => CommandCategory::Editing,
-            Self::EnterSelectMode
+            Self::SelectionUndo
+            | Self::SelectionRedo
+            | Self::EnterSelectMode
             | Self::SelectLine
             | Self::SelectLineUp
             | Self::SelectAll
@@ -1472,6 +1478,20 @@ use CommandId::{Colon as ColonId, Editor as EditorId};
 use EditorCommand as Editor;
 
 pub const COMMANDS: &[CommandSpec] = &[
+    editor_spec!(
+        Editor::SelectionUndo,
+        "selection-undo",
+        [],
+        "selection-undo",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::SelectionRedo,
+        "selection-redo",
+        [],
+        "selection-redo",
+        NoArguments
+    ),
     editor_spec!(
         Editor::OpenNavigator,
         "navigator",
@@ -2989,7 +3009,9 @@ fn invocation_from_parts(
                 Ok(CommandInvocation::help(HelpInvocation::Manual(topic)))
             }
             (
-                EditorCommand::ShowAbout
+                EditorCommand::SelectionUndo
+                | EditorCommand::SelectionRedo
+                | EditorCommand::ShowAbout
                 | EditorCommand::ToggleMarkdownRender
                 | EditorCommand::ToggleZen
                 | EditorCommand::ToggleFullscreen,

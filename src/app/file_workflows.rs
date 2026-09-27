@@ -1994,6 +1994,7 @@ impl App {
         // started. A split copies the current selection but starts its own
         // empty chain, avoiding coupling through the application-wide mode.
         pane.syntax_history.clear();
+        pane.selection_history.clear();
         // The new pane browses with an explorer of its own, so navigating in
         // one split cannot retarget the directory the other is showing. Until
         // it navigates it shares the view it was split from, which is what

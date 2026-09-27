@@ -196,3 +196,24 @@ fn mouse_autoscroll_skips_folds_and_keeps_other_panes_still() {
     assert_eq!(app.active_pane, 0);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn selection_history_groups_autoscroll_and_keyboard_cancelled_drag() {
+    let text = (0..40).map(|n| format!("line {n}\n")).collect::<String>();
+    let mut app = document(&text, false);
+    let before = app.active().selection.clone();
+    pointer(&mut app, PointerEventKind::Down(PointerButton::Left), 3);
+    pointer(&mut app, PointerEventKind::Drag(PointerButton::Left), 6);
+    assert!(tick(&mut app));
+    assert!(tick(&mut app));
+    let dragged = app.active().selection.clone();
+    // Keyboard input finishes the drag even without a mouse-up event.
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(app.active().selection, before);
+    assert!(!app.pointer_selection_drag_active());
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    assert_eq!(app.active().selection, dragged);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert!(app.status.contains("no earlier selection"));
+}
