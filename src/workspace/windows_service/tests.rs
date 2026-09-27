@@ -116,10 +116,13 @@ fn health() -> HostResponse {
 async fn answer(server: &mut LocalServer, health: HostResponse) {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut responses = None;
+        let mut answered = false;
         loop {
             match server.recv().await.unwrap() {
                 ServerEvent::Connected {
-                    responses: sender, ..
+                    id,
+                    responses: sender,
+                    ..
                 } => {
                     sender
                         .send(HostResponse::Welcome {
@@ -134,13 +137,24 @@ async fn answer(server: &mut LocalServer, health: HostResponse) {
                         })
                         .await
                         .unwrap();
-                    responses = Some(sender);
+                    responses = Some((id, sender));
                 }
                 ServerEvent::Request {
+                    id,
                     request: ClientRequest::Health,
-                    ..
                 } => {
-                    responses.as_ref().unwrap().send(health).await.unwrap();
+                    let (connected, sender) = responses.as_ref().unwrap();
+                    assert_eq!(id, *connected);
+                    assert!(!answered, "health fixture received a second request");
+                    sender.send(health.clone()).await.unwrap();
+                    answered = true;
+                    // A real host retains the response sender while the client
+                    // reads Health. Dropping it here closes the native pipe and
+                    // can race the client's pending request flush.
+                }
+                ServerEvent::Disconnected { id }
+                    if answered && responses.as_ref().is_some_and(|(peer, _)| *peer == id) =>
+                {
                     return;
                 }
                 ServerEvent::Disconnected { .. } => {}
@@ -150,6 +164,36 @@ async fn answer(server: &mut LocalServer, health: HostResponse) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn health_fixture_retains_the_connection_until_the_client_consumes_its_reply() {
+    let root = TestRuntimeRoot::new("native-health-fixture-lifetime").unwrap();
+    let layout = layout(&root, "project", "cache");
+    let (_, mut host) = server(&layout, "health");
+    let metadata = host.metadata().clone();
+    let mut answering = Box::pin(answer(&mut host, health()));
+    let client = tokio::select! {
+        _ = &mut answering => panic!("health fixture closed before its client finished"),
+        client = async {
+            let mut client = crate::workspace::windows_lifecycle::connect_control(&metadata)
+                .await.unwrap();
+            client.send(&ClientRequest::Health).await.unwrap();
+            assert!(matches!(client.recv().await.unwrap(), Some(HostResponse::Health { .. })));
+            client
+        } => client,
+    };
+    std::future::poll_fn(|cx| {
+        assert!(
+            answering.as_mut().poll(cx).is_pending(),
+            "fixture closed a retained client"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(client);
+    answering.await;
+    host.shutdown().await.unwrap();
 }
 
 async fn receive_while_answering_health(
@@ -781,7 +825,10 @@ async fn worktree_inspection_finds_a_ready_only_host_and_refuses_unreviewed_stop
     let WorkspaceEvent::WorktreePrepared { result, .. } = event else {
         panic!("ready-only host preparation returned the wrong event");
     };
-    assert!(matches!(*result, Err(error) if error.contains("changed after confirmation")));
+    assert!(
+        matches!(&*result, Err(error) if error.contains("changed after confirmation")),
+        "unexpected worktree preparation result: {result:?}"
+    );
     host.shutdown().await.unwrap();
     let (_, mut replacement) = server(&layout, "replacement");
     let (event, ()) = tokio::join!(
@@ -796,7 +843,10 @@ async fn worktree_inspection_finds_a_ready_only_host_and_refuses_unreviewed_stop
     let WorkspaceEvent::WorktreePrepared { result, .. } = event else {
         panic!("replacement host preparation returned the wrong event");
     };
-    assert!(matches!(*result, Err(error) if error.contains("changed after confirmation")));
+    assert!(
+        matches!(&*result, Err(error) if error.contains("changed after confirmation")),
+        "unexpected replacement preparation result: {result:?}"
+    );
     owner.shutdown().await.unwrap();
     replacement.shutdown().await.unwrap();
 }

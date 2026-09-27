@@ -35,6 +35,7 @@ struct Probe {
     remaining: AtomicUsize,
     written: AtomicUsize,
     write_polled: AtomicBool,
+    block_flush: AtomicBool,
     read_panic: AtomicBool,
     reader: AtomicWaker,
     writer: AtomicWaker,
@@ -107,6 +108,9 @@ impl AsyncWrite for ProbeStream {
         result
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
+        if self.probe.block_flush.load(Ordering::Acquire) {
+            return Poll::Pending;
+        }
         Pin::new(&mut self.stream).poll_flush(cx)
     }
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
@@ -420,6 +424,38 @@ async fn cancelled_and_failed_partial_sends_preserve_completion_before_and_durin
             assert!(proof.upgrade().is_none());
         }
     }
+}
+
+#[tokio::test]
+async fn switch_receipt_survives_eof_before_local_write_acknowledgement() {
+    let (mut client, mut host, probe, _proof) = pair().await;
+    probe.block_flush.store(true, Ordering::Release);
+    let request = ClientRequest::NativeSwitchCommit { receipt: 9 };
+    let mut encoded = serde_json::to_vec(&request).unwrap();
+    encoded.push(b'\n');
+    let mut sending = Box::pin(client.send(&request));
+    pending(&mut sending).await;
+    let mut received = vec![0; encoded.len()];
+    host.read_exact(&mut received).await.unwrap();
+    assert_eq!(received, encoded);
+    write_message(
+        &mut host,
+        &HostResponse::NativeSwitchCommitted { receipt: 9 },
+    )
+    .await
+    .unwrap();
+    drop(host);
+    let error = timeout(Duration::from_secs(5), sending)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("write acknowledgement lost"));
+    assert!(matches!(
+        client.recv().await.unwrap(),
+        Some(HostResponse::NativeSwitchCommitted { receipt: 9 })
+    ));
+    assert!(client.recv().await.unwrap().is_none());
+    assert!(client.send(&ClientRequest::Health).await.is_err());
 }
 
 #[tokio::test]

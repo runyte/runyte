@@ -90,11 +90,8 @@ enum HostEnd {
     ShuttingDown,
 }
 
-enum SwitchReceiptState {
-    Pending,
-    ParentCommitAccepted,
-    Complete,
-}
+#[path = "windows_frontend/switch.rs"]
+mod switch;
 
 #[derive(Clone, Copy)]
 struct WheelBatch {
@@ -379,7 +376,7 @@ async fn run_switching_session(
                         result.context("native workspace switch timed out acknowledging its first frame")??;
                     }
                 }
-                commit_switch(&mut attachment, receipt, switch_deadline).await?;
+                switch::complete(&mut attachment.client, receipt, true, switch_deadline).await?;
                 let previous = attachment.identity.clone();
                 history.retain(|entry| entry != &previous && entry != &destination.identity);
                 history.push_back(previous.clone());
@@ -960,35 +957,13 @@ fn ensure_candidate_identity(
     Ok(())
 }
 
-async fn abort_switch(
-    attachment: &mut Attachment,
-    receipt: u64,
-    deadline: tokio::time::Instant,
-) -> Result<()> {
-    tokio::time::timeout_at(deadline, async {
-        if send_or_exit(
-            &mut attachment.client,
-            &attachment.exit,
-            &ClientRequest::NativeSwitchAbort { receipt },
-        )
-        .await?
-        .ended()
-        {
-            bail!("source workspace host ended before switch abort")
-        }
-        await_switch_receipt(attachment, receipt, false, deadline).await
-    })
-    .await
-    .context("native switch abort exceeded its whole-operation deadline")?
-}
-
 async fn recover_switch_failure(
     attachment: &mut Attachment,
     receipt: u64,
     error: &anyhow::Error,
     deadline: tokio::time::Instant,
 ) -> Result<()> {
-    abort_switch(attachment, receipt, deadline).await?;
+    switch::complete(&mut attachment.client, receipt, false, deadline).await?;
     let message = format!("native session switch failed: {error:#}");
     tokio::time::timeout_at(deadline, async {
         if send_or_exit(
@@ -1006,106 +981,6 @@ async fn recover_switch_failure(
     .await
     .context("native switch recovery exceeded its whole-operation deadline")??;
     Ok(())
-}
-
-async fn commit_switch(
-    attachment: &mut Attachment,
-    receipt: u64,
-    deadline: tokio::time::Instant,
-) -> Result<()> {
-    if tokio::time::timeout_at(
-        deadline,
-        send_or_exit(
-            &mut attachment.client,
-            &attachment.exit,
-            &ClientRequest::NativeSwitchCommit { receipt },
-        ),
-    )
-    .await
-    .context("native switch commit exceeded its whole-operation deadline")??
-    .ended()
-    {
-        bail!("source workspace host ended before switch commit")
-    }
-    await_switch_receipt(attachment, receipt, true, deadline).await
-}
-
-async fn await_switch_receipt(
-    attachment: &mut Attachment,
-    receipt: u64,
-    committed: bool,
-    operation_deadline: tokio::time::Instant,
-) -> Result<()> {
-    let deadline = operation_deadline.min(tokio::time::Instant::now() + FINAL_REPLY_BUDGET);
-    loop {
-        let response = tokio::select! {
-            biased;
-            _ = attachment.exit.wait() => {
-                drain_after_host_exit(&mut attachment.client).await?;
-                bail!("source workspace host exited before switch acknowledgement")
-            }
-            response = tokio::time::timeout_at(deadline, attachment.client.recv()) => {
-                response.context("source workspace host did not acknowledge native switch")??
-            }
-        };
-        let Some(response) = response else {
-            bail!("source workspace host disconnected before switch acknowledgement")
-        };
-        match observe_switch_receipt(response, receipt, committed)? {
-            SwitchReceiptState::Pending => {}
-            SwitchReceiptState::ParentCommitAccepted => {
-                let outcome = tokio::time::timeout_at(
-                    deadline,
-                    send_or_exit(
-                        &mut attachment.client,
-                        &attachment.exit,
-                        &ClientRequest::NativeParentSwitchCommitObserved { receipt },
-                    ),
-                )
-                .await
-                .context("source frontend did not confirm parent switch commit")??;
-                if outcome.ended() {
-                    bail!("source workspace host ended before parent switch confirmation")
-                }
-                // The original frontend has now observed the source commit and
-                // confirmed it on that same connection. This is the one
-                // irreversible parent handoff point: a lost final source
-                // receipt cannot make this frontend abandon the already drawn,
-                // authenticated destination.
-                return Ok(());
-            }
-            SwitchReceiptState::Complete => return Ok(()),
-        }
-    }
-}
-
-fn observe_switch_receipt(
-    response: HostResponse,
-    receipt: u64,
-    committed: bool,
-) -> Result<SwitchReceiptState> {
-    match response {
-        HostResponse::NativeParentSwitchCommitAccepted { receipt: received }
-            if committed && received == receipt =>
-        {
-            Ok(SwitchReceiptState::ParentCommitAccepted)
-        }
-        HostResponse::NativeSwitchCommitted { receipt: received }
-            if committed && received == receipt =>
-        {
-            Ok(SwitchReceiptState::Complete)
-        }
-        HostResponse::NativeSwitchAborted { receipt: received }
-            if !committed && received == receipt =>
-        {
-            Ok(SwitchReceiptState::Complete)
-        }
-        HostResponse::WaitState { .. }
-        | HostResponse::Frame { .. }
-        | HostResponse::TerminalDamage { .. } => Ok(SwitchReceiptState::Pending),
-        HostResponse::Error { message } | HostResponse::Refused { message } => bail!(message),
-        response => bail!("unexpected native switch acknowledgement: {response:?}"),
-    }
 }
 
 async fn send_or_exit(
@@ -1431,47 +1306,5 @@ mod tests {
             PublicationKey::from_bytes([3; 32]),
         );
         assert!(ensure_candidate_identity(&candidate, &replacement).is_err());
-    }
-
-    #[test]
-    fn asynchronous_wait_state_may_precede_commit_or_abort_receipt() {
-        for committed in [false, true] {
-            let wait = HostResponse::WaitState {
-                token: serde_json::from_str("1").unwrap(),
-                status: runyte::protocol::WaitStatus::Pending {
-                    buffers: Vec::new(),
-                    remaining: Vec::new(),
-                },
-                interactive_attached: true,
-            };
-            assert!(matches!(
-                observe_switch_receipt(wait, 9, committed).unwrap(),
-                SwitchReceiptState::Pending
-            ));
-            let receipt = if committed {
-                HostResponse::NativeSwitchCommitted { receipt: 9 }
-            } else {
-                HostResponse::NativeSwitchAborted { receipt: 9 }
-            };
-            assert!(matches!(
-                observe_switch_receipt(receipt, 9, committed).unwrap(),
-                SwitchReceiptState::Complete
-            ));
-            if committed {
-                assert!(matches!(
-                    observe_switch_receipt(
-                        HostResponse::NativeParentSwitchCommitAccepted { receipt: 9 },
-                        9,
-                        true,
-                    )
-                    .unwrap(),
-                    SwitchReceiptState::ParentCommitAccepted
-                ));
-            }
-        }
-        assert!(
-            observe_switch_receipt(HostResponse::NativeSwitchCommitted { receipt: 8 }, 9, true,)
-                .is_err()
-        );
     }
 }
