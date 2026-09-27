@@ -60,6 +60,26 @@ Documentation: [user guide](docs/user-guide.md) ·
 Changelog: [GitHub Releases](https://github.com/runyte/runyte/releases) ·
 Community: [r/runyte](https://www.reddit.com/r/runyte/)
 
+## Screenshots
+
+![Runyte displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
+
+*Read Markdown as a page. Return to source. · nordbones-dark-soft*
+
+![Runyte Navigator listing files, an explorer, About, and running terminals, with a live terminal preview.](https://runyte.com/images/screenshots/navigator.webp?v=d0434c6aa20a)
+
+*Jump between open buffers and terminals. · terafox-soft*
+
+![Runyte comparing indexed and working-tree Rust source with highlighted changes in rosebones-dark.](https://runyte.com/images/screenshots/side-by-side-diff.webp?v=e74adc8b6b70)
+
+*Compare changes side by side. · rosebones-dark*
+
+![Claude Code and OpenAI Codex in adjacent Runyte terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
+
+*Claude and Codex. Two terminals, one workspace. · frappe*
+
+More examples are on the [screenshots page](https://runyte.com/screenshots/).
+
 ## Workspaces, panes, and navigation
 
 When you start Runyte in a directory, this directory becomes your **workspace**.
@@ -236,26 +256,6 @@ runyte -a /path/to/notes
 ```
 
 Run `runyte --help` for the complete command-line interface.
-
-## Screenshots
-
-![Runyte displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
-
-*Read Markdown as a page. Return to source. · nordbones-dark-soft*
-
-![Runyte Navigator listing files, an explorer, About, and running terminals, with a live terminal preview.](https://runyte.com/images/screenshots/navigator.webp?v=d0434c6aa20a)
-
-*Jump between open buffers and terminals. · terafox-soft*
-
-![Runyte comparing indexed and working-tree Rust source with highlighted changes in rosebones-dark.](https://runyte.com/images/screenshots/side-by-side-diff.webp?v=e74adc8b6b70)
-
-*Compare changes side by side. · rosebones-dark*
-
-![Claude Code and OpenAI Codex in adjacent Runyte terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
-
-*Claude and Codex. Two terminals, one workspace. · frappe*
-
-More examples are on the [screenshots page](https://runyte.com/screenshots/).
 
 ## Help
 
