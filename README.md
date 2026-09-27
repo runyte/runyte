@@ -7,47 +7,35 @@ https://github.com/user-attachments/assets/cc77a90c-25e5-4b15-a1c9-f5da7f3f12fb
 
 *[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, then find text across files and terminals.*
 
-**Runyte** is a terminal workspace built around a modal text editor.
+**Runyte** is a fast modal text editor for focused work. Everything is accessed
+through keybindings. No need to remember them though - every keybinding sequence
+shows hints with possible completions.
 
-It supports **standalone** and **persistent** modes.
-In standalone mode, when you exit Runyte you quit everything it was running.
-In persistent mode you can **detach and return later**, while a local host keeps
-your terminal processes and language servers running, and unsaved buffers open.
-Persistent mode is more powerful and preferred for focused work across
-many projects.
+Runyte can do quite a lot:
+- multipane text editing
+- terminal multiplexing
+- file browsing and management
+- Git
+- fuzzy finding across all files, terminals, and buffers
+- plugins written in any language
+- LSP support (code analysis, formatting, jumping between functions and variables)
+- Tree-sitter support for 31 languages
+- optional persistent mode (attach/detach while keeping all terminals running and unsaved buffers waiting)
+- word completion based on text from all open buffers
+- smart file path completion (searching from current buffer and from project dir)
 
-Runyte integrates text editing, a file explorer, and terminal multiplexing under one
-roof. It gives us some unique benefits:
-- **Fuzzy Finder** searches your entire project, including files, unsaved buffers,
-  and terminals
-- **Consistent keys** to move across buffers, files, terminals, plugins
-- With the optional [context bridge](bridges/runyte-context/README.md), agents can
-  read and write to buffers and terminals, including sending messages to other agents 🤯
-  (no worries - you still need to approve)
-- Press `Ctrl+g` in **Claude Code** or **Codex** running in a Runyte terminal to edit
-  your prompt in the same persistent Runyte session instead of starting a new one
-  (it requires setting [Runyte as their editor](docs/user-guide.md#session-and-destination-navigation))
+It also has some features making it more pleasant to work with AI agents.
+The following features help you manage multiple agents and keep up with their outputs:
+- Git worktree support and fast switching
+- optional [MCP bridge](bridges/runyte-context/README.md) for sharing buffer and terminal contents with agents
+- `Ctrl-g` in **Claude Code** or **Codex** attaches to the parent Runyte instance, instead of running a new one
+  (after [setting `EDITOR`](#post-install-setup))
+- **Markdown formatting** with `?`, including wide tables
+- **Image pasting** with `Ctrl-v` or `Alt-v`
+- Jump to any link with `gf` - works with file paths, Markdown links, web links (opens in a browser)
 
-If you work with agents a lot, you'll also appreciate our **Markdown formatting**
-with `?`, including wide tables and **image pasting** with
-`Ctrl+V` (or `Alt-v` when a terminal reserves `Ctrl+V`). Runyte saves images
-in the project's temporary cache and inserts a Markdown link into your document.
-
-Press `gf` on a file path in a buffer or terminal review to open it. Markdown
-link and image labels work too, and a link to a heading such as
-`[Setup](#setup)` or `[Setup](docs/guide.md#setup)` lands on that heading
-without a language server. Images and other binary files open in an external program you choose.
-Web links (`https://`, `http://`, and `www.`) open in your default browser,
-including links automatically wrapped across terminal review rows and links
-that agents such as Codex and Claude Code break across indented rows.
-
-Project goals:
-
-- Maximum performance and rock-solid stability.
-- Minimal UI. Maximum focus.
-- Coherent keybindings with constant feedback. Start a command sequence to
-  see the next keys.
-- One consistent theme for editing and terminals.
+Having all of these features in a single binary enables strong code optimization,
+consistent keybindings, consistent themes, and minimum configuration.
 
 Runyte runs on Linux, macOS, and Windows 11.
 
@@ -60,9 +48,11 @@ Runyte runs on Linux, macOS, and Windows 11.
 | x86-64 | Windows 11 | ✅ | ✅ | ✅ |
 | ARM64  | Windows 11 | ❌ | ❌ | ❌ |
 
-Automated tests run in CI on pushes to `main` and `dev`. Every prebuilt
-release is built natively on its own platform and checked to start. A few
-features are missing or work differently on Windows; see
+This project is well tested. Test coverage is about 92% of lines, and CI requires at least 89%.
+
+Every prebuilt release is built natively on its own platform and checked to start.
+
+A few features are missing or work differently on Windows; see
 [Windows support](docs/user-guide.md#windows-support).
 
 Website: [runyte.com](https://runyte.com) ·
@@ -70,29 +60,15 @@ Documentation: [user guide](docs/user-guide.md) ·
 Changelog: [GitHub Releases](https://github.com/runyte/runyte/releases) ·
 Community: [r/runyte](https://www.reddit.com/r/runyte/)
 
-## Features
+## Workspaces, panes, and navigation
 
-| Area | Built in Runyte |
-| --- | --- |
-| **Editing** | Multiple selections, registers, macros, structural syntax tools, transactional undo |
-| **Files** | Editable directory explorer with reviewed filesystem plans; unified file, buffer, and terminal search |
-| **Terminals** | Interactive PTYs, scrollback, modal review, splits, persistent processes |
-| **Git** | Status, diffs, staging, commits, pull, push, branches, worktrees, blame, stashes |
-| **Language** | 32 bundled Tree-sitter grammars and asynchronous LSP |
-| **Sessions** | Standalone or persistent workspaces, session switching, and `$EDITOR`-compatible `--wait` |
-| **Interface** | Registry-backed key hints and help, themes, settings, and notifications |
-| **Plugins** | Plugins written in any programming language, with native commands, views, and background work |
+When you start Runyte in a directory, this directory becomes your **workspace**.
+All panes, open buffers, and terminal sessions belong to this workspace.
 
-Language servers require permission per workspace; editing and Tree-sitter
-features remain available without them. Use `:lsp-trust` to change permission.
-
-See the [user guide](docs/user-guide.md) for complete behavior and limits.
-
-### Workspaces, panes, and navigation
-
-Everything belongs to a **workspace**: one project directory, its panes,
-open buffers, and terminal sessions. Panes show what you are working on;
-buffers hold editor content, and terminals run programs.
+You can start a process in a terminal pane, then hide it and use that
+pane for file editing. Use the **Navigator** (`Space n`) to browse open files
+and terminals. You can also use the fuzzy **Finder** (`Space f`) to search
+across the entire workspace including files, buffers, and terminals.
 
 ```text
 Workspace
@@ -104,55 +80,32 @@ Workspace
 +-- Other open buffers and terminals, ready to switch to
 ```
 
-A buffer can contain a file, scratch text, a directory listing, or a Git
-view. Several panes can show the same buffer. Each terminal has at most
-one visible pane, and hiding it leaves its program running.
+Use `Ctrl-w ...` commands to manage panes.
 
-| Where you want to go | Default keys |
-| --- | --- |
-| Another visible pane | `Ctrl-w h/j/k/l` |
-| An open buffer or running terminal | `Space n` — Navigator |
-| Any file, buffer, or terminal in this workspace | `Space f` — Finder; `Tab` switches between names and contents |
-| Text in the current buffer | `s` for literal search; `/` for regex |
-| Another persistent session | `Space Space` — session manager; `Shift-Left/Right` cycles running sessions |
+## Standalone and persistent modes
 
-`Ctrl-w n` also opens the Navigator while typing in a terminal. Finder searches
-the current workspace; the session manager takes you between workspaces.
+By default Runyte runs in standalone mode. When you quit, you stop its process.
+The standalone mode is suitable for quick file edits or when you want to work
+in a single workspace (directory).
 
-### Standalone and persistent modes
+Runyte also supports persistent mode in which you can attach/detach from
+your session or quickly switch to other workspaces. This mode is for you
+if you want to work on multiple projects or Git worktrees simultaneously.
+A local **host** keeps the workspace alive while a **client** provides the
+terminal interface.
 
-In standalone mode, the default, the workspace lives in one Runyte process.
-In persistent mode, a local **host** keeps the workspace alive while a
-**client** provides the terminal interface:
-
-```text
-Client (your Runyte screen)
-    |
-    +-- attach / detach --> Host
-                             |
-                             +-- Workspace
-                                 panes, buffers, terminals
-```
-
-Each host serves one workspace. Switching persistent sessions connects the
-client to another host. Persistent sessions survive detaching, but not a host
-shutdown or reboot.
-
-On Linux and macOS, add `-a` when starting Runyte to run in persistent mode:
+Start Runyte in persistent mode with:
 
 ```sh
 runyte -a  # attach to a session or start a new one
 ```
 
-Press `Space Space` to open the session manager in Runyte. On Windows, use
-`runyte -a` for direct attachment; a persistent editor can visit a selected
-running or stopped session through its manager, or use Explorer `Tab s` for
-the displayed directory. A standalone editor's manager can list, preview,
-rename and stop native sessions without attaching. In persistent mode,
-`Shift Left` and `Shift Right` cycle through running sessions.
+There are multiple ways to create a new session when you are already in Runyte:
+- `Space Space` to open the session manager
+- open the file explorer (`Space e`), navigate to another dir with `-` (go up) and `Enter` (go into) and press `Tab s` to start a new session in that dir
+- open the integrated terminal, navigate to another dir and type `runyte -a` again
 
-The [workspace and persistent-session guide](docs/user-guide.md#workspaces-and-modes)
-documents attachment, switching, lifecycle commands, and `--wait`.
+Switch between sessions with `Space Space`, or with `Shift-Left` and `Shift-Right`.
 
 ## Plugins
 
@@ -161,13 +114,11 @@ Official Runyte plugins are in development:
 - [**ru-time**](https://github.com/runyte/ru-time) — a task list and time tracker with task notes.
 - [**ru-dbviewer**](https://github.com/runyte/ru-dbviewer) — browse SQLite and PostgreSQL databases and run SQL from editor buffers.
 
-Plugins can be written in **any programming language**. Each runs as an
-explicitly enabled external process and exchanges bounded, newline-delimited
-JSON with Runyte over stdin/stdout. The asynchronous host handles registered
-commands, native views and input, background work, and capability grants.
-Type `::` to browse plugin commands.
-For example, ru-time offers `::time`, `::time-add`, and `::time-delete`.
-Plugins can also provide configurable keybindings through the editor's regular help and hints.
+Plugins can be written in **any programming language**. Each plugin is a
+separate program you enable. It talks to Runyte in JSON over stdin/stdout.
+
+Plugin commands start with `::` so they don't clash with built-in `:` commands,
+for example `::time` in ru-time.
 
 The repository includes examples to build on:
 
@@ -183,9 +134,7 @@ or the [application authoring guide](docs/plugins/authoring.md).
 
 ## Installation
 
-GitHub Releases provide archives and checksums for x86-64 and ARM64 Linux and
-macOS, and for x86-64 Windows. The executables are currently unsigned, and the
-macOS ones are not notarized.
+### Easy install
 
 Install or update to the latest release on Linux or macOS:
 
@@ -200,31 +149,73 @@ Linux requires glibc 2.35 or newer; Alpine/musl is unsupported. See the
 [installation guide](docs/user-guide.md#install-and-update-with-curl) for
 requirements, script review, version selection, and custom install locations.
 
+On Windows, download the x86-64 archive from
+[GitHub Releases](https://github.com/runyte/runyte/releases), or install through cargo.
+
+### Install through cargo
+
 Installing from crates.io requires Rust 1.88 or newer and a C compiler:
 
 ```sh
 cargo install runyte --locked
 ```
 
-For a shorter command, add `alias ru=runyte` to `~/.bashrc` or `~/.zshrc`,
-then restart your shell. In PowerShell, add `Set-Alias ru runyte` to your
-[`$PROFILE`](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_profiles)
-and start a new PowerShell session. These aliases also use the optional
-[shell wrappers](docs/user-guide.md#change-the-shell-directory-on-exit) when
-you have configured them.
-
-Git features require `git` on `PATH`; language servers are installed separately.
-Linux clipboard integration uses the first available of `wl-clipboard`, `xclip`,
-or `xsel`.
+### Build from source
 
 To build from a clone:
 
 ```sh
-./build.sh --release
+cargo build --release
 ./target/release/runyte README.md
 ```
 
-Useful starting points:
+### Post-install setup
+
+Git features require `git` on `PATH`; language servers are installed separately.
+
+The [shell directory guide](docs/user-guide.md#change-the-shell-directory-on-exit)
+explains how `:quit-here` and both wrappers work.
+
+#### Linux and macOS
+
+On Linux and macOS, it is advised to set the following in your `~/.bashrc` or `~/.zshrc`:
+```sh
+# To run it using ru instead of runyte ;)
+alias ru=runyte
+
+# To use runyte as the default editor, e.g. in git, Claude Code, Codex
+export EDITOR='runyte --wait'
+export VISUAL='runyte --wait'
+
+# To support :quit-here - quit to the directory selected in the file explorer
+function runyte() {
+    local runyte_tmp runyte_cwd runyte_exit
+    runyte_tmp="$(mktemp -t 'runyte-cwd.XXXXXX')" || return
+    command runyte --cwd-file "$runyte_tmp" "$@"
+    runyte_exit=$?
+    if [ "$runyte_exit" -eq 0 ] && IFS= read -r -d '' runyte_cwd < "$runyte_tmp"; then
+        [ -n "$runyte_cwd" ] && [ "$runyte_cwd" != "$PWD" ] && [ -d "$runyte_cwd" ] && builtin cd -- "$runyte_cwd"
+    fi
+    command rm -f -- "$runyte_tmp"
+    return "$runyte_exit"
+}
+```
+
+Linux clipboard integration uses the first available of `wl-clipboard`, `xclip`,
+or `xsel`.
+
+#### Windows
+
+On Windows, in PowerShell, add `Set-Alias ru runyte` to your
+[`$PROFILE`](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_profiles)
+and start a new PowerShell session. To use `:quit-here` on Windows,
+save [runyte.ps1](contrib/runyte.ps1) in a stable local location and dot-source it from your PowerShell profile:
+```powershell
+. 'C:\Tools\Runyte\runyte.ps1'
+```
+The wrapper is tested with Windows PowerShell 5.1; PowerShell 7 has not been validated.
+
+### First run
 
 ```sh
 runyte
@@ -235,58 +226,45 @@ runyte -a
 runyte -a /path/to/notes
 ```
 
-Run `runyte --help` for the complete command-line interface. To let
-`:quit-here` change the launching shell's directory, use the
-[shell wrappers](docs/user-guide.md#change-the-shell-directory-on-exit).
+Run `runyte --help` for the complete command-line interface.
 
 ## Screenshots
 
-![Runyte 0.2.0 displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
+![Runyte displaying a Markdown document as a formatted page.](https://runyte.com/images/screenshots/rendered-markdown.webp?v=28c285c399fe)
 
 *Read Markdown as a page. Return to source. · nordbones-dark-soft*
 
-![Runyte 0.2.0 Navigator listing open buffers and running terminals.](https://runyte.com/images/screenshots/navigator.webp?v=fbd9ff1239c3)
+![Runyte Navigator listing open buffers and running terminals.](https://runyte.com/images/screenshots/navigator.webp?v=fbd9ff1239c3)
 
 *Jump between open buffers and terminals. · terafox-soft*
 
-![Runyte 0.2.0 comparing indexed and working-tree Rust source with highlighted changes in rosebones-dark.](https://runyte.com/images/screenshots/side-by-side-diff.webp?v=e74adc8b6b70)
+![Runyte comparing indexed and working-tree Rust source with highlighted changes in rosebones-dark.](https://runyte.com/images/screenshots/side-by-side-diff.webp?v=e74adc8b6b70)
 
 *Compare changes side by side. · rosebones-dark*
 
-![Claude Code and OpenAI Codex in adjacent Runyte 0.2.0 terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
+![Claude Code and OpenAI Codex in adjacent Runyte terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
 
 *Claude and Codex. Two terminals, one workspace. · frappe*
 
 More examples are on the [screenshots page](https://runyte.com/screenshots/).
 
-## Performance
-
-Runyte benchmarks readiness to edit, quit and idle behavior, Finder ranking,
-and persistent-session navigation. Reproducible harnesses and machine-specific
-results live in the [benchmark guide](benchmarks/README.md),
-[startup record](context/reference/startup-performance.md), and
-[fuzzy-matching record](context/reference/fuzzy-matching.md).
-
 ## Help
 
-Command prefixes open registry-backed key hints. `:tutorial` provides an
+Key sequences show hints. `:tutorial` provides an
 interactive introduction, `Space ?` opens contextual help, and `:help` opens
-the complete manual. `:log-open` and `:service-health` help diagnose failures.
+the complete manual.
 
-- [User guide and command reference](docs/user-guide.md)
+- [User guide and command reference](docs/user-guide.md) (long; an AI agent can search it for you)
 - [Frequently asked questions](docs/faq.md)
 - [Configuration](docs/user-guide.md#configuration) and [example](config.example.yaml)
 - [Language-server setup](docs/lsp/README.md)
-- [Runyte and Helix keymap differences](context/reference/helix-keymap-v1.md)
-- [Diagnostics and logging](docs/user-guide.md#diagnostics-and-logging)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Status and contributing
+## Contributing
 
 Contributions are welcome in the form of:
 
-- Feature requests through [GitHub Issues](https://github.com/runyte/runyte/issues).
-- Bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
+- Feature requests and bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
 - [Plugin development](docs/plugins/authoring.md), in any programming language.
 
 See the [contributing guide](CONTRIBUTING.md) for how to describe a feature
@@ -294,7 +272,7 @@ request, report a bug, or share a plugin.
 
 ## The name
 
-Runyte is pronounced *“roon-ite”* and blends rune, byte, Rust, and unite.
+Runyte is pronounced *“roon-ite”* and blends rune, byte, Rust, and unite `¯\_(ツ)_/¯`.
 
 ## Acknowledgements
 
