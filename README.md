@@ -7,11 +7,11 @@ https://github.com/user-attachments/assets/b11679ab-0369-4bca-be4c-43c419b528c0
 
 *[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): Claude Code works in one pane while you manage files in another, and the Navigator tells you when it is done.*
 
-**Runyte** is a fast modal text editor for focused work. Everything is accessed
-through keybindings. No need to remember them though - every keybinding sequence
+Runyte is a fast modal text editor for focused work. Everything is accessed
+through keybindings. No need to remember them though — every keybinding sequence
 shows hints with possible completions.
 
-Runyte can do quite a lot:
+Runyte can do **quite a lot**:
 - multipane text editing
 - terminal multiplexing
 - file browsing and management
@@ -24,15 +24,15 @@ Runyte can do quite a lot:
 - word completion based on text from all open buffers
 - smart file path completion (searching from current buffer and from project dir)
 
-It also has some features making it more pleasant to work with AI agents.
-The following features help you manage multiple agents and keep up with their outputs:
+It also has features that make it **pleasant to work with AI agents** — managing
+several at once and keeping up with their output:
 - Git worktree support and fast switching
 - optional [MCP bridge](bridges/runyte-context/README.md) for sharing buffer and terminal contents with agents
-- `Ctrl-g` in **Claude Code** or **Codex** attaches to the parent Runyte instance, instead of running a new one
+- `Ctrl-g` in Claude Code or Codex attaches to the parent Runyte instance, instead of running a new one
   (after [setting `EDITOR`](#post-install-setup))
-- **Markdown formatting** with `?`, including wide tables
-- **Image pasting** with `Ctrl-v` or `Alt-v`
-- Jump to any link with `gf` - works with file paths, Markdown links, web links (opens in a browser)
+- Markdown formatting with `?`, including wide tables
+- Image pasting with `Ctrl-v` or `Alt-v`
+- Jump to any link with `gf` — works with file paths, Markdown links, web links (opens in a browser)
 
 Having all of these features in a single binary enables strong code optimization,
 consistent keybindings, consistent themes, and minimum configuration.
