@@ -3,9 +3,9 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-https://github.com/user-attachments/assets/cc77a90c-25e5-4b15-a1c9-f5da7f3f12fb
+https://github.com/user-attachments/assets/b11679ab-0369-4bca-be4c-43c419b528c0
 
-*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): from a Markdown prompt to Rust code, then find text across files and terminals.*
+*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): Claude Code works in one pane while you manage files in another, and the Navigator tells you when it is done.*
 
 **Runyte** is a fast modal text editor for focused work. Everything is accessed
 through keybindings. No need to remember them though - every keybinding sequence
