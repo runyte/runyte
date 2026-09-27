@@ -82,6 +82,15 @@ Workspace
 
 Use `Ctrl-w ...` commands to manage panes.
 
+## Terminals
+
+Type `:terminal` (or `:t`), or press `Space t n` or `Ctrl-w t`, to start a
+terminal in the current pane. A new terminal starts in Insert mode, where keys
+go to the running program. Press `Ctrl-\` to switch to Normal mode: the output
+keeps running, but keys go to Runyte. Press `Ctrl-\` again to review the
+output. This freezes a snapshot of the output, which you can move around,
+search with `s` or `/`, and copy with `y`. Press `i` to go back to Insert mode.
+
 ## Standalone and persistent modes
 
 By default Runyte runs in standalone mode. When you quit, you stop its process.
