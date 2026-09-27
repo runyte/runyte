@@ -234,7 +234,7 @@ Run `runyte --help` for the complete command-line interface.
 
 *Read Markdown as a page. Return to source. · nordbones-dark-soft*
 
-![Runyte Navigator listing open buffers and running terminals.](https://runyte.com/images/screenshots/navigator.webp?v=fbd9ff1239c3)
+![Runyte Navigator listing files, an explorer, About, and running terminals, with a live terminal preview.](https://runyte.com/images/screenshots/navigator.webp?v=d0434c6aa20a)
 
 *Jump between open buffers and terminals. · terafox-soft*
 
