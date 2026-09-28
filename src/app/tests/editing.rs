@@ -610,6 +610,178 @@ fn join_holds_back_the_terminator_of_a_half_open_selection() {
     assert_eq!(text(&app), "alpha bravo\ncharlie\ndelta");
 }
 
+fn selecting_app(source: &str) -> App {
+    let mut config = Config::default();
+    config.editor.selecting_motions = true;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, source);
+    set_cursor(&mut app, 0, 0);
+    app
+}
+
+fn selected(app: &App) -> (usize, usize) {
+    let range = app.active().selection.primary();
+    (range.anchor, range.head)
+}
+
+#[test]
+fn selecting_w_takes_the_word_and_the_space_after_it() {
+    let mut app = selecting_app("one two three");
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (0, 3));
+    assert_eq!(app.mode, Mode::Normal);
+    // Each press starts a fresh range at the next word.
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (4, 7));
+
+    let mut delete = selecting_app("one two three");
+    press(&mut delete, 'w');
+    press(&mut delete, 'd');
+    assert_eq!(text(&delete), "two three");
+
+    let mut change = selecting_app("one two");
+    press(&mut change, 'w');
+    press(&mut change, 'c');
+    assert_eq!(change.mode, Mode::Insert);
+    press(&mut change, 'X');
+    assert_eq!(text(&change), "Xtwo");
+}
+
+#[test]
+fn selecting_e_and_b_follow_helix_word_spans() {
+    let mut app = selecting_app("one two");
+    press(&mut app, 'e');
+    assert_eq!(selected(&app), (0, 2));
+    // From a word's end, `e` takes the whitespace before the next word too.
+    press(&mut app, 'e');
+    assert_eq!(selected(&app), (3, 6));
+
+    let mut back = selecting_app("hello world");
+    set_cursor(&mut back, 0, 8);
+    press(&mut back, 'b');
+    // Backward, the anchor stays on the character under the caret and the
+    // head lands on the word's start.
+    assert_eq!(selected(&back), (8, 6));
+    press(&mut back, 'b');
+    assert_eq!(selected(&back), (5, 0));
+}
+
+#[test]
+fn selecting_word_motions_never_take_a_line_break() {
+    let mut app = selecting_app("foo  \n\nbar baz\n");
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (0, 4), "trailing spaces, not the break");
+    press(&mut app, 'w');
+    // Line breaks and the empty row between are stepped over first.
+    assert_eq!(selected(&app), (7, 10));
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (11, 13));
+    // Nothing is left to cross before the final terminator, so the range
+    // stays rather than collapsing onto it.
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (11, 13));
+
+    press(&mut app, 'b');
+    assert_eq!(selected(&app), (13, 11));
+}
+
+#[test]
+fn selecting_long_word_motions_cross_punctuation() {
+    let mut app = selecting_app("a.b c");
+    press(&mut app, 'W');
+    assert_eq!(selected(&app), (0, 3));
+
+    // Ending a word, the caret starts `w` at the next run, as in Helix: the
+    // `.` alone, then the next word with its trailing space.
+    let mut short = selecting_app("a.b c");
+    press(&mut short, 'w');
+    assert_eq!(selected(&short), (1, 1));
+    press(&mut short, 'w');
+    assert_eq!(selected(&short), (2, 3));
+}
+
+#[test]
+fn selecting_find_motions_select_from_the_caret() {
+    let mut app = selecting_app("one two three");
+    press(&mut app, 'f');
+    press(&mut app, 't');
+    assert_eq!(selected(&app), (0, 4));
+    press(&mut app, 'd');
+    assert_eq!(text(&app), "wo three");
+
+    let mut till = selecting_app("one two three");
+    press(&mut till, 't');
+    press(&mut till, 't');
+    assert_eq!(selected(&till), (0, 3));
+
+    let mut back = selecting_app("one two three");
+    set_cursor(&mut back, 0, 12);
+    press(&mut back, 'F');
+    press(&mut back, 'o');
+    assert_eq!(selected(&back), (12, 6));
+    press(&mut back, 'T');
+    press(&mut back, 'o');
+    // A new find starts from the head, as every motion does.
+    assert_eq!(selected(&back), (6, 1));
+
+    let mut missing = selecting_app("one two");
+    press(&mut missing, 'w');
+    press(&mut missing, 'f');
+    press(&mut missing, 'z');
+    assert_eq!(selected(&missing), (0, 3), "a miss leaves the range alone");
+    assert!(missing.status_error);
+}
+
+#[test]
+fn a_replayed_counted_selecting_find_matches_the_typed_one() {
+    let mut app = selecting_app("axbx axbx");
+    for character in [' ', 'm', 'm', '2', 'f', 'x', ' ', 'm', 'm'] {
+        press(&mut app, character);
+    }
+    // The grammar ignores a count on a find, so the typed gesture selects
+    // through the first `x` only.
+    assert_eq!(selected(&app), (0, 1));
+
+    set_cursor(&mut app, 0, 5);
+    for character in [' ', 'm', 'r'] {
+        press(&mut app, character);
+    }
+    finish_macro_replay(&mut app);
+    assert_eq!(selected(&app), (5, 6), "replay selects the same span");
+}
+
+#[test]
+fn selecting_motions_leave_other_modes_and_keys_as_they_were() {
+    // Off by default: `w` moves a caret.
+    let mut default = App::new(Config::default(), None).unwrap();
+    seed(&mut default, "one two");
+    set_cursor(&mut default, 0, 0);
+    press(&mut default, 'w');
+    assert_eq!(selected(&default), (4, 4));
+
+    // Select mode still extends from its anchor.
+    let mut select = selecting_app("one two three");
+    press(&mut select, 'v');
+    press(&mut select, 'w');
+    press(&mut select, 'w');
+    assert_eq!(selected(&select), (0, 8));
+
+    // Motions that Helix does not make select still move a caret.
+    let mut plain = selecting_app("one two");
+    press(&mut plain, 'w');
+    press(&mut plain, 'l');
+    assert_eq!(selected(&plain), (4, 4));
+
+    // `p` keeps reading a range that holds text as one to replace.
+    let mut paste = selecting_app("one two");
+    press(&mut paste, 'e');
+    press(&mut paste, 'y');
+    press(&mut paste, 'w');
+    press(&mut paste, 'w');
+    press(&mut paste, 'p');
+    assert_eq!(text(&paste), "one one");
+}
+
 #[test]
 fn join_is_refused_in_a_read_only_buffer() {
     let mut app = App::new(Config::default(), None).unwrap();

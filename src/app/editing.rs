@@ -9,12 +9,13 @@ use super::{
     Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
-    Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
-    insert_word_back, insert_word_forward, is_single_cell, is_word, merged_line_spans, move_offset,
-    move_offset_projected, navigate_text_object, operative_span, outline_item_detail,
-    outline_status, project_visible_rows, select_delimiter, select_text_object,
-    syntax_object_label, syntax_object_part_label, trailing_whitespace_changes,
-    transform_selection, visual_column, without_trailing_line_terminator,
+    Transaction, TransferMode, WordTarget, buffer_language, column_at_visual_column,
+    fold_degradation_suffix, insert_word_back, insert_word_forward, is_single_cell, is_word,
+    merged_line_spans, move_offset, move_offset_projected, navigate_text_object, operative_span,
+    outline_item_detail, outline_status, project_visible_rows, select_delimiter,
+    select_text_object, select_word_motion, syntax_object_label, syntax_object_part_label,
+    trailing_whitespace_changes, transform_selection, visual_column,
+    without_trailing_line_terminator,
 };
 
 #[derive(Clone, Copy)]
@@ -373,6 +374,42 @@ impl App {
 
     pub(super) fn motion(&mut self, motion: Motion) {
         self.motion_with_extension(motion, self.mode == Mode::Select);
+    }
+
+    /// Whether a word or find motion should select what it crosses rather
+    /// than move a caret. Only Normal mode changes: Select mode already
+    /// extends, and a terminal's review selection has motions of its own.
+    pub(super) fn selecting_motions_apply(&self) -> bool {
+        self.config.editor.selecting_motions
+            && self.mode == Mode::Normal
+            && self.active_terminal().is_none()
+    }
+
+    /// Runs a word motion, selecting the word it crosses when
+    /// `editor.selecting_motions` is on.
+    pub(super) fn word_motion(&mut self, motion: Motion) {
+        let (target, long) = match motion {
+            Motion::WordForward => (WordTarget::NextStart, false),
+            Motion::WordEnd => (WordTarget::NextEnd, false),
+            Motion::WordBack => (WordTarget::PreviousStart, false),
+            Motion::LongWordForward => (WordTarget::NextStart, true),
+            Motion::LongWordEnd => (WordTarget::NextEnd, true),
+            Motion::LongWordBack => (WordTarget::PreviousStart, true),
+            _ => unreachable!("only word motions select words"),
+        };
+        if !self.selecting_motions_apply() {
+            self.motion(motion);
+            return;
+        }
+        let buffer = self.active_buffer();
+        let selection = self
+            .active()
+            .selection
+            .transform(|range| select_word_motion(buffer, range, target, long));
+        let pane = self.active_mut();
+        pane.preserve_scroll = false;
+        pane.replace_selection(selection);
+        self.reveal_active_selection_from_folds();
     }
 
     pub(super) fn motion_with_extension(&mut self, motion: Motion, extend: bool) {

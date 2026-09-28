@@ -1139,10 +1139,13 @@ impl App {
                     if self.mode == Mode::Select && *range == primary {
                         return TextRole::PrimarySelected;
                     }
+                    // Selecting motions leave lone ranges in Normal mode for
+                    // `d`, `c`, and `p` to act on, so they have to be seen.
                     if *range == primary
                         && self.mode != Mode::Select
                         && pane.selection.len() == 1
                         && pane.selection_semantics() == crate::jumplist::SelectionSemantics::Runyte
+                        && !self.config.editor.selecting_motions
                     {
                         continue;
                     }
@@ -2534,6 +2537,39 @@ mod tests {
         app.handle_key(KeyStroke::char('z')).unwrap();
         assert_eq!(app.buffers[0].to_string(), "zz xx zz");
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn a_lone_normal_range_is_drawn_only_while_motions_select() {
+        let selected_text = |app: &mut App| {
+            let snapshot = prepared_snapshot(app, 40, 8);
+            let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+                panic!("first row is text");
+            };
+            row.runs
+                .iter()
+                .filter(|run| {
+                    matches!(
+                        run.kind,
+                        TextRunKind::Text {
+                            role: TextRole::Selected,
+                            ..
+                        }
+                    )
+                })
+                .map(|run| run.text.clone())
+                .collect::<String>()
+        };
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "one two"));
+        app.panes.get_mut(&0).unwrap().selection =
+            crate::selection::Selection::single(Range::new(0, 3));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(selected_text(&mut app), "");
+
+        app.config.editor.selecting_motions = true;
+        // The head is drawn as the caret; the rest of the range is selected.
+        assert_eq!(selected_text(&mut app), "one");
     }
 
     #[test]

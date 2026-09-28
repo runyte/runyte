@@ -54,6 +54,7 @@ pub enum SettingId {
     EditorWordCompletion,
     EditorWordCompletionMinimum,
     EditorFastPaneKeys,
+    EditorSelectingMotions,
     EditorCommandModeDim,
     WorkspaceMode,
     SessionStrip,
@@ -316,6 +317,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorSelectingMotions,
+        key: "editor.selecting_motions",
+        title: "Selecting motions",
+        description: "Let word and find motions select what they cross, as in Helix",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::EditorCommandModeDim,
         key: "editor.command_mode_dim",
         title: "Command mode dim",
@@ -422,6 +432,7 @@ impl SettingId {
         Self::EditorWordCompletion,
         Self::EditorWordCompletionMinimum,
         Self::EditorFastPaneKeys,
+        Self::EditorSelectingMotions,
         Self::EditorCommandModeDim,
         Self::WorkspaceMode,
         Self::SessionStrip,
@@ -482,6 +493,7 @@ impl SettingId {
                 SettingValue::Integer(config.editor.word_completion_minimum)
             }
             Self::EditorFastPaneKeys => SettingValue::Boolean(config.editor.fast_pane_keys),
+            Self::EditorSelectingMotions => SettingValue::Boolean(config.editor.selecting_motions),
             Self::EditorCommandModeDim => SettingValue::Boolean(config.editor.command_mode_dim),
             Self::Theme => SettingValue::Text(
                 config
@@ -625,6 +637,9 @@ impl SettingId {
             }
             (Self::EditorFastPaneKeys, SettingValue::Boolean(value)) => {
                 config.editor.fast_pane_keys = *value;
+            }
+            (Self::EditorSelectingMotions, SettingValue::Boolean(value)) => {
+                config.editor.selecting_motions = *value;
             }
             (Self::EditorCommandModeDim, SettingValue::Boolean(value)) => {
                 config.editor.command_mode_dim = *value;

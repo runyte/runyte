@@ -432,6 +432,15 @@ pub struct EditorConfig {
     /// trade a tmux user makes for prefix-free pane movement, so it is theirs
     /// to make rather than the default.
     pub fast_pane_keys: bool,
+    /// Make `w`, `b`, `e`, their long-word variants, and `f`, `t`, `F`, `T`
+    /// select the text they cross in Normal mode, as Helix's do.
+    ///
+    /// Off by default because Runyte reads a selection of two or more
+    /// characters as something to act on: `p` replaces it, `s` and `/`
+    /// search inside it, and `*` searches for it. With this on, those keys
+    /// keep that reading straight after a motion, so `w p` replaces the word
+    /// `w` selected. `w d` and `w c` are the gestures it is for.
+    pub selecting_motions: bool,
     /// Gray out the text in every pane while a command prompt is open.
     ///
     /// On by default: a prompt takes the keyboard away from the panes, and
@@ -938,6 +947,7 @@ impl Default for EditorConfig {
             word_completion: true,
             word_completion_minimum: 3,
             fast_pane_keys: false,
+            selecting_motions: false,
             command_mode_dim: true,
         }
     }

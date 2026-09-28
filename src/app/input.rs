@@ -4042,12 +4042,12 @@ impl App {
                 self.push_jump();
                 self.motion(Motion::FileEnd);
             }
-            Command::MoveWordForward => self.motion(Motion::WordForward),
-            Command::MoveWordBackward => self.motion(Motion::WordBack),
-            Command::MoveWordEnd => self.motion(Motion::WordEnd),
-            Command::MoveLongWordForward => self.motion(Motion::LongWordForward),
-            Command::MoveLongWordBackward => self.motion(Motion::LongWordBack),
-            Command::MoveLongWordEnd => self.motion(Motion::LongWordEnd),
+            Command::MoveWordForward => self.word_motion(Motion::WordForward),
+            Command::MoveWordBackward => self.word_motion(Motion::WordBack),
+            Command::MoveWordEnd => self.word_motion(Motion::WordEnd),
+            Command::MoveLongWordForward => self.word_motion(Motion::LongWordForward),
+            Command::MoveLongWordBackward => self.word_motion(Motion::LongWordBack),
+            Command::MoveLongWordEnd => self.word_motion(Motion::LongWordEnd),
             Command::GotoNextParagraph => self.motion(Motion::NextParagraph),
             Command::GotoPreviousParagraph => self.motion(Motion::PreviousParagraph),
             Command::FindNextChar
@@ -5322,6 +5322,7 @@ impl App {
                     | EditorCommand::FindTillNextChar
                     | EditorCommand::FindTillPreviousChar
             );
+            let selecting = repeated_character_command && self.selecting_motions_apply();
             let repetitions = if self.macro_replay.is_some() && repeated_character_command {
                 1
             } else {
@@ -5375,6 +5376,24 @@ impl App {
             }
             match command {
                 EditorCommand::ReplaceChar => self.replace_with_char(character),
+                EditorCommand::FindNextChar
+                | EditorCommand::FindPreviousChar
+                | EditorCommand::FindTillNextChar
+                | EditorCommand::FindTillPreviousChar
+                    if selecting =>
+                {
+                    self.select_to_character(
+                        character,
+                        matches!(
+                            command,
+                            EditorCommand::FindNextChar | EditorCommand::FindTillNextChar
+                        ),
+                        matches!(
+                            command,
+                            EditorCommand::FindTillNextChar | EditorCommand::FindTillPreviousChar
+                        ),
+                    );
+                }
                 EditorCommand::FindNextChar => {
                     for _ in 0..repetitions {
                         self.find_character(character, true, false);
