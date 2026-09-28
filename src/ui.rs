@@ -7706,6 +7706,62 @@ mod tests {
     }
 
     #[test]
+    fn a_rendered_page_with_a_long_title_leaves_names_visible_in_destination_lists() {
+        let directory = std::env::temp_dir().join(format!(
+            "runyte-ui-rendered-destination-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("claude-prompt-2d112e7d-f797-456b-8312-38d01f3e658b.md");
+        std::fs::write(&path, "# Prompt\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path)).unwrap();
+        app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
+        app.handle_key(crate::input::KeyStroke::char('?')).unwrap();
+        let theme = TuiTheme::new(&app.theme);
+
+        for buffer_only in [false, true] {
+            if buffer_only {
+                app.open_buffer_picker();
+            } else {
+                app.handle_key(crate::input::KeyStroke::char(' ')).unwrap();
+                app.handle_key(crate::input::KeyStroke::char('n')).unwrap();
+            }
+            let check = |buffer: &ratatui::buffer::Buffer, width: u16| {
+                let rows = buffer
+                    .content
+                    .chunks(usize::from(width))
+                    .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                    .collect::<Vec<_>>();
+                let heading = rows.iter().find(|row| row.contains("TYPE")).unwrap();
+                assert!(heading.contains("NAME"), "{heading}");
+                for kind in ["[file]", "[rendered]"] {
+                    let row = rows.iter().find(|row| row.contains(kind)).unwrap();
+                    assert!(row.contains(".md"), "{row}");
+                }
+            };
+
+            let mut terminal = Terminal::new(TestBackend::new(200, 24)).unwrap();
+            let hints = KeyHintState::default();
+            terminal
+                .draw(|frame| render_test_frame(frame, &mut app, &hints))
+                .unwrap();
+            check(terminal.backend().buffer(), 200);
+
+            let overlay = app
+                .overlay_snapshots()
+                .into_iter()
+                .find(|overlay| overlay.column_header.is_some())
+                .unwrap();
+            check(&draw_overlay_alone(&mut app, &theme, &overlay), 100);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn destination_rows_colour_their_type_and_state_in_both_renderers() {
         let directory = std::env::temp_dir().join(format!(
             "runyte-ui-destination-tints-{}-{}",
