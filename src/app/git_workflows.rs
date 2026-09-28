@@ -1875,17 +1875,30 @@ impl App {
 
     /// Brings one buffer's marks up to date with its text.
     ///
-    /// Called before every frame, and cheap when nothing has changed: the
-    /// buffer's revision settles it without the text being read at all. Only
-    /// an edit since the last frame pays for a comparison, and that comparison
-    /// runs against the staged text already in memory.
+    /// Called before every frame. Large comparisons use the shared diff
+    /// worker; the frame only clones the rope snapshot it needs.
     pub(super) fn update_git_marks(&mut self, buffer_id: usize) {
         let Some(path) = self.buffers[buffer_id].path.clone() else {
             return;
         };
         let revision = self.buffers[buffer_id].revision();
-        let Self { git, buffers, .. } = self;
-        git.update(&path, revision, || buffers[buffer_id].to_string());
+        let Some(base_len) = self.git.base_len(&path) else {
+            return;
+        };
+        if base_len.max(self.buffers[buffer_id].len_bytes())
+            <= super::diff_work::ASYNC_DIFF_THRESHOLD
+        {
+            let Self { git, buffers, .. } = self;
+            git.update(&path, revision, || buffers[buffer_id].to_string());
+        } else if let Some((base_id, base)) = self.git.request_update(&path, revision) {
+            self.diff_worker.submit(super::diff_work::Request::Git {
+                path,
+                base_id,
+                revision,
+                base,
+                text: self.buffers[buffer_id].text().clone(),
+            });
+        }
     }
 
     /// Whether a buffer has a staged text behind it, and so a gutter column.
@@ -2066,6 +2079,10 @@ impl App {
                 &previous,
                 &current,
             )
+            .with_revisions((
+                self.buffers[previous_buffer].revision(),
+                self.buffers[current_buffer].revision(),
+            ))
             .returning_on_pane_close(return_buffer),
         );
         self.status(format!("comparing Git versions of {relative}"));

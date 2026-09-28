@@ -170,6 +170,10 @@ fn production_source() -> String {
         .chain(paths.into_iter().map(|path| {
             fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+                .split("\n#[cfg(test)]\nmod tests")
+                .next()
+                .unwrap()
+                .to_owned()
         }))
         .collect::<Vec<_>>()
         .join("\n")
@@ -179,6 +183,7 @@ mod async_syntax;
 mod commands;
 mod comparisons;
 mod config_reload;
+mod diff_latency;
 mod editing;
 mod editing_and_buffers;
 mod external_dispatch;

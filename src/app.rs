@@ -274,6 +274,7 @@ mod mouse_autoscroll;
 mod movement;
 mod navigation_workflows;
 use navigation_workflows::DestinationScope;
+mod diff_work;
 mod picker_workflows;
 pub(crate) mod pipe;
 mod plugin_documents;
@@ -2995,6 +2996,7 @@ pub struct App {
     /// What Git says about the project and about each open file. Marks are
     /// derived here rather than asked for again on every edit.
     git: GitTracker,
+    diff_worker: diff_work::Worker,
     /// Git-service bookkeeping and the typed rows behind generated Git views.
     git_state: GitWorkflowState,
     /// The branch a confirmed `D` would delete, and whether deleting it needs
@@ -3548,6 +3550,7 @@ impl App {
             state_root,
             plugin_state_anchor,
             git: GitTracker::new(),
+            diff_worker: diff_work::Worker::new(),
             git_state: GitWorkflowState::default(),
             git_branch_deletion: None,
             git_branch_switch: None,

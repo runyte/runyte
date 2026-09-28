@@ -7,15 +7,19 @@
 //! only when something outside the buffer does: opening a file, saving one, or
 //! asking for a refresh after committing elsewhere. The per-row marks are
 //! derived from that staged text and the buffer's current text, so they change
-//! on every edit and are recomputed here, in memory, without a subprocess.
+//! on every edit and are computed here, in memory, without a subprocess.
 //!
 //! The tracker holds paths and strings. It has no idea what a buffer or a pane
 //! is, which is what lets the editor call it from wherever it happens to know
 //! that a file's text has moved on.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use super::{
@@ -25,10 +29,11 @@ use super::{
 
 /// The largest staged text that will be diffed.
 ///
-/// Past this size the comparison stops being something worth doing between
-/// keystrokes, and a file this large is not one whose gutter anybody is
+/// Past this size the comparison stops being useful as a live gutter, and a
+/// file this large is not one whose gutter anybody is
 /// reading. It is not tracked at all rather than tracked wrongly.
 const MAX_BASE_BYTES: usize = 4 * 1024 * 1024;
+static NEXT_BASE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Default)]
 pub struct GitTracker {
@@ -44,11 +49,25 @@ pub struct GitTracker {
 #[derive(Debug)]
 struct TrackedFile {
     /// The staged text, kept so edits can be diffed without asking Git again.
-    base: String,
+    base: Arc<str>,
+    base_id: u64,
     rows: Vec<RowChange>,
     /// The buffer revision `rows` was computed from. `None` until the buffer
     /// text has been seen once, so the first update always computes.
     revision: Option<u64>,
+    requested_revision: Option<u64>,
+}
+
+impl TrackedFile {
+    fn new(base: String) -> Self {
+        Self {
+            base: Arc::from(base),
+            base_id: NEXT_BASE_ID.fetch_add(1, Ordering::Relaxed),
+            rows: Vec::new(),
+            revision: None,
+            requested_revision: None,
+        }
+    }
 }
 
 impl GitTracker {
@@ -114,14 +133,7 @@ impl GitTracker {
         for (path, content) in staged {
             match content {
                 BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
-                    self.files.insert(
-                        path,
-                        TrackedFile {
-                            base,
-                            rows: Vec::new(),
-                            revision: None,
-                        },
-                    );
+                    self.files.insert(path, TrackedFile::new(base));
                 }
                 BaseContent::Absent | BaseContent::Binary | BaseContent::Text(_) => {
                     self.files.remove(&path);
@@ -145,14 +157,7 @@ impl GitTracker {
         self.revision = self.revision.wrapping_add(1);
         match content {
             BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
-                self.files.insert(
-                    path,
-                    TrackedFile {
-                        base,
-                        rows: Vec::new(),
-                        revision: None,
-                    },
-                );
+                self.files.insert(path, TrackedFile::new(base));
             }
             BaseContent::Absent | BaseContent::Binary | BaseContent::Text(_) => {
                 self.files.remove(&path);
@@ -221,14 +226,8 @@ impl GitTracker {
         self.revision = self.revision.wrapping_add(1);
         match content {
             BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
-                self.files.insert(
-                    path.to_path_buf(),
-                    TrackedFile {
-                        base,
-                        rows: Vec::new(),
-                        revision: None,
-                    },
-                );
+                self.files
+                    .insert(path.to_path_buf(), TrackedFile::new(base));
             }
             _ => {
                 self.files.remove(path);
@@ -256,7 +255,7 @@ impl GitTracker {
         self.files.remove(path);
     }
 
-    /// Recomputes the marks for a path when its buffer has moved on.
+    /// Recomputes small-file marks for a path when its buffer has moved on.
     ///
     /// `revision` is what makes this cheap enough to call before every frame:
     /// unchanged text is recognised without looking at it.
@@ -269,7 +268,68 @@ impl GitTracker {
         }
         file.rows = changed_rows(&file.base, &text());
         file.revision = Some(revision);
+        file.requested_revision = None;
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Capture a large comparison once per revision, dropping marks tied to
+    /// rows that may have shifted while the worker catches up.
+    pub(crate) fn request_update(&mut self, path: &Path, revision: u64) -> Option<(u64, Arc<str>)> {
+        let file = self.files.get_mut(path)?;
+        if file.revision == Some(revision) || file.requested_revision == Some(revision) {
+            return None;
+        }
+        file.rows.clear();
+        file.requested_revision = Some(revision);
+        self.revision = self.revision.wrapping_add(1);
+        Some((file.base_id, Arc::clone(&file.base)))
+    }
+
+    pub(crate) fn apply_rows(
+        &mut self,
+        path: &Path,
+        base_id: u64,
+        revision: u64,
+        rows: Vec<RowChange>,
+    ) -> bool {
+        let Some(file) = self.files.get_mut(path) else {
+            return false;
+        };
+        if file.base_id != base_id || file.requested_revision != Some(revision) {
+            return false;
+        }
+        file.rows = rows;
+        file.revision = Some(revision);
+        file.requested_revision = None;
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
+    pub(crate) fn cancel_rows(&mut self, path: &Path, base_id: u64, revision: u64) {
+        if let Some(file) = self.files.get_mut(path)
+            && file.base_id == base_id
+            && file.requested_revision == Some(revision)
+        {
+            file.requested_revision = None;
+        }
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.files
+            .values()
+            .any(|file| file.requested_revision.is_some())
+    }
+
+    pub(crate) fn retain_pending(&mut self, visible: &HashSet<PathBuf>) {
+        for (path, file) in &mut self.files {
+            if !visible.contains(path) {
+                file.requested_revision = None;
+            }
+        }
+    }
+
+    pub(crate) fn base_len(&self, path: &Path) -> Option<usize> {
+        self.files.get(path).map(|file| file.base.len())
     }
 }
 
@@ -319,6 +379,29 @@ mod tests {
 
         tracker.update(path, 7, || panic!("the text must not be read again"));
         assert_eq!(tracker.change_at(path, 1), Some(LineChange::Added));
+    }
+
+    #[test]
+    fn delayed_marks_reject_superseded_edits_and_refreshed_bases() {
+        let path = Path::new("/project/src/main.rs");
+        let mut tracker = GitTracker::new();
+        tracker.apply_staged_content(path.to_path_buf(), BaseContent::Text("a\nb\n".into()));
+        let (first_base, _) = tracker.request_update(path, 1).unwrap();
+        let (second_base, _) = tracker.request_update(path, 2).unwrap();
+        assert_eq!(first_base, second_base);
+        assert!(!tracker.apply_rows(path, first_base, 1, changed_rows("a\nb\n", "a\nB\n")));
+        assert!(tracker.rows(path).is_empty());
+        assert!(tracker.apply_rows(path, second_base, 2, changed_rows("a\nb\n", "a\n")));
+        assert_eq!(tracker.change_at(path, 0), Some(LineChange::RemovedBelow));
+
+        let (old_base, _) = tracker.request_update(path, 3).unwrap();
+        tracker.apply_staged_content(path.to_path_buf(), BaseContent::Text("a\n".into()));
+        assert!(!tracker.apply_rows(path, old_base, 3, Vec::new()));
+        let (new_base, _) = tracker.request_update(path, 3).unwrap();
+        assert_ne!(old_base, new_base);
+        assert!(tracker.apply_rows(path, new_base, 3, Vec::new()));
+        tracker.forget(path);
+        assert!(!tracker.apply_rows(path, new_base, 3, Vec::new()));
     }
 
     #[test]

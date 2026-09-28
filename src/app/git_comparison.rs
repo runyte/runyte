@@ -399,6 +399,10 @@ impl App {
                         &left,
                         &right,
                     )
+                    .with_revisions((
+                        self.buffers[buffers[0]].revision(),
+                        self.buffers[buffers[1]].revision(),
+                    ))
                     .returning_on_pane_close(return_buffer),
                 );
             }

@@ -991,8 +991,10 @@ symbols go away.
 
 The comparison happens inside the editor. Git is asked for a file's staged text
 once, when the file is opened and after relevant Git changes while that file is
-visible; everything after that is diffed in memory, so marks keep up with typing
-without running a process per keystroke. Filesystem observations of the
+visible; everything after that is diffed in memory, so marks follow typing
+without running a process per keystroke. Large files are compared on a
+background worker: a changed gutter clears briefly, then shows the marks for
+the newest completed revision. Filesystem observations of the
 worktree, index, `HEAD`, refs, packed refs, stashes, and linked-worktree metadata
 trigger one debounced asynchronous refresh. Hidden file buffers do not reload
 their staged text until a pane reveals their gutter. `:git-refresh` remains the
@@ -1268,6 +1270,11 @@ as changed. Lines replaced by an unequal number of lines are one change rather
 than a deletion stacked on an addition, which is the same folding the Git
 gutter does. In a comparison that column shows the comparison rather than the
 Git marks, since one column cannot answer both questions at once.
+For large buffers, the comparison runs in the background after an edit. While
+it catches up, change colours and symbols pause; the panes keep the known line
+correspondence and account for inserted or removed rows until the exact
+alignment is ready. A whole-buffer replacement without an edit transaction may
+temporarily align rows by number while that comparison runs.
 
 Soft wrap is off while a comparison is open, whatever `editor.soft_wrap` says,
 and comes back when it closes: lines are matched whole, so a wrapped line would
