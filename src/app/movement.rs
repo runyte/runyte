@@ -121,6 +121,184 @@ pub(super) fn word_back_kind(buffer: &Buffer, offset: Offset, long: bool) -> Off
     0
 }
 
+/// Where a selecting word motion stops, as `editor.selecting_motions` reads
+/// `w`, `e`, and `b` and their long-word variants.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WordTarget {
+    NextStart,
+    NextEnd,
+    PreviousStart,
+}
+
+/// Character categories a selecting word motion tells apart. Unlike
+/// `word_class`, a line terminator is its own category rather than whitespace,
+/// so trailing spaces and the break after them are different runs and a
+/// selection never swallows a line break.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WordCategory {
+    Whitespace,
+    LineEnding,
+    Word,
+    Punctuation,
+}
+
+fn is_line_ending(character: char) -> bool {
+    matches!(character, '\n' | '\r')
+}
+
+fn word_category(character: char) -> WordCategory {
+    if is_line_ending(character) {
+        WordCategory::LineEnding
+    } else if character.is_whitespace() {
+        WordCategory::Whitespace
+    } else if is_word(character) {
+        WordCategory::Word
+    } else {
+        WordCategory::Punctuation
+    }
+}
+
+/// Whether a selecting word motion stops between `previous` and `next`, which
+/// are adjacent in the direction of travel rather than in the document.
+fn reached_word_target(target: WordTarget, previous: char, next: char, long: bool) -> bool {
+    let boundary = match (word_category(previous), word_category(next)) {
+        (WordCategory::Word, WordCategory::Punctuation)
+        | (WordCategory::Punctuation, WordCategory::Word)
+            if long =>
+        {
+            false
+        }
+        (previous, next) => previous != next,
+    };
+    boundary
+        && match target {
+            WordTarget::NextStart => is_line_ending(next) || !next.is_whitespace(),
+            WordTarget::NextEnd | WordTarget::PreviousStart => {
+                !previous.is_whitespace() || is_line_ending(next)
+            }
+        }
+}
+
+/// The range a selecting word motion leaves: the text it crosses, selected,
+/// in the shape Helix gives its word motions.
+///
+/// `w` selects from the cursor through the whitespace after the word, stopping
+/// before the next word starts, so `w d` deletes a word and the space that
+/// followed it. `e` selects through the end of the next word and `b` back to
+/// the start of the previous one. Each press starts a fresh range rather than
+/// extending the last, and a run of line terminators is stepped over before
+/// the range begins, so no selection contains a line break. Growing a
+/// selection stays the job of Select mode.
+///
+/// The walk is Helix's own, done in its half-open coordinates, where a
+/// forward range ends one past the character under the cursor. Runyte's
+/// inclusive range is converted in and back out, which is why the head of a
+/// forward result is one less than where the walk stopped. A walk that finds
+/// nothing to cross, at either end of the document, leaves the range as it
+/// was.
+pub(super) fn select_word_motion(
+    buffer: &Buffer,
+    range: Range,
+    target: WordTarget,
+    long: bool,
+) -> Range {
+    let len = buffer.len_chars();
+    let (anchor, head) = if range.anchor <= range.head {
+        (range.anchor, (range.head + 1).min(len))
+    } else {
+        (range.anchor + 1, range.head)
+    };
+    let backward = target == WordTarget::PreviousStart;
+    if (backward && head == 0) || (!backward && head >= len) {
+        return range;
+    }
+    // The walk starts from the one character under the cursor, never from the
+    // whole of a previous selection.
+    let start = match (backward, anchor < head) {
+        (false, true) => (head - 1, head),
+        (false, false) => (head, head + 1),
+        (true, true) => (head, head - 1),
+        (true, false) => (head + 1, head),
+    };
+    let (anchor, head) = if backward {
+        walk_word_backward(buffer, start, target, long)
+    } else {
+        walk_word_forward(buffer, start, target, long)
+    };
+    match anchor.cmp(&head) {
+        std::cmp::Ordering::Less => Range::new(anchor, head - 1),
+        std::cmp::Ordering::Greater => Range::new(anchor - 1, head),
+        std::cmp::Ordering::Equal => range,
+    }
+}
+
+fn walk_word_forward(
+    buffer: &Buffer,
+    (mut anchor, mut head): (Offset, Offset),
+    target: WordTarget,
+    long: bool,
+) -> (Offset, Offset) {
+    let len = buffer.len_chars();
+    let mut previous = head.checked_sub(1).and_then(|at| buffer.char_at(at));
+    while head < len
+        && let Some(character) = buffer.char_at(head).filter(|ch| is_line_ending(*ch))
+    {
+        previous = Some(character);
+        head += 1;
+    }
+    if previous.is_some_and(is_line_ending) {
+        anchor = head;
+    }
+    let head_start = head;
+    while head < len
+        && let Some(next) = buffer.char_at(head)
+    {
+        if previous.is_none_or(|previous| reached_word_target(target, previous, next, long)) {
+            if head == head_start {
+                anchor = head;
+            } else {
+                break;
+            }
+        }
+        previous = Some(next);
+        head += 1;
+    }
+    (anchor, head)
+}
+
+fn walk_word_backward(
+    buffer: &Buffer,
+    (mut anchor, mut head): (Offset, Offset),
+    target: WordTarget,
+    long: bool,
+) -> (Offset, Offset) {
+    let mut previous = buffer.char_at(head);
+    while head > 0
+        && let Some(character) = buffer.char_at(head - 1).filter(|ch| is_line_ending(*ch))
+    {
+        previous = Some(character);
+        head -= 1;
+    }
+    if previous.is_some_and(is_line_ending) {
+        anchor = head;
+    }
+    let head_start = head;
+    while head > 0
+        && let Some(next) = buffer.char_at(head - 1)
+    {
+        if previous.is_none_or(|previous| reached_word_target(target, previous, next, long)) {
+            if head == head_start {
+                anchor = head;
+            } else {
+                break;
+            }
+        }
+        previous = Some(next);
+        head -= 1;
+    }
+    (anchor, head)
+}
+
 pub(super) fn word_end(buffer: &Buffer, offset: Offset, long: bool) -> Offset {
     let mut candidate = offset;
     loop {

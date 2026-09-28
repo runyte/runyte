@@ -272,6 +272,15 @@ impl DelimiterPair {
     }
 }
 
+impl From<SyntaxObjectPart> for crate::text_object::Part {
+    fn from(part: SyntaxObjectPart) -> Self {
+        match part {
+            SyntaxObjectPart::Around => Self::Around,
+            SyntaxObjectPart::Inside => Self::Inside,
+        }
+    }
+}
+
 impl SyntaxObject {
     fn capture_name(self, part: SyntaxObjectPart) -> &'static str {
         match (self, part) {
@@ -3595,88 +3604,20 @@ fn lexical_enclosing_delimiter(
     requested: Option<DelimiterPair>,
     part: SyntaxObjectPart,
 ) -> Option<SyntaxRange> {
+    let bounds = crate::text_object::Span::new(bounds.from, bounds.to);
+    let range = crate::text_object::Span::new(range.from, range.to);
     DelimiterPair::ALL
         .iter()
         .copied()
         .filter(|pair| requested.is_none_or(|requested| requested == *pair))
-        .flat_map(|pair| lexical_delimiter_pairs(text, bounds, pair))
-        .filter(|around| {
-            if range.is_empty() {
-                around.from <= range.from && range.from < around.to
-            } else {
-                around.from <= range.from && range.to <= around.to
-            }
+        .filter_map(|pair| {
+            crate::text_object::enclosing_pair(text, bounds, range, pair.delimiters(), part.into())
         })
-        .map(|around| match part {
-            SyntaxObjectPart::Around => around,
-            SyntaxObjectPart::Inside => SyntaxRange {
-                from: around.from + 1,
-                to: around.to - 1,
-            },
+        .min_by_key(|span| span.len())
+        .map(|span| SyntaxRange {
+            from: span.from,
+            to: span.to,
         })
-        .filter(|selected| *selected != range)
-        .min_by_key(|selected| selected.to.saturating_sub(selected.from))
-}
-
-fn lexical_delimiter_pairs(
-    text: &Text,
-    bounds: SyntaxRange,
-    pair: DelimiterPair,
-) -> Vec<SyntaxRange> {
-    let (open, close) = pair.delimiters();
-    let characters = text
-        .slice_string(bounds.from, bounds.to)
-        .chars()
-        .enumerate()
-        .map(|(relative, character)| (bounds.from + relative, character))
-        .collect::<Vec<_>>();
-    let mut pairs = Vec::new();
-
-    if open == close {
-        let mut opening = None;
-        for (index, (offset, character)) in characters.iter().copied().enumerate() {
-            if character != open || markdown_character_is_escaped(&characters, index) {
-                continue;
-            }
-            if let Some(from) = opening.take() {
-                pairs.push(SyntaxRange {
-                    from,
-                    to: offset + 1,
-                });
-            } else {
-                opening = Some(offset);
-            }
-        }
-        return pairs;
-    }
-
-    let mut openings = Vec::new();
-    for (index, (offset, character)) in characters.iter().copied().enumerate() {
-        if markdown_character_is_escaped(&characters, index) {
-            continue;
-        }
-        if character == open {
-            openings.push(offset);
-        } else if character == close
-            && let Some(from) = openings.pop()
-        {
-            pairs.push(SyntaxRange {
-                from,
-                to: offset + 1,
-            });
-        }
-    }
-    pairs
-}
-
-fn markdown_character_is_escaped(characters: &[(Offset, char)], index: usize) -> bool {
-    characters[..index]
-        .iter()
-        .rev()
-        .take_while(|(_, character)| *character == '\\')
-        .count()
-        % 2
-        == 1
 }
 
 #[cfg(test)]

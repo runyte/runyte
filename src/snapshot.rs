@@ -46,6 +46,9 @@ struct SelectionRoles<'a> {
     replacing: bool,
     half_open: bool,
     runyte: bool,
+    /// Whether a lone range is drawn in Normal mode. Selecting motions leave
+    /// one there for `d`, `c`, and `p` to act on, so it has to be seen.
+    lone_range_shown: bool,
 }
 
 impl<'a> SelectionRoles<'a> {
@@ -80,7 +83,13 @@ impl<'a> SelectionRoles<'a> {
             replacing,
             half_open,
             runyte: semantics == crate::jumplist::SelectionSemantics::Runyte,
+            lone_range_shown: false,
         }
+    }
+
+    fn with_lone_range_shown(mut self, shown: bool) -> Self {
+        self.lone_range_shown = shown;
+        self
     }
 
     fn role_at(&mut self, offset: Offset) -> TextRole {
@@ -137,6 +146,7 @@ impl<'a> SelectionRoles<'a> {
             && !self.select_mode
             && self.ranges.len() == 1
             && self.runyte
+            && !self.lone_range_shown
         {
             return TextRole::Plain;
         }
@@ -1374,7 +1384,8 @@ impl App {
             pristine_search,
             replacing,
             pane.selection_semantics(),
-        );
+        )
+        .with_lone_range_shown(self.config.editor.selecting_motions);
         let mut role_at = |offset: Offset| {
             if !active {
                 return TextRole::Plain;
@@ -2509,7 +2520,8 @@ mod tests {
             snapshot.status.interaction_line,
             "3 w (Move to next word start)"
         );
-        assert_eq!(app.active().cursor(&app.buffers[0]).col, 17);
+        // The third `w` selects `gamma ` and leaves its head on the space.
+        assert_eq!(app.active().cursor(&app.buffers[0]).col, 16);
     }
 
     #[test]
@@ -2943,6 +2955,40 @@ mod tests {
         app.handle_key(KeyStroke::char('z')).unwrap();
         assert_eq!(app.buffers[0].to_string(), "zz xx zz");
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn a_lone_normal_range_is_drawn_only_while_motions_select() {
+        let selected_text = |app: &mut App| {
+            let snapshot = prepared_snapshot(app, 40, 8);
+            let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+                panic!("first row is text");
+            };
+            row.runs
+                .iter()
+                .filter(|run| {
+                    matches!(
+                        run.kind,
+                        TextRunKind::Text {
+                            role: TextRole::Selected,
+                            ..
+                        }
+                    )
+                })
+                .map(|run| run.text.clone())
+                .collect::<String>()
+        };
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "one two"));
+        app.panes.get_mut(&0).unwrap().selection =
+            crate::selection::Selection::single(Range::new(0, 3));
+        assert_eq!(app.mode, Mode::Normal);
+        // On by default: the head is drawn as the caret and the rest of the
+        // range is selected.
+        assert_eq!(selected_text(&mut app), "one");
+
+        app.config.editor.selecting_motions = false;
+        assert_eq!(selected_text(&mut app), "");
     }
 
     #[test]

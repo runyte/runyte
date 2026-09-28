@@ -2026,6 +2026,7 @@ context; scoped explorer keys are documented under
 | `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
 | `>` / `<` | Indent / unindent |
+| `J` | Join the selected lines with a space, or pull the line below up to a single-line selection or caret |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
 | `Alt-u` / `Alt-U`; `Space s u` / `Space s U` | Undo / redo selection changes, back to the last text edit |
@@ -2043,6 +2044,7 @@ context; scoped explorer keys are documented under
 | `"` then a register | Select a named register; uppercase appends and `_` discards |
 | `Space m …` | Record, replay, and list macros; see [Macros](#macros) |
 | `mm` | Jump to the matching bracket |
+| `m i …` / `m a …` | Select inside / around a word, paragraph, delimiter pair, function, type, or argument; see [Text objects](#text-objects) |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 
@@ -2074,6 +2076,18 @@ same content can be pasted over one range after another, and a multi-selection
 from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
+
+In Normal mode, `w`, `b`, `e`, `W`, `B`, `E`, `f`, `t`, `F`, and `T` select the
+text they cross, as Helix's do, so `w d` deletes a word and the space after it
+and `e c` changes to the end of the word. `w` selects through the whitespace
+after the word, `e` through the end of the next word, and `b` back to the start
+of the previous one; each press starts a fresh selection, which never contains
+a line break. `f` selects from the caret through the character found, and `t`
+up to it. The selection is drawn, and anything that reads a selection reads
+this one: `p` replaces it, `s` and `/` search inside it, and `*` searches for
+it. Other motions still move a caret, and Select mode still extends. Setting
+`editor.selecting_motions: false` makes these motions move a caret too, so a
+word is selected with `v` first: `v e d` deletes to the end of the word.
 
 `Ctrl-v` and `Alt-v` paste an image in Normal, Select, Insert, and Replace
 alike. A terminal cannot draw a picture, so a clipboard holding one is
@@ -2368,6 +2382,13 @@ even when a pointer drag ends on it. A selected blank line is still a line, so
 it joins as an empty piece and leaves a delimiter of its own behind. Every
 selection is joined in one transaction, so multiple selections and a single
 undo both behave as one edit.
+
+`J` is the promptless join Vim and Helix spell that way. It joins the lines a
+selection touches with a single space, as `Space p j Space Enter` would, but a
+single-line selection or a bare caret pulls the line below up to its own
+instead of joining nothing. A blank line contributes neither text nor a space,
+so `J` above an empty line removes it without leaving a trailing space behind.
+The file's final line terminator is never joined away, even after `%`.
 
 `Space p t` aligns the columns of the selected table, padding every cell to the
 widest one in its column, so
@@ -3486,6 +3507,49 @@ completion never overrides either one. Turn
 it off, or change the trigger length, with `editor.word_completion` and
 `editor.word_completion_minimum` in `Space o o`.
 
+### Text objects
+
+`m i` selects inside a text object and `m a` selects around it, spelled as
+Helix spells them. Every object works at every cursor, and the result is left
+in Select mode, so `d`, `c`, `y`, and `p` act on it and a motion extends it.
+
+| Key | Object |
+| --- | --- |
+| `m i w` / `m a w` | The word under the cursor / with the space beside it |
+| `m i W` / `m a W` | The WORD, everything between whitespace / with the space beside it |
+| `m i p` / `m a p` | The paragraph's lines / with the blank lines beside them |
+| `m i (` / `m a (`, also `[`, `{`, `<`, `"`, `'`, `` ` `` | Inside / around the enclosing pair; closing brackets are aliases |
+| `m i m` / `m a m` | Inside / around the closest enclosing pair of any of those kinds |
+| `m i f` / `m a f` | Inside / around the enclosing function |
+| `m i t` / `m a t` | Inside / around the enclosing type, such as a class or struct |
+| `m i a` / `m a a` | Inside / around the enclosing argument or parameter |
+
+Words and paragraphs are read from the text alone, so they work in every
+buffer. A word is a run of letters, digits, and `_`, a run of punctuation, or
+a run of whitespace; a WORD is everything between whitespace. Around adds the
+whitespace after the word, or the whitespace before it when nothing follows on
+the line. Neither crosses a line break, and a cursor on an empty line has no
+word. A paragraph is a run of lines holding text, separated by lines that are
+empty or hold only whitespace; on a blank line, `m i p` selects the run of
+blank lines. Around adds the blank lines after the paragraph, or before it
+when it ends the file. A paragraph is selected as whole lines, the way `x`
+selects them, so `m i p d` removes its lines and `x` extends the selection.
+
+Delimiter pairs resolve through the syntax tree when the buffer has one, which
+tells a bracket in code from one in a string. Where there is no tree — plain
+text, a language without a grammar, or a file still parsing — or the tree
+finds no enclosing pair, as inside a comment, a balanced scan of the text
+answers instead. Brackets nest and may span lines; the scan reaches 65,536
+characters on each side of the selection. Quotes pair up from the start of the
+line, so a quoted string spanning lines is not found this way. A delimiter
+escaped with a backslash is text. Asking again with a pair already selected
+grows to the next pair out. In ordinary Markdown prose, where punctuation is
+not represented by delimiter nodes, the scan is bounded to the enclosing
+Markdown syntax node first.
+
+Functions, types, and arguments need the syntax tree. Without one they report
+why and leave the selection alone.
+
 ### Structural syntax
 
 | Key | Action |
@@ -3496,23 +3560,14 @@ it off, or change the trigger length, with `editor.word_completion` and
 | `Space x o` | Open the immediate Tree-sitter document outline |
 | `Space x x` | Toggle the syntax fold at the cursor |
 | `Space x f` / `Space x u` | Fold / unfold all syntax regions in this pane |
-| `Space x a f/c/p` | Select around the enclosing function / class / parameter |
-| `Space x i f/c/p` | Select inside the enclosing function / class / parameter |
-| `Space x a (/[/{/</"/'/\`` | Select around the matching delimiter pair; closing brackets are aliases |
-| `Space x i (/[/{/</"/'/\`` | Select inside the matching delimiter pair; closing brackets are aliases |
-| `Space x a m` / `Space x i m` | Select around / inside the closest enclosing delimiter pair |
 | `Space x [ f/c/p` | Go to the previous function / class / parameter |
 | `Space x ] f/c/p` | Go to the next function / class / parameter |
 
 Structural expansion retains Tree-sitter's half-open bounds. Relationship
-commands and `Space x a/i` text objects present those same bounds with the
-block cursor on the last included character, matching ordinary Select mode;
-yank, delete, change, and indentation still act on exactly the highlighted
-syntax span.
-Delimiter objects resolve through structural nodes in source languages. In
-ordinary Markdown prose, where punctuation is not represented by delimiter
-nodes, they use a balanced scan bounded to the enclosing Markdown syntax node;
-escaped delimiters are ignored and injected code remains syntax-structural.
+commands and the syntax [text objects](#text-objects) present those same
+bounds with the block cursor on the last included character, matching ordinary
+Select mode; yank, delete, change, and indentation still act on exactly the
+highlighted syntax span.
 
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
 at most one level in `editor.indent` style when the syntax indentation query
@@ -3520,8 +3575,12 @@ requests it; a grammar that requires a tab still gets a tab. With
 `editor.smart_newline` enabled, as it is by default, Markdown list items
 continue on Enter: bullets keep their marker, numbered and lettered items
 advance, and task items start unchecked. Enter on an empty item ends the list.
-Backspace after an empty marker changes it to a continuation indent; another
-Backspace removes that alignment in one press. A single `I.` or `V.` advances
+Backspace directly after a marker changes it to a continuation indent, whether
+or not text follows the caret; another Backspace removes that alignment in one
+press. Each of these edits renumbers the numbered or lettered items after the
+one it adds or removes while they were in sequence, passing over nested items,
+continuation lines, and blank lines; a list numbered `1.` throughout or one
+with a gap keeps its numbers from that point on. A single `I.` or `V.` advances
 as a letter unless the preceding sibling establishes Roman numbering. In other
 file types, smart newline retains the existing alignment under a list item's
 content. With `editor.smart_newline: false`, Enter preserves only the row's
@@ -4352,6 +4411,7 @@ editor:
   word_completion: true # suggest words already open elsewhere in the workspace
   word_completion_minimum: 3 # prefix length before word candidates appear
   fast_pane_keys: false # Ctrl-h/j/k/l move between panes without the Ctrl-w prefix
+  selecting_motions: true # w/b/e/W/B/E and f/t/F/T select what they cross, as in Helix
   command_mode_dim: true # gray out every pane's text while a command prompt is open
 
 workspace:

@@ -21,14 +21,14 @@ use super::{
     ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery,
     Selection, SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext,
     StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard,
-    Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget, VimTextObject,
-    buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
-    hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary,
-    is_terminal_normal_key, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
-    operative_span, persistent_session_availability, pointer_pane, pointer_resize_pair,
-    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_word_backward,
-    prompt_word_forward, quote_path_hint, rect_contains, resolve_command, resolved_operation_path,
-    row_characters, unclosed_or_complete_quoted_path,
+    TextObjectPart, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
+    VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
+    external_open, hint_is_not_before, hover_content_rows, is_path_separator,
+    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
+    keymap_for, mapped_applied_path, operative_span, persistent_session_availability, pointer_pane,
+    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 impl App {
@@ -4042,12 +4042,12 @@ impl App {
                 self.push_jump();
                 self.motion(Motion::FileEnd);
             }
-            Command::MoveWordForward => self.motion(Motion::WordForward),
-            Command::MoveWordBackward => self.motion(Motion::WordBack),
-            Command::MoveWordEnd => self.motion(Motion::WordEnd),
-            Command::MoveLongWordForward => self.motion(Motion::LongWordForward),
-            Command::MoveLongWordBackward => self.motion(Motion::LongWordBack),
-            Command::MoveLongWordEnd => self.motion(Motion::LongWordEnd),
+            Command::MoveWordForward => self.word_motion(Motion::WordForward),
+            Command::MoveWordBackward => self.word_motion(Motion::WordBack),
+            Command::MoveWordEnd => self.word_motion(Motion::WordEnd),
+            Command::MoveLongWordForward => self.word_motion(Motion::LongWordForward),
+            Command::MoveLongWordBackward => self.word_motion(Motion::LongWordBack),
+            Command::MoveLongWordEnd => self.word_motion(Motion::LongWordEnd),
             Command::GotoNextParagraph => self.motion(Motion::NextParagraph),
             Command::GotoPreviousParagraph => self.motion(Motion::PreviousParagraph),
             Command::FindNextChar
@@ -4187,6 +4187,12 @@ impl App {
             Command::SelectInsideBackticks => {
                 self.select_delimiter(Some(DelimiterPair::Backticks), SyntaxObjectPart::Inside)?
             }
+            Command::SelectInsideWord => self.select_word_object(false, TextObjectPart::Inside),
+            Command::SelectAroundWord => self.select_word_object(false, TextObjectPart::Around),
+            Command::SelectInsideLongWord => self.select_word_object(true, TextObjectPart::Inside),
+            Command::SelectAroundLongWord => self.select_word_object(true, TextObjectPart::Around),
+            Command::SelectInsideParagraph => self.select_paragraph(TextObjectPart::Inside),
+            Command::SelectAroundParagraph => self.select_paragraph(TextObjectPart::Around),
             Command::SelectAroundClosestDelimiter => {
                 self.select_delimiter(None, SyntaxObjectPart::Around)?
             }
@@ -4239,6 +4245,7 @@ impl App {
             Command::HardWrap => self.hard_wrap_selections(self.config.editor.hard_wrap_width),
             Command::Reflow => self.reflow_selections(self.config.editor.hard_wrap_width),
             Command::JoinSelections => self.open_prompt(PromptKind::JoinDelimiter),
+            Command::JoinLines => self.join_lines(),
             Command::FormatTable => self.format_selected_tables(),
             Command::Search => self.open_prompt(PromptKind::Search(SearchMode::Insensitive)),
             Command::SearchRegex => self.open_prompt(PromptKind::Search(SearchMode::Regex)),
@@ -5321,6 +5328,7 @@ impl App {
                     | EditorCommand::FindTillNextChar
                     | EditorCommand::FindTillPreviousChar
             );
+            let selecting = repeated_character_command && self.selecting_motions_apply();
             let repetitions = if self.macro_replay.is_some() && repeated_character_command {
                 1
             } else {
@@ -5374,6 +5382,24 @@ impl App {
             }
             match command {
                 EditorCommand::ReplaceChar => self.replace_with_char(character),
+                EditorCommand::FindNextChar
+                | EditorCommand::FindPreviousChar
+                | EditorCommand::FindTillNextChar
+                | EditorCommand::FindTillPreviousChar
+                    if selecting =>
+                {
+                    self.select_to_character(
+                        character,
+                        matches!(
+                            command,
+                            EditorCommand::FindNextChar | EditorCommand::FindTillNextChar
+                        ),
+                        matches!(
+                            command,
+                            EditorCommand::FindTillNextChar | EditorCommand::FindTillPreviousChar
+                        ),
+                    );
+                }
                 EditorCommand::FindNextChar => {
                     for _ in 0..repetitions {
                         self.find_character(character, true, false);

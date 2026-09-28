@@ -2,9 +2,17 @@
 
 use super::*;
 
+/// A configuration with `editor.selecting_motions` off, so word and find
+/// motions move a caret.
+fn caret_motions() -> Config {
+    let mut config = Config::default();
+    config.editor.selecting_motions = false;
+    config
+}
+
 #[test]
 fn word_and_character_motions_handle_unicode_and_lines() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(caret_motions(), None).unwrap();
     seed(&mut app, "αβ, γδ\n\nx end");
 
     press(&mut app, 'e');
@@ -25,9 +33,9 @@ fn word_and_character_motions_handle_unicode_and_lines() {
 }
 
 #[test]
-fn runyte_word_motions_require_explicit_select_mode() {
+fn caret_word_motions_require_explicit_select_mode() {
     for motion in ['w', 'b', 'e', 'W', 'B', 'E'] {
-        let mut normal = App::new(Config::default(), None).unwrap();
+        let mut normal = App::new(caret_motions(), None).unwrap();
         seed(&mut normal, "alpha, βeta gamma\nnext row");
         set_cursor(&mut normal, 0, 8);
         press(&mut normal, motion);
@@ -38,7 +46,7 @@ fn runyte_word_motions_require_explicit_select_mode() {
             "plain {motion} must move the caret without selecting"
         );
 
-        let mut selecting = App::new(Config::default(), None).unwrap();
+        let mut selecting = App::new(caret_motions(), None).unwrap();
         seed(&mut selecting, "alpha, βeta gamma\nnext row");
         set_cursor(&mut selecting, 0, 8);
         press(&mut selecting, 'v');
@@ -149,7 +157,7 @@ fn word_forward_from_the_last_word_of_a_row_lands_on_the_next_rows_word() {
 
     for (seeded, expected) in cases {
         for motion in ['w', 'W'] {
-            let mut app = App::new(Config::default(), None).unwrap();
+            let mut app = App::new(caret_motions(), None).unwrap();
             seed(&mut app, seeded);
 
             press(&mut app, motion);
@@ -491,6 +499,305 @@ fn space_p_j_joins_every_selection_as_one_transaction() {
     assert_eq!(text(&app), "alpha-bravo\n\ncharlie-delta");
     press(&mut app, 'u');
     assert_eq!(text(&app), "alpha\nbravo\n\ncharlie\ndelta");
+}
+
+fn press_join(app: &mut App) {
+    key(app, KeyCode::Char('J'), Modifiers::SHIFT);
+}
+
+#[test]
+fn join_pulls_the_row_below_a_bare_caret_up_with_one_space() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(
+        &mut app,
+        "    let first = 1;  \n        let second = 2;\ntail\n",
+    );
+    set_cursor(&mut app, 0, 6);
+
+    press_join(&mut app);
+
+    assert_eq!(text(&app), "    let first = 1; let second = 2;\ntail\n");
+    assert_eq!(app.status, "joined the lines");
+    press(&mut app, 'u');
+    assert_eq!(
+        text(&app),
+        "    let first = 1;  \n        let second = 2;\ntail\n",
+        "the join is one undo step"
+    );
+}
+
+#[test]
+fn join_matches_space_p_j_with_a_space_over_a_multi_row_selection() {
+    let mut joined = App::new(Config::default(), None).unwrap();
+    seed(&mut joined, "alpha\nbravo\ncharlie\ndelta");
+    set_cursor(&mut joined, 0, 0);
+    for _ in 0..3 {
+        press(&mut joined, 'x');
+    }
+    press_join(&mut joined);
+
+    let mut prompted = App::new(Config::default(), None).unwrap();
+    seed(&mut prompted, "alpha\nbravo\ncharlie\ndelta");
+    set_cursor(&mut prompted, 0, 0);
+    for _ in 0..3 {
+        press(&mut prompted, 'x');
+    }
+    for character in [' ', 'p', 'j', ' '] {
+        press(&mut prompted, character);
+    }
+    key(&mut prompted, KeyCode::Enter, Modifiers::NONE);
+
+    // The row below the selection is not pulled up: only a selection that
+    // touches a single row reaches for the next one.
+    assert_eq!(text(&joined), "alpha bravo charlie\ndelta");
+    assert_eq!(text(&joined), text(&prompted));
+}
+
+#[test]
+fn join_puts_no_space_against_a_blank_row() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\n\nbeta");
+    set_cursor(&mut app, 0, 0);
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta");
+
+    let mut blank = App::new(Config::default(), None).unwrap();
+    seed(&mut blank, "alpha\n\n  beta");
+    set_cursor(&mut blank, 1, 0);
+    press_join(&mut blank);
+    assert_eq!(text(&blank), "alpha\nbeta");
+}
+
+#[test]
+fn join_keeps_the_final_line_terminator() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbeta\n");
+    set_cursor(&mut app, 1, 0);
+
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta\n");
+    assert_eq!(app.status, "no line below to join");
+
+    press(&mut app, '%');
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha beta\n");
+}
+
+#[test]
+fn join_merges_the_rows_of_neighbouring_cursors_into_one_change() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\ntwo\nthree\nfour\nfive\nsix");
+    let buffer = app.active_buffer();
+    let carets = [(0, 0), (0, 2), (1, 1), (4, 0)]
+        .map(|(row, col)| Range::point(buffer.offset_of(Position::new(row, col))));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(carets.to_vec(), 0);
+
+    press_join(&mut app);
+
+    // Two carets on one row, and one on the row they pull up, make a single
+    // run of three rows rather than conflicting changes.
+    assert_eq!(text(&app), "one two three\nfour\nfive six");
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "one\ntwo\nthree\nfour\nfive\nsix");
+}
+
+#[test]
+fn join_holds_back_the_terminator_of_a_half_open_selection() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\ncharlie\ndelta");
+    // A pointer drag from the first row to the start of the third ends at a
+    // row none of which is selected, so only the first two rows join.
+    let buffer = app.active_buffer();
+    let end = buffer.offset_of(Position::new(2, 0));
+    let pane = app.panes.get_mut(&0).unwrap();
+    pane.replace_selection(Selection::single(Range::new(0, end)));
+    pane.mark_selection_semantics(SelectionSemantics::HalfOpen);
+
+    press_join(&mut app);
+
+    assert_eq!(text(&app), "alpha bravo\ncharlie\ndelta");
+}
+
+fn selecting_app(source: &str) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, source);
+    set_cursor(&mut app, 0, 0);
+    app
+}
+
+fn selected(app: &App) -> (usize, usize) {
+    let range = app.active().selection.primary();
+    (range.anchor, range.head)
+}
+
+#[test]
+fn selecting_w_takes_the_word_and_the_space_after_it() {
+    let mut app = selecting_app("one two three");
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (0, 3));
+    assert_eq!(app.mode, Mode::Normal);
+    // Each press starts a fresh range at the next word.
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (4, 7));
+
+    let mut delete = selecting_app("one two three");
+    press(&mut delete, 'w');
+    press(&mut delete, 'd');
+    assert_eq!(text(&delete), "two three");
+
+    let mut change = selecting_app("one two");
+    press(&mut change, 'w');
+    press(&mut change, 'c');
+    assert_eq!(change.mode, Mode::Insert);
+    press(&mut change, 'X');
+    assert_eq!(text(&change), "Xtwo");
+}
+
+#[test]
+fn selecting_e_and_b_follow_helix_word_spans() {
+    let mut app = selecting_app("one two");
+    press(&mut app, 'e');
+    assert_eq!(selected(&app), (0, 2));
+    // From a word's end, `e` takes the whitespace before the next word too.
+    press(&mut app, 'e');
+    assert_eq!(selected(&app), (3, 6));
+
+    let mut back = selecting_app("hello world");
+    set_cursor(&mut back, 0, 8);
+    press(&mut back, 'b');
+    // Backward, the anchor stays on the character under the caret and the
+    // head lands on the word's start.
+    assert_eq!(selected(&back), (8, 6));
+    press(&mut back, 'b');
+    assert_eq!(selected(&back), (5, 0));
+}
+
+#[test]
+fn selecting_word_motions_never_take_a_line_break() {
+    let mut app = selecting_app("foo  \n\nbar baz\n");
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (0, 4), "trailing spaces, not the break");
+    press(&mut app, 'w');
+    // Line breaks and the empty row between are stepped over first.
+    assert_eq!(selected(&app), (7, 10));
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (11, 13));
+    // Nothing is left to cross before the final terminator, so the range
+    // stays rather than collapsing onto it.
+    press(&mut app, 'w');
+    assert_eq!(selected(&app), (11, 13));
+
+    press(&mut app, 'b');
+    assert_eq!(selected(&app), (13, 11));
+}
+
+#[test]
+fn selecting_long_word_motions_cross_punctuation() {
+    let mut app = selecting_app("a.b c");
+    press(&mut app, 'W');
+    assert_eq!(selected(&app), (0, 3));
+
+    // Ending a word, the caret starts `w` at the next run, as in Helix: the
+    // `.` alone, then the next word with its trailing space.
+    let mut short = selecting_app("a.b c");
+    press(&mut short, 'w');
+    assert_eq!(selected(&short), (1, 1));
+    press(&mut short, 'w');
+    assert_eq!(selected(&short), (2, 3));
+}
+
+#[test]
+fn selecting_find_motions_select_from_the_caret() {
+    let mut app = selecting_app("one two three");
+    press(&mut app, 'f');
+    press(&mut app, 't');
+    assert_eq!(selected(&app), (0, 4));
+    press(&mut app, 'd');
+    assert_eq!(text(&app), "wo three");
+
+    let mut till = selecting_app("one two three");
+    press(&mut till, 't');
+    press(&mut till, 't');
+    assert_eq!(selected(&till), (0, 3));
+
+    let mut back = selecting_app("one two three");
+    set_cursor(&mut back, 0, 12);
+    press(&mut back, 'F');
+    press(&mut back, 'o');
+    assert_eq!(selected(&back), (12, 6));
+    press(&mut back, 'T');
+    press(&mut back, 'o');
+    // A new find starts from the head, as every motion does.
+    assert_eq!(selected(&back), (6, 1));
+
+    let mut missing = selecting_app("one two");
+    press(&mut missing, 'w');
+    press(&mut missing, 'f');
+    press(&mut missing, 'z');
+    assert_eq!(selected(&missing), (0, 3), "a miss leaves the range alone");
+    assert!(missing.status_error);
+}
+
+#[test]
+fn a_replayed_counted_selecting_find_matches_the_typed_one() {
+    let mut app = selecting_app("axbx axbx");
+    for character in [' ', 'm', 'm', '2', 'f', 'x', ' ', 'm', 'm'] {
+        press(&mut app, character);
+    }
+    // The grammar ignores a count on a find, so the typed gesture selects
+    // through the first `x` only.
+    assert_eq!(selected(&app), (0, 1));
+
+    set_cursor(&mut app, 0, 5);
+    for character in [' ', 'm', 'r'] {
+        press(&mut app, character);
+    }
+    finish_macro_replay(&mut app);
+    assert_eq!(selected(&app), (5, 6), "replay selects the same span");
+}
+
+#[test]
+fn selecting_motions_leave_other_modes_and_keys_as_they_were() {
+    // On by default; turned off, `w` moves a caret.
+    assert!(Config::default().editor.selecting_motions);
+    let mut caret = App::new(caret_motions(), None).unwrap();
+    seed(&mut caret, "one two");
+    set_cursor(&mut caret, 0, 0);
+    press(&mut caret, 'w');
+    assert_eq!(selected(&caret), (4, 4));
+
+    // Select mode still extends from its anchor.
+    let mut select = selecting_app("one two three");
+    press(&mut select, 'v');
+    press(&mut select, 'w');
+    press(&mut select, 'w');
+    assert_eq!(selected(&select), (0, 8));
+
+    // Motions that Helix does not make select still move a caret.
+    let mut plain = selecting_app("one two");
+    press(&mut plain, 'w');
+    press(&mut plain, 'l');
+    assert_eq!(selected(&plain), (4, 4));
+
+    // `p` keeps reading a range that holds text as one to replace.
+    let mut paste = selecting_app("one two");
+    press(&mut paste, 'e');
+    press(&mut paste, 'y');
+    press(&mut paste, 'w');
+    press(&mut paste, 'w');
+    press(&mut paste, 'p');
+    assert_eq!(text(&paste), "one one");
+}
+
+#[test]
+fn join_is_refused_in_a_read_only_buffer() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbeta\n");
+    app.buffers[0].kind = crate::buffer::BufferKind::Help;
+    set_cursor(&mut app, 0, 0);
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta\n");
+    assert!(app.status_error);
 }
 
 /// The table from the issue that asked for the command, formatted by
@@ -1605,4 +1912,192 @@ fn comment_toggle_is_refused_in_a_read_only_buffer() {
     assert_eq!(text(&app), "let a = 1;\n");
     assert_eq!(app.status, "help is read-only");
     assert!(app.status_error);
+}
+
+fn type_keys(app: &mut App, keys: &str) {
+    for character in keys.chars() {
+        press(app, character);
+    }
+}
+
+/// The text a Runyte selection covers, its head's character included.
+fn inclusive_text(app: &App) -> String {
+    let range = app.active().selection.primary();
+    let buffer = app.active_buffer();
+    buffer.slice(range.from(), (range.to() + 1).min(buffer.len_chars()))
+}
+
+#[test]
+fn m_i_w_and_m_a_w_select_words_in_a_buffer_without_syntax() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "call some_name(x) now");
+    set_cursor(&mut app, 0, 7);
+
+    type_keys(&mut app, "miw");
+    assert_eq!(inclusive_text(&app), "some_name");
+    assert_eq!(app.mode, Mode::Select);
+
+    set_cursor(&mut app, 0, 7);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "maw");
+    // Punctuation follows the word, so the space before it is taken.
+    assert_eq!(inclusive_text(&app), " some_name");
+
+    set_cursor(&mut app, 0, 7);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "miW");
+    assert_eq!(inclusive_text(&app), "some_name(x)");
+    type_keys(&mut app, "d");
+    assert_eq!(text(&app), "call  now");
+}
+
+#[test]
+fn m_i_w_again_keeps_the_word_it_selected() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one two three");
+    set_cursor(&mut app, 0, 0);
+    type_keys(&mut app, "miw");
+    assert_eq!(inclusive_text(&app), "one");
+    type_keys(&mut app, "miw");
+    assert_eq!(
+        inclusive_text(&app),
+        "one",
+        "the caret is still on the word"
+    );
+
+    // A backward range reads the same caret.
+    let mut backward = App::new(Config::default(), None).unwrap();
+    seed(&mut backward, "one two three");
+    backward
+        .active_mut()
+        .replace_selection(Selection::single(Range::new(6, 4)));
+    type_keys(&mut backward, "miw");
+    assert_eq!(inclusive_text(&backward), "two");
+}
+
+#[test]
+fn m_i_w_on_a_line_break_reports_rather_than_selecting() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\n\ntwo");
+    set_cursor(&mut app, 1, 0);
+    type_keys(&mut app, "miw");
+    assert_eq!(app.status, "no word under the cursor");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.active().selection.primary().is_empty());
+}
+
+#[test]
+fn m_i_p_selects_whole_lines_so_d_removes_them() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "first\n\nalpha\n  beta\n\nlast\n");
+    set_cursor(&mut app, 3, 3);
+
+    type_keys(&mut app, "mip");
+    assert_eq!(inclusive_text(&app), "alpha\n  beta");
+    type_keys(&mut app, "d");
+    assert_eq!(text(&app), "first\n\n\nlast\n");
+    assert_eq!(app.mode, Mode::Normal);
+
+    let mut around = App::new(Config::default(), None).unwrap();
+    seed(&mut around, "first\n\nalpha\n  beta\n\nlast\n");
+    set_cursor(&mut around, 2, 0);
+    type_keys(&mut around, "mapd");
+    // The blank line after the paragraph goes with it.
+    assert_eq!(text(&around), "first\n\nlast\n");
+
+    // `x` after `mip` keeps extending the same line selection.
+    let mut extend = App::new(Config::default(), None).unwrap();
+    seed(&mut extend, "a\nb\n\nc\n");
+    set_cursor(&mut extend, 0, 0);
+    type_keys(&mut extend, "mipxd");
+    assert_eq!(text(&extend), "c\n");
+}
+
+#[test]
+fn delimiter_objects_fall_back_to_the_text_and_grow_when_repeated() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "note (outer [inner (deep) text] end) tail");
+    set_cursor(&mut app, 0, 21);
+
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "deep");
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "outer [inner (deep) text] end");
+
+    set_cursor(&mut app, 0, 21);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "ma(");
+    assert_eq!(inclusive_text(&app), "(deep)");
+    type_keys(&mut app, "mam");
+    assert_eq!(inclusive_text(&app), "[inner (deep) text]");
+
+    let mut quoted = App::new(Config::default(), None).unwrap();
+    seed(&mut quoted, "say \"hello there\" now");
+    set_cursor(&mut quoted, 0, 8);
+    type_keys(&mut quoted, "mi\"d");
+    assert_eq!(text(&quoted), "say \"\" now");
+}
+
+#[test]
+fn delimiter_objects_use_the_syntax_tree_and_grow_through_it() {
+    let path = temporary("m-objects-syntax.rs");
+    let source = "fn demo() { call(a, (b + c)); let s = \"(x)\"; }\n";
+    fs::write(&path, source).unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    assert!(app.command_capabilities().syntax.is_available());
+
+    let b = source.find('b').unwrap();
+    app.active_mut().replace_selection(Selection::point(b));
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "b + c");
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "a, (b + c)");
+
+    app.enter_normal_mode();
+    let x = source.find('x').unwrap();
+    app.active_mut().replace_selection(Selection::point(x));
+    type_keys(&mut app, "mi\"");
+    assert_eq!(inclusive_text(&app), "(x)");
+
+    app.enter_normal_mode();
+    app.active_mut().replace_selection(Selection::point(b));
+    type_keys(&mut app, "mif");
+    assert_eq!(
+        inclusive_text(&app),
+        "{ call(a, (b + c)); let s = \"(x)\"; }"
+    );
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn syntax_objects_say_why_they_are_unavailable_without_a_tree() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "plain (text) here");
+    set_cursor(&mut app, 0, 8);
+    let before = app.active().selection.clone();
+    type_keys(&mut app, "mif");
+    assert_eq!(app.status, "syntax is unavailable for this buffer");
+    assert_eq!(app.active().selection, before);
+
+    // The delimiter objects need no tree at all.
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "text");
+}
+
+#[test]
+fn a_line_selection_ending_on_an_empty_row_deletes_that_row_too() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\n\nbeta\n");
+    set_cursor(&mut app, 0, 0);
+    type_keys(&mut app, "xxd");
+    assert_eq!(text(&app), "beta\n");
+    // The register already held both rows; now the text agrees with it.
+    assert_eq!(app.read_selected_register().text, "alpha\n\n");
+
+    let mut upward = App::new(Config::default(), None).unwrap();
+    seed(&mut upward, "alpha\n\nbeta\n");
+    set_cursor(&mut upward, 2, 0);
+    type_keys(&mut upward, "XXd");
+    assert_eq!(text(&upward), "alpha\n");
 }

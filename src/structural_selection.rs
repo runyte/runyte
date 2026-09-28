@@ -11,6 +11,7 @@ use crate::{
         SyntaxObjectPart, SyntaxRange, SyntaxSelectionRange, SyntaxSelectionTransform,
     },
     text::Text,
+    text_object,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -18,8 +19,14 @@ pub(crate) struct ExpansionHistory {
     frames: Vec<ExpansionFrame>,
 }
 
+/// Selects the delimiter pair enclosing each half-open range in `selection`.
+///
+/// A syntax tree answers first, because it knows a bracket in a string or a
+/// comment from one in code. Without a tree, or where the tree finds no
+/// enclosing pair, a balanced scan of the text answers instead, so the objects
+/// work in plain text and in languages Runyte has no grammar for.
 pub(crate) fn select_delimiter(
-    syntax: &DocumentSyntax,
+    syntax: Option<&DocumentSyntax>,
     text: &Text,
     registry: &Registry,
     selection: &Selection,
@@ -31,13 +38,15 @@ pub(crate) fn select_delimiter(
         .ranges()
         .iter()
         .map(|range| {
-            let selected = syntax.enclosing_delimiter(
-                text,
-                registry,
-                SyntaxRange::new(range.from(), range.to())?,
-                pair,
-                part,
-            )?;
+            let requested = SyntaxRange::new(range.from(), range.to())?;
+            let structural = match syntax {
+                Some(syntax) => {
+                    syntax.enclosing_delimiter(text, registry, requested, pair, part)?
+                }
+                None => None,
+            };
+            let selected =
+                structural.or_else(|| lexical_enclosing_delimiter(text, requested, pair, part));
             let Some(selected) = selected else {
                 return Ok(*range);
             };
@@ -50,6 +59,31 @@ pub(crate) fn select_delimiter(
         })
         .collect::<Result<Vec<_>, SyntaxError>>()?;
     Ok(changed.then(|| Selection::new(ranges, selection.primary_index())))
+}
+
+/// The smallest pair of any requested kind that a text scan finds around
+/// `range`, each kind scanned within its own `text_object::pair_bounds`.
+fn lexical_enclosing_delimiter(
+    text: &Text,
+    range: SyntaxRange,
+    pair: Option<DelimiterPair>,
+    part: SyntaxObjectPart,
+) -> Option<SyntaxRange> {
+    let range = text_object::Span::new(range.from, range.to);
+    DelimiterPair::ALL
+        .iter()
+        .copied()
+        .filter(|candidate| pair.is_none_or(|pair| pair == *candidate))
+        .filter_map(|candidate| {
+            let (open, close) = candidate.delimiters();
+            let bounds = text_object::pair_bounds(text, range, open, close);
+            text_object::enclosing_pair(text, bounds, range, (open, close), part.into())
+        })
+        .min_by_key(|span| span.len())
+        .map(|span| SyntaxRange {
+            from: span.from,
+            to: span.to,
+        })
 }
 
 #[derive(Clone, Debug)]
@@ -506,7 +540,7 @@ mod tests {
         let selection = Selection::single(Range::new(two + 1, two));
 
         let inside = select_delimiter(
-            &syntax,
+            Some(&syntax),
             &text,
             &registry,
             &selection,
@@ -523,7 +557,7 @@ mod tests {
         );
 
         let around = select_delimiter(
-            &syntax,
+            Some(&syntax),
             &text,
             &registry,
             &Selection::point(two),
@@ -538,7 +572,7 @@ mod tests {
         );
 
         let closest = select_delimiter(
-            &syntax,
+            Some(&syntax),
             &text,
             &registry,
             &Selection::point(two),
@@ -550,7 +584,7 @@ mod tests {
         assert_eq!(closest, around);
 
         let outer = select_delimiter(
-            &syntax,
+            Some(&syntax),
             &text,
             &registry,
             &inside,
@@ -582,7 +616,7 @@ mod tests {
         ] {
             let point = source.find(needle).unwrap() + usize::from(needle == "'x'");
             let selected = select_delimiter(
-                &syntax,
+                Some(&syntax),
                 &text,
                 &registry,
                 &Selection::point(point),
@@ -606,7 +640,7 @@ mod tests {
         let text = Text::from(source);
         let syntax = DocumentSyntax::new(&text, language, &registry).unwrap();
         let selected = select_delimiter(
-            &syntax,
+            Some(&syntax),
             &text,
             &registry,
             &Selection::point(source.find("hello").unwrap()),
@@ -618,6 +652,67 @@ mod tests {
         assert_eq!(
             text.slice_string(selected.primary().from(), selected.primary().to()),
             "hello"
+        );
+    }
+
+    #[test]
+    fn delimiter_selection_scans_the_text_without_a_syntax_tree() {
+        let registry = Registry::new();
+        let source = "notes (alpha [beta] \"quoted\") end";
+        let text = Text::from(source);
+        let select = |needle: &str, pair, part| {
+            select_delimiter(
+                None,
+                &text,
+                &registry,
+                &Selection::point(source.find(needle).unwrap()),
+                pair,
+                part,
+            )
+            .unwrap()
+            .map(|selected| text.slice_string(selected.primary().from(), selected.primary().to()))
+        };
+        assert_eq!(
+            select(
+                "alpha",
+                Some(DelimiterPair::Parentheses),
+                SyntaxObjectPart::Inside
+            )
+            .as_deref(),
+            Some("alpha [beta] \"quoted\"")
+        );
+        assert_eq!(
+            select("beta", None, SyntaxObjectPart::Around).as_deref(),
+            Some("[beta]")
+        );
+        assert_eq!(
+            select("quoted", None, SyntaxObjectPart::Inside).as_deref(),
+            Some("quoted")
+        );
+        assert_eq!(
+            select("end", Some(DelimiterPair::Braces), SyntaxObjectPart::Inside),
+            None
+        );
+    }
+
+    #[test]
+    fn delimiter_selection_scans_the_text_where_the_tree_has_no_pair() {
+        // A comment is one syntax node, so the tree knows no pair inside it.
+        let source = "fn demo() {} // see (the notes)\n";
+        let (registry, text, syntax) = rust_document(source);
+        let selected = select_delimiter(
+            Some(&syntax),
+            &text,
+            &registry,
+            &Selection::point(source.find("notes").unwrap()),
+            Some(DelimiterPair::Parentheses),
+            SyntaxObjectPart::Inside,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            text.slice_string(selected.primary().from(), selected.primary().to()),
+            "the notes"
         );
     }
 

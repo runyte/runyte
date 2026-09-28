@@ -4,16 +4,17 @@
 
 // Application-module dependencies:
 use super::{
-    App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashSet, HistoryReset,
-    Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode, Modifiers,
-    Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
+    App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashMap, HashSet,
+    HistoryReset, Jump, JumpLabels, KeyCode, KeyStroke, LanguageId, ListAction, ListPicker, Mode,
+    Modifiers, Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
-    Transaction, TransferMode, buffer_language, column_at_visual_column, fold_degradation_suffix,
-    insert_word_back, insert_word_forward, is_single_cell, is_word, merged_line_spans, move_offset,
-    move_offset_projected, navigate_text_object, operative_span, outline_item_detail,
-    outline_status, project_visible_rows, select_delimiter, select_text_object,
-    syntax_object_label, syntax_object_part_label, trailing_whitespace_changes,
+    TextObjectPart, Transaction, TransferMode, WordTarget, buffer_language,
+    column_at_visual_column, fold_degradation_suffix, insert_word_back, insert_word_forward,
+    is_single_cell, is_word, merged_line_spans, move_offset, move_offset_projected,
+    navigate_text_object, operative_span, outline_item_detail, outline_status,
+    project_visible_rows, select_delimiter, select_text_object, select_word_motion,
+    syntax_object_label, syntax_object_part_label, text_object, trailing_whitespace_changes,
     transform_selection, visual_column, without_trailing_line_terminator,
 };
 
@@ -89,11 +90,10 @@ fn canonical_roman(marker: &str) -> bool {
     rest.is_empty()
 }
 
-fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
-    let indent_end = line.find(|character: char| !matches!(character, ' ' | '\t'))?;
-    let body = &line[indent_end..];
-    let (kind, marker_end) = match body.chars().next()? {
-        bullet @ ('-' | '*' | '+') => (ListKind::Bullet(bullet), 1),
+/// The kind of the list marker `body` starts with, and the marker's length.
+fn list_marker(body: &str) -> Option<(ListKind<'_>, usize)> {
+    match body.chars().next()? {
+        bullet @ ('-' | '*' | '+') => Some((ListKind::Bullet(bullet), 1)),
         _ => {
             let period = body.find('.')?;
             let token = &body[..period];
@@ -106,9 +106,15 @@ fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
             } else {
                 return None;
             };
-            (kind, period + 1)
+            Some((kind, period + 1))
         }
-    };
+    }
+}
+
+fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
+    let indent_end = line.find(|character: char| !matches!(character, ' ' | '\t'))?;
+    let body = &line[indent_end..];
+    let (kind, marker_end) = list_marker(body)?;
     let after_marker = &body[marker_end..];
     let separator_end = after_marker
         .find(|character: char| !matches!(character, ' ' | '\t'))
@@ -255,8 +261,10 @@ fn next_decimal(marker: &str) -> String {
     String::from_utf8(digits).expect("decimal marker is ASCII")
 }
 
-fn next_list_prefix(item: &ListItem<'_>, roman_style: bool) -> Option<String> {
-    let marker = match item.kind {
+/// The marker after `marker` in its list: `-` after `-`, `10.` after `9.`.
+fn following_marker(marker: &str, roman_style: bool) -> Option<String> {
+    let (kind, _) = list_marker(marker)?;
+    Some(match kind {
         ListKind::Bullet(character) => character.to_string(),
         ListKind::Decimal(number) => format!("{}.", next_decimal(number)),
         ListKind::Roman(roman) => format!("{}.", next_roman(roman_value(roman) + 1)?),
@@ -271,11 +279,201 @@ fn next_list_prefix(item: &ListItem<'_>, roman_style: bool) -> Option<String> {
                 format!("{next}.")
             }
         }
-    };
+    })
+}
+
+/// The start of the item after `item`, whose own marker is `marker`: the
+/// item's marker as written, or the one renumbering is giving it.
+fn next_list_prefix(item: &ListItem<'_>, marker: &str, roman_style: bool) -> Option<String> {
+    let marker = following_marker(marker, roman_style)?;
     let task = item
         .task_separator
         .map_or(String::new(), |separator| format!("[ ]{separator}"));
     Some(format!("{}{marker}{}{task}", item.indent, item.separator))
+}
+
+/// Markers that the items of ordered lists will carry once every caret's
+/// inserted or removed item is in place, keyed by pre-edit row.
+///
+/// An item is renumbered only while it continues the sequence it already had,
+/// so a list numbered `1.` throughout, or one with a deliberate gap, keeps its
+/// numbers from that point on. Carets are visited top to bottom. A run that
+/// reaches the row of a later caret gives that item its new marker and stops
+/// there, and the later caret carries the run on from its own item, so several
+/// carets in one list shift everything after them without any row being
+/// walked twice.
+struct Renumbering {
+    markers: BTreeMap<usize, String>,
+    /// Rows whose caret inserts an item after them or removes their marker.
+    anchors: HashSet<usize>,
+    /// Anchors a Roman run handed over to. Whether a single `V.` or `X.` is a
+    /// numeral is otherwise read from the siblings above it, and that reading
+    /// stops at a blank line that the run itself passes over.
+    roman_anchors: HashSet<usize>,
+    /// The spans the transaction's other changes replace, by each row they
+    /// touch. A run stops at a marker one of them overlaps rather than
+    /// rewrite text that change is editing.
+    edits: HashMap<usize, Vec<(Offset, Offset)>>,
+}
+
+impl Renumbering {
+    /// Starts renumbering around the carets on `anchors`, alongside `changes`,
+    /// or `None` when a caret spans rows or shares its row with another, so
+    /// that which items it adds or removes is not a question of one row.
+    fn new(
+        buffer: &Buffer,
+        ranges: &[Range],
+        anchors: HashSet<usize>,
+        changes: &[Change],
+    ) -> Option<Self> {
+        let mut rows = HashSet::new();
+        for range in ranges {
+            let row = buffer.offset_to_row(range.from());
+            if buffer.offset_to_row(range.to()) != row || !rows.insert(row) {
+                return None;
+            }
+        }
+        let mut edits: HashMap<usize, Vec<(Offset, Offset)>> = HashMap::new();
+        for change in changes {
+            let span = (change.from, change.to);
+            let first = buffer.offset_to_row(change.from);
+            let last = buffer.offset_to_row(change.to);
+            edits.entry(first).or_default().push(span);
+            if last != first {
+                edits.entry(last).or_default().push(span);
+            }
+        }
+        Some(Self {
+            markers: BTreeMap::new(),
+            anchors,
+            roman_anchors: HashSet::new(),
+            edits,
+        })
+    }
+
+    fn marker<'a>(&'a self, row: usize, item: &'a ListItem<'_>) -> &'a str {
+        self.markers.get(&row).map_or(item.marker, String::as_str)
+    }
+
+    /// Whether `item` on `row` counts Roman numerals, so that `V.` follows `IV.`.
+    fn roman_style(&self, buffer: &Buffer, row: usize, item: &ListItem<'_>) -> bool {
+        self.roman_anchors.contains(&row)
+            || matches!(item.kind, ListKind::Roman(_))
+            || roman_style_before(buffer, row, item.indent)
+    }
+
+    /// Renumbers the siblings after the item on `row`, which gains a new item
+    /// after it when `inserting` and otherwise loses its own marker.
+    fn follow(
+        &mut self,
+        buffer: &Buffer,
+        row: usize,
+        item: &ListItem<'_>,
+        roman_style: bool,
+        inserting: bool,
+    ) {
+        let marker = self.marker(row, item).to_owned();
+        // A run from above stops here, so the next sibling is still in
+        // sequence when it follows this item's marker as written.
+        let Some(old) = following_marker(item.marker, roman_style) else {
+            return;
+        };
+        let new = if inserting {
+            following_marker(&marker, roman_style)
+                .and_then(|inserted| following_marker(&inserted, roman_style))
+        } else {
+            Some(marker)
+        };
+        if let Some(new) = new {
+            self.shift(buffer, row, item.indent, roman_style, old, new);
+        }
+    }
+
+    /// Gives the first sibling after `row` marked `old` the marker `new`, and
+    /// each later sibling still in sequence the marker after the previous one.
+    ///
+    /// Nested items, continuation lines, and blank lines between siblings
+    /// belong to the list and are passed over; anything indented no deeper
+    /// than the siblings ends it.
+    fn shift(
+        &mut self,
+        buffer: &Buffer,
+        row: usize,
+        indent: &str,
+        roman_style: bool,
+        mut old: String,
+        mut new: String,
+    ) {
+        // A bullet follows itself, so there is nothing to renumber.
+        if old == new {
+            return;
+        }
+        for next_row in row + 1..buffer.len_lines() {
+            let line = buffer.line_string(next_row);
+            let body = line.trim_start_matches([' ', '\t']);
+            if body.is_empty() {
+                continue;
+            }
+            if let Some(item) = parse_list_item(&line)
+                && item.indent == indent
+            {
+                let anchor = self.anchors.contains(&next_row);
+                let start = buffer.line_to_offset(next_row) + item.indent.chars().count();
+                // Markers are ASCII, so their byte length is their width.
+                let end = start + item.marker.len();
+                if self.marker(next_row, &item) != old
+                    || !anchor && self.overlaps_edit(buffer, next_row, start, end)
+                {
+                    break;
+                }
+                if anchor && roman_style {
+                    self.roman_anchors.insert(next_row);
+                }
+                let following =
+                    following_marker(&old, roman_style).zip(following_marker(&new, roman_style));
+                let Some((next_old, next_new)) = following.filter(|_| !anchor) else {
+                    self.markers.insert(next_row, new);
+                    break;
+                };
+                self.markers
+                    .insert(next_row, std::mem::replace(&mut new, next_new));
+                old = next_old;
+                continue;
+            }
+            let leading = &line[..line.len() - body.len()];
+            if !leading.starts_with(indent) || leading.len() <= indent.len() {
+                break;
+            }
+        }
+    }
+
+    /// Whether another change replaces text inside `[from, to)` on `row`,
+    /// inserts strictly within it, or removes the line break before `row`,
+    /// joining the marker onto the line above as ordinary text.
+    fn overlaps_edit(&self, buffer: &Buffer, row: usize, from: Offset, to: Offset) -> bool {
+        let row_start = buffer.line_to_offset(row);
+        self.edits.get(&row).is_some_and(|spans| {
+            spans.iter().any(|&(start, end)| {
+                (start < to && end > from) || (start < row_start && end >= row_start)
+            })
+        })
+    }
+
+    /// The marker rewrites, leaving out the rows in `unmarked`, whose markers
+    /// another change in the same transaction removes.
+    fn changes(self, buffer: &Buffer, unmarked: &HashSet<usize>) -> Vec<Change> {
+        self.markers
+            .into_iter()
+            .filter(|(row, _)| !unmarked.contains(row))
+            .filter_map(|(row, marker)| {
+                let line = buffer.line_string(row);
+                let item = parse_list_item(&line)?;
+                let start = buffer.line_to_offset(row) + item.indent.chars().count();
+                (item.marker != marker)
+                    .then(|| Change::new(start, start + item.marker.len(), marker))
+            })
+            .collect()
+    }
 }
 
 impl App {
@@ -373,6 +571,42 @@ impl App {
 
     pub(super) fn motion(&mut self, motion: Motion) {
         self.motion_with_extension(motion, self.mode == Mode::Select);
+    }
+
+    /// Whether a word or find motion should select what it crosses rather
+    /// than move a caret. Only Normal mode changes: Select mode already
+    /// extends, and a terminal's review selection has motions of its own.
+    pub(super) fn selecting_motions_apply(&self) -> bool {
+        self.config.editor.selecting_motions
+            && self.mode == Mode::Normal
+            && self.active_terminal().is_none()
+    }
+
+    /// Runs a word motion, selecting the word it crosses when
+    /// `editor.selecting_motions` is on.
+    pub(super) fn word_motion(&mut self, motion: Motion) {
+        let (target, long) = match motion {
+            Motion::WordForward => (WordTarget::NextStart, false),
+            Motion::WordEnd => (WordTarget::NextEnd, false),
+            Motion::WordBack => (WordTarget::PreviousStart, false),
+            Motion::LongWordForward => (WordTarget::NextStart, true),
+            Motion::LongWordEnd => (WordTarget::NextEnd, true),
+            Motion::LongWordBack => (WordTarget::PreviousStart, true),
+            _ => unreachable!("only word motions select words"),
+        };
+        if !self.selecting_motions_apply() {
+            self.motion(motion);
+            return;
+        }
+        let buffer = self.active_buffer();
+        let selection = self
+            .active()
+            .selection
+            .transform(|range| select_word_motion(buffer, range, target, long));
+        let pane = self.active_mut();
+        pane.preserve_scroll = false;
+        pane.replace_selection(selection);
+        self.reveal_active_selection_from_folds();
     }
 
     pub(super) fn motion_with_extension(&mut self, motion: Motion, extend: bool) {
@@ -1035,10 +1269,14 @@ impl App {
         // Every answer is derived from the same pre-edit text. This matters
         // for multi-caret insertion: an earlier caret must never change the
         // syntax or leading whitespace observed by a later one.
-        let changes = selection
+        // Carets that start a new list item, by index into `changes`, with
+        // the row they continue and the newline they insert.
+        let mut continuations = Vec::new();
+        let mut changes = selection
             .ranges()
             .iter()
-            .map(|range| {
+            .enumerate()
+            .map(|(index, range)| {
                 // `Selection::change_by` replaces at the normalized start of
                 // the range, so indentation must be derived from that same
                 // insertion point regardless of selection direction.
@@ -1064,14 +1302,19 @@ impl App {
                     && range.from() == line_start + buffer.line_len(row)
                     && item.content_start == line.len()
                 {
+                    continuations.push((index, row, None));
                     return Change::new(line_start, range.from(), "");
                 }
                 let list_indent = list_item.as_ref().map(|item| item.hanging_indent(markdown));
                 if let Some(item) = &full_item
                     && before_caret.len() >= item.content_start
-                    && let Some(next) =
-                        next_list_prefix(item, roman_style_before(buffer, row, item.indent))
+                    && let Some(next) = next_list_prefix(
+                        item,
+                        item.marker,
+                        roman_style_before(buffer, row, item.indent),
+                    )
                 {
+                    continuations.push((index, row, Some(terminator)));
                     return Change::new(range.from(), range.to(), format!("{terminator}{next}"));
                 }
                 // The syntax contract answers for an existing newline token,
@@ -1108,6 +1351,34 @@ impl App {
                 )
             })
             .collect::<Vec<_>>();
+        let anchors = continuations.iter().map(|&(_, row, _)| row).collect();
+        if !continuations.is_empty()
+            && let Some(mut renumbering) =
+                Renumbering::new(buffer, selection.ranges(), anchors, &changes)
+        {
+            let mut unmarked = HashSet::new();
+            for (index, row, terminator) in continuations {
+                let line = buffer.line_string(row);
+                let Some(item) = parse_list_item(&line) else {
+                    continue;
+                };
+                let roman_style = renumbering.roman_style(buffer, row, &item);
+                if let Some(terminator) = terminator {
+                    // An item renumbered by a caret above this one is followed
+                    // by the marker after its new number, not its old one.
+                    let marker = renumbering.marker(row, &item);
+                    if marker != item.marker
+                        && let Some(next) = next_list_prefix(&item, marker, roman_style)
+                    {
+                        changes[index].text = format!("{terminator}{next}");
+                    }
+                } else {
+                    unmarked.insert(row);
+                }
+                renumbering.follow(buffer, row, &item, roman_style, terminator.is_some());
+            }
+            changes.extend(renumbering.changes(buffer, &unmarked));
+        }
         self.edit(Transaction::new(changes));
     }
 
@@ -1122,6 +1393,8 @@ impl App {
         let mut new_alignments = Vec::new();
         let mut special = Vec::new();
         let mut ordinary = Vec::new();
+        // Rows whose item becomes a continuation, top to bottom.
+        let mut unmarked = Vec::new();
         for (index, range) in self.active().selection.ranges().iter().enumerate() {
             if !range.is_empty() {
                 ordinary.push((range.from(), range.to()));
@@ -1135,66 +1408,71 @@ impl App {
                 let row = buffer.offset_to_row(head);
                 let start = buffer.line_to_offset(row);
                 let line = buffer.line_string(row);
-                if head == start + buffer.line_len(row) {
-                    if line
+                // Text after the caret does not change what the marker or the
+                // alignment before it means: an item split by Enter mid-line
+                // unwinds exactly like one started at the end of a line.
+                if buffer
+                    .slice(start, head)
+                    .chars()
+                    .all(|character| matches!(character, ' ' | '\t'))
+                    && let Some(alignment) = pending_alignments.iter().find(|alignment| {
+                        alignment.buffer == buffer_id
+                            && alignment.pane == pane
+                            && alignment.revision == revision
+                            && alignment.head == head
+                    })
+                {
+                    special.push(Change::new(alignment.indent_start, head, ""));
+                    continue;
+                }
+                if let Some(item) = parse_list_item(&line)
+                    && line[..item.content_start].chars().count() == head - start
+                {
+                    let indent_start = start + item.indent.chars().count();
+                    special.push(Change::new(
+                        indent_start,
+                        head,
+                        &item.hanging_indent(true)[item.indent.len()..],
+                    ));
+                    new_alignments.push((index, item.indent.chars().count()));
+                    unmarked.push(row);
+                    continue;
+                }
+                if head == start + buffer.line_len(row)
+                    && line
                         .chars()
                         .all(|character| matches!(character, ' ' | '\t'))
-                        && let Some(alignment) = pending_alignments.iter().find(|alignment| {
-                            alignment.buffer == buffer_id
-                                && alignment.pane == pane
-                                && alignment.revision == revision
-                                && alignment.head == head
-                        })
-                    {
-                        special.push(Change::new(alignment.indent_start, head, ""));
-                        continue;
-                    }
-                    if let Some(item) = parse_list_item(&line)
-                        && item.content_start == line.len()
-                    {
-                        let indent_start = start + item.indent.chars().count();
-                        special.push(Change::new(
-                            indent_start,
-                            head,
-                            &item.hanging_indent(true)[item.indent.len()..],
-                        ));
-                        new_alignments.push((index, item.indent.chars().count()));
-                        continue;
-                    }
-                    if line
-                        .chars()
-                        .all(|character| matches!(character, ' ' | '\t'))
-                    {
-                        let mut aligned = false;
-                        for previous_row in (0..row).rev() {
-                            let previous = buffer.line_string(previous_row);
-                            if let Some(item) = parse_list_item(&previous) {
-                                let next_alignment = next_list_prefix(
-                                    &item,
-                                    roman_style_before(buffer, previous_row, item.indent),
-                                )
-                                .and_then(|prefix| {
-                                    parse_list_item(&prefix).map(|next| next.hanging_indent(true))
-                                });
-                                if item.hanging_indent(true) == line
-                                    || next_alignment.as_deref() == Some(line.as_str())
-                                {
-                                    special.push(Change::new(
-                                        start + item.indent.chars().count(),
-                                        head,
-                                        "",
-                                    ));
-                                    aligned = true;
-                                }
-                                break;
+                {
+                    let mut aligned = false;
+                    for previous_row in (0..row).rev() {
+                        let previous = buffer.line_string(previous_row);
+                        if let Some(item) = parse_list_item(&previous) {
+                            let next_alignment = next_list_prefix(
+                                &item,
+                                item.marker,
+                                roman_style_before(buffer, previous_row, item.indent),
+                            )
+                            .and_then(|prefix| {
+                                parse_list_item(&prefix).map(|next| next.hanging_indent(true))
+                            });
+                            if item.hanging_indent(true) == line
+                                || next_alignment.as_deref() == Some(line.as_str())
+                            {
+                                special.push(Change::new(
+                                    start + item.indent.chars().count(),
+                                    head,
+                                    "",
+                                ));
+                                aligned = true;
                             }
-                            if !previous.starts_with(&line) || previous.trim().is_empty() {
-                                break;
-                            }
+                            break;
                         }
-                        if aligned {
-                            continue;
+                        if !previous.starts_with(&line) || previous.trim().is_empty() {
+                            break;
                         }
+                    }
+                    if aligned {
+                        continue;
                     }
                 }
             }
@@ -1202,6 +1480,21 @@ impl App {
         }
         let mut changes = crlf_safe_deletions(buffer, ordinary);
         changes.extend(special);
+        let anchors = unmarked.iter().copied().collect();
+        if !unmarked.is_empty()
+            && let Some(mut renumbering) =
+                Renumbering::new(buffer, self.active().selection.ranges(), anchors, &changes)
+        {
+            for &row in &unmarked {
+                let line = buffer.line_string(row);
+                let Some(item) = parse_list_item(&line) else {
+                    continue;
+                };
+                let roman_style = renumbering.roman_style(buffer, row, &item);
+                renumbering.follow(buffer, row, &item, roman_style, false);
+            }
+            changes.extend(renumbering.changes(buffer, &unmarked.into_iter().collect()));
+        }
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
         let revision = self.active_buffer().revision();
@@ -1632,15 +1925,11 @@ impl App {
         part: SyntaxObjectPart,
     ) -> Result<()> {
         let buffer_id = self.active().buffer;
-        let Some(syntax) = self.syntax[buffer_id].as_ref() else {
-            self.mark_unavailable("syntax is unavailable for this buffer");
-            return Ok(());
-        };
         let selection = select_delimiter(
-            syntax,
+            self.syntax[buffer_id].as_ref(),
             self.buffers[buffer_id].text(),
             &self.registry,
-            &self.active().selection,
+            &self.half_open_object_selection(),
             pair,
             part,
         )?;
@@ -1650,6 +1939,91 @@ impl App {
         };
         self.install_inclusive_syntax_selection(selection);
         Ok(())
+    }
+
+    /// Selects the word under each caret, read from the text alone, so it
+    /// works in every buffer whether or not a grammar covers it.
+    pub(super) fn select_word_object(&mut self, long: bool, part: TextObjectPart) {
+        let text = self.active_buffer().text();
+        let mut found = false;
+        // The word is looked up under the caret the person sees, which for a
+        // range holding text is its last character rather than the offset one
+        // past it that the half-open reading ends at; reading it from there
+        // would make asking again step onto the run after the word. A range
+        // with no word under its caret is kept in its half-open reading so it
+        // survives the conversion back to Runyte's inclusive ranges.
+        let selection = self.active().selection.transform(|range| {
+            match text_object::word(text, range.head, long, part) {
+                Some(span) => {
+                    found = true;
+                    Range::new(span.from, span.to)
+                }
+                None => self.half_open_object_range(range),
+            }
+        });
+        if !found {
+            self.status("no word under the cursor");
+            return;
+        }
+        self.install_inclusive_syntax_selection(selection);
+    }
+
+    /// Selects the paragraph under each caret as whole lines, the way `x`
+    /// selects them, so `d`, `y`, and `p` treat it as lines rather than as the
+    /// characters between its first and last. Read from the text alone, so it
+    /// works in every buffer.
+    pub(super) fn select_paragraph(&mut self, part: TextObjectPart) {
+        let buffer = self.active_buffer();
+        let text = buffer.text();
+        let mut found = false;
+        let selection = self.active().selection.transform(|range| {
+            let row = buffer.offset_to_row(range.head);
+            let Some((first, last)) = text_object::paragraph_rows(text, row, part) else {
+                return range;
+            };
+            found = true;
+            Range::new(
+                buffer.line_to_offset(first),
+                buffer.row_end_offset(last, false),
+            )
+        });
+        if !found {
+            self.status("no paragraph in an empty buffer");
+            return;
+        }
+        let pane = self.active_mut();
+        pane.replace_selection(selection);
+        pane.mark_selection_semantics(SelectionSemantics::Runyte);
+        if self.line_select.is_none() {
+            self.line_select = Some(self.mode);
+            self.mode = Mode::Select;
+        }
+    }
+
+    /// The active selection as the half-open spans a text object compares
+    /// itself against.
+    ///
+    /// A range holding text is inclusive under Runyte semantics, so its last
+    /// character is added back; without that, an object already selected would
+    /// read as smaller than itself and asking again could not grow past it. A
+    /// bare caret stays empty, which object lookups read as "the character
+    /// under the caret" rather than as a one-character selection to grow from.
+    fn half_open_object_selection(&self) -> Selection {
+        self.active()
+            .selection
+            .transform(|range| self.half_open_object_range(range))
+    }
+
+    fn half_open_object_range(&self, range: Range) -> Range {
+        if range.is_empty() || self.active().selection_semantics() != SelectionSemantics::Runyte {
+            return range;
+        }
+        let end = self.active_buffer().len_chars();
+        if range.anchor <= range.head {
+            Range::new(range.anchor, (range.head + 1).min(end))
+        } else {
+            Range::new((range.anchor + 1).min(end), range.head)
+        }
     }
 
     /// Installs exact half-open syntax bounds using Runyte's visible inclusive
@@ -2377,6 +2751,85 @@ impl App {
         }
     }
 
+    /// Joins the rows each selection touches with a single space, the way Vim's
+    /// and Helix's `J` do.
+    ///
+    /// Unlike `join_selections`, a selection that touches one row — a bare
+    /// caret included — pulls up the row below it, because that is what `J` is
+    /// pressed for. The rows a selection touches are read as `join_selections`
+    /// reads its span, so the two commands agree on which breaks a multi-row
+    /// selection covers. Joining whole rows rather than the span itself changes
+    /// nothing in the result, since only the whitespace against a removed break
+    /// is touched; it is what lets overlapping row runs from several cursors be
+    /// merged into one change instead of conflicting.
+    ///
+    /// The empty row after a final line terminator is not a row to pull up:
+    /// joining it would take the file's last newline away.
+    pub(super) fn join_lines(&mut self) {
+        let buffer = self.active_buffer();
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
+        let last_row = buffer.last_row();
+        let last_joinable_row = if last_row > 0 && buffer.line_len(last_row) == 0 {
+            last_row - 1
+        } else {
+            last_row
+        };
+        let mut runs: Vec<(usize, usize)> = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .zip(self.operative_spans())
+            .filter_map(|(range, (from, to))| {
+                let (first, last) = if range.is_empty() {
+                    let row = buffer.offset_to_row(range.head);
+                    (row, row)
+                } else {
+                    let to = if half_open {
+                        without_trailing_line_terminator(buffer, from, to)
+                    } else {
+                        to
+                    };
+                    let last = buffer.offset_to_row(to).min(last_joinable_row);
+                    (buffer.offset_to_row(from), last)
+                };
+                if first < last {
+                    Some((first, last))
+                } else {
+                    (first < last_joinable_row).then_some((first, first + 1))
+                }
+            })
+            .collect();
+        runs.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+        for (first, last) in runs {
+            match merged.last_mut() {
+                Some((_, previous_last)) if first <= *previous_last => {
+                    *previous_last = (*previous_last).max(last);
+                }
+                _ => merged.push((first, last)),
+            }
+        }
+        let changes = merged
+            .into_iter()
+            .filter_map(|(first, last)| {
+                let from = buffer.line_to_offset(first);
+                let to = buffer.line_to_offset(last) + buffer.line_len(last);
+                let original = buffer.slice(from, to);
+                let joined = crate::wrap::join_lines_with_space(&original);
+                (joined != original).then(|| Change::new(from, to, joined))
+            })
+            .collect();
+        if self.edit(Transaction::new(changes)) {
+            self.status("joined the lines");
+        } else {
+            self.status("no line below to join");
+        }
+    }
+
     /// Aligns the columns of the table each selection covers.
     ///
     /// Alone among the selection-wide text transforms this widens each span to
@@ -2539,16 +2992,55 @@ impl App {
             directory,
         });
         let buffer = self.active_buffer();
-        let changes = self
-            .operative_spans()
-            .into_iter()
-            .filter(|(from, to)| from < to)
-            .map(|(from, to)| {
-                if !transient_line_selection {
-                    return Change::new(from, to, "");
+        if !transient_line_selection {
+            let changes = self
+                .operative_spans()
+                .into_iter()
+                .filter(|(from, to)| from < to)
+                .map(|(from, to)| Change::new(from, to, ""))
+                .collect();
+            self.finish_delete(buffer_id, changes, enter_insert);
+            return;
+        }
+        // Rows are read from each range the way `line_register` reads them.
+        // A character span cannot say that a line selection ends on an empty
+        // row: that row holds no character, so the span stops at the break
+        // before it and the row would be left behind while the register
+        // still recorded it.
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
+        let mut runs: Vec<(usize, usize)> = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|range| {
+                let last = if half_open && !range.is_empty() {
+                    range.to() - 1
+                } else {
+                    range.to()
+                };
+                (
+                    buffer.offset_to_row(range.from()),
+                    buffer.offset_to_row(last),
+                )
+            })
+            .collect();
+        runs.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+        for (first, last) in runs {
+            match merged.last_mut() {
+                Some((_, previous_last)) if first <= *previous_last => {
+                    *previous_last = (*previous_last).max(last);
                 }
-                let first_row = buffer.offset_to_row(from);
-                let last_row = buffer.offset_to_row(to.saturating_sub(1));
+                _ => merged.push((first, last)),
+            }
+        }
+        let changes = merged
+            .into_iter()
+            .map(|(first_row, last_row)| {
                 if last_row < buffer.last_row() {
                     Change::new(
                         buffer.line_to_offset(first_row),
@@ -2566,6 +3058,10 @@ impl App {
                 }
             })
             .collect();
+        self.finish_delete(buffer_id, changes, enter_insert);
+    }
+
+    fn finish_delete(&mut self, buffer_id: usize, changes: Vec<Change>, enter_insert: bool) {
         self.edit(Transaction::new(changes));
         let selection = self.active().selection.collapse();
         self.active_mut().replace_selection(selection);

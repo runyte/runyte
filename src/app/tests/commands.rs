@@ -516,12 +516,21 @@ fn syntax_namespace_text_objects_end_on_the_last_included_character() {
         config.editor.grammar = grammar;
         let mut app = App::new(config, Some(path.clone())).unwrap();
 
-        for (part, expected, last) in [('i', "2 + 3", '3'), ('a', "(2 + 3)", ')')] {
+        for (part, command, expected, last) in [
+            ('i', EditorCommand::SelectInsideParentheses, "2 + 3", '3'),
+            ('a', EditorCommand::SelectAroundParentheses, "(2 + 3)", ')'),
+        ] {
             app.active_mut()
                 .replace_selection(Selection::point(source.find('2').unwrap()));
             app.enter_normal_mode();
-            for key in [' ', 'x', part, '('] {
-                press(&mut app, key);
+            // The retained Vim interpreter spends `m` on its own meaning, so it
+            // reaches the object through the command rather than the keys.
+            if grammar == GrammarKind::Runyte {
+                for key in ['m', part, '('] {
+                    press(&mut app, key);
+                }
+            } else {
+                app.execute_editor_command(command).unwrap();
             }
 
             assert_eq!(
@@ -1392,7 +1401,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 391, "current binding inventory changed");
+    assert_eq!(bindings.len(), 398, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1414,7 +1423,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 764, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 778, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()

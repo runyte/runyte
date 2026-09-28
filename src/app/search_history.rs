@@ -1018,6 +1018,45 @@ impl App {
         pane.preserve_scroll = false;
     }
 
+    /// `f`, `t`, `F`, and `T` under `editor.selecting_motions`: selects from
+    /// the character under each caret through the found character, or up to
+    /// it for `t` and `T`, as Helix's find motions do. Like the caret-moving
+    /// finds, it takes no count.
+    pub(super) fn select_to_character(&mut self, character: char, forward: bool, till: bool) {
+        let buffer = self.active_buffer();
+        let mut missed = false;
+        let selection = self.active().selection.transform(|range| {
+            let found = if forward {
+                offsets_after(buffer, range.head)
+                    .find(|offset| buffer.char_at(*offset) == Some(character))
+            } else {
+                offsets_before(buffer, range.head)
+                    .find(|offset| buffer.char_at(*offset) == Some(character))
+            };
+            let Some(mut target) = found else {
+                missed = true;
+                return range;
+            };
+            // Stepping back from the match skips line terminators, so from a
+            // caret on an empty row it could land behind the caret; a till
+            // never selects in the direction opposite to its search.
+            if till {
+                target = if forward {
+                    previous_offset(buffer, target).map_or(range.head, |at| at.max(range.head))
+                } else {
+                    next_offset(buffer, target).map_or(range.head, |at| at.min(range.head))
+                };
+            }
+            Range::new(range.head, target)
+        });
+        if missed {
+            self.action_failed(format!("character not found: {character}"));
+        }
+        let pane = self.active_mut();
+        pane.replace_selection(selection);
+        pane.preserve_scroll = false;
+    }
+
     pub(super) fn viewport_height(&self) -> usize {
         self.areas
             .get(&self.active_pane)
