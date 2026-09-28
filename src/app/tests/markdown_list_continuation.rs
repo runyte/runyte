@@ -241,3 +241,63 @@ fn markdown_file_continues_lists_even_when_scratch_markdown_is_disabled() {
     app.edit_newline();
     assert_eq!(text(&app), "- item\n- ");
 }
+
+#[test]
+fn markdown_backspace_after_a_marker_unwinds_the_same_way_before_text() {
+    let original = "1. First point\n2. Second point a bit longer to show the problem";
+    let mut app = markdown(original);
+    let split = "1. First point\n2. Second point a bit longer "
+        .chars()
+        .count();
+    app.replace_active_selection(Selection::point(split));
+    app.edit_newline();
+    assert_eq!(
+        text(&app),
+        "1. First point\n2. Second point a bit longer \n3. to show the problem"
+    );
+    let content = split + "\n3. ".chars().count();
+    assert_eq!(app.active().selection.primary().head, content);
+
+    app.edit_backspace();
+    assert_eq!(
+        text(&app),
+        "1. First point\n2. Second point a bit longer \n   to show the problem"
+    );
+    assert_eq!(app.active().selection.primary().head, content);
+
+    app.edit_backspace();
+    assert_eq!(
+        text(&app),
+        "1. First point\n2. Second point a bit longer \nto show the problem"
+    );
+    assert_eq!(app.active().selection.primary().head, split + 1);
+
+    app.edit_backspace();
+    assert_eq!(text(&app), original);
+}
+
+#[test]
+fn markdown_backspace_at_an_existing_item_content_start_uses_character_columns() {
+    for (before, caret, after) in [
+        ("- żółw", 2, "  żółw"),
+        ("\t- [x]\tżółw", 7, "\t     \tżółw"),
+        ("ż\n  10. item", 8, "ż\n      item"),
+    ] {
+        let mut app = markdown(before);
+        app.replace_active_selection(Selection::point(caret));
+        app.edit_backspace();
+        assert_eq!(text(&app), after, "{before}");
+        assert_eq!(app.active().selection.primary().head, caret, "{before}");
+    }
+
+    for (before, caret, after) in [
+        ("- żółw", 3, "- ółw"),
+        ("1.  item", 3, "1. item"),
+        ("  not a list", 2, " not a list"),
+    ] {
+        let mut app = markdown(before);
+        app.replace_active_selection(Selection::point(caret));
+        app.edit_backspace();
+        assert_eq!(text(&app), after, "ordinary Backspace for {before}");
+    }
+}

@@ -3569,8 +3569,9 @@ requests it; a grammar that requires a tab still gets a tab. With
 `editor.smart_newline` enabled, as it is by default, Markdown list items
 continue on Enter: bullets keep their marker, numbered and lettered items
 advance, and task items start unchecked. Enter on an empty item ends the list.
-Backspace after an empty marker changes it to a continuation indent; another
-Backspace removes that alignment in one press. A single `I.` or `V.` advances
+Backspace directly after a marker changes it to a continuation indent, whether
+or not text follows the caret; another Backspace removes that alignment in one
+press. A single `I.` or `V.` advances
 as a letter unless the preceding sibling establishes Roman numbering. In other
 file types, smart newline retains the existing alignment under a list item's
 content. With `editor.smart_newline: false`, Enter preserves only the row's

@@ -1162,66 +1162,69 @@ impl App {
                 let row = buffer.offset_to_row(head);
                 let start = buffer.line_to_offset(row);
                 let line = buffer.line_string(row);
-                if head == start + buffer.line_len(row) {
-                    if line
+                // Text after the caret does not change what the marker or the
+                // alignment before it means: an item split by Enter mid-line
+                // unwinds exactly like one started at the end of a line.
+                if buffer
+                    .slice(start, head)
+                    .chars()
+                    .all(|character| matches!(character, ' ' | '\t'))
+                    && let Some(alignment) = pending_alignments.iter().find(|alignment| {
+                        alignment.buffer == buffer_id
+                            && alignment.pane == pane
+                            && alignment.revision == revision
+                            && alignment.head == head
+                    })
+                {
+                    special.push(Change::new(alignment.indent_start, head, ""));
+                    continue;
+                }
+                if let Some(item) = parse_list_item(&line)
+                    && line[..item.content_start].chars().count() == head - start
+                {
+                    let indent_start = start + item.indent.chars().count();
+                    special.push(Change::new(
+                        indent_start,
+                        head,
+                        &item.hanging_indent(true)[item.indent.len()..],
+                    ));
+                    new_alignments.push((index, item.indent.chars().count()));
+                    continue;
+                }
+                if head == start + buffer.line_len(row)
+                    && line
                         .chars()
                         .all(|character| matches!(character, ' ' | '\t'))
-                        && let Some(alignment) = pending_alignments.iter().find(|alignment| {
-                            alignment.buffer == buffer_id
-                                && alignment.pane == pane
-                                && alignment.revision == revision
-                                && alignment.head == head
-                        })
-                    {
-                        special.push(Change::new(alignment.indent_start, head, ""));
-                        continue;
-                    }
-                    if let Some(item) = parse_list_item(&line)
-                        && item.content_start == line.len()
-                    {
-                        let indent_start = start + item.indent.chars().count();
-                        special.push(Change::new(
-                            indent_start,
-                            head,
-                            &item.hanging_indent(true)[item.indent.len()..],
-                        ));
-                        new_alignments.push((index, item.indent.chars().count()));
-                        continue;
-                    }
-                    if line
-                        .chars()
-                        .all(|character| matches!(character, ' ' | '\t'))
-                    {
-                        let mut aligned = false;
-                        for previous_row in (0..row).rev() {
-                            let previous = buffer.line_string(previous_row);
-                            if let Some(item) = parse_list_item(&previous) {
-                                let next_alignment = next_list_prefix(
-                                    &item,
-                                    roman_style_before(buffer, previous_row, item.indent),
-                                )
-                                .and_then(|prefix| {
-                                    parse_list_item(&prefix).map(|next| next.hanging_indent(true))
-                                });
-                                if item.hanging_indent(true) == line
-                                    || next_alignment.as_deref() == Some(line.as_str())
-                                {
-                                    special.push(Change::new(
-                                        start + item.indent.chars().count(),
-                                        head,
-                                        "",
-                                    ));
-                                    aligned = true;
-                                }
-                                break;
+                {
+                    let mut aligned = false;
+                    for previous_row in (0..row).rev() {
+                        let previous = buffer.line_string(previous_row);
+                        if let Some(item) = parse_list_item(&previous) {
+                            let next_alignment = next_list_prefix(
+                                &item,
+                                roman_style_before(buffer, previous_row, item.indent),
+                            )
+                            .and_then(|prefix| {
+                                parse_list_item(&prefix).map(|next| next.hanging_indent(true))
+                            });
+                            if item.hanging_indent(true) == line
+                                || next_alignment.as_deref() == Some(line.as_str())
+                            {
+                                special.push(Change::new(
+                                    start + item.indent.chars().count(),
+                                    head,
+                                    "",
+                                ));
+                                aligned = true;
                             }
-                            if !previous.starts_with(&line) || previous.trim().is_empty() {
-                                break;
-                            }
+                            break;
                         }
-                        if aligned {
-                            continue;
+                        if !previous.starts_with(&line) || previous.trim().is_empty() {
+                            break;
                         }
+                    }
+                    if aligned {
+                        continue;
                     }
                 }
             }
