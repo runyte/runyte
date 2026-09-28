@@ -2645,16 +2645,55 @@ impl App {
             directory,
         });
         let buffer = self.active_buffer();
-        let changes = self
-            .operative_spans()
-            .into_iter()
-            .filter(|(from, to)| from < to)
-            .map(|(from, to)| {
-                if !transient_line_selection {
-                    return Change::new(from, to, "");
+        if !transient_line_selection {
+            let changes = self
+                .operative_spans()
+                .into_iter()
+                .filter(|(from, to)| from < to)
+                .map(|(from, to)| Change::new(from, to, ""))
+                .collect();
+            self.finish_delete(buffer_id, changes, enter_insert);
+            return;
+        }
+        // Rows are read from each range the way `line_register` reads them.
+        // A character span cannot say that a line selection ends on an empty
+        // row: that row holds no character, so the span stops at the break
+        // before it and the row would be left behind while the register
+        // still recorded it.
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
+        let mut runs: Vec<(usize, usize)> = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|range| {
+                let last = if half_open && !range.is_empty() {
+                    range.to() - 1
+                } else {
+                    range.to()
+                };
+                (
+                    buffer.offset_to_row(range.from()),
+                    buffer.offset_to_row(last),
+                )
+            })
+            .collect();
+        runs.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+        for (first, last) in runs {
+            match merged.last_mut() {
+                Some((_, previous_last)) if first <= *previous_last => {
+                    *previous_last = (*previous_last).max(last);
                 }
-                let first_row = buffer.offset_to_row(from);
-                let last_row = buffer.offset_to_row(to.saturating_sub(1));
+                _ => merged.push((first, last)),
+            }
+        }
+        let changes = merged
+            .into_iter()
+            .map(|(first_row, last_row)| {
                 if last_row < buffer.last_row() {
                     Change::new(
                         buffer.line_to_offset(first_row),
@@ -2672,6 +2711,10 @@ impl App {
                 }
             })
             .collect();
+        self.finish_delete(buffer_id, changes, enter_insert);
+    }
+
+    fn finish_delete(&mut self, buffer_id: usize, changes: Vec<Change>, enter_insert: bool) {
         self.edit(Transaction::new(changes));
         let selection = self.active().selection.collapse();
         self.active_mut().replace_selection(selection);

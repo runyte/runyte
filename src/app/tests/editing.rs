@@ -1906,3 +1906,26 @@ fn comment_toggle_is_refused_in_a_read_only_buffer() {
     assert_eq!(app.status, "help is read-only");
     assert!(app.status_error);
 }
+
+fn type_keys(app: &mut App, keys: &str) {
+    for character in keys.chars() {
+        press(app, character);
+    }
+}
+
+#[test]
+fn a_line_selection_ending_on_an_empty_row_deletes_that_row_too() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\n\nbeta\n");
+    set_cursor(&mut app, 0, 0);
+    type_keys(&mut app, "xxd");
+    assert_eq!(text(&app), "beta\n");
+    // The register already held both rows; now the text agrees with it.
+    assert_eq!(app.read_selected_register().text, "alpha\n\n");
+
+    let mut upward = App::new(Config::default(), None).unwrap();
+    seed(&mut upward, "alpha\n\nbeta\n");
+    set_cursor(&mut upward, 2, 0);
+    type_keys(&mut upward, "XXd");
+    assert_eq!(text(&upward), "alpha\n");
+}
