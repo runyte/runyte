@@ -1321,8 +1321,10 @@ as an editable buffer with one relative path per line and `/` after
 directories. Normal modal editing and multiple selections work unchanged:
 rename a line to rename an entry, remove it to delete, add a line to create a
 file, add a trailing `/` to create a directory, or change its path to move the
-entry. To copy with the normal Helix keys, select one or more entries with `x`,
-yank with `y`, navigate or focus the destination explorer, and paste with `p`.
+entry. A new line may name a file inside an existing subdirectory, such as
+`docs/roadmap.md`. To copy with the normal Helix keys, select one or more
+entries with `x`, yank with `y`, navigate or focus the destination explorer,
+and paste with `p`.
 Use `d` instead of `y` to cut and move the selection. This works after
 navigating in the same pane or across split panes. A pasted cut is applied by
 writing its destination explorer; Runyte refuses to write the source first
