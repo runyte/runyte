@@ -208,6 +208,10 @@ impl App {
             super::BufferKind::Directory => ("[explorer]".to_owned(), RowTint::Explorer),
             super::BufferKind::Scratch => ("[scratch]".to_owned(), RowTint::Scratch),
             super::BufferKind::Provider(_) => ("[remote]".to_owned(), RowTint::File),
+            super::BufferKind::Virtual {
+                identity: super::GeneratedViewIdentity::MarkdownRender { .. },
+                ..
+            } => ("[rendered]".to_owned(), RowTint::Generated),
             _ => {
                 let title = buffer.display_name();
                 let kind = title
@@ -220,17 +224,20 @@ impl App {
             Some(path) => self.destination_path(path),
             None => {
                 let title = buffer.display_name();
-                let rest = title
-                    .strip_prefix(kind.as_str())
-                    .unwrap_or(&title)
-                    .trim()
-                    .to_owned();
+                let rest = if buffer.markdown_render_source().is_some() {
+                    title
+                        .strip_prefix("[rendered ")
+                        .and_then(|name| name.strip_suffix(']'))
+                        .unwrap_or(&title)
+                } else {
+                    title.strip_prefix(kind.as_str()).unwrap_or(&title).trim()
+                };
                 if rest.is_empty() {
                     kind.trim_start_matches('[')
                         .trim_end_matches(']')
                         .to_owned()
                 } else {
-                    rest
+                    rest.to_owned()
                 }
             }
         };

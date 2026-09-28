@@ -866,10 +866,11 @@ columns under dim `TYPE`, `NAME` and `STATE` headings:
 A `*` marks a destination some pane is showing. TYPE is the bracketed kind a
 pane title uses, coloured by kind: files, explorers, generated pages such as
 `[about]`, `[config]` and `[help]`, scratch buffers, and terminals each have
-their own theme colour. NAME is a path relative to the workspace, under `~`
-inside the home directory, or absolute otherwise, and a terminal's name; a name
-too long for its row is shortened in the middle so its file name stays. STATE
-collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
+their own theme colour. A rendered Markdown page uses `[rendered]` as TYPE
+and puts its source name in NAME. NAME is a path relative to the workspace,
+under `~` inside the home directory, or absolute otherwise, and a terminal's
+name; a name too long for its row is shortened in the middle so its file name
+stays. STATE collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
 `exited`, `unread` and `bell` for terminals — so an edit that conflicts with a
 change on disk reads `[+] [STALE]`. A terminal's preview shows its live screen,
 and its ID appears in its pane title (`[terminal #3] …`).

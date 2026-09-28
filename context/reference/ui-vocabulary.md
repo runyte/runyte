@@ -546,7 +546,8 @@ narrower scope. All three draw `*` for a destination some pane shows, a TYPE
 cell coloured by kind from the `destination_*` theme keys, a NAME that is
 shortened in the middle when too long, and a pinned STATE run holding `[+]`,
 `[STALE]`, `[RO]`, `exited`, `unread` and `bell`; they carry a key legend and
-open with the preview shown. A terminal's ID appears in its pane title as
+open with the preview shown. Rendered Markdown pages use `[rendered]` as TYPE
+and put the source name in NAME. A terminal's ID appears in its pane title as
 `[terminal #<id>]`.
 
 Terminal previews in the Navigator, terminal list and name-mode Finder read
