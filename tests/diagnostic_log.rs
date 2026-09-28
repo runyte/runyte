@@ -341,7 +341,9 @@ async fn response_ignoring_visuals(client: &mut LocalClient) -> HostResponse {
         let response = response(client).await;
         if !matches!(
             response,
-            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. }
         ) {
             return response;
         }
@@ -392,6 +394,9 @@ async fn wait_for_git_discovery(endpoint: &LocalEndpoint) {
                 }
             }
             HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            HostResponse::EditorDamage { .. } => {
                 client.send(&ClientRequest::Resynchronize).await.unwrap();
             }
             response => panic!("expected a Git discovery frame, got {response:?}"),

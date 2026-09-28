@@ -93,7 +93,8 @@ async fn exchange(
                 }
                 HostResponse::WaitState { .. }
                 | HostResponse::Frame { .. }
-                | HostResponse::TerminalDamage { .. } => {}
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. } => {}
                 HostResponse::Error { message } | HostResponse::Refused { message } => {
                     bail!(message)
                 }

@@ -150,6 +150,134 @@ pub struct HostFrame {
     pub overlays: Vec<OverlaySnapshot>,
 }
 
+/// Changed visible editor rows against a frame already written to the client.
+/// Pane geometry, viewport, and active document revision remain fixed; a larger
+/// change is sent as a complete frame.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorDamageFrame {
+    pub base: FrameId,
+    pub id: FrameId,
+    pub status: StatusSnapshot,
+    pub panes: Vec<EditorPaneDamage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorPaneDamage {
+    pub pane_id: usize,
+    pub cursor_screen_row: Option<usize>,
+    pub rows: Vec<EditorRowDamage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EditorRowDamage {
+    pub row: usize,
+    pub snapshot: SnapshotRow,
+}
+
+impl EditorDamageFrame {
+    pub fn between(base: &HostFrame, next: &HostFrame) -> Option<Self> {
+        if base.active_buffer != next.active_buffer
+            || base.active_revision != next.active_revision
+            || base.overlays != next.overlays
+            || base.editor.geometry != next.editor.geometry
+            || base.editor.theme != next.editor.theme
+            || base.editor.mode != next.editor.mode
+            || base.editor.session_strip != next.editor.session_strip
+            || base.editor.panes.len() != next.editor.panes.len()
+        {
+            return None;
+        }
+        let mut panes = Vec::new();
+        let mut total_rows = 0;
+        let mut changed_rows = 0;
+        for (old, new) in base.editor.panes.iter().zip(&next.editor.panes) {
+            if old.pane_id != new.pane_id
+                || old.area != new.area
+                || old.body != new.body
+                || old.active != new.active
+                || old.jump_active != new.jump_active
+                || old.dimmed != new.dimmed
+                || old.drawable != new.drawable
+                || old.title != new.title
+                || old.line_numbers != new.line_numbers
+                || old.line_digits != new.line_digits
+                || old.signs != new.signs
+                || old.changes != new.changes
+                || old.text_width != new.text_width
+                || old.gutter_width != new.gutter_width
+                || old.content_indent != new.content_indent
+                || old.scroll_row != new.scroll_row
+                || old.scroll_wrap != new.scroll_wrap
+                || old.wrap_width != new.wrap_width
+                || old.terminal != new.terminal
+                || old.rows.len() != new.rows.len()
+            {
+                return None;
+            }
+            let rows: Vec<_> = old
+                .rows
+                .iter()
+                .zip(&new.rows)
+                .enumerate()
+                .filter(|(_, (before, after))| before != after)
+                .map(|(row, (_, snapshot))| EditorRowDamage {
+                    row,
+                    snapshot: snapshot.clone(),
+                })
+                .collect();
+            total_rows += old.rows.len();
+            changed_rows += rows.len();
+            if !rows.is_empty() || old.cursor_screen_row != new.cursor_screen_row {
+                panes.push(EditorPaneDamage {
+                    pane_id: new.pane_id,
+                    cursor_screen_row: new.cursor_screen_row,
+                    rows,
+                });
+            }
+        }
+        // A small pane may repaint in full while a large sibling stays fixed.
+        if total_rows > 4 && changed_rows > total_rows / 2 {
+            return None;
+        }
+        Some(Self {
+            base: base.id,
+            id: next.id,
+            status: next.editor.status.clone(),
+            panes,
+        })
+    }
+
+    pub fn apply(&self, frame: &mut HostFrame) -> bool {
+        if frame.id != self.base
+            || self.panes.iter().any(|damage| {
+                frame
+                    .editor
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == damage.pane_id)
+                    .is_none_or(|pane| damage.rows.iter().any(|row| row.row >= pane.rows.len()))
+            })
+        {
+            return false;
+        }
+        for damage in &self.panes {
+            let pane = frame
+                .editor
+                .panes
+                .iter_mut()
+                .find(|pane| pane.pane_id == damage.pane_id)
+                .expect("damage pane was validated");
+            pane.cursor_screen_row = damage.cursor_screen_row;
+            for row in &damage.rows {
+                pane.rows[row.row] = row.snapshot.clone();
+            }
+        }
+        frame.id = self.id;
+        frame.editor.status = self.status.clone();
+        true
+    }
+}
+
 /// Output-only update against one complete host frame. The reliable local
 /// transport preserves order, while both frame and terminal revisions make a
 /// stale update detectable instead of guessable.
@@ -902,6 +1030,84 @@ mod tests {
         let mut applied = base;
         assert!(damage.apply(&mut applied));
         assert_eq!(applied, next);
+    }
+
+    fn editor_frame(id: u64) -> HostFrame {
+        let mut frame = terminal_frame(id, 1, 'x');
+        let pane = &mut frame.editor.panes[0];
+        pane.terminal = None;
+        pane.rows = vec![SnapshotRow::Placeholder; 12];
+        pane.cursor_screen_row = Some(0);
+        frame
+    }
+
+    #[test]
+    fn editor_damage_round_trips_cursor_selection_and_status_from_exact_base() {
+        let base = editor_frame(10);
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(11);
+        next.editor.panes[0].cursor_screen_row = Some(1);
+        next.editor.panes[0].rows[0] = SnapshotRow::Filler;
+        next.editor.panes[0].rows[1] = SnapshotRow::Padding;
+        next.editor.status.selection_count += 1;
+        let damage = EditorDamageFrame::between(&base, &next).unwrap();
+        assert_eq!(damage.base, base.id);
+        assert_eq!(damage.panes[0].rows.len(), 2);
+        assert!(
+            serde_json::to_vec(&damage).unwrap().len() < serde_json::to_vec(&next).unwrap().len()
+        );
+        let wire: EditorDamageFrame =
+            serde_json::from_slice(&serde_json::to_vec(&damage).unwrap()).unwrap();
+        let mut received = base.clone();
+        assert!(wire.apply(&mut received));
+        assert_eq!(received, next);
+        let mut invalid = wire.clone();
+        invalid.panes[0].rows[0].row = 100;
+        let mut unchanged = base.clone();
+        assert!(!invalid.apply(&mut unchanged));
+        assert_eq!(unchanged, base);
+        let mut stale = base;
+        stale.id = FrameId::from_raw(9);
+        assert!(!wire.apply(&mut stale));
+        assert_eq!(stale.id.get(), 9);
+    }
+
+    #[test]
+    fn editor_damage_requires_full_frame_for_edit_scroll_geometry_and_broad_repaint() {
+        let base = editor_frame(1);
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.active_revision =
+            crate::workspace::BufferRevision::from_raw(next.active_revision.get() + 1).into();
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        next = base.clone();
+        next.editor.panes[0].scroll_row += 1;
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        next = base.clone();
+        next.editor.geometry.screen.width += 1;
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        next = base.clone();
+        next.editor.panes[0].rows.fill(SnapshotRow::Filler);
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+    }
+
+    #[test]
+    fn changed_one_row_pane_does_not_retransmit_large_unchanged_sibling() {
+        let mut base = editor_frame(1);
+        let mut sibling = base.editor.panes[0].clone();
+        sibling.pane_id = 2;
+        sibling.active = false;
+        base.editor.panes[0].rows.truncate(1);
+        base.editor.panes.push(sibling);
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.panes[0].rows[0] = SnapshotRow::Filler;
+        let damage = EditorDamageFrame::between(&base, &next).unwrap();
+        assert_eq!(damage.panes.len(), 1);
+        assert_eq!(damage.panes[0].rows.len(), 1);
+        let mut received = base;
+        assert!(damage.apply(&mut received));
+        assert_eq!(received, next);
     }
 
     #[test]

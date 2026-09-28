@@ -3229,6 +3229,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replacing_an_in_flight_visual_keeps_the_new_one_pending() {
+        let mut host = WorkspaceHost::new(App::new(Config::default(), None).unwrap());
+        let frame: crate::protocol::HostFrame = host.prepare_frame(FrameGeometry::default()).into();
+        let (responses, mut receiver) = response_channel();
+        responses
+            .try_send(HostResponse::Frame {
+                frame: Box::new(frame.clone()),
+            })
+            .unwrap();
+        assert!(matches!(
+            receiver.recv().await,
+            Some(HostResponse::Frame { .. })
+        ));
+        responses
+            .try_send(HostResponse::Frame {
+                frame: Box::new(frame),
+            })
+            .unwrap();
+        receiver.mark_delivered();
+        assert!(
+            responses.visual_pending(),
+            "acknowledging the old write cannot acknowledge its replacement"
+        );
+        assert!(matches!(
+            receiver.recv().await,
+            Some(HostResponse::Frame { .. })
+        ));
+        receiver.mark_delivered();
+        assert!(!responses.visual_pending());
+    }
+
+    #[test]
+    fn reader_coalesces_editor_damage_chain_while_renderer_is_stalled() {
+        let mut host = WorkspaceHost::new(App::new(Config::default(), None).unwrap());
+        let base: crate::protocol::HostFrame = host.prepare_frame(FrameGeometry::default()).into();
+        let mut middle = base.clone();
+        middle.id = crate::protocol::FrameId::from_raw(base.id.get() + 1);
+        middle.editor.panes[0].cursor_screen_row = Some(1);
+        let mut final_frame = middle.clone();
+        final_frame.id = crate::protocol::FrameId::from_raw(middle.id.get() + 1);
+        final_frame.editor.panes[0].cursor_screen_row = Some(2);
+        let first = crate::protocol::EditorDamageFrame::between(&base, &middle).unwrap();
+        let second = crate::protocol::EditorDamageFrame::between(&middle, &final_frame).unwrap();
+        let mut reader = FrameCoalescer::default();
+        let _unrendered = reader.coalesce(HostResponse::Frame {
+            frame: Box::new(base),
+        });
+        let _unrendered = reader.coalesce(HostResponse::EditorDamage {
+            damage: Box::new(first),
+        });
+        let latest = reader.coalesce(HostResponse::EditorDamage {
+            damage: Box::new(second),
+        });
+        assert!(matches!(latest, HostResponse::Frame { frame } if *frame == final_frame));
+    }
+
+    #[tokio::test]
     async fn final_response_survives_a_full_semantic_queue() {
         let (responses, mut receiver) = response_channel();
         for index in 0..RESPONSE_CAPACITY {

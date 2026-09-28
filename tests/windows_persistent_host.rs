@@ -245,7 +245,9 @@ async fn buffered_semantic_response(client: &mut BufferedLocalClient, stage: &st
                 .expect("native interactive peer closed");
             if !matches!(
                 response,
-                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+                HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. }
             ) {
                 return response;
             }

@@ -65,6 +65,32 @@ already-dirty rows isolate the geometry improvement. As above, these are
 in-process transaction-to-prepared-frame measurements rather than terminal
 input-to-drawn-frame latency.
 
+## 2026-09-28 — persistent cursor publications
+
+Release builds of the full-frame protocol at `83e0ade` and the editor-row-delta
+implementation were compared with the same local-host fixture on Linux. Each
+case opened a 120-line plain-text document with isolated temporary workspace
+and configuration storage, waited for startup publications, then sent
+`h`, `l`, `h`, `l`, `j`, `k` through the attached client. The 120×40 case had one
+visible pane; the 240×80 case had two. The table reports medians of the six
+cursor publications. Wire size is the serialized host-to-client JSON response,
+excluding its one-byte newline delimiter.
+
+| Geometry | Full-frame bytes | Row-delta bytes | Full-frame input to draw | Row-delta input to draw |
+| --- | ---: | ---: | ---: | ---: |
+| 120×40, one pane | 18,777 | 1,309 (93.0% less) | 0.770 ms | 0.501 ms |
+| 240×80, two panes | 68,672 | 1,348 (98.0% less) | 2.901 ms | 2.741 ms |
+
+The respective full-frame and delta byte ranges were 18,775–18,904 and
+1,182–1,627 at 120×40, and 68,619–68,848 and 1,171–1,616 at 240×80. Timing
+ranges were 0.623–1.605 and 0.484–0.823 ms at 120×40, and 2.570–3.101 and
+1.942–3.273 ms at 240×80. The timing ranges overlap, so these six-sample
+results establish the wire reduction but only suggest a latency difference.
+The timer starts before the input send and ends after JSON receive, frame
+reconstruction, snapshot conversion, and rendering into Ratatui's
+`TestBackend`. It does not measure a real terminal write, PTY flush, or
+rendered acknowledgement, nor compare with standalone mode.
+
 ## 2026-09-19 — complete plugin value documents
 
 Observed the coordinated database-viewer implementation on Linux x86-64 using

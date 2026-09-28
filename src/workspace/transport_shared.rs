@@ -82,7 +82,7 @@ pub enum ServerEvent<P = Option<u32>> {
     },
 }
 
-/// Semantic responses retain FIFO order; complete frames and terminal damage
+/// Semantic responses retain FIFO order; complete frames and pane damage
 /// share one replaceable slot. A slow client therefore holds at most one
 /// pending visual update while lifecycle/command replies remain explicit.
 #[derive(Clone, Debug)]
@@ -171,7 +171,9 @@ impl ResponseSender {
         }
         if matches!(
             response,
-            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. }
         ) {
             let visual = VisualResponse {
                 sequence: self
@@ -198,7 +200,9 @@ impl ResponseSender {
         }
         if matches!(
             response,
-            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. }
         ) {
             let visual = VisualResponse {
                 sequence: self
@@ -227,7 +231,9 @@ impl ResponseSender {
         }
         if matches!(
             response,
-            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. }
         ) {
             let visual = VisualResponse {
                 sequence: self
@@ -324,7 +330,7 @@ impl ResponseReceiver {
     }
 }
 
-/// Folds terminal damage before entering a replaceable response slot. The
+/// Folds pane damage before entering a replaceable response slot. The
 /// native reader owns this value independently of the frontend renderer.
 #[derive(Default)]
 pub(super) struct FrameCoalescer {
@@ -334,7 +340,7 @@ pub(super) struct FrameCoalescer {
 impl FrameCoalescer {
     pub(super) fn coalesce(&mut self, response: HostResponse) -> HostResponse {
         // Socket delivery lets the host use that frame as the base of later
-        // terminal damage, but the synchronous frontend may not have rendered
+        // pane damage, but the synchronous frontend may not have rendered
         // it yet. Fold every received delta into the reader's latest complete
         // frame before entering the local replaceable slot. Replacing one
         // complete frame with another is always safe, however far the renderer
@@ -353,6 +359,17 @@ impl FrameCoalescer {
                     }
                 } else {
                     HostResponse::TerminalDamage { damage }
+                }
+            }
+            HostResponse::EditorDamage { damage } => {
+                if let Some(frame) = self.latest_frame.as_mut()
+                    && damage.apply(frame)
+                {
+                    HostResponse::Frame {
+                        frame: Box::new(frame.clone()),
+                    }
+                } else {
+                    HostResponse::EditorDamage { damage }
                 }
             }
             response => response,

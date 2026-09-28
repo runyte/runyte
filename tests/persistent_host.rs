@@ -198,7 +198,9 @@ async fn semantic_response_after(
             };
             if !matches!(
                 response,
-                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+                HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. }
             ) {
                 return response;
             }
@@ -282,7 +284,11 @@ async fn shutdown(client: &mut LocalClient, request: ClientRequest) {
     let response = tokio::time::timeout(HOST_RESPONSE_TIMEOUT, async {
         loop {
             match client.recv().await.unwrap() {
-                Some(HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }) => {}
+                Some(
+                    HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. },
+                ) => {}
                 response => return response,
             }
         }
@@ -495,7 +501,7 @@ async fn wait_for_editor_frame(
                 }
                 last_complete = Some(*frame);
             }
-            HostResponse::TerminalDamage { .. } => {}
+            HostResponse::TerminalDamage { .. } | HostResponse::EditorDamage { .. } => {}
             response => panic!(
                 "unexpected host response while {waiting_for}: {response:?}; {}",
                 frame_diagnostic(last_complete.as_ref()),
@@ -596,6 +602,11 @@ async fn frame_matching(
                     client.send(&ClientRequest::Resynchronize).await.unwrap();
                 }
             }
+            HostResponse::EditorDamage { damage } => {
+                if !current.as_mut().is_some_and(|frame| damage.apply(frame)) {
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                }
+            }
             HostResponse::Error { message } => {
                 panic!("host rejected a request while waiting for terminal state: {message}")
             }
@@ -617,6 +628,9 @@ async fn next_complete_frame(client: &mut LocalClient) -> runyte::protocol::Host
         match response(client).await {
             HostResponse::Frame { frame } => return *frame,
             HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            HostResponse::EditorDamage { .. } => {
                 client.send(&ClientRequest::Resynchronize).await.unwrap();
             }
             _ => {}
@@ -671,7 +685,9 @@ async fn invoke_with_argument_when_current(
             .unwrap();
         loop {
             match response(client).await {
-                HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. } => {}
+                HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. } => {}
                 HostResponse::Error { message } if message.starts_with("stale editor frame:") => {
                     assert!(
                         Instant::now() < deadline,

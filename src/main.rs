@@ -3276,22 +3276,32 @@ fn publish_attached_frame(
             frame: Box::new(frame.clone()),
         }
     } else {
-        client
-            .last_frame
-            .as_ref()
-            .and_then(|base| runyte::protocol::TerminalDamageFrame::between(base, &frame))
-            .map_or_else(
-                || HostResponse::Frame {
-                    frame: Box::new(frame.clone()),
-                },
-                |damage| HostResponse::TerminalDamage {
-                    damage: Box::new(damage),
-                },
-            )
+        match client.last_frame.as_ref() {
+            Some(base) => {
+                if let Some(damage) = runyte::protocol::EditorDamageFrame::between(base, &frame) {
+                    HostResponse::EditorDamage {
+                        damage: Box::new(damage),
+                    }
+                } else if let Some(damage) =
+                    runyte::protocol::TerminalDamageFrame::between(base, &frame)
+                {
+                    HostResponse::TerminalDamage {
+                        damage: Box::new(damage),
+                    }
+                } else {
+                    HostResponse::Frame {
+                        frame: Box::new(frame.clone()),
+                    }
+                }
+            }
+            None => HostResponse::Frame {
+                frame: Box::new(frame.clone()),
+            },
+        }
     };
-    // A frame is a whole snapshot, so a client that cannot keep up loses
-    // nothing by missing one: the next publish supersedes it. Only a closed
-    // connection means the client is actually gone. Detaching on a merely
+    // The replaceable slot carries a complete snapshot whenever its prior
+    // visual is still pending, so a slow client can skip to the newest state.
+    // Only a closed connection means the client is actually gone. Detaching on a merely
     // full channel used to end the session mid-keystroke, which reached the
     // person as an unexplained clean exit.
     match client.responses.try_send(response) {
@@ -4386,6 +4396,15 @@ async fn run_attached(
                         client.send(&ClientRequest::Resynchronize).await?;
                     }
                 }
+                Some(HostResponse::EditorDamage { damage }) => {
+                    if apply_editor_damage(&mut current_frame, &damage)? {
+                        terminal.draw(|frame| {
+                            ui::render_host_frame(frame, &current_frame, color_depth)
+                        })?;
+                    } else {
+                        client.send(&ClientRequest::Resynchronize).await?;
+                    }
+                }
                 Some(HostResponse::WaitState {
                     token: response_token,
                     status: WaitStatus::Pending { .. },
@@ -4523,6 +4542,15 @@ async fn run_attached(
                             client.send(&ClientRequest::Resynchronize).await?;
                         }
                     }
+                    Some(HostResponse::EditorDamage { damage }) => {
+                        if apply_editor_damage(&mut current_frame, &damage)? {
+                            terminal.draw(|frame| {
+                                ui::render_host_frame(frame, &current_frame, color_depth)
+                            })?;
+                        } else {
+                            client.send(&ClientRequest::Resynchronize).await?;
+                        }
+                    }
                     Some(HostResponse::WaitState { token, status, .. }) if Some(token) == wait_token => {
                         match status {
                             WaitStatus::Completed => break,
@@ -4614,7 +4642,7 @@ async fn recover_attached_wait_after_status_write(
     let recovery = tokio::time::timeout(SHUTDOWN_FLUSH_BUDGET, async {
         loop {
             match client.recv().await {
-                Ok(Some(HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. })) => {}
+                Ok(Some(HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. } | HostResponse::EditorDamage { .. })) => {}
                 Ok(Some(HostResponse::WaitState {
                     token: response_token,
                     status: WaitStatus::Pending { .. },
@@ -4661,6 +4689,21 @@ async fn recover_attached_wait_after_status_write(
 fn apply_terminal_damage(
     current: &mut runyte::workspace::HostFrame,
     damage: &runyte::protocol::TerminalDamageFrame,
+) -> Result<bool> {
+    let mut wire: runyte::protocol::HostFrame = current.clone().into();
+    if !damage.apply(&mut wire) {
+        return Ok(false);
+    }
+    *current = wire
+        .try_into()
+        .map_err(|error: String| anyhow::anyhow!(error))?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn apply_editor_damage(
+    current: &mut runyte::workspace::HostFrame,
+    damage: &runyte::protocol::EditorDamageFrame,
 ) -> Result<bool> {
     let mut wire: runyte::protocol::HostFrame = current.clone().into();
     if !damage.apply(&mut wire) {
