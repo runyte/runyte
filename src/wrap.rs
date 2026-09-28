@@ -69,7 +69,10 @@ pub(crate) fn line_segments(
         return layout.segments.clone();
     }
     const MAX_SEGMENTS: usize = 8 * 1024 * 1024 / std::mem::size_of::<Segment>();
-    const MAX_LINES: usize = 16;
+    // A viewport commonly shows more than 16 short logical lines. Keep enough
+    // entries for several tall views of one buffer at different pane widths;
+    // MAX_SEGMENTS remains the hard bound on retained segment payload.
+    const MAX_LINES: usize = 256;
     let key = (buffer.revision(), row, width.max(1), tab_width.max(1));
     let mut cache = buffer.wrap_cache.lines.lock().unwrap();
     cache.retain(|entry| entry.key.0 == key.0);

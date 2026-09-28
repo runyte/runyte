@@ -22,6 +22,7 @@ use crate::{
     lsp::Severity,
     notification::{NotificationCounts, NotificationSeverity},
     row_hints::RowHints,
+    selection::Range,
     syntax::{Scope, Span},
     terminal::TerminalView,
     text::Offset,
@@ -29,6 +30,129 @@ use crate::{
 };
 
 const ZERO_WIDTH_SCAN_LIMIT: usize = 256;
+
+/// Walk the normalized ranges in document order while a viewport row is drawn.
+/// Both heads and covered spans are ordered, including reversed ranges. A
+/// structured table can revisit a document offset, so those lookups reset at
+/// that offset rather than assuming the visual order is always monotonic.
+struct SelectionRoles<'a> {
+    ranges: &'a [Range],
+    primary: usize,
+    covered: usize,
+    head: usize,
+    last_offset: Option<Offset>,
+    select_mode: bool,
+    pristine_search: bool,
+    replacing: bool,
+    half_open: bool,
+    runyte: bool,
+    /// Whether a lone range is drawn in Normal mode. Selecting motions leave
+    /// one there for `d`, `c`, and `p` to act on, so it has to be seen.
+    lone_range_shown: bool,
+}
+
+impl<'a> SelectionRoles<'a> {
+    fn new(
+        ranges: &'a [Range],
+        primary: usize,
+        first_offset: Offset,
+        select_mode: bool,
+        pristine_search: bool,
+        replacing: bool,
+        semantics: crate::jumplist::SelectionSemantics,
+    ) -> Self {
+        let half_open = matches!(
+            semantics,
+            crate::jumplist::SelectionSemantics::HalfOpen
+                | crate::jumplist::SelectionSemantics::VimLinewise
+        );
+        Self {
+            ranges,
+            primary,
+            covered: ranges.partition_point(|range| {
+                if half_open {
+                    range.to() <= first_offset
+                } else {
+                    range.to() < first_offset
+                }
+            }),
+            head: ranges.partition_point(|range| range.head < first_offset),
+            last_offset: None,
+            select_mode,
+            pristine_search,
+            replacing,
+            half_open,
+            runyte: semantics == crate::jumplist::SelectionSemantics::Runyte,
+            lone_range_shown: false,
+        }
+    }
+
+    fn with_lone_range_shown(mut self, shown: bool) -> Self {
+        self.lone_range_shown = shown;
+        self
+    }
+
+    fn role_at(&mut self, offset: Offset) -> TextRole {
+        if self.last_offset.is_some_and(|last| offset < last) {
+            self.covered = self.ranges.partition_point(|range| {
+                if self.half_open {
+                    range.to() <= offset
+                } else {
+                    range.to() < offset
+                }
+            });
+            self.head = self.ranges.partition_point(|range| range.head < offset);
+        } else {
+            while self.covered < self.ranges.len()
+                && if self.half_open {
+                    self.ranges[self.covered].to() <= offset
+                } else {
+                    self.ranges[self.covered].to() < offset
+                }
+            {
+                self.covered += 1;
+            }
+            while self.head < self.ranges.len() && self.ranges[self.head].head < offset {
+                self.head += 1;
+            }
+        }
+        self.last_offset = Some(offset);
+        let head = self
+            .ranges
+            .get(self.head)
+            .is_some_and(|range| range.head == offset);
+        if head && self.replacing {
+            return TextRole::ReplaceCaret;
+        }
+        if self.select_mode && self.ranges[self.primary].head == offset {
+            return TextRole::PrimaryCaret;
+        }
+        if head && !self.pristine_search {
+            return TextRole::Caret;
+        }
+        if head && self.pristine_search && self.runyte && self.ranges[self.head].is_empty() {
+            return TextRole::Selected;
+        }
+        let Some(range) = self.ranges.get(self.covered) else {
+            return TextRole::Plain;
+        };
+        if range.is_empty() || offset < range.from() {
+            return TextRole::Plain;
+        }
+        if self.select_mode && self.covered == self.primary {
+            return TextRole::PrimarySelected;
+        }
+        if self.covered == self.primary
+            && !self.select_mode
+            && self.ranges.len() == 1
+            && self.runyte
+            && !self.lone_range_shown
+        {
+            return TextRole::Plain;
+        }
+        TextRole::Selected
+    }
+}
 
 /// Everything needed to draw the normal editor panes and status surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1068,12 +1192,29 @@ impl App {
                 .map(|(_, _, severity)| *severity)
                 .max()
         };
-        let primary = pane.selection.primary();
         let pristine_search =
             self.mode == Mode::Select && self.pristine_search_selection(prepared.pane_id);
         let replacing = self.awaiting_character_command() == Some(EditorCommand::ReplaceChar);
         let preview = self.search_preview_for(prepared.pane_id, prepared.buffer_id);
-        let role_at = |offset: Offset| {
+        let first_offset =
+            row_start.saturating_add(context.segment.map_or(prepared.scroll_col, |segment| {
+                if segment.table.is_some() {
+                    0
+                } else {
+                    segment.start
+                }
+            }));
+        let mut selection_roles = SelectionRoles::new(
+            pane.selection.ranges(),
+            pane.selection.primary_index(),
+            first_offset,
+            self.mode == Mode::Select,
+            pristine_search,
+            replacing,
+            pane.selection_semantics(),
+        )
+        .with_lone_range_shown(self.config.editor.selecting_motions);
+        let mut role_at = |offset: Offset| {
             if !active {
                 return TextRole::Plain;
             }
@@ -1082,77 +1223,7 @@ impl App {
             if let Some(preview) = preview {
                 return preview.role_at(offset);
             }
-            if replacing
-                && pane
-                    .selection
-                    .ranges()
-                    .iter()
-                    .any(|range| range.head == offset)
-            {
-                return TextRole::ReplaceCaret;
-            }
-            if self.mode == Mode::Select && primary.head == offset {
-                return TextRole::PrimaryCaret;
-            }
-            if pane
-                .selection
-                .ranges()
-                .iter()
-                .any(|range| range.head == offset)
-                && !pristine_search
-            {
-                return TextRole::Caret;
-            }
-            // A one-character match is an anchor and a head on the same
-            // offset, so the run below skips it as a bare caret that selects
-            // nothing, and the caret that would have drawn it is suppressed
-            // along with every other secondary caret. Under Runyte's
-            // inclusive ranges such a range covers exactly the character it
-            // sits on, and a search that found every `a` has to look like one
-            // before the selection moves.
-            if pristine_search
-                && pane.selection_semantics() == crate::jumplist::SelectionSemantics::Runyte
-                && pane
-                    .selection
-                    .ranges()
-                    .iter()
-                    .any(|range| range.is_empty() && range.head == offset)
-            {
-                return TextRole::Selected;
-            }
-            for range in pane.selection.ranges() {
-                if range.is_empty() {
-                    continue;
-                }
-                let half_open = matches!(
-                    pane.selection_semantics(),
-                    crate::jumplist::SelectionSemantics::HalfOpen
-                        | crate::jumplist::SelectionSemantics::VimLinewise
-                );
-                if offset >= range.from()
-                    && if half_open {
-                        offset < range.to()
-                    } else {
-                        offset <= range.to()
-                    }
-                {
-                    if self.mode == Mode::Select && *range == primary {
-                        return TextRole::PrimarySelected;
-                    }
-                    // Selecting motions leave lone ranges in Normal mode for
-                    // `d`, `c`, and `p` to act on, so they have to be seen.
-                    if *range == primary
-                        && self.mode != Mode::Select
-                        && pane.selection.len() == 1
-                        && pane.selection_semantics() == crate::jumplist::SelectionSemantics::Runyte
-                        && !self.config.editor.selecting_motions
-                    {
-                        continue;
-                    }
-                    return TextRole::Selected;
-                }
-            }
-            TextRole::Plain
+            selection_roles.role_at(offset)
         };
         let label_at = |offset: Offset| {
             active
@@ -1173,10 +1244,12 @@ impl App {
             } else {
                 0
             };
-            let heads = pane
-                .selection
-                .ranges()
+            let ranges = pane.selection.ranges();
+            let first_head = ranges.partition_point(|range| range.head < row_start);
+            let row_end = row_start + buffer.text().line(context.row).len_chars();
+            let heads = ranges[first_head..]
                 .iter()
+                .take_while(|range| range.head <= row_end)
                 .filter_map(|range| {
                     let position = buffer.position_of(range.head);
                     if position.row != context.row {
@@ -1186,6 +1259,7 @@ impl App {
                     (line == index && x >= scroll).then_some((x.saturating_sub(scroll), range.head))
                 })
                 .collect::<Vec<_>>();
+            let mut heads = heads.iter().peekable();
             let mut runs: Vec<TextRun> = Vec::new();
             let mut next_cell = 0;
             for atom in layout.visible(buffer, context.row, index, scroll, context.text_width) {
@@ -1198,8 +1272,11 @@ impl App {
                     });
                 }
                 let offset = atom.offset.map(|col| row_start + col);
-                let mut role = offset.map_or(TextRole::Plain, &role_at);
-                if let Some((_, head)) = heads.iter().find(|(x, _)| *x == atom.x) {
+                let mut role = offset.map_or(TextRole::Plain, &mut role_at);
+                while heads.peek().is_some_and(|(x, _)| *x < atom.x) {
+                    heads.next();
+                }
+                if let Some((_, head)) = heads.peek().filter(|(x, _)| *x == atom.x) {
                     let head_role = role_at(*head);
                     if matches!(
                         head_role,
@@ -1698,9 +1775,177 @@ mod tests {
         command::{CommandExecutionContext, CommandInvocation, EditorCommand},
         config::Config,
         input::{KeyCode, KeyStroke, Modifiers},
-        selection::Range,
+        jumplist::SelectionSemantics,
+        selection::{Range, Selection},
         text::Transaction,
     };
+
+    #[test]
+    fn selection_role_walk_matches_range_semantics_at_boundaries_and_after_a_backward_jump() {
+        let selections = [
+            Selection::new(
+                vec![Range::new(3, 5), Range::new(12, 10), Range::point(18)],
+                1,
+            ),
+            Selection::new(vec![Range::new(3, 5), Range::new(5, 8)], 1),
+            Selection::single(Range::new(3, 5)),
+            Selection::new(vec![Range::point(3), Range::point(8)], 0),
+        ];
+        for selection in &selections {
+            for semantics in [
+                SelectionSemantics::Runyte,
+                SelectionSemantics::HalfOpen,
+                SelectionSemantics::VimLinewise,
+            ] {
+                for select_mode in [false, true] {
+                    for pristine in [false, true] {
+                        for replacing in [false, true] {
+                            let mut roles = SelectionRoles::new(
+                                selection.ranges(),
+                                selection.primary_index(),
+                                10,
+                                select_mode,
+                                pristine,
+                                replacing,
+                                semantics,
+                            );
+                            // The second pass simulates a structured row that
+                            // returns to an earlier document offset.
+                            for offset in (10..25).chain(0..25) {
+                                let ranges = selection.ranges();
+                                let head = ranges.iter().any(|range| range.head == offset);
+                                let expected = if replacing && head {
+                                    TextRole::ReplaceCaret
+                                } else if select_mode && selection.primary().head == offset {
+                                    TextRole::PrimaryCaret
+                                } else if head && !pristine {
+                                    TextRole::Caret
+                                } else if pristine
+                                    && semantics == SelectionSemantics::Runyte
+                                    && ranges
+                                        .iter()
+                                        .any(|range| range.is_empty() && range.head == offset)
+                                {
+                                    TextRole::Selected
+                                } else {
+                                    ranges
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, range)| {
+                                            !range.is_empty()
+                                                && range.from() <= offset
+                                                && if semantics == SelectionSemantics::Runyte {
+                                                    offset <= range.to()
+                                                } else {
+                                                    offset < range.to()
+                                                }
+                                        })
+                                        .map_or(TextRole::Plain, |(index, _)| {
+                                            if select_mode && index == selection.primary_index() {
+                                                TextRole::PrimarySelected
+                                            } else if !select_mode
+                                                && index == selection.primary_index()
+                                                && selection.len() == 1
+                                                && semantics == SelectionSemantics::Runyte
+                                            {
+                                                TextRole::Plain
+                                            } else {
+                                                TextRole::Selected
+                                            }
+                                        })
+                                };
+                                assert_eq!(
+                                    roles.role_at(offset),
+                                    expected,
+                                    "{selection:?}, {semantics:?}, {select_mode}, {pristine}, {replacing}, {offset}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn offscreen_carets_do_not_change_visible_wrapped_rows_or_selection_state() {
+        let mut config = Config::default();
+        config.editor.soft_wrap = true;
+        let mut app = App::new(config, None).unwrap();
+        let first_line = format!("{}\n", "abcdefghijklmnopqrstuvwxyz ".repeat(8));
+        let text = format!("{first_line}{}", "offscreen\n".repeat(1_000));
+        app.buffers[0].apply(&Transaction::insert(0, text));
+        let visible = [Range::new(0, 3), Range::point(25)];
+        app.panes.get_mut(&0).unwrap().selection = Selection::new(visible.to_vec(), 0);
+        app.mode = Mode::Select;
+        let baseline = prepared_snapshot(&mut app, 24, 12)
+            .pane(0)
+            .unwrap()
+            .rows
+            .clone();
+
+        let offscreen = (0..1_000).map(|row| Range::point(first_line.len() + row * 10));
+        app.panes.get_mut(&0).unwrap().selection =
+            Selection::new(visible.into_iter().chain(offscreen).collect(), 0);
+        let with_offscreen = prepared_snapshot(&mut app, 24, 12);
+        assert_eq!(with_offscreen.pane(0).unwrap().rows, baseline);
+        assert_eq!(app.panes[&0].selection.len(), 1_002);
+    }
+
+    #[test]
+    fn wrapped_table_keeps_selection_roles_on_continuation_rows() {
+        let mut config = Config::default();
+        config.editor.soft_wrap = true;
+        let mut app = App::new(config, None).unwrap();
+        let source = "| Name | Description |\n| --- | --- |\n| A | **alpha beta gamma** |\n";
+        app.buffers[0].apply(&Transaction::insert(0, source));
+        app.handle_key(KeyStroke::char('?')).unwrap();
+        let rendered = app.active_buffer().to_string();
+        let start = rendered[..rendered.find("alpha").unwrap()].chars().count();
+        let end = rendered[..rendered.find("gamma").unwrap()].chars().count() + "gamma".len() - 1;
+        app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(start, end));
+        app.mode = Mode::Select;
+
+        let snapshot = prepared_snapshot(&mut app, 21, 20);
+        let selected_rows = snapshot
+            .pane(0)
+            .unwrap()
+            .rows
+            .iter()
+            .filter(|row| {
+                let SnapshotRow::Text(row) = row else {
+                    return false;
+                };
+                row.runs.iter().any(|run| {
+                    matches!(
+                        run.kind,
+                        TextRunKind::Text {
+                            role: TextRole::PrimarySelected | TextRole::PrimaryCaret,
+                            ..
+                        }
+                    )
+                })
+            })
+            .count();
+        assert!(
+            selected_rows >= 2,
+            "selection should span wrapped table rows"
+        );
+        assert!(snapshot.pane(0).unwrap().rows.iter().any(|row| {
+            let SnapshotRow::Text(row) = row else {
+                return false;
+            };
+            row.runs.iter().any(|run| {
+                matches!(
+                    run.kind,
+                    TextRunKind::Text {
+                        role: TextRole::PrimaryCaret,
+                        ..
+                    }
+                )
+            })
+        }));
+    }
 
     fn prepared_snapshot(app: &mut App, width: u16, height: u16) -> EditorSnapshot {
         let geometry = crate::app::FrameGeometry {

@@ -65,14 +65,15 @@ fn geometry_is_reused_across_panes_and_invalidated_by_edit_undo_and_redo() {
 #[test]
 fn cache_eviction_and_oversized_geometry_preserve_results() {
     let mut buffer = Buffer::scratch();
-    buffer.apply(&Transaction::insert(0, "abcdefghij\n".repeat(20)));
+    buffer.apply(&Transaction::insert(0, "abcdefghij\n".repeat(260)));
     let original = line_segments(&buffer, 0, 3, 4);
-    for row in 1..20 {
+    for row in 1..260 {
         line_segments(&buffer, row, 3, 4);
     }
     let rebuilt = line_segments(&buffer, 0, 3, 4);
     assert_eq!(original, rebuilt);
     assert!(!Arc::ptr_eq(&original, &rebuilt));
+    assert_eq!(buffer.wrap_cache.lines.lock().unwrap().len(), 256);
 
     buffer.apply(&Transaction::insert(0, "x".repeat(262_145)));
     let oversized = line_segments(&buffer, 0, 1, 4);
@@ -81,5 +82,74 @@ fn cache_eviction_and_oversized_geometry_preserve_results() {
     // Two individually cacheable layouts must also respect the total cap.
     line_segments(&buffer, 0, 2, 4);
     line_segments(&buffer, 0, 2, 8);
-    assert_eq!(buffer.wrap_cache.lines.lock().unwrap().len(), 1);
+    let cache = buffer.wrap_cache.lines.lock().unwrap();
+    assert_eq!(cache.len(), 1);
+    let retained_bytes =
+        cache.iter().map(|entry| entry.spans.len()).sum::<usize>() * std::mem::size_of::<Segment>();
+    assert!(retained_bytes <= 8 * 1024 * 1024);
+}
+
+#[test]
+fn ordinary_viewports_keep_geometry_across_frames_scrolls_and_pane_widths() {
+    let mut buffer = Buffer::scratch();
+    buffer.apply(&Transaction::insert(
+        0,
+        "alpha beta gamma delta\n".repeat(120),
+    ));
+
+    // A frame visits more than 16 distinct short lines. Cursor movement and
+    // redraws at either pane width should reuse every warmed layout.
+    let wide: Vec<_> = (0..100)
+        .map(|row| line_segments(&buffer, row, 30, 4))
+        .collect();
+    let narrow: Vec<_> = (0..100)
+        .map(|row| line_segments(&buffer, row, 12, 4))
+        .collect();
+    let mut repeat_misses = 0;
+    for _ in 0..3 {
+        for row in 0..100 {
+            repeat_misses += usize::from(!Arc::ptr_eq(
+                &wide[row],
+                &line_segments(&buffer, row, 30, 4),
+            ));
+            repeat_misses += usize::from(!Arc::ptr_eq(
+                &narrow[row],
+                &line_segments(&buffer, row, 12, 4),
+            ));
+        }
+    }
+    assert_eq!(repeat_misses, 0, "steady frames recomputed layouts");
+
+    // A small scroll computes only newly visible lines. The overlap stays
+    // resident even after a second frame at the other pane width.
+    for row in 100..105 {
+        line_segments(&buffer, row, 30, 4);
+        line_segments(&buffer, row, 12, 4);
+    }
+    for row in 5..100 {
+        assert!(Arc::ptr_eq(&wide[row], &line_segments(&buffer, row, 30, 4)));
+        assert!(Arc::ptr_eq(
+            &narrow[row],
+            &line_segments(&buffer, row, 12, 4)
+        ));
+    }
+    assert_eq!(buffer.wrap_cache.lines.lock().unwrap().len(), 210);
+}
+
+#[test]
+fn repeated_edits_and_tab_width_changes_do_not_retain_stale_geometry() {
+    let mut buffer = Buffer::scratch();
+    buffer.apply(&Transaction::insert(0, "one\ntwo\nthree"));
+    let original = line_segments(&buffer, 0, 8, 4);
+    let other_tab = line_segments(&buffer, 0, 8, 8);
+    assert!(!Arc::ptr_eq(&original, &other_tab));
+
+    for _ in 0..32 {
+        buffer.apply(&Transaction::insert(0, "x"));
+        let current = line_segments(&buffer, 0, 8, 4);
+        assert!(!Arc::ptr_eq(&original, &current));
+        let cache = buffer.wrap_cache.lines.lock().unwrap();
+        assert_eq!(cache.len(), 1);
+        assert!(cache.iter().all(|entry| entry.key.0 == buffer.revision()));
+    }
 }
