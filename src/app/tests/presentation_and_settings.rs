@@ -3,6 +3,61 @@
 use super::*;
 
 #[test]
+fn inactive_pane_snapshot_refreshes_after_git_marks_change_without_text_edit() {
+    let path = temporary("pane-git-marks.txt");
+    fs::write(&path, "new\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.execute(CommandInvocation::split_vertical(None))
+        .unwrap();
+    app.git
+        .apply_staged_content(path.clone(), crate::git::BaseContent::Text("new\n".into()));
+    let geometry = FrameGeometry {
+        screen: Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 12,
+        },
+        editor: Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 10,
+        },
+        status: Rect {
+            x: 0,
+            y: 10,
+            width: 80,
+            height: 1,
+        },
+        message: Rect {
+            x: 0,
+            y: 11,
+            width: 80,
+            height: 1,
+        },
+    };
+    let view = app.prepare_view(geometry);
+    let first = app.snapshot(&view);
+    assert_eq!(app.visible_pane_rebuilds.get(), 1);
+    let crate::snapshot::SnapshotRow::Text(row) = &first.pane(0).unwrap().rows[0] else {
+        panic!("first row is text");
+    };
+    assert_eq!(row.change, None);
+
+    app.git
+        .apply_staged_content(path.clone(), crate::git::BaseContent::Text("old\n".into()));
+    let view = app.prepare_view(geometry);
+    let second = app.snapshot(&view);
+    assert_eq!(app.visible_pane_rebuilds.get(), 2);
+    let crate::snapshot::SnapshotRow::Text(row) = &second.pane(0).unwrap().rows[0] else {
+        panic!("first row is text");
+    };
+    assert_eq!(row.change, Some(LineChange::Modified));
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn folds_share_one_projection_across_snapshot_motion_and_panes() {
     let path = temporary("syntax-fold.rs");
     fs::write(&path, "fn outer() {\n    let value = 1;\n}\nlast\n").unwrap();

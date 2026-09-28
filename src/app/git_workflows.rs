@@ -295,6 +295,10 @@ impl GitWorkflowState {
 }
 
 impl App {
+    pub(crate) fn git_presentation_revision(&self) -> u64 {
+        self.git.revision()
+    }
+
     /// Asks Git which repository the project sits in, and reads what it says
     /// about the files already open.
     ///

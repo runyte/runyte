@@ -2777,9 +2777,15 @@ pub struct App {
     /// buffer arena slot. These are independent of parsed document syntax and
     /// leave the underlying searchable buffer text unchanged.
     generated_highlights: HashMap<usize, Vec<Span>>,
+    pub(crate) generated_highlights_revision: u64,
     /// Last visible syntax query per pane. Snapshot preparation can reuse it
     /// when only selection or cursor presentation changed.
     pub(crate) visible_highlights: RefCell<HashMap<usize, crate::snapshot::VisibleHighlightCache>>,
+    /// At most one owned snapshot per visible document pane. Keys are checked
+    /// against presentation inputs before reusing a pane on the next frame.
+    pub(crate) visible_pane_snapshots: RefCell<HashMap<usize, crate::snapshot::CachedPaneSnapshot>>,
+    #[cfg(test)]
+    pub(crate) visible_pane_rebuilds: std::cell::Cell<usize>,
     markdown_positions: HashMap<usize, crate::markdown::PositionMap>,
     /// Stale trees retain translated highlighting but expose no structural
     /// query while their replacement is being parsed.
@@ -3448,7 +3454,11 @@ impl App {
             buffers,
             syntax,
             generated_highlights: HashMap::new(),
+            generated_highlights_revision: 0,
             visible_highlights: RefCell::new(HashMap::new()),
+            visible_pane_snapshots: RefCell::new(HashMap::new()),
+            #[cfg(test)]
+            visible_pane_rebuilds: std::cell::Cell::new(0),
             markdown_positions: HashMap::new(),
             stale_syntax: HashMap::new(),
             syntax_worker: None,

@@ -880,6 +880,7 @@ impl App {
         };
         self.generated_highlights
             .insert(buffer, document.spans().to_vec());
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         self.push_jump();
         let pane = self.active_mut();
         pane.retarget(buffer);
@@ -926,6 +927,7 @@ impl App {
         );
         self.generated_highlights
             .insert(buffer, document.spans().to_vec());
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         let offset = topic.map_or(0, |topic| {
             crate::manual::topic_offset(document.text(), topic)
         });
@@ -949,6 +951,7 @@ impl App {
         );
         self.generated_highlights
             .insert(buffer, document.spans().to_vec());
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
     }
 
     /// Shows the active Markdown document as formatted text, or returns from
@@ -1026,6 +1029,7 @@ impl App {
         );
         self.generated_highlights
             .insert(buffer, rendered.spans().to_vec());
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         let revision = self.buffers[buffer].revision();
         self.buffers[buffer].wrap_cache.tables =
             crate::table_layout::Tables::new(revision, rendered.tables);

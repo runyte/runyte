@@ -275,6 +275,7 @@ impl App {
         self.buffers.push(document);
         self.syntax.push(None);
         self.generated_highlights.insert(buffer, spans);
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         self.retire_detached_ephemeral_buffers();
         buffer
     }
@@ -397,6 +398,7 @@ impl App {
             });
         }
         self.generated_highlights.insert(buffer, spans);
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         true
     }
 
