@@ -866,10 +866,11 @@ columns under dim `TYPE`, `NAME` and `STATE` headings:
 A `*` marks a destination some pane is showing. TYPE is the bracketed kind a
 pane title uses, coloured by kind: files, explorers, generated pages such as
 `[about]`, `[config]` and `[help]`, scratch buffers, and terminals each have
-their own theme colour. NAME is a path relative to the workspace, under `~`
-inside the home directory, or absolute otherwise, and a terminal's name; a name
-too long for its row is shortened in the middle so its file name stays. STATE
-collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
+their own theme colour. A rendered Markdown page uses `[rendered]` as TYPE
+and puts its source name in NAME. NAME is a path relative to the workspace,
+under `~` inside the home directory, or absolute otherwise, and a terminal's
+name; a name too long for its row is shortened in the middle so its file name
+stays. STATE collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
 `exited`, `unread` and `bell` for terminals — so an edit that conflicts with a
 change on disk reads `[+] [STALE]`. A terminal's preview shows its live screen,
 and its ID appears in its pane title (`[terminal #3] …`).
@@ -1320,8 +1321,10 @@ as an editable buffer with one relative path per line and `/` after
 directories. Normal modal editing and multiple selections work unchanged:
 rename a line to rename an entry, remove it to delete, add a line to create a
 file, add a trailing `/` to create a directory, or change its path to move the
-entry. To copy with the normal Helix keys, select one or more entries with `x`,
-yank with `y`, navigate or focus the destination explorer, and paste with `p`.
+entry. A new line may name a file inside an existing subdirectory, such as
+`docs/roadmap.md`. To copy with the normal Helix keys, select one or more
+entries with `x`, yank with `y`, navigate or focus the destination explorer,
+and paste with `p`.
 Use `d` instead of `y` to cut and move the selection. This works after
 navigating in the same pane or across split panes. A pasted cut is applied by
 writing its destination explorer; Runyte refuses to write the source first
@@ -1993,7 +1996,7 @@ context; scoped explorer keys are documented under
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
-| `gf` | Open the selected path, or infer the complete path under a bare cursor; on a Markdown link to `#heading` or `file.md#heading`, land on that heading |
+| `gf` | Open the selected path exactly, or infer the complete path under a bare cursor; inferred paths at the end of a sentence ignore trailing punctuation if the literal name does not exist. On a Markdown link to `#heading` or `file.md#heading`, land on that heading |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |
@@ -2927,7 +2930,7 @@ clipped, and a shorter preview keeps the child's visible cursor row in view.
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
-| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser, including links broken across rows by the terminal or by an agent's indented output |
+| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; inferred paths at the end of a sentence ignore trailing punctuation if the literal name does not exist. Web links use the default browser, including links broken across rows by the terminal or by an agent's indented output |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
 | `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |

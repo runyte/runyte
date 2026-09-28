@@ -552,20 +552,28 @@ impl DirectoryBuffer {
                     matched[*source_row] = true;
                     assigned[row] = origin.clone();
                     resolved[row] = true;
-                } else if let Some(origin) = instances[0].1.as_ref()
+                } else if after_lines.len() > before_lines.len()
+                    && let Some(origin) = instances[0].1.as_ref()
                     && instances
                         .iter()
                         .all(|(_, candidate)| candidate.as_ref() == Some(origin))
                 {
-                    // A pasted copy initially has the same label as its source.
-                    // Retain that source identity on the extra row; a later edit
-                    // can then be planned as a copy instead of an empty create.
+                    // A pasted copy adds a row with its source's label. Typing
+                    // that label into an already new row must not turn the new
+                    // row into a copy while its name is still incomplete.
                     assigned[row] = Some(origin.clone());
                     resolved[row] = true;
                 }
             }
         }
 
+        let carried_snapshot_ids = previous
+            .iter()
+            .filter_map(|origin| match origin {
+                Some(RowOrigin::Snapshot(id)) => Some(*id),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
         let baseline_labels = self
             .baseline
             .entries()
@@ -575,6 +583,7 @@ impl DirectoryBuffer {
         for (row, label) in after_lines.iter().enumerate() {
             if !resolved[row]
                 && let Some(id) = baseline_labels.get(*label)
+                && !carried_snapshot_ids.contains(id)
             {
                 assigned[row] = Some(RowOrigin::Snapshot(*id));
                 resolved[row] = true;

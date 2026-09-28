@@ -747,6 +747,54 @@ fn navigator_aligns_types_titles_and_flags_in_terminal_cells() {
 }
 
 #[test]
+fn rendered_markdown_keeps_its_file_name_in_the_destination_name_column() {
+    let directory = temporary("navigator-rendered-name");
+    fs::create_dir_all(&directory).unwrap();
+    let file_name = "claude-prompt-2d112e7d-f797-456b-8312-38d01f3e658b.md";
+    let path = directory.join(file_name);
+    fs::write(&path, "# Prompt\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path)).unwrap();
+    app.toggle_markdown_render();
+    let rendered = app.active().buffer;
+    app.toggle_markdown_render();
+
+    for scope in [DestinationScope::All, DestinationScope::Buffers] {
+        app.open_destination_list(scope);
+        let picker = app.list.as_ref().unwrap();
+        let item = picker
+            .items
+            .iter()
+            .find(|item| {
+                matches!(
+                    app.list_actions[item.index],
+                    ListAction::Destination(OpenDestination::Buffer(id)) if id == rendered
+                )
+            })
+            .unwrap();
+        assert!(item.label.starts_with("  [rendered]  "), "{}", item.label);
+        assert_eq!(
+            item.label
+                .chars()
+                .skip(item.elide_from.unwrap())
+                .collect::<String>()
+                .trim_end(),
+            file_name
+        );
+        assert_eq!(item.trailing_detail.trim_end(), "[RO]");
+        assert!(
+            picker
+                .column_header
+                .as_ref()
+                .unwrap()
+                .label
+                .contains("NAME"),
+            "the source name has its own column"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn destination_elision_starts_at_the_name_after_a_unicode_type() {
     use unicode_width::UnicodeWidthStr as _;
     let mut app = App::new(Config::default(), None).unwrap();
