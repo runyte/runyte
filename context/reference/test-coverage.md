@@ -39,10 +39,10 @@ requires exact contents after each of 128 successful saves. These cases also
 run in the ordinary native suite; their reexecuted helper tests are ignored
 only to prevent running them outside the owning fixture.
 
-The above-95% target applies to the total **Lines** percentage printed by that
+Coverage is measured as the total **Lines** percentage printed by that
 canonical command. It is the only current measure that `cargo-llvm-cov` can
 enforce directly and identically in a local run and in CI. It is a reported
-source-coverage figure, not a claim that more than 95% of production-only Rust
+source-coverage figure, not a claim about how much production-only Rust
 source has run: stable Rust still instruments inline `#[cfg(test)]` modules in
 the same source files as production code, and `cargo-llvm-cov` cannot exclude
 only those portions of a file.
@@ -52,14 +52,19 @@ second, Rust-syntax- and configuration-sensitive coverage implementation that
 the compiler does not verify. Runyte therefore does not use such a figure as a
 gate. New behavior coverage should preferentially live in standalone files
 under `tests/` or existing source subdirectories named `tests`, which
-`cargo-llvm-cov` excludes, so adding a test does not itself make the target
-easier. Revisit this decision if stable Rust gains a compiler-owned way to
+`cargo-llvm-cov` excludes, so adding a test does not itself inflate the
+figure. Revisit this decision if stable Rust gains a compiler-owned way to
 exclude inline test code from source coverage.
 
-The 95% floor may be enabled only after the canonical command clears it on both
-`x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`. Until then, CI keeps a
-lower floor that holds on its measured target, and each platform baseline is
-recorded separately.
+An earlier target of above 95% line coverage was withdrawn on 2026-09-28. The
+standard is now to maintain the current coverage. Every change keeps the
+canonical result at or above the enforced floor on both
+`x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`. New behavior brings its
+own tests, so the recorded baselines, about 92% of lines on each target, do
+not wear away over time. The floor can still be raised when a new baseline
+justifies it; the floor, the CI threshold and the README badge then change
+together. The dated entries below that mention the 95% target record progress
+toward it before it was withdrawn.
 
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
 summary, retains an HTML report as a `rust-coverage-html-<runner>` artifact for
@@ -156,7 +161,7 @@ also passed at **91.92%** total lines (126,013 of 137,092). The coverage floor,
 CI threshold, and README badge remain unchanged.
 
 The macOS allocator is unchanged. Its separate inheritance gap remains open in
-[`macos_pty_descriptor_inheritance.md`](../issues/macos_pty_descriptor_inheritance.md);
+[`macos_pty_descriptor_inheritance.md`](../issues/resolved/macos_pty_descriptor_inheritance.md);
 passing native behavior and coverage checks does not establish atomic macOS
 allocation.
 
