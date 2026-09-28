@@ -773,9 +773,10 @@ impl App {
                 true
             }
             Command::GotoFile => {
+                let inferred = session.review_navigation_target_is_inferred();
                 let target = session.review_navigation_target();
                 let directory = session.directory().to_path_buf();
-                if let Err(error) = self.open_navigation_target(target, Some(directory)) {
+                if let Err(error) = self.open_navigation_target(target, Some(directory), inferred) {
                     self.action_failed(error.to_string());
                 }
                 true

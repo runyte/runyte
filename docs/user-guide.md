@@ -1993,7 +1993,7 @@ context; scoped explorer keys are documented under
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
 | `gp` / `gP` | Next / previous paragraph |
-| `gf` | Open the selected path, or infer the complete path under a bare cursor; on a Markdown link to `#heading` or `file.md#heading`, land on that heading |
+| `gf` | Open the selected path exactly, or infer the complete path under a bare cursor; inferred paths at the end of a sentence ignore trailing punctuation if the literal name does not exist. On a Markdown link to `#heading` or `file.md#heading`, land on that heading |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
 | `i` / `a` / `I` / `A` | Insert before/after cursor or at line boundary |
@@ -2906,7 +2906,7 @@ clipped, and a shorter preview keeps the child's visible cursor row in view.
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |
-| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; web links use the default browser, including links broken across rows by the terminal or by an agent's indented output |
+| `gf` in terminal review | Open the selected file path or web link, or the target under the caret; inferred paths at the end of a sentence ignore trailing punctuation if the literal name does not exist. Web links use the default browser, including links broken across rows by the terminal or by an agent's indented output |
 | `gw` in terminal review | Label visible terminal words and jump to the chosen one |
 | `s` / `/`, then `n` / `N` | Search an immutable terminal review snapshot by literal / regular expression and move among matches |
 | `y` / `Space c y` in terminal review | Copy the caret character or every selection, joined by newlines, to the unnamed register / system clipboard |

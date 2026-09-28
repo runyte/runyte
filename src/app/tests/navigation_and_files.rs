@@ -730,6 +730,59 @@ fn goto_file_infers_the_complete_absolute_path_at_every_kind_of_character() {
 }
 
 #[test]
+fn goto_file_trims_sentence_punctuation_only_for_missing_inferred_paths() {
+    let root = temporary("goto-file-punctuation");
+    fs::create_dir_all(root.join("src")).unwrap();
+    let source = root.join("source.txt");
+    let plain = root.join("src/plain.rs");
+    let literal = root.join("src/literal.rs.");
+    let comma = root.join("src/comma.rs,");
+    fs::write(&plain, "plain\n").unwrap();
+    fs::write(&literal, "literal\n").unwrap();
+    fs::write(&comma, "comma\n").unwrap();
+
+    for (line, target) in [
+        ("Changed src/plain.rs.", &plain),
+        ("Changed src/plain.rs...", &plain),
+        ("Changed src/plain.rs:", &plain),
+        ("Changed src/plain.rs,", &plain),
+        ("Changed (src/plain.rs).", &plain),
+        ("Changed src/literal.rs.", &literal),
+        ("Changed src/comma.rs,", &comma),
+    ] {
+        fs::write(&source, format!("{line}\n")).unwrap();
+        let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+        set_cursor(&mut app, 0, 12);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_ref(), Some(target), "{line}");
+    }
+
+    fs::write(&source, "src/plain.rs.\n").unwrap();
+    let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(
+            0,
+            "src/plain.rs.".chars().count() - 1,
+        )));
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&source));
+    assert_eq!(app.status, "path not found: src/plain.rs.");
+
+    for token in ["!", "?", ":", "!!!"] {
+        fs::write(&source, format!("{token}\n")).unwrap();
+        let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+        set_cursor(&mut app, 0, 0);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(app.active_buffer().path.as_ref(), Some(&source), "{token}");
+        assert_eq!(app.status, format!("path not found: {token}"));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn goto_file_uses_an_exact_selection_and_asks_between_relative_matches() {
     let root = temporary("goto-file-relative");
     let active_directory = root.join("active");
@@ -3232,6 +3285,79 @@ fn goto_file_in_terminal_review_uses_its_directory_and_preserves_the_child() {
         "the exact reverse selection opens the same files"
     );
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    app.close_terminal_id(terminal);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn goto_file_in_terminal_review_trims_sentence_punctuation_but_keeps_literal_names() {
+    let root = temporary("goto-terminal-punctuation");
+    fs::create_dir_all(root.join("src")).unwrap();
+    let plain = root.join("src/plain.rs");
+    let literal = root.join("src/literal.rs.");
+    let comma = root.join("src/comma.rs,");
+    fs::write(&plain, "plain\n").unwrap();
+    fs::write(&literal, "literal\n").unwrap();
+    fs::write(&comma, "comma\n").unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"Changed src/plain.rs.\r\nChanged src/plain.rs,\r\nChanged src/literal.rs.\r\nChanged src/comma.rs,\r\n".to_vec(),
+    });
+    app.mode = Mode::Normal;
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.begin_review();
+    session.search_review("src/plain.rs", false).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.goto_review_offset(offset, false);
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&plain));
+    assert!(app.terminals.get(terminal).unwrap().live());
+
+    app.show_terminal(terminal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.search_review("src/plain.rs,", false).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.goto_review_offset(offset, false);
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&plain));
+
+    app.show_terminal(terminal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.search_review("src/literal.rs", false).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.goto_review_offset(offset, false);
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&literal));
+
+    app.show_terminal(terminal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.search_review("src/comma.rs", false).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.goto_review_offset(offset, false);
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&comma));
+
+    app.show_terminal(terminal);
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.search_review("src/plain.rs.", false).unwrap();
+    let offset = session.review_selection_anchor().unwrap();
+    session.set_review_selection(offset, offset + "src/plain.rs.".len() - 1);
+    app.mode = Mode::Select;
+    press(&mut app, 'g');
+    press(&mut app, 'f');
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&comma));
+    assert_eq!(app.status, "path not found: src/plain.rs.");
     app.close_terminal_id(terminal);
     fs::remove_dir_all(root).unwrap();
 }

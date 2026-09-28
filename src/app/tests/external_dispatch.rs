@@ -88,7 +88,7 @@ fn browser_and_directory_completion_keep_the_captured_target_and_skip_program_ca
             browser_ticket.lock().unwrap().take().unwrap(),
         ))
     });
-    app.open_navigation_target(Some("https://example.com/a?b=1&c=2".into()), None)
+    app.open_navigation_target(Some("https://example.com/a?b=1&c=2".into()), None, false)
         .unwrap();
     let (directory_done, directory_ticket) = LaunchTicket::channel(now + Duration::from_secs(5));
     let directory_ticket = Mutex::new(Some(directory_ticket));
