@@ -210,7 +210,10 @@ impl App {
         }
         let left_text = self.buffers[left.buffer].to_string();
         let right_text = self.buffers[right.buffer].to_string();
-        let session = DiffSession::new(left, right, &left_text, &right_text);
+        let session = DiffSession::new(left, right, &left_text, &right_text).with_revisions((
+            self.buffers[left.buffer].revision(),
+            self.buffers[right.buffer].revision(),
+        ));
         let equal = session.alignment().is_equal();
         if let Some(comparison) = comparison {
             self.diffs[comparison] = session;

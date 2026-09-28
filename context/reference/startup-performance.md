@@ -17,6 +17,54 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-28 — large comparison edit-to-frame cost
+
+The ignored `large_diff_edit_to_frame_latency` test in
+`src/app/tests/diff_latency.rs` measures a transaction followed by one
+`prepare_view` call in a release build. The fixture has 50,000 lines (about
+2.5 MB); a leading-space difference makes the Git base and the two compared
+buffers unequal. Each entry is the median of 40 alternating insert/delete
+edits at line 25,000, after the initial alignment has settled. The before
+column is `5e139bc` with the same measurement test temporarily added; the
+after column is the asynchronous comparison implementation. Values exclude
+terminal drawing and the later exact-result publication.
+
+| Comparison | Edit | Before edit / frame / total | After edit / frame / total |
+| --- | --- | ---: | ---: |
+| Git gutter | Character | 2.304 / 935.097 / 937.542 µs | 3.337 / 4.088 / 7.465 µs |
+| Git gutter | Newline | 2.245 / 939.697 / 941.861 µs | 3.356 / 4.068 / 7.404 µs |
+| Side by side | Character | 3.256 / 1096.174 / 1099.391 µs | 4.659 / 7.454 / 12.144 µs |
+| Side by side | Newline | 3.176 / 1094.771 / 1098.148 µs | 5.120 / 7.094 / 12.114 µs |
+
+The separately ignored `large_diff_worker_cost` test in `src/app/diff_work.rs`
+measures only exact comparison computation, with 10 warmups and 50 samples.
+Its release medians were 3.213 ms for the Git gutter and 3.990 ms for the
+paired view. The first prepared frame uses pending marks and provisional row
+geometry; after the worker result publishes, both views use the same exact
+alignment. These timings establish the first-frame reduction, not end-to-end
+input latency or the delay until exact colors and alignment appear.
+
+The ignored `large_diff_history_to_frame_latency` test uses the same 50,000-line
+paired view and measures 40 undo/redo cycles after five warmups. It compares
+`f2c810b`, which found changed rows by scanning the whole buffer on each history
+step, with transaction replay. Each cell gives undo / redo median elapsed time
+through the prepared frame; the frame-only medians are listed separately.
+"Already dirty" means an earlier edit remains after undo, avoiding the
+separate saved-text equality check in `Buffer::update_dirty`.
+
+| State | Edit | Before total | After total | After frame only |
+| --- | --- | ---: | ---: | ---: |
+| Already dirty | Character | 21.325 / 21.327 ms | 7.886 / 6.943 µs | 3.587 / 3.737 µs |
+| Already dirty | Newline | 20.630 / 20.542 ms | 8.216 / 8.386 µs | 3.797 / 4.108 µs |
+| Clean after undo | Character | 31.398 / 21.141 ms | 9.476 ms / 5.090 µs | 3.267 / 2.525 µs |
+| Clean after undo | Newline | 31.076 / 20.864 ms | 9.478 ms / 5.631 µs | 3.366 / 2.686 µs |
+
+Undoing back to saved text still spends about 9.5 ms checking whether the
+50,000-line buffer is clean; that cost is outside comparison geometry. The
+already-dirty rows isolate the geometry improvement. As above, these are
+in-process transaction-to-prepared-frame measurements rather than terminal
+input-to-drawn-frame latency.
+
 ## 2026-09-19 — complete plugin value documents
 
 Observed the coordinated database-viewer implementation on Linux x86-64 using

@@ -120,6 +120,169 @@ pub struct Alignment {
 }
 
 impl Alignment {
+    /// A cheap, geometry-safe alignment while a full comparison is running.
+    /// Changes are not read from this provisional value.
+    pub(crate) fn pending(left_lines: usize, right_lines: usize) -> Self {
+        let shared = left_lines.min(right_lines);
+        let mut runs = Vec::with_capacity(2);
+        if shared > 0 {
+            runs.push(Run {
+                kind: RunKind::Equal,
+                left: 0..shared,
+                right: 0..shared,
+                aligned: 0,
+            });
+        }
+        if left_lines > shared {
+            runs.push(Run {
+                kind: RunKind::Deleted,
+                left: shared..left_lines,
+                right: shared..shared,
+                aligned: shared,
+            });
+        } else if right_lines > shared {
+            runs.push(Run {
+                kind: RunKind::Inserted,
+                left: shared..shared,
+                right: shared..right_lines,
+                aligned: shared,
+            });
+        }
+        Self {
+            runs,
+            height: left_lines.max(right_lines),
+            left_lines,
+            right_lines,
+        }
+    }
+
+    /// Preserve known row correspondence after a local row replacement. This
+    /// only provides geometry while the full alignment is computed; callers
+    /// suppress classifications until that result arrives.
+    pub(crate) fn splice(&mut self, side: Side, start: usize, removed: usize, inserted: usize) {
+        let old_lines = self.lines(side);
+        let start = start.min(old_lines);
+        let end = start.saturating_add(removed).min(old_lines);
+        let at = if old_lines == 0 {
+            0
+        } else {
+            self.aligned_row(side, start)
+        };
+        let until = self.aligned_row(side, end);
+        let mut runs = Vec::with_capacity(self.runs.len() + 4);
+        let (mut left_row, mut right_row, mut aligned) = (0, 0, 0);
+        let mut inserted_here = false;
+        let push = |runs: &mut Vec<Run>,
+                    left_row: &mut usize,
+                    right_row: &mut usize,
+                    aligned: &mut usize,
+                    height: usize,
+                    left: bool,
+                    right: bool| {
+            if height == 0 || (!left && !right) {
+                return;
+            }
+            let kind = match (left, right) {
+                (true, true) => RunKind::Equal,
+                (true, false) => RunKind::Deleted,
+                (false, true) => RunKind::Inserted,
+                (false, false) => unreachable!(),
+            };
+            if let Some(last) = runs.last_mut()
+                && last.kind == kind
+            {
+                if left {
+                    last.left.end += height;
+                }
+                if right {
+                    last.right.end += height;
+                }
+            } else {
+                runs.push(Run {
+                    kind,
+                    left: *left_row..*left_row + height * usize::from(left),
+                    right: *right_row..*right_row + height * usize::from(right),
+                    aligned: *aligned,
+                });
+            }
+            *left_row += height * usize::from(left);
+            *right_row += height * usize::from(right);
+            *aligned += height;
+        };
+        for run in &self.runs {
+            let mut cuts = vec![run.aligned, run.aligned + run.height()];
+            for cut in [
+                at,
+                until,
+                run.aligned + run.left.len(),
+                run.aligned + run.right.len(),
+            ] {
+                if run.aligned < cut && cut < run.aligned + run.height() {
+                    cuts.push(cut);
+                }
+            }
+            cuts.sort_unstable();
+            cuts.dedup();
+            for pair in cuts.windows(2) {
+                let (from, to) = (pair[0], pair[1]);
+                if !inserted_here && from >= at {
+                    push(
+                        &mut runs,
+                        &mut left_row,
+                        &mut right_row,
+                        &mut aligned,
+                        inserted,
+                        side == Side::Left,
+                        side == Side::Right,
+                    );
+                    inserted_here = true;
+                }
+                let offset = from - run.aligned;
+                let mut left = offset < run.left.len();
+                let mut right = offset < run.right.len();
+                if (at..until).contains(&from) {
+                    match side {
+                        Side::Left => left = false,
+                        Side::Right => right = false,
+                    }
+                }
+                push(
+                    &mut runs,
+                    &mut left_row,
+                    &mut right_row,
+                    &mut aligned,
+                    to - from,
+                    left,
+                    right,
+                );
+            }
+        }
+        if !inserted_here {
+            push(
+                &mut runs,
+                &mut left_row,
+                &mut right_row,
+                &mut aligned,
+                inserted,
+                side == Side::Left,
+                side == Side::Right,
+            );
+        }
+        debug_assert_eq!(
+            match side {
+                Side::Left => left_row,
+                Side::Right => right_row,
+            },
+            old_lines + inserted - (end - start)
+        );
+        *self = Self {
+            runs,
+            height: aligned,
+            left_lines: left_row,
+            right_lines: right_row,
+        };
+    }
+
     pub fn runs(&self) -> &[Run] {
         &self.runs
     }
@@ -535,6 +698,57 @@ mod tests {
         let alignment = align_text("a\n", "a\n");
         assert_eq!(alignment.aligned_row(Side::Left, 5), 5);
         assert_eq!(alignment.row_at(Side::Left, 5), Some(5));
+    }
+
+    #[test]
+    fn provisional_splices_keep_unchanged_correspondence_below_a_change() {
+        let mut alignment = align_text("head\ntail\n", "head\nnew\ntail\n");
+        assert_eq!(alignment.aligned_row(Side::Left, 1), 2);
+        alignment.splice(Side::Left, 1, 0, 1);
+        assert_eq!(alignment.aligned_row(Side::Left, 2), 3);
+        assert_eq!(alignment.aligned_row(Side::Right, 2), 3);
+        alignment.splice(Side::Left, 1, 1, 0);
+        assert_eq!(
+            alignment.aligned_row(Side::Left, 1),
+            alignment.aligned_row(Side::Right, 2)
+        );
+    }
+
+    #[test]
+    fn provisional_splices_preserve_each_remaining_row_for_both_sides() {
+        for original in [
+            align_text("a\nb\nc\nd\ne\n", "a\nx\nb\nD\ne\nf\n"),
+            align_text("", "a\nb\n"),
+            align_text("a\nb\n", ""),
+        ] {
+            for side in [Side::Left, Side::Right] {
+                for start in 0..=original.lines(side) {
+                    for removed in 0..=original.lines(side) - start {
+                        for inserted in 0..=2 {
+                            let mut alignment = original.clone();
+                            alignment.splice(side, start, removed, inserted);
+                            assert_eq!(
+                                alignment.lines(side),
+                                original.lines(side) - removed + inserted
+                            );
+                            assert_eq!(
+                                alignment.lines(side.opposite()),
+                                original.lines(side.opposite())
+                            );
+                            for check in [Side::Left, Side::Right] {
+                                for row in 0..alignment.lines(check) {
+                                    assert_eq!(
+                                        alignment.row_at(check, alignment.aligned_row(check, row)),
+                                        Some(row),
+                                        "{side:?} {start} {removed} {inserted} {check:?} {row}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// A region too large to align is reported as changed rather than mapped

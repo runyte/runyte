@@ -9,11 +9,19 @@
 //! file-against-file view this was written for, and a Git base against a
 //! working tree later, are the same object with different buffers in it.
 //!
-//! Nothing here draws or scrolls. The session answers two questions — how does
+//! A large edit briefly keeps known row correspondence while the exact
+//! alignment is computed off the frame path. Nothing here draws or scrolls.
+//! The session answers two questions — how does
 //! this row of this side read, and which row of the other side sits level with
 //! it — and the editor's existing pane projection does the rest.
 
-use crate::diff::{Alignment, Change, Side, align_text};
+use crate::{
+    diff::{Alignment, Change, Side, align_text},
+    text::{Text, Transaction},
+};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The largest text that will be aligned.
 ///
@@ -32,6 +40,7 @@ pub struct DiffSide {
 /// Two buffers shown side by side.
 #[derive(Clone, Debug)]
 pub struct DiffSession {
+    id: u64,
     left: DiffSide,
     right: DiffSide,
     /// Buffer a temporary paired view replaced, if closing either pane should
@@ -47,6 +56,8 @@ pub struct DiffSession {
     /// Both sides stay editable, so the alignment is only ever as current as
     /// the revisions it was built from.
     revisions: (u64, u64),
+    pending_revisions: Option<(u64, u64)>,
+    geometry_revisions: (u64, u64),
     /// Where both viewports start in the aligned row space.
     ///
     /// This single value is the whole of the scroll link. It is derived each
@@ -59,6 +70,7 @@ pub struct DiffSession {
 impl DiffSession {
     pub fn new(left: DiffSide, right: DiffSide, left_text: &str, right_text: &str) -> Self {
         Self {
+            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             left,
             right,
             pane_close_return: None,
@@ -66,8 +78,19 @@ impl DiffSession {
             // A fresh session has not seen a revision yet, so the first update
             // always recomputes rather than trusting a default.
             revisions: (u64::MAX, u64::MAX),
+            pending_revisions: None,
+            geometry_revisions: (u64::MAX, u64::MAX),
             aligned_start: 0,
         }
+    }
+
+    /// The caller built the initial alignment from these buffer revisions.
+    /// Recording them avoids comparing the same large texts again on the
+    /// first frame and gives subsequent edit splices a known starting point.
+    pub(crate) fn with_revisions(mut self, revisions: (u64, u64)) -> Self {
+        self.revisions = revisions;
+        self.geometry_revisions = revisions;
+        self
     }
 
     pub fn aligned_start(&self) -> usize {
@@ -144,14 +167,150 @@ impl DiffSession {
         self.revisions != revisions
     }
 
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.pending_revisions.is_some()
+    }
+
+    pub(crate) fn request_update(&mut self, revisions: (u64, u64), lines: (usize, usize)) -> bool {
+        if self.revisions == revisions || self.pending_revisions == Some(revisions) {
+            return false;
+        }
+        self.pending_revisions = Some(revisions);
+        if self.geometry_revisions != revisions {
+            self.alignment = Alignment::pending(lines.0, lines.1);
+        }
+        self.geometry_revisions = revisions;
+        true
+    }
+
+    fn revision(&self, side: Side) -> u64 {
+        match side {
+            Side::Left => self.geometry_revisions.0,
+            Side::Right => self.geometry_revisions.1,
+        }
+    }
+
+    fn set_revision(&mut self, side: Side, revision: u64) {
+        match side {
+            Side::Left => self.geometry_revisions.0 = revision,
+            Side::Right => self.geometry_revisions.1 = revision,
+        }
+    }
+
+    pub(crate) fn visible_lines(text: &Text) -> usize {
+        text.len_lines() - usize::from(text.line_len(text.last_row()) == 0)
+    }
+
+    /// Carry known row positions through an edit without classifying changed
+    /// lines. A direct replacement that did not pass through the editor's
+    /// transaction path is detected by the revision mismatch at preparation.
+    pub(crate) fn note_transaction(
+        &mut self,
+        buffer: usize,
+        before: &Text,
+        after: &Text,
+        transaction: &Transaction,
+    ) {
+        let side = if self.left.buffer == buffer {
+            Side::Left
+        } else if self.right.buffer == buffer {
+            Side::Right
+        } else {
+            return;
+        };
+        if self.revision(side) != before.revision() {
+            return;
+        }
+        for change in transaction.changes().iter().rev() {
+            let removed_newlines = before
+                .rope()
+                .slice(change.from..change.to)
+                .chars()
+                .filter(|c| *c == '\n')
+                .count();
+            let inserted_newlines = change.text.bytes().filter(|byte| *byte == b'\n').count();
+            if removed_newlines == 0 && inserted_newlines == 0 {
+                continue;
+            }
+            let position = before.position_of(change.from);
+            let start = position.row + usize::from(position.col > 0);
+            self.alignment
+                .splice(side, start, removed_newlines, inserted_newlines);
+        }
+        let actual = Self::visible_lines(after);
+        let projected = self.alignment.lines(side);
+        if actual != projected {
+            self.alignment.splice(
+                side,
+                actual.min(projected),
+                projected.saturating_sub(actual),
+                actual.saturating_sub(projected),
+            );
+        }
+        self.set_revision(side, after.revision());
+    }
+
+    /// History returns the inverse transactions in application order. Replay
+    /// them against the captured rope so distant edits keep the correspondence
+    /// between them, then adopt the live buffer's revision.
+    pub(crate) fn note_history(
+        &mut self,
+        buffer: usize,
+        before: &Text,
+        after: &Text,
+        transactions: &[Transaction],
+    ) {
+        let side = if self.left.buffer == buffer {
+            Side::Left
+        } else if self.right.buffer == buffer {
+            Side::Right
+        } else {
+            return;
+        };
+        if self.revision(side) != before.revision() {
+            return;
+        }
+        let mut replay = before.clone();
+        for transaction in transactions {
+            let previous = replay.clone();
+            replay.apply(transaction);
+            self.note_transaction(buffer, &previous, &replay, transaction);
+        }
+        debug_assert_eq!(replay.len_chars(), after.len_chars());
+        debug_assert_eq!(replay.len_bytes(), after.len_bytes());
+        if self.revision(side) == replay.revision() {
+            self.set_revision(side, after.revision());
+        }
+    }
+
+    pub(crate) fn apply_alignment(&mut self, revisions: (u64, u64), alignment: Alignment) -> bool {
+        if self.pending_revisions != Some(revisions) {
+            return false;
+        }
+        self.alignment = alignment;
+        self.revisions = revisions;
+        self.pending_revisions = None;
+        self.geometry_revisions = revisions;
+        true
+    }
+
     /// Rebuilds the alignment from text the caller has already fetched.
     pub fn update(&mut self, revisions: (u64, u64), left: &str, right: &str) {
         self.alignment = align_text(left, right);
         self.revisions = revisions;
+        self.pending_revisions = None;
+        self.geometry_revisions = revisions;
     }
 
     /// How one row of one side reads, or `None` where it matches the other.
     pub fn change(&self, side: Side, row: usize) -> Option<Change> {
+        if self.pending() {
+            return None;
+        }
         self.alignment.change(side, row)
     }
 
@@ -179,6 +338,7 @@ impl DiffSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::Change as TextChange;
 
     fn session(left: &str, right: &str) -> DiffSession {
         DiffSession::new(
@@ -187,6 +347,27 @@ mod tests {
             left,
             right,
         )
+    }
+
+    #[test]
+    fn multi_range_newline_edit_preserves_correspondence_below_both_changes() {
+        let before = Text::from_str("head\na\nb\ntail\n");
+        let right = Text::from_str("head\nextra\na\nb\ntail\n");
+        let mut session = session(&before.to_string(), &right.to_string());
+        session.update(
+            (before.revision(), right.revision()),
+            &before.to_string(),
+            &right.to_string(),
+        );
+        let transaction =
+            Transaction::new(vec![TextChange::new(6, 7, ""), TextChange::new(9, 9, "\n")]);
+        let mut after = before.clone();
+        after.apply(&transaction);
+        session.note_transaction(0, &before, &after, &transaction);
+        assert_eq!(
+            session.alignment().aligned_row(Side::Left, 3),
+            session.alignment().aligned_row(Side::Right, 4)
+        );
     }
 
     #[test]

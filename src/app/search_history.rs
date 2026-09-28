@@ -575,8 +575,19 @@ impl App {
 
     pub(super) fn undo(&mut self) {
         let buffer_id = self.active().buffer;
+        let diff_before = self
+            .diffs
+            .iter()
+            .any(|session| session.has_buffer(buffer_id))
+            .then(|| self.buffers[buffer_id].text().clone());
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         if let Some(transactions) = self.buffers[buffer_id].undo_with_transactions() {
+            if let Some(before) = diff_before.as_ref() {
+                let after = self.buffers[buffer_id].text();
+                for session in &mut self.diffs {
+                    session.note_history(buffer_id, before, after, &transactions);
+                }
+            }
             self.map_transaction_views(buffer_id, &transactions);
             self.resync_replaced_buffer(buffer_id, language_before);
             self.normalize_buffer(buffer_id);
@@ -589,8 +600,19 @@ impl App {
 
     pub(super) fn redo(&mut self) {
         let buffer_id = self.active().buffer;
+        let diff_before = self
+            .diffs
+            .iter()
+            .any(|session| session.has_buffer(buffer_id))
+            .then(|| self.buffers[buffer_id].text().clone());
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         if let Some(transactions) = self.buffers[buffer_id].redo_with_transactions() {
+            if let Some(before) = diff_before.as_ref() {
+                let after = self.buffers[buffer_id].text();
+                for session in &mut self.diffs {
+                    session.note_history(buffer_id, before, after, &transactions);
+                }
+            }
             self.map_transaction_views(buffer_id, &transactions);
             self.resync_replaced_buffer(buffer_id, language_before);
             self.normalize_buffer(buffer_id);

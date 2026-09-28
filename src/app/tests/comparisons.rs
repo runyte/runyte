@@ -56,6 +56,219 @@ fn sides(app: &App) -> (usize, usize) {
     )
 }
 
+fn settle_large_diff(app: &mut App) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.diff_work_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "diff worker did not settle"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        prepare(app);
+    }
+}
+
+#[test]
+fn large_live_comparison_keeps_far_row_mapping_while_edits_are_in_flight() {
+    let left = (0..1200)
+        .map(|row| {
+            format!("line {row:04} with enough repeated text to exceed the async threshold\n")
+        })
+        .collect::<String>();
+    let right = left.replacen(
+        "line 0002",
+        "new line inserted only on the right\nline 0002",
+        1,
+    );
+    let (mut app, one, two) = compared(&left, &right);
+    settle_large_diff(&mut app);
+    let session = &app.diffs[0];
+    let left_buffer = session.side(Side::Left).buffer;
+    let right_buffer = session.side(Side::Right).buffer;
+    assert_eq!(
+        session.alignment().aligned_row(Side::Left, 900),
+        session.alignment().aligned_row(Side::Right, 901)
+    );
+
+    let at = app.buffers[left_buffer]
+        .text()
+        .offset_of(Position::new(900, 4));
+    assert!(app.apply_to_buffer(left_buffer, &Transaction::insert(at, "x")));
+    prepare(&mut app);
+    assert!(app.diffs[0].pending());
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 900),
+        app.diffs[0].alignment().aligned_row(Side::Right, 901)
+    );
+    assert_eq!(app.diffs[0].change(Side::Left, 900), None);
+
+    let at = app.buffers[left_buffer]
+        .text()
+        .offset_of(Position::new(100, 0));
+    assert!(app.apply_to_buffer(left_buffer, &Transaction::insert(at, "new line\n")));
+    prepare(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 901),
+        app.diffs[0].alignment().aligned_row(Side::Right, 901)
+    );
+    settle_large_diff(&mut app);
+    let exact = crate::diff::align_text(
+        &app.buffers[left_buffer].to_string(),
+        &app.buffers[right_buffer].to_string(),
+    );
+    assert_eq!(app.diffs[0].alignment(), &exact);
+    let left_text = app.buffers[left_buffer].to_string();
+    let right_text = app.buffers[right_buffer].to_string();
+    app.git.apply_staged_content(
+        two.clone(),
+        crate::git::BaseContent::Text(left_text.clone()),
+    );
+    prepare(&mut app);
+    settle_large_diff(&mut app);
+    assert_eq!(
+        app.git.rows(&two),
+        crate::git::changed_rows(&left_text, &right_text)
+    );
+    assert_eq!(
+        app.diffs[0].alignment(),
+        &crate::diff::align_text(&left_text, &right_text)
+    );
+
+    app.active_pane = app.diffs[0].side(Side::Left).pane;
+    app.undo();
+    let pending_view = prepare(&mut app);
+    let pending_snapshot = app.snapshot(&pending_view);
+    let right_pane = app.diffs[0].side(Side::Right).pane;
+    assert!(
+        pending_snapshot
+            .pane(right_pane)
+            .unwrap()
+            .rows
+            .iter()
+            .all(|row| {
+                !matches!(row, crate::snapshot::SnapshotRow::Text(row) if row.change.is_some())
+            })
+    );
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 900),
+        app.diffs[0].alignment().aligned_row(Side::Right, 901)
+    );
+    settle_large_diff(&mut app);
+    app.redo();
+    prepare(&mut app);
+    settle_large_diff(&mut app);
+    let exact = crate::diff::align_text(
+        &app.buffers[left_buffer].to_string(),
+        &app.buffers[right_buffer].to_string(),
+    );
+    assert_eq!(app.diffs[0].alignment(), &exact);
+
+    let at = app.buffers[left_buffer]
+        .text()
+        .offset_of(Position::new(900, 4));
+    assert!(app.apply_to_buffer(left_buffer, &Transaction::insert(at, "y")));
+    prepare(&mut app);
+    app.execute_command("diff-off").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    app.poll_diff_work();
+    assert!(app.diffs.is_empty());
+    fs::remove_dir_all(one.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn large_comparison_character_undo_and_redo_keep_known_row_mapping() {
+    let left = (0..1200)
+        .map(|row| format!("line {row:04} with enough repeated text for background comparison\n"))
+        .collect::<String>();
+    let right = left.replacen("line 0002", "right-only line\nline 0002", 1);
+    let (mut app, one, _) = compared(&left, &right);
+    settle_large_diff(&mut app);
+    let side = app.diffs[0].side(Side::Left);
+    app.active_pane = side.pane;
+    let at = app.buffers[side.buffer]
+        .text()
+        .offset_of(Position::new(900, 4));
+    assert!(app.apply_to_buffer(side.buffer, &Transaction::insert(at, "x")));
+    prepare(&mut app);
+    app.undo();
+    prepare(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 900),
+        app.diffs[0].alignment().aligned_row(Side::Right, 901)
+    );
+    app.redo();
+    prepare(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 900),
+        app.diffs[0].alignment().aligned_row(Side::Right, 901)
+    );
+    settle_large_diff(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment(),
+        &crate::diff::align_text(
+            &app.buffers[side.buffer].to_string(),
+            &app.buffers[app.diffs[0].side(Side::Right).buffer].to_string()
+        )
+    );
+    fs::remove_dir_all(one.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn distant_multi_range_undo_and_redo_keep_middle_correspondence() {
+    let left = (0..1200)
+        .map(|row| format!("line {row:04} with enough repeated text for background comparison\n"))
+        .collect::<String>();
+    let right = left.replacen("line 0002", "right-only line\nline 0002", 1);
+    let (mut app, one, _) = compared(&left, &right);
+    settle_large_diff(&mut app);
+    let side = app.diffs[0].side(Side::Left);
+    app.active_pane = side.pane;
+    let text = app.buffers[side.buffer].text();
+    let first = text.offset_of(Position::new(100, 0));
+    let last = text.offset_of(Position::new(900, 0));
+    let transaction = Transaction::new(vec![
+        crate::text::Change::new(first, first, "left first\n"),
+        crate::text::Change::new(last, last, "left last\n"),
+    ]);
+    app.buffers[side.buffer].begin_undo_group();
+    assert!(app.apply_to_buffer(side.buffer, &transaction));
+    let between = app.buffers[side.buffer]
+        .text()
+        .offset_of(Position::new(700, 4));
+    assert!(app.apply_to_buffer(side.buffer, &Transaction::insert(between, "x")));
+    app.buffers[side.buffer].commit_undo_group();
+    prepare(&mut app);
+    settle_large_diff(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 501),
+        app.diffs[0].alignment().aligned_row(Side::Right, 501)
+    );
+
+    app.undo();
+    prepare(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 500),
+        app.diffs[0].alignment().aligned_row(Side::Right, 501),
+        "undo must retain the right-only filler above the untouched middle"
+    );
+    app.redo();
+    prepare(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment().aligned_row(Side::Left, 501),
+        app.diffs[0].alignment().aligned_row(Side::Right, 501),
+        "redo must retain correspondence between distant edits"
+    );
+    settle_large_diff(&mut app);
+    assert_eq!(
+        app.diffs[0].alignment(),
+        &crate::diff::align_text(
+            &app.buffers[side.buffer].to_string(),
+            &app.buffers[app.diffs[0].side(Side::Right).buffer].to_string()
+        )
+    );
+    fs::remove_dir_all(one.parent().unwrap()).unwrap();
+}
+
 #[test]
 fn diff_disk_places_an_immutable_disk_snapshot_left_of_the_editable_source() {
     let directory = temporary("diff-disk");

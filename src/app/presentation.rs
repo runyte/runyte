@@ -16,6 +16,7 @@ use super::{
     project_visible_rows, selection_for_launch_position,
 };
 use crate::keymap::{ActionContext, ContextAction};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 /// How long a paced value published at `published` has left to hold.
@@ -26,6 +27,63 @@ fn paced_delay(published: Option<Instant>, interval: Duration, now: Instant) -> 
 }
 
 impl App {
+    /// Apply finished comparisons only to the exact revisions and base they
+    /// captured. A result for a closed or superseded view is discarded.
+    pub fn poll_diff_work(&mut self) -> bool {
+        let mut changed = false;
+        while let Some(result) = self.diff_worker.try_recv() {
+            match result {
+                super::diff_work::Result::Git {
+                    path,
+                    base_id,
+                    revision,
+                    rows,
+                } => {
+                    if self.buffers.iter().enumerate().any(|(id, buffer)| {
+                        !self.closed_buffers.contains(&id)
+                            && buffer.path.as_deref() == Some(path.as_path())
+                            && buffer.revision() == revision
+                    }) {
+                        changed |= self.git.apply_rows(&path, base_id, revision, rows);
+                    } else {
+                        self.git.cancel_rows(&path, base_id, revision);
+                    }
+                }
+                super::diff_work::Result::Pair {
+                    id,
+                    revisions,
+                    alignment,
+                } => {
+                    if let Some(session) = self.diffs.iter_mut().find(|session| session.id() == id)
+                    {
+                        let left = session.side(Side::Left);
+                        let right = session.side(Side::Right);
+                        if self
+                            .panes
+                            .get(&left.pane)
+                            .is_some_and(|pane| pane.buffer == left.buffer)
+                            && self
+                                .panes
+                                .get(&right.pane)
+                                .is_some_and(|pane| pane.buffer == right.buffer)
+                            && self.buffers[left.buffer].revision() == revisions.0
+                            && self.buffers[right.buffer].revision() == revisions.1
+                            && !self.closed_buffers.contains(&left.buffer)
+                            && !self.closed_buffers.contains(&right.buffer)
+                        {
+                            changed |= session.apply_alignment(revisions, alignment);
+                        }
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    pub fn diff_work_pending(&self) -> bool {
+        self.git.pending() || self.diffs.iter().any(DiffSession::pending)
+    }
+
     /// Resolve the selected identity at frame time so output cannot stale the
     /// preview or force the list to re-rank. Content matches keep their snippet.
     pub(crate) fn list_terminal_preview(&self) -> Option<crate::terminal::TerminalView> {
@@ -110,7 +168,9 @@ impl App {
         self.config.editor.soft_wrap && self.diff_session(pane_id).is_none() && viable
     }
 
-    /// Brings every live diff up to date and settles where both sides start.
+    /// Requests current alignment for each live diff and settles where both
+    /// sides start. Large comparisons may keep provisional row geometry until
+    /// their exact alignment arrives from the worker.
     ///
     /// Run before any pane is projected, because a pane's rows depend on the
     /// alignment and on the aligned start its session agreed on.
@@ -135,6 +195,25 @@ impl App {
                 self.buffers[right.buffer].revision(),
             );
             if self.diffs[index].needs_update(revisions) {
+                if self.buffers[left.buffer]
+                    .len_bytes()
+                    .max(self.buffers[right.buffer].len_bytes())
+                    > super::diff_work::ASYNC_DIFF_THRESHOLD
+                {
+                    let lines = (
+                        DiffSession::visible_lines(self.buffers[left.buffer].text()),
+                        DiffSession::visible_lines(self.buffers[right.buffer].text()),
+                    );
+                    if self.diffs[index].request_update(revisions, lines) {
+                        self.diff_worker.submit(super::diff_work::Request::Pair {
+                            id: self.diffs[index].id(),
+                            revisions,
+                            left: self.buffers[left.buffer].text().clone(),
+                            right: self.buffers[right.buffer].text().clone(),
+                        });
+                    }
+                    continue;
+                }
                 let left = self.buffers[left.buffer].to_string();
                 let right = self.buffers[right.buffer].to_string();
                 self.diffs[index].update(revisions, &left, &right);
@@ -286,6 +365,7 @@ impl App {
     /// This is the only frame lifecycle step allowed to mutate view state.
     /// Rendering consumes the returned owned values and an immutable `App`.
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
+        self.poll_diff_work();
         self.settle_background_notifications();
         if !self.plugins.instances.is_empty() {
             self.plugins.presented_views.clear();
@@ -315,6 +395,14 @@ impl App {
             self.reveal_pane_selection_from_folds(pane_id);
         }
         self.prepare_diffs();
+        let visible_git = self
+            .panes
+            .values()
+            .filter_map(|pane| self.buffers[pane.buffer].path.clone())
+            .collect::<HashSet<_>>();
+        self.git.retain_pending(&visible_git);
+        self.diff_worker
+            .retain(visible_git, self.diffs.iter().map(DiffSession::id));
         self.refresh_search_preview();
         self.areas.clear();
         if let Some(maximized) = self

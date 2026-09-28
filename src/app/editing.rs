@@ -717,10 +717,20 @@ impl App {
         // something is actually watching.
         let watched = self.syntax[buffer_id].is_some()
             || self.pending_syntax.contains_key(&buffer_id)
-            || self.lsp_documents.contains_key(&buffer_id);
+            || self.lsp_documents.contains_key(&buffer_id)
+            || self
+                .diffs
+                .iter()
+                .any(|session| session.has_buffer(buffer_id));
         let before = watched.then(|| self.buffers[buffer_id].text().clone());
         if !self.buffers[buffer_id].apply(transaction) {
             return false;
+        }
+        if let Some(before) = before.as_ref() {
+            let after = self.buffers[buffer_id].text();
+            for session in &mut self.diffs {
+                session.note_transaction(buffer_id, before, after, transaction);
+            }
         }
         if self.mode == Mode::Replace && self.active().buffer == buffer_id {
             // Replace's own overwrites and restorations take the session out

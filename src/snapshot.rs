@@ -987,7 +987,11 @@ impl App {
             folded: context.folded,
             cursor_row: context.row == buffer.offset_to_row(pane.head()),
             diagnostic_sign: self.row_severity(prepared.buffer_id, context.row),
-            change: self.row_change(prepared.buffer_id, context.row, context.continuation),
+            change: self
+                .diff_session(prepared.pane_id)
+                .is_none()
+                .then(|| self.row_change(prepared.buffer_id, context.row, context.continuation))
+                .flatten(),
             diff: self.row_diff(buffer, context.row),
             compared: self.row_compared(prepared.pane_id, context.row),
             notification_severity: buffer

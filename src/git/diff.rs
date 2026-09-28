@@ -5,8 +5,8 @@
 //! The diff runs inside Runyte rather than in a subprocess, and that is the
 //! point. Git is asked once for what a file looked like when it was staged;
 //! every keystroke after that is compared against the text already in memory,
-//! so a live gutter costs no processes and marks never lag behind the buffer
-//! they describe.
+//! so a live gutter costs no processes. Large comparisons run on a coalescing
+//! worker and publish marks only for the revision they captured.
 //!
 //! The comparison itself is not here. [`crate::diff`] owns the one line
 //! alignment in Runyte, and this module turns it into the marks a gutter

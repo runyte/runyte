@@ -2237,7 +2237,9 @@ async fn run(
             // Nothing a refill passes through is worth drawing: between
             // dropping a terminal's rows and finding them again the list has a
             // hole where results the reader was looking at used to be.
-            _ = frame_tick.tick(), if frame_pending && !app.finder_scan_refills() => {}
+            _ = frame_tick.tick(), if (frame_pending || app.diff_work_pending()) && !app.finder_scan_refills() => {
+                if !frame_pending && !app.poll_diff_work() { continue; }
+            }
             // Paced picker state comes due without an event to carry it: a
             // ranked answer waiting for the rows to age out, and header
             // counts the work stopped short of. Nothing else would wake for
@@ -3107,11 +3109,11 @@ async fn run_host_server(
             // Nothing a refill passes through is worth publishing: between
             // dropping a terminal's rows and finding them again the list has a
             // hole where results the reader was looking at used to be.
-            _ = frame_tick.tick(), if frame_pending
+            _ = frame_tick.tick(), if (frame_pending || host.app().diff_work_pending())
                 && active.is_some()
                 && !host.finder_scan_refills() =>
             {
-                changed = true;
+                changed = frame_pending || host.app_mut().poll_diff_work();
             }
             _ = tokio::time::sleep(pointer_autoscroll.unwrap_or_default()), if pointer_autoscroll.is_some() && active.is_some() => {
                 changed = host.advance_pointer_autoscroll(Instant::now());
