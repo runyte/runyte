@@ -257,6 +257,25 @@ impl App {
             .retain(|fold| !hidden.contains(fold));
     }
 
+    /// Identity of the syntax source used by a visible pane, if its highlights
+    /// come from a current or retained tree.
+    pub(crate) fn visible_syntax_source(&self, buffer_id: usize) -> Option<(u64, u64, bool)> {
+        if self.generated_highlights.contains_key(&buffer_id)
+            || self.buffers[buffer_id].is_git_branches()
+        {
+            return None;
+        }
+        self.syntax[buffer_id]
+            .as_ref()
+            .map(|syntax| (syntax.document_id(), syntax.revision().get(), false))
+            .or_else(|| {
+                self.stale_syntax.get(&buffer_id).map(|syntax| {
+                    let (document, revision) = syntax.source_revision();
+                    (document, revision, true)
+                })
+            })
+    }
+
     /// Highlight spans for a character range of a buffer, empty when the
     /// buffer has no syntax tree.
     pub fn highlights(&self, buffer_id: usize, from: Offset, to: Offset) -> Vec<Span> {
