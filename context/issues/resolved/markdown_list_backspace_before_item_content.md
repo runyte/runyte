@@ -43,8 +43,8 @@ separator, and on non-list text, which keep ordinary Backspace.
 
 Known limitation: after the first press, the item's text remains a
 continuation of the previous item, but the numbers of the items after it are
-not adjusted; that is tracked separately in
-`context/issues/markdown_list_renumbering.md`.
+not adjusted. That was resolved separately; see
+`context/issues/resolved/markdown_list_renumbering.md`.
 
 ## Report
 
