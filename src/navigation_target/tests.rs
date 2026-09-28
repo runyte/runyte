@@ -44,6 +44,19 @@ fn paths_and_empty_carets_preserve_the_path_token_grammar() {
 }
 
 #[test]
+fn terminal_path_punctuation_reaches_literal_first_resolution() {
+    for (line, target) in [
+        ("Changed src/file.rs, next", "src/file.rs,"),
+        ("Changed (src/file.rs).", "src/file.rs)."),
+        ("Changed src/file.rs,", "src/file.rs,"),
+        ("Changed src/file.rs,other", "src/file.rs"),
+    ] {
+        let offset = line.find("src/").unwrap() + 4;
+        assert_eq!(under_cursor(line, offset).as_deref(), Some(target));
+    }
+}
+
+#[test]
 fn only_web_addresses_use_the_browser_and_www_defaults_to_https() {
     for text in [
         "file.txt",

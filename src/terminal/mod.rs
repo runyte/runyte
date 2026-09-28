@@ -1044,6 +1044,10 @@ impl TerminalSession {
         crate::navigation_target::under_cursor(&text, range.head - line.text_start)
     }
 
+    pub(crate) fn review_navigation_target_is_inferred(&mut self) -> bool {
+        self.ensure_review().selection.primary().is_empty()
+    }
+
     pub fn review_selection_text(&mut self) -> String {
         let review = self.ensure_review();
         let text = review.text.chars().collect::<Vec<_>>();

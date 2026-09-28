@@ -84,7 +84,7 @@ impl App {
         let range = self.active().selection.primary();
         let source = self.buffers[buffer].markdown_render_source();
         let directory = self.buffer_directory(source.unwrap_or(buffer));
-        let requested_text = if range.is_empty() {
+        let (requested_text, inferred) = if range.is_empty() {
             let markdown_link = if let Some(source) = source {
                 self.markdown_positions.get(&buffer).and_then(|positions| {
                     self.markdown_link_at(source, positions.to_source(range.head))
@@ -104,8 +104,12 @@ impl App {
             let start = self.buffers[buffer].line_to_offset(row);
             let line =
                 self.buffers[buffer].slice(start, start + self.buffers[buffer].line_len(row));
-            markdown_link
-                .or_else(|| crate::navigation_target::under_cursor(&line, range.head - start))
+            let inferred = markdown_link.is_none();
+            (
+                markdown_link
+                    .or_else(|| crate::navigation_target::under_cursor(&line, range.head - start)),
+                inferred,
+            )
         } else {
             let (from, to) = if matches!(
                 self.active().selection_semantics(),
@@ -115,9 +119,9 @@ impl App {
             } else {
                 super::operative_span(&self.buffers[buffer], &range)
             };
-            Some(self.buffers[buffer].slice(from, to))
+            (Some(self.buffers[buffer].slice(from, to)), false)
         };
-        self.open_navigation_target(requested_text, directory)
+        self.open_navigation_target(requested_text, directory, inferred)
     }
 
     /// Follows a Markdown link that names a heading: `#heading` in the
@@ -213,6 +217,7 @@ impl App {
         &mut self,
         requested_text: Option<String>,
         directory: Option<PathBuf>,
+        inferred: bool,
     ) -> Result<()> {
         let Some(requested_text) =
             requested_text.filter(|text| !text.is_empty() && !text.contains(['\n', '\r']))
@@ -225,8 +230,40 @@ impl App {
             return Ok(());
         }
 
-        let candidates = self.navigation_candidates(&requested_text, directory);
+        let candidates = if inferred {
+            self.inferred_navigation_candidates(&requested_text, directory)
+        } else {
+            self.navigation_candidates(&requested_text, directory)
+        };
         self.open_navigation_candidates(&requested_text, candidates)
+    }
+
+    /// Sentence punctuation is optional only for a target inferred from a
+    /// caret. Prefer the literal name, including its punctuation, when it
+    /// exists; then try successively shorter names until one resolves.
+    fn inferred_navigation_candidates(
+        &self,
+        requested_text: &str,
+        directory: Option<PathBuf>,
+    ) -> Vec<PathBuf> {
+        let candidates = self.navigation_candidates(requested_text, directory.clone());
+        if !candidates.is_empty() {
+            return candidates;
+        }
+        let mut trimmed = requested_text;
+        while let Some(shorter) =
+            trimmed.strip_suffix(['.', ',', ':', ';', '!', '?', ')', ']', '}'])
+        {
+            if shorter.is_empty() {
+                break;
+            }
+            trimmed = shorter;
+            let candidates = self.navigation_candidates(trimmed, directory.clone());
+            if !candidates.is_empty() {
+                return candidates;
+            }
+        }
+        candidates
     }
 
     /// The existing files and directories a relative or absolute path names,

@@ -97,10 +97,27 @@ pub(crate) fn under_cursor(line: &str, offset: usize) -> Option<String> {
         .rev()
         .find(|(_, c)| is_path_boundary(*c))
         .map_or(0, |(i, c)| i + c.len_utf8());
-    let end = line[caret..]
+    let mut end = line[caret..]
         .char_indices()
         .find(|(_, c)| is_path_boundary(*c))
         .map_or(line.len(), |(i, _)| caret + i);
+    // Keep punctuation that closes a token at the end of prose so path
+    // resolution can prefer a real filename containing it. An internal
+    // delimiter, as in `one,two`, still separates the two tokens.
+    let suffix = &line[end..];
+    let punctuation_bytes = suffix
+        .chars()
+        .take_while(|c| matches!(c, '.' | ',' | ':' | ';' | '!' | '?' | ')' | ']' | '}'))
+        .map(char::len_utf8)
+        .sum::<usize>();
+    if punctuation_bytes > 0
+        && suffix[punctuation_bytes..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || hard_boundary(c))
+    {
+        end += punctuation_bytes;
+    }
     Some(line[start..end].to_owned())
 }
 
