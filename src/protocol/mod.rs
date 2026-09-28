@@ -189,7 +189,9 @@ use crate::workspace::{
 // Version 62 combines those destination rows with live terminal cell previews
 // in picker overlays; version 61 peers cannot decode the new preview variant.
 // Version 63 adds editor-row damage for persistent-session presentation.
-pub const VERSION: u32 = 63;
+// Version 64 adds a secondary-caret text role and theme colour to bundled
+// frames, so older clients cannot safely decode or paint multi-selections.
+pub const VERSION: u32 = 64;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1475,7 +1477,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 63);
+        assert_eq!(VERSION, 64);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

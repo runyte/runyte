@@ -123,6 +123,7 @@ unit_enum!(
         PrimaryCaret,
         ReplaceCaret,
         Caret,
+        SecondaryCaret,
     ]
 );
 unit_enum!(Severity, CoreSeverity, [Hint, Information, Warning, Error]);
@@ -2020,6 +2021,7 @@ pub struct Theme {
     pub cursor_replace: Color,
     pub cursor_select: Color,
     pub cursor_command: Color,
+    pub cursor_secondary: Color,
     pub directory: Color,
     pub destination_file: Color,
     pub destination_explorer: Color,
@@ -2062,6 +2064,7 @@ macro_rules! theme {
             cursor_replace: $map($value.cursor_replace),
             cursor_select: $map($value.cursor_select),
             cursor_command: $map($value.cursor_command),
+            cursor_secondary: $map($value.cursor_secondary),
             directory: $map($value.directory),
             destination_file: $map($value.destination_file),
             destination_explorer: $map($value.destination_explorer),

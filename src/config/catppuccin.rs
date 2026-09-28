@@ -76,6 +76,7 @@ fn catppuccin_theme(palette: CatppuccinPalette) -> ThemeDefinition {
         cursor_replace: None,
         cursor_select: Some(palette.cursor_select.into()),
         cursor_command: Some(palette.mauve.into()),
+        cursor_secondary: None,
         directory: Some(palette.blue.into()),
         destination_file: None,
         destination_explorer: None,

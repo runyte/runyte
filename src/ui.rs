@@ -63,6 +63,7 @@ struct TuiTheme {
     cursor_replace: ratatui::style::Color,
     cursor_select: ratatui::style::Color,
     cursor_command: ratatui::style::Color,
+    cursor_secondary: ratatui::style::Color,
     directory: ratatui::style::Color,
     destination_file: ratatui::style::Color,
     destination_explorer: ratatui::style::Color,
@@ -109,7 +110,7 @@ impl TuiTheme {
             theme.appearance(),
             &[background, inactive_background],
         );
-        Self {
+        let mut resolved = Self {
             color_depth,
             background,
             inactive_background,
@@ -125,6 +126,7 @@ impl TuiTheme {
             cursor_replace: color(theme.cursor_replace),
             cursor_select: color(theme.cursor_select),
             cursor_command: color(theme.cursor_command),
+            cursor_secondary: color(theme.cursor_secondary),
             directory: color(theme.directory),
             destination_file: color(theme.destination_file),
             destination_explorer: color(theme.destination_explorer),
@@ -148,7 +150,53 @@ impl TuiTheme {
             diff_removed: theme.diff_removed.map(color),
             diff_changed: theme.diff_changed.map(color),
             syntax: theme.syntax.iter().map(|value| value.map(color)).collect(),
+        };
+        let primary_cursors = [
+            resolved.cursor_normal,
+            resolved.cursor_insert,
+            resolved.cursor_replace,
+            resolved.cursor_select,
+            resolved.cursor_command,
+        ];
+        if primary_cursors
+            .iter()
+            .any(|primary| same_terminal_color(resolved.cursor_secondary, *primary))
+            || same_terminal_color(resolved.cursor_secondary, resolved.background)
+        {
+            // Indexed and basic palettes can merge two distinct RGB roles.
+            // Pick a visible neutral first, then another free terminal colour.
+            let candidates = match theme.appearance() {
+                Some(ThemeAppearance::Light) => [
+                    ratatui::style::Color::Black,
+                    ratatui::style::Color::Blue,
+                    ratatui::style::Color::Red,
+                    ratatui::style::Color::Magenta,
+                    ratatui::style::Color::Cyan,
+                    ratatui::style::Color::Green,
+                    ratatui::style::Color::Yellow,
+                    ratatui::style::Color::Gray,
+                ],
+                _ => [
+                    ratatui::style::Color::Gray,
+                    ratatui::style::Color::Yellow,
+                    ratatui::style::Color::Cyan,
+                    ratatui::style::Color::Green,
+                    ratatui::style::Color::Magenta,
+                    ratatui::style::Color::Blue,
+                    ratatui::style::Color::Red,
+                    ratatui::style::Color::Black,
+                ],
+            };
+            if let Some(candidate) = candidates.into_iter().find(|candidate| {
+                !same_terminal_color(*candidate, resolved.background)
+                    && !primary_cursors
+                        .iter()
+                        .any(|primary| same_terminal_color(*candidate, *primary))
+            }) {
+                resolved.cursor_secondary = candidate;
+            }
         }
+        resolved
     }
 
     fn syntax_color(&self, scope: crate::syntax::Scope) -> Option<ratatui::style::Color> {
@@ -180,6 +228,36 @@ impl TuiTheme {
     fn mode_status_style(&self, mode: Mode) -> Style {
         Style::default().fg(self.background).bg(self.cursor(mode))
     }
+}
+
+/// Compare the terminal colours rather than Ratatui's different ways to name
+/// them: ANSI Black, indexed 16, and RGB(0,0,0) paint the same cell.
+fn same_terminal_color(left: ratatui::style::Color, right: ratatui::style::Color) -> bool {
+    fn rgb(color: ratatui::style::Color) -> Option<[u8; 3]> {
+        use ratatui::style::Color;
+        Some(match color {
+            Color::Reset => return None,
+            Color::Black => xterm_color(0),
+            Color::Red => xterm_color(1),
+            Color::Green => xterm_color(2),
+            Color::Yellow => xterm_color(3),
+            Color::Blue => xterm_color(4),
+            Color::Magenta => xterm_color(5),
+            Color::Cyan => xterm_color(6),
+            Color::Gray => xterm_color(7),
+            Color::DarkGray => xterm_color(8),
+            Color::LightRed => xterm_color(9),
+            Color::LightGreen => xterm_color(10),
+            Color::LightYellow => xterm_color(11),
+            Color::LightBlue => xterm_color(12),
+            Color::LightMagenta => xterm_color(13),
+            Color::LightCyan => xterm_color(14),
+            Color::White => xterm_color(15),
+            Color::Rgb(red, green, blue) => [red, green, blue],
+            Color::Indexed(index) => xterm_color(index),
+        })
+    }
+    rgb(left) == rgb(right)
 }
 
 /// Keeps Runyte's three semantic grounds distinct after indexed conversion.
@@ -2251,6 +2329,7 @@ fn snapshot_line(
                     TextRole::Caret
                         | TextRole::PrimaryCaret
                         | TextRole::ReplaceCaret
+                        | TextRole::SecondaryCaret
                         | TextRole::Selected
                         | TextRole::PrimarySelected
                 );
@@ -2382,6 +2461,9 @@ fn text_run_style(
             .fg(theme.background)
             .bg(theme.cursor_insert),
         TextRole::Caret => Style::default().fg(theme.background).bg(theme.cursor(mode)),
+        TextRole::SecondaryCaret => Style::default()
+            .fg(theme.background)
+            .bg(theme.cursor_secondary),
     };
     // Emphasis belongs to the scope rather than to the theme: bold text is
     // bold in every palette, and a theme that gives `markup.bold` no colour of
@@ -2399,7 +2481,10 @@ fn text_run_style(
         Some(_)
             if !matches!(
                 role,
-                TextRole::PrimaryCaret | TextRole::ReplaceCaret | TextRole::Caret
+                TextRole::PrimaryCaret
+                    | TextRole::ReplaceCaret
+                    | TextRole::Caret
+                    | TextRole::SecondaryCaret
             ) =>
         {
             base.add_modifier(Modifier::UNDERLINED)
@@ -4742,6 +4827,7 @@ mod tests {
         assert_role!(cursor_replace);
         assert_role!(cursor_select);
         assert_role!(cursor_command);
+        assert_role!(cursor_secondary);
         assert_role!(directory);
         assert_role!(selection);
         assert_role!(selection_primary);
@@ -4775,6 +4861,106 @@ mod tests {
             theme.overlay_background,
             to_tui_color(source.overlay_background())
         );
+    }
+
+    #[test]
+    fn rotating_a_multiselection_moves_the_mode_colored_caret() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "x\ny"));
+        let hints = KeyHintState::default();
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+
+        for mode in [Mode::Normal, Mode::Insert, Mode::Select] {
+            app.mode = mode;
+            for primary in [0, 1] {
+                app.panes.get_mut(&0).unwrap().selection = Selection::new(
+                    vec![
+                        crate::selection::Range::point(0),
+                        crate::selection::Range::point(2),
+                    ],
+                    primary,
+                );
+                terminal
+                    .draw(|frame| render_test_frame(frame, &mut app, &hints))
+                    .unwrap();
+                for (index, symbol) in ["x", "y"].into_iter().enumerate() {
+                    let cell = terminal
+                        .backend()
+                        .buffer()
+                        .content
+                        .iter()
+                        .find(|cell| cell.symbol() == symbol)
+                        .unwrap();
+                    let expected = if index != primary {
+                        app.theme.cursor_secondary
+                    } else {
+                        match mode {
+                            Mode::Normal => app.theme.cursor_normal,
+                            Mode::Insert => app.theme.cursor_insert,
+                            Mode::Select => app.theme.cursor_select,
+                            _ => unreachable!(),
+                        }
+                    };
+                    assert_eq!(
+                        cell.style().bg,
+                        Some(to_tui_color(expected)),
+                        "{mode:?} {symbol}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_palette_secondary_carets_survive_terminal_color_depths() {
+        let config = Config::default();
+        for name in config.theme_names() {
+            let theme = config.resolve_theme(name).unwrap();
+            for depth in [
+                TerminalColorDepth::TrueColor,
+                TerminalColorDepth::Indexed,
+                TerminalColorDepth::Basic,
+            ] {
+                let tui = TuiTheme::with_color_depth(&theme, depth);
+                for primary in [
+                    tui.cursor_normal,
+                    tui.cursor_insert,
+                    tui.cursor_select,
+                    tui.cursor_replace,
+                ] {
+                    assert!(
+                        !same_terminal_color(tui.cursor_secondary, primary),
+                        "{name} {depth:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn custom_theme_secondary_caret_avoids_equivalent_ansi_and_rgb_colors() {
+        for normal in ["'#000000'", "black"] {
+            let yaml = format!(
+                "themes:\n  custom:\n    background: '#ffffff'\n    foreground: '#000000'\n    cursor_normal: {normal}\n    cursor_secondary: '#000000'\n"
+            );
+            let config: Config = serde_yaml::from_str(&yaml).unwrap();
+            let theme = config.resolve_theme("custom").unwrap();
+            for depth in [
+                TerminalColorDepth::TrueColor,
+                TerminalColorDepth::Indexed,
+                TerminalColorDepth::Basic,
+            ] {
+                let tui = TuiTheme::with_color_depth(&theme, depth);
+                assert!(
+                    !same_terminal_color(tui.cursor_secondary, tui.cursor_normal),
+                    "{normal} {depth:?}"
+                );
+                assert!(
+                    !same_terminal_color(tui.cursor_secondary, tui.background),
+                    "{normal} {depth:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -6713,9 +6899,23 @@ mod tests {
             .filter(|cell| cell.symbol() == "x")
             .collect::<Vec<_>>();
         assert_eq!(insert_carets.len(), 2);
-        assert!(insert_carets.iter().all(|cell| {
-            cell.style().bg == Some(to_tui_color(insert_multi.theme.cursor_insert))
-        }));
+        assert_eq!(
+            insert_carets
+                .iter()
+                .filter(
+                    |cell| cell.style().bg == Some(to_tui_color(insert_multi.theme.cursor_insert))
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            insert_carets
+                .iter()
+                .filter(|cell| cell.style().bg
+                    == Some(to_tui_color(insert_multi.theme.cursor_secondary)))
+                .count(),
+            1
+        );
     }
 
     #[cfg(unix)]

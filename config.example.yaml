@@ -103,6 +103,8 @@ themes:
     cursor_replace: "#39ff14"
     cursor_select: "#ffb86c"
     cursor_command: "#bd93f9"
+    # Secondary carets in a multi-selection; omitted uses foreground.
+    cursor_secondary: "#d8dee9"
     directory: "#8be9fd"
     selection: "#2e3440"
     error: "#bf616a"

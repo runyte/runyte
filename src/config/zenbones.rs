@@ -400,6 +400,7 @@ impl Palette {
             cursor_replace: None,
             cursor_select: Some(self.warning.into()),
             cursor_command: Some(cursor_command.into()),
+            cursor_secondary: None,
             directory: Some(self.info.into()),
             destination_file: None,
             destination_explorer: None,

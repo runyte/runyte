@@ -43,6 +43,10 @@ them, regardless of which extensibility direction is chosen.
   or becomes editable text. A pane scrolls within an overwide explorer prefix
   independently before scrolling buffer text, keeping every metadata field
   reachable without assigning the prefix document coordinates.
+- **Primary caret** — the caret at the primary selection. In a multi-selection
+  it keeps its mode or pending-replacement colour; other carets use the theme's
+  secondary caret colour. Changing which selection is primary moves that
+  colour to the new primary caret without changing the ranges.
 - **Global status line** — the first global row below the editor area. It owns
   mode, workspace directory, active-buffer state, cursor/progress, selection
   count, Git/LSP summaries, long-running action progress, and unread

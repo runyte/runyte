@@ -122,13 +122,21 @@ impl<'a> SelectionRoles<'a> {
             .get(self.head)
             .is_some_and(|range| range.head == offset);
         if head && self.replacing {
-            return TextRole::ReplaceCaret;
+            return if self.ranges[self.primary].head == offset {
+                TextRole::ReplaceCaret
+            } else {
+                TextRole::SecondaryCaret
+            };
         }
         if self.select_mode && self.ranges[self.primary].head == offset {
             return TextRole::PrimaryCaret;
         }
         if head && !self.pristine_search {
-            return TextRole::Caret;
+            return if self.ranges[self.primary].head == offset {
+                TextRole::Caret
+            } else {
+                TextRole::SecondaryCaret
+            };
         }
         if head && self.pristine_search && self.runyte && self.ranges[self.head].is_empty() {
             return TextRole::Selected;
@@ -602,6 +610,7 @@ pub enum TextRole {
     PrimaryCaret,
     ReplaceCaret,
     Caret,
+    SecondaryCaret,
 }
 
 /// Owned status and prompt values for the bottom two rows.
@@ -1452,7 +1461,10 @@ impl App {
                     let head_role = role_at(*head);
                     if matches!(
                         head_role,
-                        TextRole::Caret | TextRole::PrimaryCaret | TextRole::ReplaceCaret
+                        TextRole::Caret
+                            | TextRole::PrimaryCaret
+                            | TextRole::ReplaceCaret
+                            | TextRole::SecondaryCaret
                     ) {
                         role = head_role;
                     }
@@ -1698,7 +1710,10 @@ impl App {
             let role = role_at(end);
             if matches!(
                 role,
-                TextRole::PrimaryCaret | TextRole::ReplaceCaret | TextRole::Caret
+                TextRole::PrimaryCaret
+                    | TextRole::ReplaceCaret
+                    | TextRole::Caret
+                    | TextRole::SecondaryCaret
             ) {
                 runs.push(TextRun {
                     text: " ".to_owned(),
@@ -1960,6 +1975,8 @@ mod tests {
                 1,
             ),
             Selection::new(vec![Range::new(3, 5), Range::new(5, 8)], 1),
+            // Distinct adjacent ranges can point their heads at one offset.
+            Selection::new(vec![Range::new(3, 5), Range::new(8, 5)], 1),
             Selection::single(Range::new(3, 5)),
             Selection::new(vec![Range::point(3), Range::point(8)], 0),
         ];
@@ -1986,12 +2003,21 @@ mod tests {
                             for offset in (10..25).chain(0..25) {
                                 let ranges = selection.ranges();
                                 let head = ranges.iter().any(|range| range.head == offset);
+                                let primary_head = selection.primary().head == offset;
                                 let expected = if replacing && head {
-                                    TextRole::ReplaceCaret
+                                    if primary_head {
+                                        TextRole::ReplaceCaret
+                                    } else {
+                                        TextRole::SecondaryCaret
+                                    }
                                 } else if select_mode && selection.primary().head == offset {
                                     TextRole::PrimaryCaret
                                 } else if head && !pristine {
-                                    TextRole::Caret
+                                    if primary_head {
+                                        TextRole::Caret
+                                    } else {
+                                        TextRole::SecondaryCaret
+                                    }
                                 } else if pristine
                                     && semantics == SelectionSemantics::Runyte
                                     && ranges
@@ -2813,7 +2839,7 @@ mod tests {
         assert!(!row.runs.iter().any(|run| matches!(
             run.kind,
             TextRunKind::Text {
-                role: TextRole::Caret | TextRole::ReplaceCaret,
+                role: TextRole::Caret | TextRole::ReplaceCaret | TextRole::SecondaryCaret,
                 ..
             }
         )));
@@ -2827,7 +2853,14 @@ mod tests {
         assert!(row.runs.iter().any(|run| matches!(
             run.kind,
             TextRunKind::Text {
-                role: TextRole::Caret,
+                role: TextRole::PrimaryCaret,
+                ..
+            }
+        )));
+        assert!(row.runs.iter().any(|run| matches!(
+            run.kind,
+            TextRunKind::Text {
+                role: TextRole::SecondaryCaret,
                 ..
             }
         )));
@@ -2923,7 +2956,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_replace_marks_every_selection_head_as_a_replace_caret() {
+    fn pending_replace_distinguishes_the_primary_caret() {
         let mut app = App::new(Config::default(), None).unwrap();
         app.buffers[0].apply(&Transaction::insert(0, "at xx at"));
         for character in ['s', 'a', 't'] {
@@ -2950,7 +2983,14 @@ mod tests {
                 )
             })
             .count();
-        assert_eq!(replace_carets, 2);
+        assert_eq!(replace_carets, 1);
+        assert!(row.runs.iter().any(|run| matches!(
+            run.kind,
+            TextRunKind::Text {
+                role: TextRole::SecondaryCaret,
+                ..
+            }
+        )));
 
         app.handle_key(KeyStroke::char('z')).unwrap();
         assert_eq!(app.buffers[0].to_string(), "zz xx zz");
@@ -3013,7 +3053,7 @@ mod tests {
         assert!(row.runs.iter().any(|run| matches!(
             run.kind,
             TextRunKind::Text {
-                role: TextRole::Caret,
+                role: TextRole::SecondaryCaret,
                 ..
             }
         )));

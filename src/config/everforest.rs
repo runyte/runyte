@@ -131,6 +131,7 @@ fn everforest_theme(
         cursor_replace: None,
         cursor_select: Some(foreground.orange.into()),
         cursor_command: Some(foreground.command.into()),
+        cursor_secondary: None,
         directory: Some(foreground.blue.into()),
         destination_file: None,
         destination_explorer: None,

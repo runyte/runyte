@@ -486,6 +486,9 @@ pub struct ThemeDefinition {
     /// theme written before command mode had a colour still distinguishes all
     /// four.
     pub cursor_command: Option<String>,
+    /// Secondary carets in a multi-selection. An omitted value uses
+    /// `foreground`, keeping them visible while the primary retains its mode colour.
+    pub cursor_secondary: Option<String>,
     /// Directory entries in explorer buffers. An omitted value uses `accent`.
     pub directory: Option<String>,
     /// The `[file]` type cell in the Navigator, buffer list, and terminal
@@ -681,6 +684,7 @@ pub struct Theme {
     pub cursor_replace: Color,
     pub cursor_select: Color,
     pub cursor_command: Color,
+    pub cursor_secondary: Color,
     pub directory: Color,
     pub destination_file: Color,
     pub destination_explorer: Color,
@@ -968,6 +972,7 @@ impl Default for ThemeDefinition {
             cursor_replace: None,
             cursor_select: None,
             cursor_command: None,
+            cursor_secondary: None,
             directory: None,
             destination_file: None,
             destination_explorer: None,
@@ -1295,6 +1300,7 @@ impl TryFrom<&ThemeDefinition> for Theme {
             cursor_replace,
             cursor_select,
             cursor_command,
+            cursor_secondary: optional_color(value.cursor_secondary.as_deref(), foreground)?,
             directory,
             destination_file: optional_color(value.destination_file.as_deref(), foreground)?,
             destination_explorer: optional_color(value.destination_explorer.as_deref(), directory)?,
@@ -3732,6 +3738,29 @@ mod tests {
     }
 
     #[test]
+    fn built_in_secondary_carets_are_visible_and_distinct_from_primary_carets() {
+        let config = Config::default();
+        for name in config.theme_names() {
+            let theme = config.resolve_theme(name).unwrap();
+            let ground = theme.background.relative_luminance().unwrap();
+            let caret = theme.cursor_secondary.relative_luminance().unwrap();
+            let contrast = (ground.max(caret) + 0.05) / (ground.min(caret) + 0.05);
+            assert!(
+                contrast >= 3.0,
+                "{name}: secondary caret contrast {contrast}"
+            );
+            for (mode, primary) in [
+                ("Normal", theme.cursor_normal),
+                ("Insert", theme.cursor_insert),
+                ("Replace", theme.cursor_insert),
+                ("Select", theme.cursor_select),
+            ] {
+                assert_ne!(theme.cursor_secondary, primary, "{name}: {mode} caret");
+            }
+        }
+    }
+
+    #[test]
     fn built_in_themes_use_mode_specific_cursor_colors() {
         let config = Config::default();
         for name in config.theme_names() {
@@ -4115,6 +4144,7 @@ mod tests {
         assert_eq!(theme.cursor_insert, theme.error);
         assert_eq!(theme.cursor_replace, CURSOR_REPLACE_DARK_ALTERNATE);
         assert_eq!(theme.cursor_select, theme.warning);
+        assert_eq!(theme.cursor_secondary, theme.foreground);
         assert_eq!(theme.directory, Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(theme.selection_primary, theme.selection);
         assert_eq!(theme.fuzzy_match_secondary, theme.selection);
@@ -4143,6 +4173,13 @@ mod tests {
         assert_eq!(
             configured.resolve_theme("custom").unwrap().cursor_select,
             Color::Rgb(0x65, 0x43, 0x21)
+        );
+
+        let configured: Config =
+            serde_yaml::from_str("themes:\n  custom:\n    cursor_secondary: '#abcdef'\n").unwrap();
+        assert_eq!(
+            configured.resolve_theme("custom").unwrap().cursor_secondary,
+            Color::Rgb(0xab, 0xcd, 0xef)
         );
 
         let configured: Config = serde_yaml::from_str(

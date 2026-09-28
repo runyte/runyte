@@ -4639,6 +4639,7 @@ themes:
     cursor_insert: "#ff79c6"
     cursor_replace: "#39ff14"
     cursor_select: "#ffb86c"
+    cursor_secondary: "#d8dee9"
     cursor_command: "#bd93f9"
     directory: "#8be9fd"
     destination_file: "#d8dee9"
@@ -4747,9 +4748,9 @@ counts. Custom themes that omit `warning` use `change_modified` (then terminal
 yellow), while omitted `info` uses `change_added` (then terminal green).
 
 `cursor_normal`, `cursor_insert`, `cursor_replace`, `cursor_select`, and
-`cursor_command` colour both carets and the global status line's mode label in
-Normal, Insert, Replace, Select, and Command modes respectively. When omitted
-they fall back to `accent`, `error`, Runyte's neon Replace accent, `warning`,
+`cursor_command` colour the primary caret and the global status line's mode
+label in Normal, Insert, Replace, Select, and Command modes respectively. When
+omitted they fall back to `accent`, `error`, Runyte's neon Replace accent, `warning`,
 and `info`. The Replace fallback is saturated green against both dark and
 light grounds; it switches to neon magenta when another resolved mode colour
 is green. Command and Replace are otherwise a Runyte colour rather than an
@@ -4758,6 +4759,11 @@ green for Replace, orange for Select, and purple for Command, but each theme
 is free to choose its own. `ember-dark` and `ember-light` do: green for
 Normal, red for Insert, purple for Replace, pink for Select, and blue for
 Command, the same blue their `command` role lists palette commands in.
+In a multi-selection, the primary caret keeps its usual mode colour (or the
+pending replacement colour), and secondary carets use `cursor_secondary`.
+It falls back to `foreground` when omitted, so custom themes need no new
+setting to distinguish them. If the terminal maps it to the same displayed
+colour as a primary caret, Runyte chooses another available colour.
 
 `selection` colours secondary ranges in a multi-selection.
 `selection_primary` colours the primary range and ordinary Select-mode ranges;
