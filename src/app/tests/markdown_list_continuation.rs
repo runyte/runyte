@@ -301,3 +301,250 @@ fn markdown_backspace_at_an_existing_item_content_start_uses_character_columns()
         assert_eq!(text(&app), after, "ordinary Backspace for {before}");
     }
 }
+
+fn newline_at(before: &str, carets: &[&str]) -> App {
+    let mut app = markdown(before);
+    let ranges = carets
+        .iter()
+        .map(|prefix| {
+            assert!(before.starts_with(prefix), "{prefix:?} is a prefix");
+            Range::point(prefix.chars().count())
+        })
+        .collect();
+    app.replace_active_selection(Selection::new(ranges, 0));
+    app
+}
+
+#[test]
+fn markdown_enter_renumbers_following_items_and_backspace_restores_them() {
+    let original = "1. First point\n2. Second point a bit longer to show the problem\n3. Some later point\n4. Last";
+    let mut app = newline_at(original, &["1. First point\n2. Second point a bit longer "]);
+    app.edit_newline();
+    assert_eq!(
+        text(&app),
+        "1. First point\n2. Second point a bit longer \n3. to show the problem\n4. Some later point\n5. Last"
+    );
+    app.undo();
+    assert_eq!(text(&app), original, "renumbering is part of one undo step");
+    app.redo();
+
+    app.edit_backspace();
+    assert_eq!(
+        text(&app),
+        "1. First point\n2. Second point a bit longer \n   to show the problem\n3. Some later point\n4. Last"
+    );
+    app.edit_backspace();
+    app.edit_backspace();
+    assert_eq!(text(&app), original);
+}
+
+#[test]
+fn markdown_enter_at_the_end_of_an_item_renumbers_the_same_way() {
+    let mut app = newline_at("1. a\n2. b\n3. c", &["1. a"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n2. \n3. b\n4. c");
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\n   \n2. b\n3. c");
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\n\n2. b\n3. c");
+}
+
+#[test]
+fn markdown_renumbering_follows_every_ordered_marker_style() {
+    for (before, caret, after) in [
+        ("a. x\nb. y\nc. z", "a. x", "a. x\nb. \nc. y\nd. z"),
+        ("IV. x\nV. y\nVI. z", "IV. x", "IV. x\nV. \nVI. y\nVII. z"),
+        (
+            "III. x\nIV. y\nV. z",
+            "III. x\nIV. y",
+            "III. x\nIV. y\nV. \nVI. z",
+        ),
+        ("9. x\n10. y", "9. x", "9. x\n10. \n11. y"),
+        (
+            "1. x\r\n2. y\r\n3. z",
+            "1. x",
+            "1. x\r\n2. \r\n3. y\r\n4. z",
+        ),
+        (
+            "- [x] 1. x\n- [ ] 2. y",
+            "- [x] 1. x",
+            "- [x] 1. x\n- [ ] \n- [ ] 2. y",
+        ),
+    ] {
+        let mut app = newline_at(before, &[caret]);
+        app.edit_newline();
+        assert_eq!(text(&app), after, "{before}");
+    }
+}
+
+#[test]
+fn markdown_renumbering_keeps_numbers_that_were_not_in_sequence() {
+    for (before, caret, after) in [
+        ("1. a\n1. b\n1. c", "1. a", "1. a\n2. \n1. b\n1. c"),
+        ("1. a\n2. b\n5. c", "1. a", "1. a\n2. \n3. b\n5. c"),
+        (
+            "1. a\n2. b\n- c\n3. d",
+            "1. a",
+            "1. a\n2. \n3. b\n- c\n3. d",
+        ),
+        (
+            "1. a\n2. b\n\nparagraph\n\n3. c",
+            "1. a",
+            "1. a\n2. \n3. b\n\nparagraph\n\n3. c",
+        ),
+    ] {
+        let mut app = newline_at(before, &[caret]);
+        app.edit_newline();
+        assert_eq!(text(&app), after, "{before}");
+    }
+}
+
+#[test]
+fn markdown_renumbering_passes_over_nested_items_continuations_and_blank_lines() {
+    let before = "1. a\n2. b\n   continued\n   1. nested\n   2. nested\n\n3. c\n  4. deeper";
+    let mut app = newline_at(before, &["1. a"]);
+    app.edit_newline();
+    assert_eq!(
+        text(&app),
+        "1. a\n2. \n3. b\n   continued\n   1. nested\n   2. nested\n\n4. c\n  4. deeper"
+    );
+
+    let before = "1. a\n   1. x\n   2. y\n2. b";
+    let mut app = newline_at(before, &["1. a\n   1. x"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n   1. x\n   2. \n   3. y\n2. b");
+}
+
+#[test]
+fn markdown_multicaret_enter_and_backspace_renumber_one_list_consistently() {
+    let original = "1. a\n2. b\n3. c";
+    let mut app = newline_at(original, &["1. a", "1. a\n2. b"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n2. \n3. b\n4. \n5. c");
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\n   \n2. b\n   \n3. c");
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\n\n2. b\n\n3. c");
+    app.undo();
+    assert_eq!(
+        text(&app),
+        original,
+        "Insert mode groups the whole sequence"
+    );
+
+    let mut app = newline_at("8. a\n9. b\n10. c", &["8. a", "8. a\n9. b"]);
+    app.edit_newline();
+    let after = "8. a\n9. \n10. b\n11. \n12. c";
+    assert_eq!(text(&app), after);
+    let heads = app
+        .active()
+        .selection
+        .ranges()
+        .iter()
+        .map(|range| range.head)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        heads,
+        [
+            "8. a\n9. ".chars().count(),
+            "8. a\n9. \n10. b\n11. ".chars().count()
+        ]
+    );
+
+    let original = "1. a\r\n2. \r\n3. \r\n4. d";
+    let mut app = newline_at(original, &["1. a\r\n2. ", "1. a\r\n2. \r\n3. "]);
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\r\n   \r\n   \r\n2. d");
+}
+
+#[test]
+fn markdown_renumbering_continues_past_other_carets_unless_they_edit_a_marker() {
+    // Carets elsewhere on a row leave its marker to be renumbered.
+    let mut app = newline_at(
+        "1. a\n2. b\n   cont\n3. c",
+        &["1. a", "1. a\n2. b\n   cont"],
+    );
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n2. \n3. b\n   cont\n   \n4. c");
+
+    let mut app = newline_at("1. a\n2. b\n3. c", &["1. a", "1. a\n2. b\n"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n2. \n3. b\n\n4. c");
+
+    let mut app = newline_at("1. a\n2. b\n3. c\n4. d", &["1. a\n2. ", "1. a\n2. b\n3. c"]);
+    app.edit_backspace();
+    assert_eq!(text(&app), "1. a\n   b\n2. \n3. d");
+
+    // A caret inside a marker stops the run above it rather than rewrite the
+    // marker that caret is splitting.
+    let mut app = newline_at("8. a\n9. b\n10. c", &["8. a", "8. a\n9. b\n1"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "8. a\n9. \n10. b\n1\n0. c");
+}
+
+#[test]
+fn markdown_enter_on_an_empty_item_renumbers_the_items_after_it() {
+    let mut app = newline_at("1. a\n2. b\n3. c", &["1. a"]);
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n2. \n3. b\n4. c");
+    app.edit_newline();
+    assert_eq!(text(&app), "1. a\n\n2. b\n3. c");
+}
+
+#[test]
+fn markdown_backspace_renumbering_follows_letters_roman_numerals_and_tabs() {
+    for (before, caret, after) in [
+        ("a. x\nb. \nc. y", "a. x\nb. ", "a. x\n   \nb. y"),
+        ("IV. x\nV. \nVI. y", "IV. x\nV. ", "IV. x\n   \nV. y"),
+        (
+            "\t1. x\n\t2. \n\t3. y",
+            "\t1. x\n\t2. ",
+            "\t1. x\n\t   \n\t2. y",
+        ),
+    ] {
+        let mut app = newline_at(before, &[caret]);
+        app.edit_backspace();
+        assert_eq!(text(&app), after, "{before}");
+    }
+
+    for (before, caret, after) in [
+        ("\t1. a\n\t2. b", "\t1. a", "\t1. a\n\t2. \n\t3. b"),
+        ("x. a\ny. b\nz. c", "x. a", "x. a\ny. \nz. b\nz. c"),
+    ] {
+        let mut app = newline_at(before, &[caret]);
+        app.edit_newline();
+        assert_eq!(text(&app), after, "{before}");
+    }
+}
+
+#[test]
+fn markdown_renumbering_hands_its_roman_style_to_a_later_caret() {
+    let original = "VIII. a\n\nIX. b\n\nX. c\n\nXI. d";
+    let mut app = newline_at(original, &["VIII. a", "VIII. a\n\nIX. b\n\nX. c"]);
+    app.edit_newline();
+    assert_eq!(
+        text(&app),
+        "VIII. a\nIX. \n\nX. b\n\nXI. c\nXII. \n\nXIII. d"
+    );
+
+    let original = "VIII. a\nIX. \n\nX. \n\nXI. d";
+    let mut app = newline_at(original, &["VIII. a\nIX. ", "VIII. a\nIX. \n\nX. "]);
+    app.edit_backspace();
+    assert_eq!(text(&app), "VIII. a\n    \n\n   \n\nIX. d");
+}
+
+#[test]
+fn markdown_renumbering_leaves_a_marker_joined_onto_the_line_above() {
+    for (original, joined) in [
+        ("1. a\n2. b\n3. c\n4. d", "1. a\n   b\n2. c4. d"),
+        ("1. a\r\n2. b\r\n3. c\r\n4. d", "1. a\r\n   b\r\n2. c4. d"),
+    ] {
+        let rows = original.split_inclusive('\n').collect::<Vec<_>>();
+        let mut app = newline_at(
+            original,
+            &[&(rows[0].to_owned() + "2. "), &rows[..3].concat()],
+        );
+        app.edit_backspace();
+        assert_eq!(text(&app), joined, "{original:?}");
+    }
+}

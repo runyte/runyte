@@ -3571,7 +3571,10 @@ continue on Enter: bullets keep their marker, numbered and lettered items
 advance, and task items start unchecked. Enter on an empty item ends the list.
 Backspace directly after a marker changes it to a continuation indent, whether
 or not text follows the caret; another Backspace removes that alignment in one
-press. A single `I.` or `V.` advances
+press. Each of these edits renumbers the numbered or lettered items after the
+one it adds or removes while they were in sequence, passing over nested items,
+continuation lines, and blank lines; a list numbered `1.` throughout or one
+with a gap keeps its numbers from that point on. A single `I.` or `V.` advances
 as a letter unless the preceding sibling establishes Roman numbering. In other
 file types, smart newline retains the existing alignment under a list item's
 content. With `editor.smart_newline: false`, Enter preserves only the row's
