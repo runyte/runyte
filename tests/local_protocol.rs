@@ -1773,7 +1773,7 @@ impl InputTraces {
     /// The tail of every trace, bounded so a long session cannot bury the
     /// failure it is attached to.
     fn report(&self) -> String {
-        const TAIL_LINES: usize = 60;
+        const TAIL_LINES: usize = 150;
         let mut owners: Vec<_> = fs::read_dir(&self.directory)
             .into_iter()
             .flatten()
