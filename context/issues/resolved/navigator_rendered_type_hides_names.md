@@ -1,4 +1,35 @@
-# A long rendered-view label hides every name in the Navigator
+---
+title: "A long rendered-view label hides every name in the Navigator"
+status: resolved
+reported: 2026-09-27
+resolved: 2026-09-28
+commit: 1b0d86a
+---
+
+## Resolution
+
+Commit `1b0d86a` (`Keep rendered page names visible in destination lists`)
+corrected `App::buffer_destination_row`. It had found a generated buffer's TYPE
+by taking its display name through the first `]`. A rendered Markdown page is
+named `[rendered <file name>]`, so its file name became part of TYPE.
+`App::destination_items` then widened that column for every row; the list
+renderer had no room left to show any NAME at the reported width.
+
+The row now recognizes the Markdown render's structural buffer identity and
+uses `[rendered]` as TYPE, with the source name in NAME. The shared NAME
+elision can shorten that name in the middle when space is limited. The
+rendered page's pane title remains `[rendered <file name>]`; this is a list
+column correction, not a rename of the buffer. This chooses the report's
+short kind-label option instead of changing the column-width calculation.
+
+Coverage is `rendered_markdown_keeps_its_file_name_in_the_destination_name_column`
+in `src/app/tests/session_navigation.rs`, which checks both destination-list
+scopes, and
+`a_rendered_page_with_a_long_title_leaves_names_visible_in_destination_lists`
+in `src/ui.rs`, which checks the Navigator and buffer list in both the local
+and snapshot renderers.
+
+## Report
 
 The Navigator, the buffer list and the terminal list draw `TYPE`, `NAME` and
 `STATE` columns. A rendered Markdown view's TYPE label contains its file name,
@@ -38,7 +69,7 @@ equally nameless.
 
 Expected: NAME remains visible for every row. The rendered row's TYPE label is
 shortened or kept to its kind, as a long NAME already is: the section
-[Session and destination navigation](../../docs/user-guide.md#session-and-destination-navigation)
+[Session and destination navigation](../../../docs/user-guide.md#session-and-destination-navigation)
 says a name too long for its row is shortened in the middle.
 
 ## Notes
