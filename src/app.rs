@@ -109,6 +109,7 @@ use crate::{
         TerminalSession, TerminalSessions,
     },
     text::{Assoc, Change, Offset, Text, Transaction},
+    text_object::{self, Part as TextObjectPart},
     tutorial::{MotionHints, TutorialState},
     word_index::WordIndexHandle,
     workspace_search::{

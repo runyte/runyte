@@ -582,6 +582,21 @@ editor_commands! {
     SelectInsideSingleQuotes => ("select-inside-single-quotes", "Select inside single quotes"),
     SelectAroundBackticks => ("select-around-backticks", "Select around backticks"),
     SelectInsideBackticks => ("select-inside-backticks", "Select inside backticks"),
+    SelectInsideWord => ("select-inside-word", "Select the word under the cursor"),
+    SelectAroundWord => (
+        "select-around-word",
+        "Select the word under the cursor and the space beside it"
+    ),
+    SelectInsideLongWord => ("select-inside-long-word", "Select the WORD under the cursor"),
+    SelectAroundLongWord => (
+        "select-around-long-word",
+        "Select the WORD under the cursor and the space beside it"
+    ),
+    SelectInsideParagraph => ("select-inside-paragraph", "Select the paragraph's lines"),
+    SelectAroundParagraph => (
+        "select-around-paragraph",
+        "Select the paragraph's lines and the blank lines beside them"
+    ),
     SelectAroundClosestDelimiter => (
         "select-around-closest-delimiter",
         "Select around the closest delimiter pair"
@@ -975,22 +990,6 @@ impl EditorCommand {
             | Self::SelectInsideSyntaxClass
             | Self::SelectSyntaxParameter
             | Self::SelectInsideSyntaxParameter
-            | Self::SelectAroundParentheses
-            | Self::SelectInsideParentheses
-            | Self::SelectAroundSquareBrackets
-            | Self::SelectInsideSquareBrackets
-            | Self::SelectAroundBraces
-            | Self::SelectInsideBraces
-            | Self::SelectAroundAngleBrackets
-            | Self::SelectInsideAngleBrackets
-            | Self::SelectAroundDoubleQuotes
-            | Self::SelectInsideDoubleQuotes
-            | Self::SelectAroundSingleQuotes
-            | Self::SelectInsideSingleQuotes
-            | Self::SelectAroundBackticks
-            | Self::SelectInsideBackticks
-            | Self::SelectAroundClosestDelimiter
-            | Self::SelectInsideClosestDelimiter
             | Self::GotoPreviousSyntaxFunction
             | Self::GotoNextSyntaxFunction
             | Self::GotoPreviousSyntaxClass
@@ -1110,7 +1109,29 @@ impl EditorCommand {
             | Self::KeepMatchingSelections
             | Self::RemoveMatchingSelections
             | Self::AlignSelections
-            | Self::TrimSelections => CommandCategory::Selection,
+            | Self::TrimSelections
+            | Self::SelectAroundParentheses
+            | Self::SelectInsideParentheses
+            | Self::SelectAroundSquareBrackets
+            | Self::SelectInsideSquareBrackets
+            | Self::SelectAroundBraces
+            | Self::SelectInsideBraces
+            | Self::SelectAroundAngleBrackets
+            | Self::SelectInsideAngleBrackets
+            | Self::SelectAroundDoubleQuotes
+            | Self::SelectInsideDoubleQuotes
+            | Self::SelectAroundSingleQuotes
+            | Self::SelectInsideSingleQuotes
+            | Self::SelectAroundBackticks
+            | Self::SelectInsideBackticks
+            | Self::SelectAroundClosestDelimiter
+            | Self::SelectInsideClosestDelimiter
+            | Self::SelectInsideWord
+            | Self::SelectAroundWord
+            | Self::SelectInsideLongWord
+            | Self::SelectAroundLongWord
+            | Self::SelectInsideParagraph
+            | Self::SelectAroundParagraph => CommandCategory::Selection,
             Self::HardWrap
             | Self::Reflow
             | Self::JoinSelections
@@ -1129,22 +1150,6 @@ impl EditorCommand {
             | Self::SelectInsideSyntaxClass
             | Self::SelectSyntaxParameter
             | Self::SelectInsideSyntaxParameter
-            | Self::SelectAroundParentheses
-            | Self::SelectInsideParentheses
-            | Self::SelectAroundSquareBrackets
-            | Self::SelectInsideSquareBrackets
-            | Self::SelectAroundBraces
-            | Self::SelectInsideBraces
-            | Self::SelectAroundAngleBrackets
-            | Self::SelectInsideAngleBrackets
-            | Self::SelectAroundDoubleQuotes
-            | Self::SelectInsideDoubleQuotes
-            | Self::SelectAroundSingleQuotes
-            | Self::SelectInsideSingleQuotes
-            | Self::SelectAroundBackticks
-            | Self::SelectInsideBackticks
-            | Self::SelectAroundClosestDelimiter
-            | Self::SelectInsideClosestDelimiter
             | Self::GotoPreviousSyntaxFunction
             | Self::GotoNextSyntaxFunction
             | Self::GotoPreviousSyntaxClass
@@ -3282,22 +3287,6 @@ mod tests {
             EditorCommand::SelectInsideSyntaxClass,
             EditorCommand::SelectSyntaxParameter,
             EditorCommand::SelectInsideSyntaxParameter,
-            EditorCommand::SelectAroundParentheses,
-            EditorCommand::SelectInsideParentheses,
-            EditorCommand::SelectAroundSquareBrackets,
-            EditorCommand::SelectInsideSquareBrackets,
-            EditorCommand::SelectAroundBraces,
-            EditorCommand::SelectInsideBraces,
-            EditorCommand::SelectAroundAngleBrackets,
-            EditorCommand::SelectInsideAngleBrackets,
-            EditorCommand::SelectAroundDoubleQuotes,
-            EditorCommand::SelectInsideDoubleQuotes,
-            EditorCommand::SelectAroundSingleQuotes,
-            EditorCommand::SelectInsideSingleQuotes,
-            EditorCommand::SelectAroundBackticks,
-            EditorCommand::SelectInsideBackticks,
-            EditorCommand::SelectAroundClosestDelimiter,
-            EditorCommand::SelectInsideClosestDelimiter,
             EditorCommand::GotoPreviousSyntaxFunction,
             EditorCommand::GotoNextSyntaxFunction,
             EditorCommand::GotoPreviousSyntaxClass,

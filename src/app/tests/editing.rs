@@ -1913,6 +1913,171 @@ fn type_keys(app: &mut App, keys: &str) {
     }
 }
 
+/// The text a Runyte selection covers, its head's character included.
+fn inclusive_text(app: &App) -> String {
+    let range = app.active().selection.primary();
+    let buffer = app.active_buffer();
+    buffer.slice(range.from(), (range.to() + 1).min(buffer.len_chars()))
+}
+
+#[test]
+fn m_i_w_and_m_a_w_select_words_in_a_buffer_without_syntax() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "call some_name(x) now");
+    set_cursor(&mut app, 0, 7);
+
+    type_keys(&mut app, "miw");
+    assert_eq!(inclusive_text(&app), "some_name");
+    assert_eq!(app.mode, Mode::Select);
+
+    set_cursor(&mut app, 0, 7);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "maw");
+    // Punctuation follows the word, so the space before it is taken.
+    assert_eq!(inclusive_text(&app), " some_name");
+
+    set_cursor(&mut app, 0, 7);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "miW");
+    assert_eq!(inclusive_text(&app), "some_name(x)");
+    type_keys(&mut app, "d");
+    assert_eq!(text(&app), "call  now");
+}
+
+#[test]
+fn m_i_w_again_keeps_the_word_it_selected() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one two three");
+    set_cursor(&mut app, 0, 0);
+    type_keys(&mut app, "miw");
+    assert_eq!(inclusive_text(&app), "one");
+    type_keys(&mut app, "miw");
+    assert_eq!(
+        inclusive_text(&app),
+        "one",
+        "the caret is still on the word"
+    );
+
+    // A backward range reads the same caret.
+    let mut backward = App::new(Config::default(), None).unwrap();
+    seed(&mut backward, "one two three");
+    backward
+        .active_mut()
+        .replace_selection(Selection::single(Range::new(6, 4)));
+    type_keys(&mut backward, "miw");
+    assert_eq!(inclusive_text(&backward), "two");
+}
+
+#[test]
+fn m_i_w_on_a_line_break_reports_rather_than_selecting() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\n\ntwo");
+    set_cursor(&mut app, 1, 0);
+    type_keys(&mut app, "miw");
+    assert_eq!(app.status, "no word under the cursor");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.active().selection.primary().is_empty());
+}
+
+#[test]
+fn m_i_p_selects_whole_lines_so_d_removes_them() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "first\n\nalpha\n  beta\n\nlast\n");
+    set_cursor(&mut app, 3, 3);
+
+    type_keys(&mut app, "mip");
+    assert_eq!(inclusive_text(&app), "alpha\n  beta");
+    type_keys(&mut app, "d");
+    assert_eq!(text(&app), "first\n\n\nlast\n");
+    assert_eq!(app.mode, Mode::Normal);
+
+    let mut around = App::new(Config::default(), None).unwrap();
+    seed(&mut around, "first\n\nalpha\n  beta\n\nlast\n");
+    set_cursor(&mut around, 2, 0);
+    type_keys(&mut around, "mapd");
+    // The blank line after the paragraph goes with it.
+    assert_eq!(text(&around), "first\n\nlast\n");
+
+    // `x` after `mip` keeps extending the same line selection.
+    let mut extend = App::new(Config::default(), None).unwrap();
+    seed(&mut extend, "a\nb\n\nc\n");
+    set_cursor(&mut extend, 0, 0);
+    type_keys(&mut extend, "mipxd");
+    assert_eq!(text(&extend), "c\n");
+}
+
+#[test]
+fn delimiter_objects_fall_back_to_the_text_and_grow_when_repeated() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "note (outer [inner (deep) text] end) tail");
+    set_cursor(&mut app, 0, 21);
+
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "deep");
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "outer [inner (deep) text] end");
+
+    set_cursor(&mut app, 0, 21);
+    app.mode = Mode::Normal;
+    type_keys(&mut app, "ma(");
+    assert_eq!(inclusive_text(&app), "(deep)");
+    type_keys(&mut app, "mam");
+    assert_eq!(inclusive_text(&app), "[inner (deep) text]");
+
+    let mut quoted = App::new(Config::default(), None).unwrap();
+    seed(&mut quoted, "say \"hello there\" now");
+    set_cursor(&mut quoted, 0, 8);
+    type_keys(&mut quoted, "mi\"d");
+    assert_eq!(text(&quoted), "say \"\" now");
+}
+
+#[test]
+fn delimiter_objects_use_the_syntax_tree_and_grow_through_it() {
+    let path = temporary("m-objects-syntax.rs");
+    let source = "fn demo() { call(a, (b + c)); let s = \"(x)\"; }\n";
+    fs::write(&path, source).unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    assert!(app.command_capabilities().syntax.is_available());
+
+    let b = source.find('b').unwrap();
+    app.active_mut().replace_selection(Selection::point(b));
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "b + c");
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "a, (b + c)");
+
+    app.enter_normal_mode();
+    let x = source.find('x').unwrap();
+    app.active_mut().replace_selection(Selection::point(x));
+    type_keys(&mut app, "mi\"");
+    assert_eq!(inclusive_text(&app), "(x)");
+
+    app.enter_normal_mode();
+    app.active_mut().replace_selection(Selection::point(b));
+    type_keys(&mut app, "mif");
+    assert_eq!(
+        inclusive_text(&app),
+        "{ call(a, (b + c)); let s = \"(x)\"; }"
+    );
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn syntax_objects_say_why_they_are_unavailable_without_a_tree() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "plain (text) here");
+    set_cursor(&mut app, 0, 8);
+    let before = app.active().selection.clone();
+    type_keys(&mut app, "mif");
+    assert_eq!(app.status, "syntax is unavailable for this buffer");
+    assert_eq!(app.active().selection, before);
+
+    // The delimiter objects need no tree at all.
+    type_keys(&mut app, "mi(");
+    assert_eq!(inclusive_text(&app), "text");
+}
+
 #[test]
 fn a_line_selection_ending_on_an_empty_row_deletes_that_row_too() {
     let mut app = App::new(Config::default(), None).unwrap();

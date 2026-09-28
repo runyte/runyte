@@ -1707,276 +1707,6 @@ fn built_in_bindings() -> Vec<Binding> {
             [
                 Key::char(' '),
                 Key::char('x'),
-                Key::char('a'),
-                Key::char('f'),
-            ],
-            Command::SelectSyntaxFunction,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('c'),
-            ],
-            Command::SelectSyntaxClass,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('p'),
-            ],
-            Command::SelectSyntaxParameter,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('f'),
-            ],
-            Command::SelectInsideSyntaxFunction,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('c'),
-            ],
-            Command::SelectInsideSyntaxClass,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('p'),
-            ],
-            Command::SelectInsideSyntaxParameter,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('('),
-            ],
-            Command::SelectAroundParentheses,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char(')'),
-            ],
-            Command::SelectAroundParentheses,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('('),
-            ],
-            Command::SelectInsideParentheses,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char(')'),
-            ],
-            Command::SelectInsideParentheses,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('['),
-            ],
-            Command::SelectAroundSquareBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char(']'),
-            ],
-            Command::SelectAroundSquareBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('['),
-            ],
-            Command::SelectInsideSquareBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char(']'),
-            ],
-            Command::SelectInsideSquareBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('{'),
-            ],
-            Command::SelectAroundBraces,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('}'),
-            ],
-            Command::SelectAroundBraces,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('{'),
-            ],
-            Command::SelectInsideBraces,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('}'),
-            ],
-            Command::SelectInsideBraces,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('<'),
-            ],
-            Command::SelectAroundAngleBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('>'),
-            ],
-            Command::SelectAroundAngleBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('<'),
-            ],
-            Command::SelectInsideAngleBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('>'),
-            ],
-            Command::SelectInsideAngleBrackets,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('"'),
-            ],
-            Command::SelectAroundDoubleQuotes,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('"'),
-            ],
-            Command::SelectInsideDoubleQuotes,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('\''),
-            ],
-            Command::SelectAroundSingleQuotes,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('\''),
-            ],
-            Command::SelectInsideSingleQuotes,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('`'),
-            ],
-            Command::SelectAroundBackticks,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('`'),
-            ],
-            Command::SelectInsideBackticks,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('a'),
-                Key::char('m'),
-            ],
-            Command::SelectAroundClosestDelimiter,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
-                Key::char('i'),
-                Key::char('m'),
-            ],
-            Command::SelectInsideClosestDelimiter,
-        ),
-        primary_modal(
-            [
-                Key::char(' '),
-                Key::char('x'),
                 Key::char('['),
                 Key::char('f'),
             ],
@@ -2190,6 +1920,153 @@ fn built_in_bindings() -> Vec<Binding> {
             "use :pipe <shell-command>",
         ),
         modal([Key::char('m'), Key::char('m')], Command::MatchBracket),
+        // Text objects, spelled as Helix spells them. Words, paragraphs, and
+        // delimiter pairs work in every buffer; functions, types, and
+        // arguments need a syntax tree.
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('w')],
+            Command::SelectInsideWord,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('W')],
+            Command::SelectInsideLongWord,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('p')],
+            Command::SelectInsideParagraph,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('(')],
+            Command::SelectInsideParentheses,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char(')')],
+            Command::SelectInsideParentheses,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('[')],
+            Command::SelectInsideSquareBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char(']')],
+            Command::SelectInsideSquareBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('{')],
+            Command::SelectInsideBraces,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('}')],
+            Command::SelectInsideBraces,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('<')],
+            Command::SelectInsideAngleBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('>')],
+            Command::SelectInsideAngleBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('"')],
+            Command::SelectInsideDoubleQuotes,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('\'')],
+            Command::SelectInsideSingleQuotes,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('`')],
+            Command::SelectInsideBackticks,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('m')],
+            Command::SelectInsideClosestDelimiter,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('f')],
+            Command::SelectInsideSyntaxFunction,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('t')],
+            Command::SelectInsideSyntaxClass,
+        ),
+        modal(
+            [Key::char('m'), Key::char('i'), Key::char('a')],
+            Command::SelectInsideSyntaxParameter,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('w')],
+            Command::SelectAroundWord,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('W')],
+            Command::SelectAroundLongWord,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('p')],
+            Command::SelectAroundParagraph,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('(')],
+            Command::SelectAroundParentheses,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char(')')],
+            Command::SelectAroundParentheses,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('[')],
+            Command::SelectAroundSquareBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char(']')],
+            Command::SelectAroundSquareBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('{')],
+            Command::SelectAroundBraces,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('}')],
+            Command::SelectAroundBraces,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('<')],
+            Command::SelectAroundAngleBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('>')],
+            Command::SelectAroundAngleBrackets,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('"')],
+            Command::SelectAroundDoubleQuotes,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('\'')],
+            Command::SelectAroundSingleQuotes,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('`')],
+            Command::SelectAroundBackticks,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('m')],
+            Command::SelectAroundClosestDelimiter,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('f')],
+            Command::SelectSyntaxFunction,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('t')],
+            Command::SelectSyntaxClass,
+        ),
+        modal(
+            [Key::char('m'), Key::char('a'), Key::char('a')],
+            Command::SelectSyntaxParameter,
+        ),
         insert(Key::plain(KeyCode::Escape), Command::EnterNormalMode),
         insert(Key::ctrl('\\'), Command::EnterNormalMode),
         insert(Key::ctrl('4'), Command::EnterNormalMode).with_role(BindingRole::Compatibility),
@@ -2356,6 +2233,8 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         BindingNamespace::global(MODAL, Key::char(' '), "Application commands"),
         BindingNamespace::global(MODAL, Key::char('g'), "Goto"),
         BindingNamespace::global(MODAL, Key::char('m'), "Match"),
+        BindingNamespace::global(MODAL, [Key::char('m'), Key::char('i')], "Select inside"),
+        BindingNamespace::global(MODAL, [Key::char('m'), Key::char('a')], "Select around"),
         BindingNamespace::global(MODAL, Key::char('z'), "View alignment"),
         BindingNamespace::global(MODAL, Key::char('Z'), "View alignment, staying open"),
         BindingNamespace::global(MODAL, Key::ctrl('w'), "Pane commands"),
@@ -2391,18 +2270,6 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             MODAL,
             [Key::char(' '), Key::char('x')],
             "Syntax (Tree-sitter)",
-        )
-        .with_capability(CommandCapability::Syntax),
-        BindingNamespace::global(
-            MODAL,
-            [Key::char(' '), Key::char('x'), Key::char('a')],
-            "Select around",
-        )
-        .with_capability(CommandCapability::Syntax),
-        BindingNamespace::global(
-            MODAL,
-            [Key::char(' '), Key::char('x'), Key::char('i')],
-            "Select inside",
         )
         .with_capability(CommandCapability::Syntax),
         BindingNamespace::global(
@@ -3382,12 +3249,8 @@ mod tests {
             ('i', 'm', EditorCommand::SelectInsideClosestDelimiter),
         ];
         for (part, delimiter, command) in cases {
-            let sequence = KeySequence::from([
-                Key::char(' '),
-                Key::char('x'),
-                Key::char(part),
-                Key::char(delimiter),
-            ]);
+            let sequence =
+                KeySequence::from([Key::char('m'), Key::char(part), Key::char(delimiter)]);
             assert!(matches!(
                 default_keymap().lookup(Mode::Normal, &sequence),
                 Lookup::Exact(binding)

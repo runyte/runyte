@@ -671,27 +671,6 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
         (" xh", Editor(EditorCommand::SelectPreviousSyntaxSibling)),
         (" xl", Editor(EditorCommand::SelectNextSyntaxSibling)),
         (" xo", Editor(EditorCommand::DocumentOutline)),
-        (" xaf", Editor(EditorCommand::SelectSyntaxFunction)),
-        (" xac", Editor(EditorCommand::SelectSyntaxClass)),
-        (" xap", Editor(EditorCommand::SelectSyntaxParameter)),
-        (" xif", Editor(EditorCommand::SelectInsideSyntaxFunction)),
-        (" xic", Editor(EditorCommand::SelectInsideSyntaxClass)),
-        (" xip", Editor(EditorCommand::SelectInsideSyntaxParameter)),
-        (" xa(", Editor(EditorCommand::SelectAroundParentheses)),
-        (" xa)", Editor(EditorCommand::SelectAroundParentheses)),
-        (" xi(", Editor(EditorCommand::SelectInsideParentheses)),
-        (" xi)", Editor(EditorCommand::SelectInsideParentheses)),
-        (" xa[", Editor(EditorCommand::SelectAroundSquareBrackets)),
-        (" xi]", Editor(EditorCommand::SelectInsideSquareBrackets)),
-        (" xa{", Editor(EditorCommand::SelectAroundBraces)),
-        (" xi}", Editor(EditorCommand::SelectInsideBraces)),
-        (" xa<", Editor(EditorCommand::SelectAroundAngleBrackets)),
-        (" xi>", Editor(EditorCommand::SelectInsideAngleBrackets)),
-        (" xa\"", Editor(EditorCommand::SelectAroundDoubleQuotes)),
-        (" xi'", Editor(EditorCommand::SelectInsideSingleQuotes)),
-        (" xa`", Editor(EditorCommand::SelectAroundBackticks)),
-        (" xam", Editor(EditorCommand::SelectAroundClosestDelimiter)),
-        (" xim", Editor(EditorCommand::SelectInsideClosestDelimiter)),
         (" x[f", Editor(EditorCommand::GotoPreviousSyntaxFunction)),
         (" x[c", Editor(EditorCommand::GotoPreviousSyntaxClass)),
         (" x[p", Editor(EditorCommand::GotoPreviousSyntaxParameter)),
@@ -762,6 +741,58 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
                 if binding.target == BindingTarget::Editor(command)
                     && binding.role == BindingRole::Primary
         ));
+    }
+}
+
+#[test]
+fn text_objects_are_spelled_under_m_and_space_x_keeps_only_structure() {
+    use BindingTarget::Editor;
+
+    let cases = [
+        ("miw", Editor(EditorCommand::SelectInsideWord)),
+        ("maw", Editor(EditorCommand::SelectAroundWord)),
+        ("miW", Editor(EditorCommand::SelectInsideLongWord)),
+        ("maW", Editor(EditorCommand::SelectAroundLongWord)),
+        ("mip", Editor(EditorCommand::SelectInsideParagraph)),
+        ("map", Editor(EditorCommand::SelectAroundParagraph)),
+        ("mi(", Editor(EditorCommand::SelectInsideParentheses)),
+        ("ma)", Editor(EditorCommand::SelectAroundParentheses)),
+        ("mi]", Editor(EditorCommand::SelectInsideSquareBrackets)),
+        ("ma{", Editor(EditorCommand::SelectAroundBraces)),
+        ("mi>", Editor(EditorCommand::SelectInsideAngleBrackets)),
+        ("ma\"", Editor(EditorCommand::SelectAroundDoubleQuotes)),
+        ("mi'", Editor(EditorCommand::SelectInsideSingleQuotes)),
+        ("ma`", Editor(EditorCommand::SelectAroundBackticks)),
+        ("mim", Editor(EditorCommand::SelectInsideClosestDelimiter)),
+        ("mam", Editor(EditorCommand::SelectAroundClosestDelimiter)),
+        ("mif", Editor(EditorCommand::SelectInsideSyntaxFunction)),
+        ("maf", Editor(EditorCommand::SelectSyntaxFunction)),
+        ("mit", Editor(EditorCommand::SelectInsideSyntaxClass)),
+        ("mat", Editor(EditorCommand::SelectSyntaxClass)),
+        ("mia", Editor(EditorCommand::SelectInsideSyntaxParameter)),
+        ("maa", Editor(EditorCommand::SelectSyntaxParameter)),
+    ];
+    for (keys, target) in cases {
+        for mode in [Mode::Normal, Mode::Select] {
+            assert!(
+                matches!(
+                    default_keymap().lookup(mode, &sequence(keys)),
+                    Lookup::Exact(binding) if binding.target == target
+                ),
+                "missing text object binding for {keys:?} in {mode:?}"
+            );
+        }
+    }
+
+    // The objects left `Space x`; its structural commands stayed.
+    for keys in [" xa", " xi", " xaf", " xi("] {
+        assert!(
+            matches!(
+                default_keymap().lookup(Mode::Normal, &sequence(keys)),
+                Lookup::NoMatch
+            ),
+            "retired text object spelling still bound: {keys:?}"
+        );
     }
 }
 

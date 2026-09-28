@@ -72,6 +72,7 @@ pub mod terminal;
 #[doc(hidden)]
 pub mod test_support;
 pub mod text;
+pub(crate) mod text_object;
 pub mod tui;
 pub mod tutorial;
 pub mod ui;

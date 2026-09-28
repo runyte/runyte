@@ -2037,6 +2037,7 @@ context; scoped explorer keys are documented under
 | `"` then a register | Select a named register; uppercase appends and `_` discards |
 | `Space m …` | Record, replay, and list macros; see [Macros](#macros) |
 | `mm` | Jump to the matching bracket |
+| `m i …` / `m a …` | Select inside / around a word, paragraph, delimiter pair, function, type, or argument; see [Text objects](#text-objects) |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 
@@ -3500,6 +3501,49 @@ completion never overrides either one. Turn
 it off, or change the trigger length, with `editor.word_completion` and
 `editor.word_completion_minimum` in `Space o o`.
 
+### Text objects
+
+`m i` selects inside a text object and `m a` selects around it, spelled as
+Helix spells them. Every object works at every cursor, and the result is left
+in Select mode, so `d`, `c`, `y`, and `p` act on it and a motion extends it.
+
+| Key | Object |
+| --- | --- |
+| `m i w` / `m a w` | The word under the cursor / with the space beside it |
+| `m i W` / `m a W` | The WORD, everything between whitespace / with the space beside it |
+| `m i p` / `m a p` | The paragraph's lines / with the blank lines beside them |
+| `m i (` / `m a (`, also `[`, `{`, `<`, `"`, `'`, `` ` `` | Inside / around the enclosing pair; closing brackets are aliases |
+| `m i m` / `m a m` | Inside / around the closest enclosing pair of any of those kinds |
+| `m i f` / `m a f` | Inside / around the enclosing function |
+| `m i t` / `m a t` | Inside / around the enclosing type, such as a class or struct |
+| `m i a` / `m a a` | Inside / around the enclosing argument or parameter |
+
+Words and paragraphs are read from the text alone, so they work in every
+buffer. A word is a run of letters, digits, and `_`, a run of punctuation, or
+a run of whitespace; a WORD is everything between whitespace. Around adds the
+whitespace after the word, or the whitespace before it when nothing follows on
+the line. Neither crosses a line break, and a cursor on an empty line has no
+word. A paragraph is a run of lines holding text, separated by lines that are
+empty or hold only whitespace; on a blank line, `m i p` selects the run of
+blank lines. Around adds the blank lines after the paragraph, or before it
+when it ends the file. A paragraph is selected as whole lines, the way `x`
+selects them, so `m i p d` removes its lines and `x` extends the selection.
+
+Delimiter pairs resolve through the syntax tree when the buffer has one, which
+tells a bracket in code from one in a string. Where there is no tree — plain
+text, a language without a grammar, or a file still parsing — or the tree
+finds no enclosing pair, as inside a comment, a balanced scan of the text
+answers instead. Brackets nest and may span lines; the scan reaches 65,536
+characters on each side of the selection. Quotes pair up from the start of the
+line, so a quoted string spanning lines is not found this way. A delimiter
+escaped with a backslash is text. Asking again with a pair already selected
+grows to the next pair out. In ordinary Markdown prose, where punctuation is
+not represented by delimiter nodes, the scan is bounded to the enclosing
+Markdown syntax node first.
+
+Functions, types, and arguments need the syntax tree. Without one they report
+why and leave the selection alone.
+
 ### Structural syntax
 
 | Key | Action |
@@ -3510,23 +3554,14 @@ it off, or change the trigger length, with `editor.word_completion` and
 | `Space x o` | Open the immediate Tree-sitter document outline |
 | `Space x x` | Toggle the syntax fold at the cursor |
 | `Space x f` / `Space x u` | Fold / unfold all syntax regions in this pane |
-| `Space x a f/c/p` | Select around the enclosing function / class / parameter |
-| `Space x i f/c/p` | Select inside the enclosing function / class / parameter |
-| `Space x a (/[/{/</"/'/\`` | Select around the matching delimiter pair; closing brackets are aliases |
-| `Space x i (/[/{/</"/'/\`` | Select inside the matching delimiter pair; closing brackets are aliases |
-| `Space x a m` / `Space x i m` | Select around / inside the closest enclosing delimiter pair |
 | `Space x [ f/c/p` | Go to the previous function / class / parameter |
 | `Space x ] f/c/p` | Go to the next function / class / parameter |
 
 Structural expansion retains Tree-sitter's half-open bounds. Relationship
-commands and `Space x a/i` text objects present those same bounds with the
-block cursor on the last included character, matching ordinary Select mode;
-yank, delete, change, and indentation still act on exactly the highlighted
-syntax span.
-Delimiter objects resolve through structural nodes in source languages. In
-ordinary Markdown prose, where punctuation is not represented by delimiter
-nodes, they use a balanced scan bounded to the enclosing Markdown syntax node;
-escaped delimiters are ignored and injected code remains syntax-structural.
+commands and the syntax [text objects](#text-objects) present those same
+bounds with the block cursor on the last included character, matching ordinary
+Select mode; yank, delete, change, and indentation still act on exactly the
+highlighted syntax span.
 
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
 at most one level in `editor.indent` style when the syntax indentation query

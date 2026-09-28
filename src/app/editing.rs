@@ -9,13 +9,13 @@ use super::{
     Motion, Offset, Outline, Pane, PickerItem, Press, Range, Regex, Register, Result,
     SearchSelectionPresentation, Selection, SelectionSemantics, ShrinkResult, SyntaxError,
     SyntaxObject, SyntaxObjectPart, SyntaxSelectionRange, SyntaxSelectionTransform, TerminalId,
-    Transaction, TransferMode, WordTarget, buffer_language, column_at_visual_column,
-    fold_degradation_suffix, insert_word_back, insert_word_forward, is_single_cell, is_word,
-    merged_line_spans, move_offset, move_offset_projected, navigate_text_object, operative_span,
-    outline_item_detail, outline_status, project_visible_rows, select_delimiter,
-    select_text_object, select_word_motion, syntax_object_label, syntax_object_part_label,
-    trailing_whitespace_changes, transform_selection, visual_column,
-    without_trailing_line_terminator,
+    TextObjectPart, Transaction, TransferMode, WordTarget, buffer_language,
+    column_at_visual_column, fold_degradation_suffix, insert_word_back, insert_word_forward,
+    is_single_cell, is_word, merged_line_spans, move_offset, move_offset_projected,
+    navigate_text_object, operative_span, outline_item_detail, outline_status,
+    project_visible_rows, select_delimiter, select_text_object, select_word_motion,
+    syntax_object_label, syntax_object_part_label, text_object, trailing_whitespace_changes,
+    transform_selection, visual_column, without_trailing_line_terminator,
 };
 
 #[derive(Clone, Copy)]
@@ -1659,15 +1659,11 @@ impl App {
         part: SyntaxObjectPart,
     ) -> Result<()> {
         let buffer_id = self.active().buffer;
-        let Some(syntax) = self.syntax[buffer_id].as_ref() else {
-            self.mark_unavailable("syntax is unavailable for this buffer");
-            return Ok(());
-        };
         let selection = select_delimiter(
-            syntax,
+            self.syntax[buffer_id].as_ref(),
             self.buffers[buffer_id].text(),
             &self.registry,
-            &self.active().selection,
+            &self.half_open_object_selection(),
             pair,
             part,
         )?;
@@ -1677,6 +1673,91 @@ impl App {
         };
         self.install_inclusive_syntax_selection(selection);
         Ok(())
+    }
+
+    /// Selects the word under each caret, read from the text alone, so it
+    /// works in every buffer whether or not a grammar covers it.
+    pub(super) fn select_word_object(&mut self, long: bool, part: TextObjectPart) {
+        let text = self.active_buffer().text();
+        let mut found = false;
+        // The word is looked up under the caret the person sees, which for a
+        // range holding text is its last character rather than the offset one
+        // past it that the half-open reading ends at; reading it from there
+        // would make asking again step onto the run after the word. A range
+        // with no word under its caret is kept in its half-open reading so it
+        // survives the conversion back to Runyte's inclusive ranges.
+        let selection = self.active().selection.transform(|range| {
+            match text_object::word(text, range.head, long, part) {
+                Some(span) => {
+                    found = true;
+                    Range::new(span.from, span.to)
+                }
+                None => self.half_open_object_range(range),
+            }
+        });
+        if !found {
+            self.status("no word under the cursor");
+            return;
+        }
+        self.install_inclusive_syntax_selection(selection);
+    }
+
+    /// Selects the paragraph under each caret as whole lines, the way `x`
+    /// selects them, so `d`, `y`, and `p` treat it as lines rather than as the
+    /// characters between its first and last. Read from the text alone, so it
+    /// works in every buffer.
+    pub(super) fn select_paragraph(&mut self, part: TextObjectPart) {
+        let buffer = self.active_buffer();
+        let text = buffer.text();
+        let mut found = false;
+        let selection = self.active().selection.transform(|range| {
+            let row = buffer.offset_to_row(range.head);
+            let Some((first, last)) = text_object::paragraph_rows(text, row, part) else {
+                return range;
+            };
+            found = true;
+            Range::new(
+                buffer.line_to_offset(first),
+                buffer.row_end_offset(last, false),
+            )
+        });
+        if !found {
+            self.status("no paragraph in an empty buffer");
+            return;
+        }
+        let pane = self.active_mut();
+        pane.replace_selection(selection);
+        pane.mark_selection_semantics(SelectionSemantics::Runyte);
+        if self.line_select.is_none() {
+            self.line_select = Some(self.mode);
+            self.mode = Mode::Select;
+        }
+    }
+
+    /// The active selection as the half-open spans a text object compares
+    /// itself against.
+    ///
+    /// A range holding text is inclusive under Runyte semantics, so its last
+    /// character is added back; without that, an object already selected would
+    /// read as smaller than itself and asking again could not grow past it. A
+    /// bare caret stays empty, which object lookups read as "the character
+    /// under the caret" rather than as a one-character selection to grow from.
+    fn half_open_object_selection(&self) -> Selection {
+        self.active()
+            .selection
+            .transform(|range| self.half_open_object_range(range))
+    }
+
+    fn half_open_object_range(&self, range: Range) -> Range {
+        if range.is_empty() || self.active().selection_semantics() != SelectionSemantics::Runyte {
+            return range;
+        }
+        let end = self.active_buffer().len_chars();
+        if range.anchor <= range.head {
+            Range::new(range.anchor, (range.head + 1).min(end))
+        } else {
+            Range::new((range.anchor + 1).min(end), range.head)
+        }
     }
 
     /// Installs exact half-open syntax bounds using Runyte's visible inclusive

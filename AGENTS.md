@@ -271,6 +271,10 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/jump_labels.rs`: two-character `goto-word` labels and the narrowing
   their keystrokes perform. Knows nothing about drawing or about what makes
   an offset worth labelling.
+- `src/text_object.rs`: the `m i`/`m a` objects read from characters alone —
+  words, paragraphs, and the bounded balanced-pair scan delimiter objects fall
+  back to without a syntax tree. Knows nothing about syntax trees, buffers, or
+  selections.
 - `src/ui.rs`: Ratatui rendering.
 - `src/workspace/`: workspace identity and state plus the optional persistent
   session host, bounded local protocol, attachment transport, and lifecycle.
