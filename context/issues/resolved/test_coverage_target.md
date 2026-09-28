@@ -1,4 +1,49 @@
-# Raise measured test coverage above 95%
+---
+title: "Measured line coverage is below the above-95% target"
+status: resolved
+reported: 2026-08-31
+resolved: 2026-09-28
+commit: d6a3693
+---
+
+## Resolution
+
+Commit `d6a3693` (`Withdraw the above-95% coverage target`) resolves the issue
+by a decision, not by reaching the target. The target was lowered: Runyte
+maintains its current coverage rather than working toward more than 95% of
+lines. No editor code or test was wrong, so no function changes.
+
+`context/reference/test-coverage.md` no longer describes an above-95% target,
+or a 95% floor to be enabled once both targets clear it. Its target-measure
+section now states the standard: every change keeps the canonical
+`cargo llvm-cov --locked --workspace` result at or above the enforced floor on
+both `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`. New behavior brings
+its own tests, so the recorded baselines do not wear away over time. The floor
+can still be raised when a new baseline justifies it, with the CI threshold and
+README badge changing in the same commit. Earlier dated entries that mention
+the 95% target stay as they are and record progress made before the decision.
+
+The most recent baselines when the target was withdrawn were 91.89% of lines on
+`aarch64-apple-darwin` (128,260 of 139,585, recorded 2026-09-25) and 91.96% on
+`x86_64-unknown-linux-gnu` (128,044 of 139,240, recorded 2026-09-24). The
+enforced floor stays at 89%, and so do the README badge and the `AGENTS.md`
+invariant, since none of them referred to 95%. The measure chosen in `26deb27`
+also stays: the total **Lines** percentage printed by the canonical command,
+read with the inline `#[cfg(test)]` caveat recorded in the reference.
+
+The gate that holds the standard is the `Enforce line coverage baseline` step
+of the `coverage` job in `.github/workflows/ci.yml`. It runs
+`cargo llvm-cov report --fail-under-lines 89` on `ubuntu-latest` and
+`macos-latest`. The local equivalent is
+`cargo llvm-cov --locked --workspace --summary-only --fail-under-lines 89`.
+
+Known limitation: the enforced floor is about three percentage points below
+both baselines. A regression smaller than that still passes CI, so holding the
+recorded level depends on the recording rules in the reference and on review,
+not on the gate alone. Native Windows coverage remains provisional, with no
+measured baseline.
+
+## Report
 
 Linux and macOS are Runyte's first-class platforms, and the test suite is the
 main evidence that both stay correct as the editor changes.
@@ -329,8 +374,8 @@ After review the largest remaining Linux gaps by uncovered lines are
 `syntax/mod.rs` (294) and `input_grammar.rs` (269). The floor and the README
 badge stay at 89%.
 
-The issue remains open. Linux still has 9,163 uncovered lines.
-The above-95% target remains open.
+At that measurement Linux still had 9,163 uncovered lines, and the above-95%
+target was not met.
 
 ## Current macOS baseline
 

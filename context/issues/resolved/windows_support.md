@@ -1,16 +1,125 @@
-# Windows support
+---
+title: "Runyte does not build or run natively on Windows"
+status: resolved
+reported: 2026-08-24
+resolved: 2026-09-28
+commit: ad60c94
+---
 
-Current continuation: Phase 1 and Phase 2.1–2.4 are complete. Phase 2.5 and
-2.6 have local Windows implementations and native acceptance, including
-persistent-session navigation, ordinary-shell wait, PowerShell directory
-handoff, guarded Git worktree teardown, and managed plugin helpers. Native
-formatting, denied-warning all-target Clippy, and the full workspace suite pass.
+## Resolution
+
+Commit `ad60c94` (`Release 0.3.2`) closed the last open item: a tagged release
+that publishes a native Windows binary with a verifiable checksum. It is the
+first tag that contains the full Windows port, including the Phase 2 merge
+`e601582` and the follow-up `be17cc7`. Both releases 0.3.2 and 0.3.3
+(`f474036`) publish `runyte-v<version>-x86_64-pc-windows-msvc.zip`, with its
+hash in `SHA256SUMS`. Both published archives were downloaded and match their
+entries. The 0.3.3 archive contains `runyte.exe`, `config.example.yaml`,
+`contrib/runyte.ps1`, the user guide, and the license and notice material.
 Cross-platform acceptance through `be17cc7` passed all 18 jobs in
 [CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810).
-The tagged Windows release and published archive/checksum follow-up remain open. The
-[handoff](../reviews/windows_phase2_handoff.md) records the current checkout,
-validation and next package; the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
-contains detailed delivery evidence. Earlier investigations below are historical.
+The Native Windows job and both unchanged 89% Unix coverage gates are among
+them. The [Phase 2 handoff](../../reviews/windows_phase2_handoff.md) records the
+checkout and validation behind that run.
+
+The port followed the phased scope in the report below, and the report's open
+decisions were settled as follows. The supported target is
+`x86_64-pc-windows-msvc` on Windows 11 24H2 or later, inside Windows Terminal.
+Terminals start `%COMSPEC%` and fall back to `cmd.exe`; PowerShell 7 and Git
+Bash are not required. Phase 1
+([`PLAN_WINDOWS_PHASE1.md`](../../plans/completed/PLAN_WINDOWS_PHASE1.md),
+through `fc9c324`) restored compilation. It added native configuration
+discovery under `%APPDATA%\runyte`, console input with safe paste, and the
+native text clipboard. Filesystem plans gained native file identity and
+collision-safe renames, and terminal sessions run in owned ConPTY instances.
+Deferred services kept registry-backed unavailable states, so dispatch, help
+and the palette agree on each platform. Phase 2
+([`PLAN_WINDOWS_PHASE2.md`](../../plans/completed/PLAN_WINDOWS_PHASE2.md))
+restored the remaining services. In order, these were: optional Git discovered
+through `PATHEXT` (`cdd3b8b`); private storage on local NTFS with diagnostics;
+language services with local-drive file URIs and account-scoped permissions;
+Windows PowerShell shell filters; PNG and DIB image paste; system opening
+through native dispatch rather than `cmd /c start`; standalone and
+integrated-parent `--wait`; and the PowerShell 5.1 `:quit-here` wrapper. After
+those came persistent sessions over the native transport, plugins with managed
+helper processes, and the context bridge. Process trees on Windows are owned
+through Job Objects, the counterpart of Unix process groups.
+
+Some behavior deliberately differs from the report or goes beyond it:
+
+- `.cmd`, `.bat` and `.ps1` wrappers are not run as Git or language-server
+  executables. The report identified batch-file argument decoding as a risk,
+  and resolving only `.exe` and `.com` avoids a shell. A script-based server is
+  configured through its interpreter.
+- Combined branch and worktree removal, which the report records as refused on
+  Windows, is now available behind guarded teardown.
+- `:session-clean` is available inside the editor on Windows. Two hosts for one
+  project can coexist and are selected by name or row.
+
+`docs/user-guide.md` (Windows support) records the executable and session
+differences alongside the gaps.
+
+The deferred-command agreement of Phase 1 is covered by
+`public_and_deferred_commands_agree_with_palette_availability` in
+`tests/windows_phase1.rs`. Real ConPTY editor acceptance covers paste and save
+(`real_editor_paste_and_save` in `tests/windows_acceptance.rs`), terminal modes
+(`native_ctrl_backslash_switches_live_terminal_modes` in
+`tests/windows_terminal_mode.rs`) and diagnostics
+(`native_logging_startup_and_readonly_page` in `tests/diagnostic_log_windows.rs`).
+Persistent sessions are covered by
+`direct_native_attachment_starts_retains_and_refuses_takeover`,
+`integrated_terminal_wait_uses_exact_parent_and_completes_each_file` and
+`native_manager_visits_selected_live_publication_and_refuses_stale_row` in
+`tests/windows_public_attachment.rs`. Waiting and handoff are covered by
+`windows_wait_uses_a_persistent_session_until_requested_buffers_complete` in
+`tests/windows_wait.rs` and
+`powershell_wrapper_keeps_literal_paths_and_returns_to_its_caller` in
+`tests/windows_handoff.rs`. Language services are covered by
+`native_lsp_requires_permission_and_missing_servers_fail_nonfatally_after_restart`
+in `tests/windows_phase1.rs`, and by the real rust-analyzer case in
+`tests/lsp_windows_acceptance.rs`.
+The Windows CI job additionally requires exact passing results for the three
+isolated clipboard cases: `native_clipboard_round_trip` and
+`concurrent_fixture_children_keep_distinct_clipboards` in
+`src/clipboard/windows.rs`, and
+`native_images_use_the_bounded_worker_on_an_isolated_desktop` in
+`src/clipboard/windows/image_tests.rs`. It also requires
+`restart_success_replaces_host_and_preserves_protected_state` and
+`restart_refuses_detached_policy_without_breakaway_job` in
+`tests/windows_session_cli.rs`, and
+`successful_saves_have_complete_contents_after_acknowledgement` in
+`tests/windows_save_visibility.rs`. The native transport, worker and host
+suites are `tests/lsp_windows_transport.rs`, `tests/plugin_windows_worker.rs`,
+`tests/windows_persistent_host.rs` and `tests/windows_context_acceptance.rs`.
+
+Known limitation: Windows support is close to full rather than full parity.
+The following are not available on Windows:
+
+- Recent-root and worktree shortcuts in the session manager's directory
+  chooser. Tracked in `context/issues/windows_directory_chooser_shortcuts.md`.
+- `:session-stop` and `--session-stop` without a workspace. Tracked in
+  `context/issues/windows_session_stop_without_selector.md`.
+- Git and language servers installed as `.cmd`, `.bat` or `.ps1` wrappers.
+- Working directories whose ordinary spelling is 260 UTF-16 units or longer.
+- UNC working directories for `cmd.exe` terminals.
+- Language-server file URIs for network shares, device paths and alternate data
+  streams.
+- Private runtime storage anywhere other than local NTFS.
+- Preserving unsaved editor state when the outer console window is closed.
+- Starting a detached persistent host from a job that forbids breakaway.
+
+ARM64 Windows, MinGW builds, Windows versions older than 11 24H2, outer
+terminals other than Windows Terminal, network shares, long-path filesystem
+operations, PowerShell 7 for the `:quit-here` wrapper, and keyboard layouts or
+IMEs beyond the automated cases are not validated. Native Windows coverage has
+no measured `cargo llvm-cov` baseline and remains provisional. Executables are
+unsigned, and the ZIP does not bundle the Visual C++ runtime.
+
+## Report
+
+This report was kept up to date through the port. Its status paragraphs
+describe each checkpoint as it stood when written; the investigation sections
+record the state before implementation.
 
 Windows support is incomplete; Linux and macOS provide the full feature set.
 The Phase-1 implementation and validation status are recorded below.
@@ -99,7 +208,7 @@ system opening, private diagnostic logs, `--wait` and `:quit-here` are unavailab
 in Phase 1. Configuring a deferred service cannot start it.
 
 A reported Phase-1 input problem is tracked separately in
-[`windows_control_pane_keys.md`](resolved/windows_control_pane_keys.md): `Ctrl+h` in the
+[`windows_control_pane_keys.md`](windows_control_pane_keys.md): `Ctrl+h` in the
 explorer was treated as Backspace, and `Ctrl+j` as Enter. Commit `af2218e` fixes
 the native transport with reviewed decoder and real
 ConPTY regressions; the resolution records the physical-capture limitation.
@@ -195,7 +304,7 @@ Combined branch/worktree deletion is explicitly refused without mutation on
 Windows: remove the worktree first, then delete its branch. Worktree switching
 remains deferred with persistent sessions.
 The ordered work packages, validation limits and continuation details are in
-[`PLAN_WINDOWS_PHASE2.md`](../plans/active/PLAN_WINDOWS_PHASE2.md).
+[`PLAN_WINDOWS_PHASE2.md`](../../plans/completed/PLAN_WINDOWS_PHASE2.md).
 
 The independently validated Linux PTY allocation fix and resolution are
 included as `8e2bd5d` and `c6ca884`, cherry-picked from `5e30ffb` and `6e6f270`

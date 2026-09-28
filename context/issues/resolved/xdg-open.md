@@ -47,7 +47,7 @@ Tests covering the behavior are:
   `tests/key_hints.rs`
 
 Known limitation: Windows has no system-default opener in this change. That is
-deliberately deferred to `context/issues/windows_support.md`.
+deliberately deferred to `context/issues/resolved/windows_support.md`.
 
 ## Report
 

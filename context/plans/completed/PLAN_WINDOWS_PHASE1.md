@@ -4,12 +4,12 @@ Completed on `feat/windows-support` through `fc9c324`. Remote acceptance run
 [`35542444854`](https://github.com/runyte/runyte/actions/runs/35542444854)
 passed every job, including native Windows formatting, Clippy and tests,
 Linux/macOS regression suites, and both 89% coverage gates. The implementation
-and CI repairs are committed and pushed. Remaining Windows integrations are
-tracked in `context/plans/active/PLAN_WINDOWS_PHASE2.md`.
+and CI repairs are committed and pushed. The remaining Windows integrations
+were delivered under `context/plans/completed/PLAN_WINDOWS_PHASE2.md`.
 
 Scope: native standalone editing and file management with independent ConPTY
 terminals on `x86_64-pc-windows-msvc`. The acceptance requirements remain in
-`context/issues/windows_support.md`. Windows 11 24H2 or later with Windows
+`context/issues/resolved/windows_support.md`. Windows 11 24H2 or later with Windows
 Terminal is the initial target; older Windows, ARM64 and MinGW remain untested.
 The default shell is `COMSPEC`, falling back to `cmd.exe`. PowerShell 7 and Git
 Bash are optional. LSP, persistent sessions, Git, plugins, context access, shell

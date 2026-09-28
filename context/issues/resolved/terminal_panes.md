@@ -310,7 +310,7 @@ That correction is covered by
 
 Further known limitations. Terminals are Unix only: Windows needs ConPTY,
 which is a second implementation of the hardest part, and
-`context/issues/windows_support.md` already records that Runyte disables a
+`context/issues/resolved/windows_support.md` already records that Runyte disables a
 feature there rather than shipping an unsound one. Inline images — kitty
 graphics, sixel — are not passed through. Resizing does not reflow wrapped
 lines, because emulators disagree about what a resized wrapped line should
@@ -368,7 +368,7 @@ selection — or the whole buffer — to a terminal as a single bracketed paste.
 Scope and platform:
 
 Unix only. Windows needs ConPTY, which is a second implementation of the
-hardest part; `context/issues/windows_support.md` already records that Runyte
+hardest part; `context/issues/resolved/windows_support.md` already records that Runyte
 disables a feature there rather than shipping an unsound one.
 
 The emulator is Runyte's own, in keeping with the project's preference for

@@ -13,9 +13,9 @@ records the source review, local native checks and PowerShell ZIP validation.
 
 This supersedes older working-tree, branch and pending-CI descriptions below.
 The Phase 2 implementation and cross-platform CI acceptance are complete;
-the tagged Windows binary release and published checksum verification remain
-open in the active plan and Windows support issue. No release is implied by
-this checkpoint.
+the tagged Windows binary release and published checksum verification were
+the last open item. Releases 0.3.2 and 0.3.3 publish the Windows ZIP with its
+`SHA256SUMS` entry, and the Windows support issue was resolved on 2026-09-28.
 
 ## Earlier checkpoints
 
@@ -47,7 +47,7 @@ commit `a79e765`; Windows CI acceptance regressions are repaired in source commi
 The macOS host queue EINTR repair is `dad1d86`; Unix plugin fixture readiness
 repairs are `26f6c4e`, `333771d` and `0adcf38`. The preceding native host
 attachment is `1e69755` and shared response ordering repair is `5d727db`.
-This record supplements the [active plan](../plans/active/PLAN_WINDOWS_PHASE2.md)
+This record supplements the [Phase 2 plan](../plans/completed/PLAN_WINDOWS_PHASE2.md)
 with the working-tree state and immediate continuation steps. Read this record
 before the older chronological progress entries. No previous chat is required.
 
@@ -196,7 +196,7 @@ required development records.
 
 ## Accepted package: 4e.3f authoritative stopped names
 
-The [reviewed stopped-name design](../plans/active/WINDOWS_STOPPED_NAMES.md)
+The [reviewed stopped-name design](../plans/completed/WINDOWS_STOPPED_NAMES.md)
 contains the authority, ordered locks, bounded recovery and acceptance contract.
 Its implementation is committed in `8d5c009`. All four source replacements
 matched their `.before` baselines, allowing only line-ending differences, and
@@ -866,7 +866,7 @@ native Python acceptance is claimed locally. The required Windows CI gate is
 the acceptance authority for those cases and remains pending.
 The immutable/frozen and current Node/plugin conformance suites remain separate
 required CI lanes; neither was run or claimed by `34f53b6`. The existing Node
-readiness issue remains open in `context/issues/node_conformance_readiness.md`.
+readiness issue remained open in `context/issues/resolved/node_conformance_readiness.md`.
 
 ## Accepted package: 5g public Windows context access
 
@@ -1092,7 +1092,7 @@ ConPTY job limits and exact publication authority in further packages.
 
 ## Phase 2.5 implementation order
 
-The [catalog/service design](../plans/active/WINDOWS_CATALOG_SERVICE.md) records
+The [catalog/service design](../plans/completed/WINDOWS_CATALOG_SERVICE.md) records
 the reviewed integration map and acceptance requirements. DiscoveryScope, which
 that design calls a prerequisite, is already applied as described above.
 
@@ -1120,7 +1120,7 @@ that design calls a prerequisite, is already applied as described above.
    Preserve common editor semantics, protected shutdown and connection-owned
    waits while opening the remaining public gates.
 4. Completed in 4e.5j5: ParentAttach authorization and routing using the
-   [reviewed parent design](../plans/active/WINDOWS_PARENT_ROUTING.md). The
+   [reviewed parent design](../plans/completed/WINDOWS_PARENT_ROUTING.md). The
    retained pipe peer's exact ConPTY job membership, terminal capability and
    current attachment ownership agree through settlement. Destination startup
    remains outside the requesting terminal job, and ConPTY job limits are not
@@ -1196,7 +1196,7 @@ sequence is remotely accepted; the public plugin lifecycle passed every job in
 
 The Node reader buffered-publication fix and bounded diagnostics are committed
 in `aadaf48`. The original intermittent initial-registration failure's cause is
-still unproven; `context/issues/node_conformance_readiness.md` stays open despite
+still unproven; `context/issues/resolved/node_conformance_readiness.md` stayed open despite
 recent green CI. Deferred macOS PTY allocation work is outside this task.
 
 ## Execution constraints and handoff safety

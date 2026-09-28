@@ -47,7 +47,7 @@ command palette and reported an error only after execution.
 persistent mode was disabled rather than explaining that persistent workspace
 hosts were unsupported on the platform.
 
-The platform policy in `context/issues/windows_support.md` requires these
+The platform policy in `context/issues/resolved/windows_support.md` requires these
 commands to remain in the shared command inventory but return
 `CommandAvailability::Unavailable` off Unix, with the correct unsupported
 platform reason. Their palette rows must be dimmed consistently with other

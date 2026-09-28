@@ -4,8 +4,12 @@ The native control CLI, typed row identity and owned catalog service are now
 implemented and independently reviewed; see the
 [continuation checkpoint](../../reviews/windows_phase2_handoff.md) for the
 accepted commits and validation. This record retains the design decisions and
-acceptance boundaries. Native manager controls are accepted; public attachment,
-foreground host supervision and parent-terminal authorization remain later work.
+acceptance boundaries. Native manager controls are accepted. Public attachment,
+foreground host supervision and parent-terminal authorization were delivered
+later in Windows Phase 2; see
+[`PLAN_WINDOWS_PHASE2.md`](PLAN_WINDOWS_PHASE2.md). The recent-root and worktree
+shortcuts in the directory chooser remain unavailable on Windows and are tracked
+in `context/issues/windows_directory_chooser_shortcuts.md`.
 
 ## Recommended implementation order
 

@@ -5,9 +5,13 @@ Current acceptance: Phase 2 implementation through `be17cc7` is merged into
 [CI run 36136546810](https://github.com/runyte/runyte/actions/runs/36136546810).
 The [native validation checkpoint](../../reviews/windows_publication_startup_handoff.md#2026-09-25-native-acceptance-checkpoint)
 records startup-lock, context, clipboard, language-server and packaging evidence.
-The plan remains active for the tagged Windows binary release and published
-archive/checksum verification below. Earlier implementation and pending-CI
-descriptions are historical.
+Completed on 2026-09-28. The last open item was the tagged Windows binary release
+and published archive/checksum verification. Releases 0.3.2 (`ad60c94`) and
+0.3.3 (`f474036`) each publish `runyte-v<version>-x86_64-pc-windows-msvc.zip`
+with its hash in `SHA256SUMS`, and both published archives match their entries.
+Windows limitations that remain are listed in `docs/user-guide.md` under
+Windows support and in `context/issues/resolved/windows_support.md`. Earlier
+implementation and pending-CI descriptions are historical.
 
 ## Earlier checkpoints
 
@@ -131,7 +135,7 @@ included here as `8e2bd5d` and `c6ca884` after integration review by `review_wp3
 Their native Linux/macOS CI passed, including both unchanged coverage floors.
 The Linux allocation race and Windows process inheritance failure have separate
 regressions and fixes. The remaining macOS allocation window is recorded in
-[`macos_pty_descriptor_inheritance.md`](../../issues/macos_pty_descriptor_inheritance.md).
+[`macos_pty_descriptor_inheritance.md`](../../issues/resolved/macos_pty_descriptor_inheritance.md).
 
 ### Public Windows context boundary
 
@@ -308,7 +312,7 @@ regression. Its cross-platform run passes all jobs, including both unchanged
 89% coverage gates. The Linux plugin-conformance job initially timed out during
 the first Node registration; an isolated same-commit rerun passes unchanged.
 The diagnostic gap and separate buffered-response test issue remain recorded
-in `context/issues/node_conformance_readiness.md` for the plugin package.
+in `context/issues/resolved/node_conformance_readiness.md` for the plugin package.
 
 #### Sub-phase 2.2 package 1: native storage contract
 
@@ -1331,7 +1335,7 @@ The separate Linux Node-conformance job reproduced its initial-registration
 timeout before publication timing began. Correction `aadaf48` adds bounded
 failure evidence and repairs the distinct buffered publication-wait gap; it
 preserves response deadlines and passes six deterministic reader tests. The
-initial-registration cause remains open in `node_conformance_readiness.md`.
+initial-registration cause remained open in `context/issues/resolved/node_conformance_readiness.md`.
 
 Host checkpoint `6bee767` passes native Windows and both Unix plugin-conformance jobs in CI run
 `35649368038`. Its Linux Clippy gate found a leftover test import after the

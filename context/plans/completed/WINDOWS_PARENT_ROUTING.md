@@ -4,7 +4,8 @@ Retained architecture for native parent authority and routing. Private
 ParentWait and ParentAttach are accepted. Public parent attachment through
 `-a`/`--persistent` opened in `2563fba`, configured bare attachment in
 `378a22b`, and integrated-parent `--wait` in `fee4819`. In-editor navigation
-and switching remain gated.
+and switching were opened later in Windows Phase 2 and accepted in the
+cross-platform CI run recorded in [`PLAN_WINDOWS_PHASE2.md`](PLAN_WINDOWS_PHASE2.md).
 
 ## Existing seams
 

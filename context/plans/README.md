@@ -24,6 +24,14 @@ The retained completed records cover:
 - [Windows Phase 1](completed/PLAN_WINDOWS_PHASE1.md): native standalone editing,
   file management, console input, text clipboard and ConPTY terminal sessions,
   with native Windows CI and Linux/macOS regression acceptance;
+- [Windows Phase 2](completed/PLAN_WINDOWS_PHASE2.md): native Git, private
+  storage, language services, shell filters, image paste, system opening,
+  `--wait`, `:quit-here`, persistent sessions, plugins and context access, with
+  the tagged Windows release. The native session catalog, parent routing and
+  stopped-name designs are retained beside it as
+  [`WINDOWS_CATALOG_SERVICE.md`](completed/WINDOWS_CATALOG_SERVICE.md),
+  [`WINDOWS_PARENT_ROUTING.md`](completed/WINDOWS_PARENT_ROUTING.md) and
+  [`WINDOWS_STOPPED_NAMES.md`](completed/WINDOWS_STOPPED_NAMES.md);
 - [Database viewer UX and full-value inspection](completed/PLAN_DBVIEWER_UX_AND_FULL_VALUES.md):
   grouped actions, explicit view identity, labelled top metadata and on-demand
   complete-value documents through compatible `runyte-1` extensions;
