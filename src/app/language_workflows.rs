@@ -3695,6 +3695,7 @@ impl App {
         }
         self.retire_syntax(buffer);
         self.generated_highlights.remove(&buffer);
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         self.markdown_positions.retain(|page, _| {
             *page != buffer && self.buffers[*page].markdown_render_source() != Some(buffer)
         });

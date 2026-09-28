@@ -108,14 +108,20 @@ impl Diagnostic {
 pub struct DiagnosticStore {
     by_path: BTreeMap<PathBuf, Vec<Diagnostic>>,
     by_language: BTreeMap<PathBuf, String>,
+    revision: u64,
 }
 
 impl DiagnosticStore {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_path.is_empty()
     }
 
     pub fn set(&mut self, language: &str, path: PathBuf, diagnostics: Vec<Diagnostic>) {
+        self.revision = self.revision.wrapping_add(1);
         if diagnostics.is_empty() {
             self.by_path.remove(&path);
             self.by_language.remove(&path);
@@ -129,6 +135,7 @@ impl DiagnosticStore {
     /// stops, because diagnostics with no server behind them are stale claims
     /// about the code that nothing will ever correct.
     pub fn clear_language(&mut self, language: &str) {
+        self.revision = self.revision.wrapping_add(1);
         let paths: Vec<PathBuf> = self
             .by_language
             .iter()
@@ -143,6 +150,7 @@ impl DiagnosticStore {
 
     /// Drops the last diagnostics published for one document path.
     pub fn clear_path(&mut self, path: &Path) {
+        self.revision = self.revision.wrapping_add(1);
         self.by_path.remove(path);
         self.by_language.remove(path);
     }

@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     app::{App, MaximizedView, Mode, PreparedPane, PreparedView, PromptKind},
-    buffer::{Buffer, ExternalFileStatus, Position},
+    buffer::{Buffer, BufferKind, ExternalFileStatus, GeneratedViewIdentity, Position},
     command::EditorCommand,
     config::Theme,
     diff::Change,
@@ -693,6 +693,39 @@ pub(crate) struct VisibleHighlightCache {
     spans: Vec<Span>,
 }
 
+/// The inputs that can change an inactive document pane without changing its
+/// prepared projection. Active panes are rebuilt because their selection,
+/// search preview, jump labels, and inline diagnostic depend on live input.
+#[derive(Clone, Eq, PartialEq)]
+struct PaneSnapshotKey {
+    prepared: PreparedPane,
+    kind: std::mem::Discriminant<BufferKind>,
+    path: Option<PathBuf>,
+    text_revision: u64,
+    syntax_source: Option<(u64, u64, bool)>,
+    generated_highlights_revision: u64,
+    title: PaneTitle,
+    cursor: Position,
+    mode: Mode,
+    theme: Theme,
+    tab_width: usize,
+    line_numbers: bool,
+    render_whitespace: bool,
+    command_mode_dim: bool,
+    row_hints: RowHints,
+    directory: bool,
+    diff_start: Option<Offset>,
+    notifications: Vec<Option<NotificationSeverity>>,
+    diagnostic_revision: u64,
+    git_revision: u64,
+    compared: Vec<Option<Change>>,
+}
+
+pub(crate) struct CachedPaneSnapshot {
+    key: PaneSnapshotKey,
+    snapshot: PaneSnapshot,
+}
+
 impl App {
     /// Captures the normal editor surface after viewport preparation.
     ///
@@ -702,10 +735,13 @@ impl App {
         self.visible_highlights
             .borrow_mut()
             .retain(|pane, _| prepared.pane(*pane).is_some());
+        self.visible_pane_snapshots
+            .borrow_mut()
+            .retain(|pane, _| prepared.pane(*pane).is_some());
         let panes = prepared
             .panes
             .iter()
-            .map(|pane| self.snapshot_pane(pane))
+            .map(|pane| self.snapshot_cached_pane(pane))
             .collect();
         let active = self.active();
         let buffer = self.active_buffer();
@@ -794,6 +830,90 @@ impl App {
     /// what keeps `g` and `Space` from dimming anything.
     fn command_prompt_dims_panes(&self) -> bool {
         self.config.editor.command_mode_dim && self.mode == Mode::Command
+    }
+
+    fn snapshot_cached_pane(&self, prepared: &PreparedPane) -> PaneSnapshot {
+        let buffer = &self.buffers[prepared.buffer_id];
+        // Some generated lists read typed row metadata outside the buffer's
+        // text and row hints. Keep their live path until that metadata has a
+        // presentation revision of its own.
+        let cacheable = match &buffer.kind {
+            BufferKind::File
+            | BufferKind::Provider(_)
+            | BufferKind::Scratch
+            | BufferKind::CommitMessage => true,
+            BufferKind::Virtual { identity, .. } => {
+                !matches!(identity, GeneratedViewIdentity::GitComparison { .. })
+            }
+            _ => false,
+        };
+        if prepared.terminal.is_some() || prepared.pane_id == self.active_pane || !cacheable {
+            self.visible_pane_snapshots
+                .borrow_mut()
+                .remove(&prepared.pane_id);
+            return self.snapshot_pane(prepared);
+        }
+        let key = PaneSnapshotKey {
+            prepared: prepared.clone(),
+            kind: std::mem::discriminant(&buffer.kind),
+            path: buffer.path.clone(),
+            text_revision: buffer.revision(),
+            syntax_source: self.visible_syntax_source(prepared.buffer_id),
+            generated_highlights_revision: self.generated_highlights_revision,
+            title: PaneTitle {
+                name: buffer.pane_title(),
+                dirty: buffer.dirty,
+                external_file_status: buffer.external_file_status(),
+                read_only: buffer.is_read_only(),
+                maximized: self.maximized_view(prepared.pane_id),
+            },
+            cursor: self.panes[&prepared.pane_id].cursor(buffer),
+            mode: self.mode,
+            theme: self.theme.clone(),
+            tab_width: self.config.editor.tab_width,
+            line_numbers: self.config.editor.line_numbers,
+            render_whitespace: self.config.editor.render_whitespace,
+            command_mode_dim: self.config.editor.command_mode_dim,
+            row_hints: buffer.row_hints(),
+            directory: buffer.is_directory(),
+            diff_start: buffer.diff_start(),
+            notifications: prepared
+                .rows
+                .iter()
+                .map(|row| {
+                    row.document_row
+                        .and_then(|document_row| buffer.notification_row_at(document_row))
+                        .and_then(|notification| notification.severity)
+                })
+                .collect(),
+            diagnostic_revision: self.diagnostics.revision(),
+            git_revision: self.git_presentation_revision(),
+            compared: prepared
+                .rows
+                .iter()
+                .map(|row| {
+                    row.document_row
+                        .and_then(|document_row| self.row_compared(prepared.pane_id, document_row))
+                })
+                .collect(),
+        };
+        if let Some(cached) = self.visible_pane_snapshots.borrow().get(&prepared.pane_id)
+            && cached.key == key
+        {
+            return cached.snapshot.clone();
+        }
+        #[cfg(test)]
+        self.visible_pane_rebuilds
+            .set(self.visible_pane_rebuilds.get() + 1);
+        let snapshot = self.snapshot_pane(prepared);
+        self.visible_pane_snapshots.borrow_mut().insert(
+            prepared.pane_id,
+            CachedPaneSnapshot {
+                key,
+                snapshot: snapshot.clone(),
+            },
+        );
+        snapshot
     }
 
     fn snapshot_pane(&self, prepared: &PreparedPane) -> PaneSnapshot {
@@ -2991,6 +3111,203 @@ mod tests {
         app.syntax[0] =
             crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
         app
+    }
+
+    fn split_snapshot_fixture(panes: usize) -> App {
+        let mut app = lua_snapshot_fixture(200);
+        for _ in 1..panes {
+            app.execute(CommandInvocation::split_vertical(None))
+                .unwrap();
+        }
+        app
+    }
+
+    #[test]
+    fn inactive_panes_reuse_owned_rows_while_active_cursor_and_status_move() {
+        for pane_count in [2, 4] {
+            let mut app = split_snapshot_fixture(pane_count);
+            let first = prepared_snapshot(&mut app, 120, 40);
+            assert_eq!(app.visible_pane_rebuilds.get(), pane_count - 1);
+            let inactive = first.panes.iter().find(|pane| !pane.active).unwrap();
+            let inactive_id = inactive.pane_id;
+            let original_rows = inactive.rows.clone();
+            let old_cursor = first.status.cursor;
+            app.handle_key(KeyStroke::char('l')).unwrap();
+            let second = prepared_snapshot(&mut app, 120, 40);
+            assert_eq!(app.visible_pane_rebuilds.get(), pane_count - 1);
+            assert_eq!(second.pane(inactive_id).unwrap().rows, original_rows);
+            assert_ne!(second.status.cursor, old_cursor);
+            assert_ne!(
+                second.pane(app.active_pane).unwrap().rows,
+                first.pane(app.active_pane).unwrap().rows
+            );
+
+            // Snapshots returned to a frontend own their rows independently
+            // of the cache and of later frames.
+            let mut changed = second;
+            changed
+                .panes
+                .iter_mut()
+                .find(|pane| pane.pane_id == inactive_id)
+                .unwrap()
+                .rows
+                .clear();
+            let third = prepared_snapshot(&mut app, 120, 40);
+            assert_eq!(third.pane(inactive_id).unwrap().rows, original_rows);
+            assert_eq!(app.visible_pane_rebuilds.get(), pane_count - 1);
+            assert_eq!(app.visible_pane_snapshots.borrow().len(), pane_count - 1);
+            app.layout = crate::layout::Layout::Pane(app.active_pane);
+            let _ = prepared_snapshot(&mut app, 120, 40);
+            assert!(app.visible_pane_snapshots.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn inactive_pane_cache_invalidates_for_shared_text_projection_theme_and_diagnostics() {
+        let mut app = split_snapshot_fixture(2);
+        let inactive = app
+            .panes
+            .keys()
+            .copied()
+            .find(|&id| id != app.active_pane)
+            .unwrap();
+        let first = prepared_snapshot(&mut app, 120, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 1);
+
+        // Both panes show the same buffer; an edit in the active pane must
+        // rebuild the inactive pane even when its viewport stays put.
+        app.buffers[0].apply(&Transaction::insert(0, "-- changed\n"));
+        let edited = prepared_snapshot(&mut app, 120, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 2);
+        assert_ne!(
+            edited.pane(inactive).unwrap().rows,
+            first.pane(inactive).unwrap().rows
+        );
+
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 3);
+        app.config.editor.soft_wrap = true;
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 4);
+        app.theme.background = crate::config::Color::White;
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 5);
+        app.config.editor.render_whitespace = true;
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 6);
+        let language = app.registry.language_for_name("lua").unwrap();
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 7);
+        app.mode = Mode::Select;
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 8);
+
+        let path = std::path::PathBuf::from("/tmp/runyte-pane-cache-diagnostic.lua");
+        app.buffers[0].path = Some(path.clone());
+        let _ = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 9);
+        app.diagnostics.set(
+            "lua",
+            path,
+            vec![crate::lsp::Diagnostic::new(Default::default())],
+        );
+        let diagnosed = prepared_snapshot(&mut app, 100, 40);
+        assert_eq!(app.visible_pane_rebuilds.get(), 10);
+        assert!(matches!(
+            &diagnosed.pane(inactive).unwrap().rows[0],
+            SnapshotRow::Text(row) if row.diagnostic_sign == Some(Severity::Error)
+        ));
+
+        app.active_pane = inactive;
+        let focused = prepared_snapshot(&mut app, 100, 40);
+        assert!(focused.pane(inactive).unwrap().active);
+        assert!(!focused.pane(1).unwrap().active);
+        assert!(app.visible_pane_snapshots.borrow().get(&inactive).is_none());
+    }
+
+    #[test]
+    #[ignore = "manual fixed-geometry pane snapshot timing"]
+    fn inactive_pane_snapshot_timing() {
+        use std::time::Instant;
+
+        for pane_count in [1, 2, 4] {
+            for shared in [false, true]
+                .into_iter()
+                .filter(|shared| pane_count > 1 || *shared)
+            {
+                for cached in [false, true] {
+                    let mut app = split_snapshot_fixture(pane_count);
+                    if !shared {
+                        for pane_id in 0..pane_count - 1 {
+                            let mut buffer = app.buffers[0].clone();
+                            buffer.apply(&Transaction::insert(0, format!("-- pane {pane_id}\n")));
+                            let language = app.registry.language_for_name("lua").unwrap();
+                            let syntax = crate::syntax::DocumentSyntax::new(
+                                buffer.text(),
+                                language,
+                                &app.registry,
+                            );
+                            let buffer_id = app.buffers.len();
+                            app.buffers.push(buffer);
+                            app.syntax.push(syntax);
+                            app.panes.get_mut(&pane_id).unwrap().buffer = buffer_id;
+                        }
+                    }
+                    let _ = prepared_snapshot(&mut app, 120, 40);
+                    let mut prepare = Vec::new();
+                    let mut snapshot = Vec::new();
+                    for index in 0..200 {
+                        app.handle_key(KeyStroke::char(if index % 2 == 0 { 'l' } else { 'h' }))
+                            .unwrap();
+                        let start = Instant::now();
+                        let geometry = crate::app::FrameGeometry {
+                            screen: Rect {
+                                x: 0,
+                                y: 0,
+                                width: 120,
+                                height: 40,
+                            },
+                            editor: Rect {
+                                x: 0,
+                                y: 0,
+                                width: 120,
+                                height: 38,
+                            },
+                            status: Rect {
+                                x: 0,
+                                y: 38,
+                                width: 120,
+                                height: 1,
+                            },
+                            message: Rect {
+                                x: 0,
+                                y: 39,
+                                width: 120,
+                                height: 1,
+                            },
+                        };
+                        let view = app.prepare_view(geometry);
+                        prepare.push(start.elapsed().as_micros());
+                        if !cached {
+                            app.visible_pane_snapshots.borrow_mut().clear();
+                        }
+                        let start = Instant::now();
+                        std::hint::black_box(app.snapshot(&view));
+                        snapshot.push(start.elapsed().as_micros());
+                    }
+                    prepare.sort_unstable();
+                    snapshot.sort_unstable();
+                    eprintln!(
+                        "{pane_count} panes, shared {shared}, cached {cached}: prepare {} us, snapshot {} us, inactive rebuilds {}",
+                        prepare[100],
+                        snapshot[100],
+                        app.visible_pane_rebuilds.get()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

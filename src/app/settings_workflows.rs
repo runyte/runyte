@@ -340,6 +340,7 @@ impl App {
             }
         };
         self.generated_highlights.insert(buffer, page.spans);
+        self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
         self.push_jump();
         let pane = self.active_mut();
         pane.retarget(buffer);
@@ -433,6 +434,8 @@ impl App {
             if self.buffers[index].is_settings() {
                 self.buffers[index] = rendered.clone();
                 self.generated_highlights.insert(index, page.spans.clone());
+                self.generated_highlights_revision =
+                    self.generated_highlights_revision.wrapping_add(1);
                 self.normalize_buffer(index);
             }
         }

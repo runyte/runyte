@@ -32,6 +32,7 @@ const MAX_BASE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Default)]
 pub struct GitTracker {
+    revision: u64,
     repository: Option<Repository>,
     status: Option<RepositoryStatus>,
     /// The line counts for that status, read only while something shows them,
@@ -51,12 +52,17 @@ struct TrackedFile {
 }
 
 impl GitTracker {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Notes the repository the editor is working in, if there is one.
     pub fn attach(&mut self, repository: Option<Repository>) {
+        self.revision = self.revision.wrapping_add(1);
         if self.repository != repository {
             self.files.clear();
             self.status = None;
@@ -93,6 +99,7 @@ impl GitTracker {
         staged: Vec<(PathBuf, BaseContent)>,
         stats_requested: bool,
     ) {
+        self.revision = self.revision.wrapping_add(1);
         let same_repository = self.repository.as_ref() == Some(&repository);
         if !same_repository {
             self.files.clear();
@@ -129,11 +136,13 @@ impl GitTracker {
     /// [`GitTracker::apply_snapshot`] drops uncounted ones: they were measured
     /// against a status this one replaces.
     pub fn apply_status(&mut self, status: RepositoryStatus) {
+        self.revision = self.revision.wrapping_add(1);
         self.status = Some(status);
         self.stats = StatusStats::default();
     }
 
     pub fn apply_staged_content(&mut self, path: PathBuf, content: BaseContent) {
+        self.revision = self.revision.wrapping_add(1);
         match content {
             BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
                 self.files.insert(
@@ -183,6 +192,7 @@ impl GitTracker {
             return Ok(());
         };
         let status = provider.status(repository)?;
+        self.revision = self.revision.wrapping_add(1);
         // Counting is best-effort where the status itself is not: a provider
         // that cannot count leaves the list without numbers, which is not a
         // reason to leave the reader without the list.
@@ -203,10 +213,13 @@ impl GitTracker {
             return Ok(());
         };
         if !repository.contains(path) {
+            self.revision = self.revision.wrapping_add(1);
             self.files.remove(path);
             return Ok(());
         }
-        match provider.staged_content(repository, path)? {
+        let content = provider.staged_content(repository, path)?;
+        self.revision = self.revision.wrapping_add(1);
+        match content {
             BaseContent::Text(base) if base.len() <= MAX_BASE_BYTES => {
                 self.files.insert(
                     path.to_path_buf(),
@@ -239,6 +252,7 @@ impl GitTracker {
     }
 
     pub fn forget(&mut self, path: &Path) {
+        self.revision = self.revision.wrapping_add(1);
         self.files.remove(path);
     }
 
@@ -255,6 +269,7 @@ impl GitTracker {
         }
         file.rows = changed_rows(&file.base, &text());
         file.revision = Some(revision);
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 
