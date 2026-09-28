@@ -2,9 +2,17 @@
 
 use super::*;
 
+/// A configuration with `editor.selecting_motions` off, so word and find
+/// motions move a caret.
+fn caret_motions() -> Config {
+    let mut config = Config::default();
+    config.editor.selecting_motions = false;
+    config
+}
+
 #[test]
 fn word_and_character_motions_handle_unicode_and_lines() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(caret_motions(), None).unwrap();
     seed(&mut app, "αβ, γδ\n\nx end");
 
     press(&mut app, 'e');
@@ -25,9 +33,9 @@ fn word_and_character_motions_handle_unicode_and_lines() {
 }
 
 #[test]
-fn runyte_word_motions_require_explicit_select_mode() {
+fn caret_word_motions_require_explicit_select_mode() {
     for motion in ['w', 'b', 'e', 'W', 'B', 'E'] {
-        let mut normal = App::new(Config::default(), None).unwrap();
+        let mut normal = App::new(caret_motions(), None).unwrap();
         seed(&mut normal, "alpha, βeta gamma\nnext row");
         set_cursor(&mut normal, 0, 8);
         press(&mut normal, motion);
@@ -38,7 +46,7 @@ fn runyte_word_motions_require_explicit_select_mode() {
             "plain {motion} must move the caret without selecting"
         );
 
-        let mut selecting = App::new(Config::default(), None).unwrap();
+        let mut selecting = App::new(caret_motions(), None).unwrap();
         seed(&mut selecting, "alpha, βeta gamma\nnext row");
         set_cursor(&mut selecting, 0, 8);
         press(&mut selecting, 'v');
@@ -149,7 +157,7 @@ fn word_forward_from_the_last_word_of_a_row_lands_on_the_next_rows_word() {
 
     for (seeded, expected) in cases {
         for motion in ['w', 'W'] {
-            let mut app = App::new(Config::default(), None).unwrap();
+            let mut app = App::new(caret_motions(), None).unwrap();
             seed(&mut app, seeded);
 
             press(&mut app, motion);
@@ -611,9 +619,7 @@ fn join_holds_back_the_terminator_of_a_half_open_selection() {
 }
 
 fn selecting_app(source: &str) -> App {
-    let mut config = Config::default();
-    config.editor.selecting_motions = true;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, source);
     set_cursor(&mut app, 0, 0);
     app
@@ -752,12 +758,13 @@ fn a_replayed_counted_selecting_find_matches_the_typed_one() {
 
 #[test]
 fn selecting_motions_leave_other_modes_and_keys_as_they_were() {
-    // Off by default: `w` moves a caret.
-    let mut default = App::new(Config::default(), None).unwrap();
-    seed(&mut default, "one two");
-    set_cursor(&mut default, 0, 0);
-    press(&mut default, 'w');
-    assert_eq!(selected(&default), (4, 4));
+    // On by default; turned off, `w` moves a caret.
+    assert!(Config::default().editor.selecting_motions);
+    let mut caret = App::new(caret_motions(), None).unwrap();
+    seed(&mut caret, "one two");
+    set_cursor(&mut caret, 0, 0);
+    press(&mut caret, 'w');
+    assert_eq!(selected(&caret), (4, 4));
 
     // Select mode still extends from its anchor.
     let mut select = selecting_app("one two three");

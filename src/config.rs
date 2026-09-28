@@ -435,11 +435,11 @@ pub struct EditorConfig {
     /// Make `w`, `b`, `e`, their long-word variants, and `f`, `t`, `F`, `T`
     /// select the text they cross in Normal mode, as Helix's do.
     ///
-    /// Off by default because Runyte reads a selection of two or more
-    /// characters as something to act on: `p` replaces it, `s` and `/`
-    /// search inside it, and `*` searches for it. With this on, those keys
-    /// keep that reading straight after a motion, so `w p` replaces the word
-    /// `w` selected. `w d` and `w c` are the gestures it is for.
+    /// On by default, for `w d` and `w c`. Runyte still reads a selection of
+    /// two or more characters as something to act on: `p` replaces it, `s`
+    /// and `/` search inside it, and `*` searches for it. Those keys keep
+    /// that reading straight after a motion, so `w p` replaces the word `w`
+    /// selected. Turned off, these motions move a caret instead.
     pub selecting_motions: bool,
     /// Gray out the text in every pane while a command prompt is open.
     ///
@@ -947,7 +947,7 @@ impl Default for EditorConfig {
             word_completion: true,
             word_completion_minimum: 3,
             fast_pane_keys: false,
-            selecting_motions: false,
+            selecting_motions: true,
             command_mode_dim: true,
         }
     }

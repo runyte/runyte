@@ -2396,7 +2396,8 @@ mod tests {
             snapshot.status.interaction_line,
             "3 w (Move to next word start)"
         );
-        assert_eq!(app.active().cursor(&app.buffers[0]).col, 17);
+        // The third `w` selects `gamma ` and leaves its head on the space.
+        assert_eq!(app.active().cursor(&app.buffers[0]).col, 16);
     }
 
     #[test]
@@ -2858,11 +2859,12 @@ mod tests {
         app.panes.get_mut(&0).unwrap().selection =
             crate::selection::Selection::single(Range::new(0, 3));
         assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(selected_text(&mut app), "");
-
-        app.config.editor.selecting_motions = true;
-        // The head is drawn as the caret; the rest of the range is selected.
+        // On by default: the head is drawn as the caret and the rest of the
+        // range is selected.
         assert_eq!(selected_text(&mut app), "one");
+
+        app.config.editor.selecting_motions = false;
+        assert_eq!(selected_text(&mut app), "");
     }
 
     #[test]

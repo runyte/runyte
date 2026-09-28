@@ -2070,18 +2070,17 @@ from a search replaces every match at once. `P` never replaces: it stays the
 way to reach the start of a selection without giving up what is selected.
 `Space c p` and `Space c P` follow the same rule from the system clipboard.
 
-In Normal mode, `w`, `b`, `e`, and the find motions move a caret, so a word is
-selected with `v` first: `v e d` deletes to the end of the word. Setting
-`editor.selecting_motions: true` makes `w`, `b`, `e`, `W`, `B`, `E`, `f`, `t`,
-`F`, and `T` select the text they cross, as Helix's do, so `w d` deletes a word
-and the space after it and `e c` changes to the end of the word. `w` selects
-through the whitespace after the word, `e` through the end of the next word,
-and `b` back to the start of the previous one; each press starts a fresh
-selection, which never contains a line break. `f` selects from the caret
-through the character found, and `t` up to it. The selection is drawn, and
-anything that reads a selection reads this one: `p` replaces it, `s` and `/`
-search inside it, and `*` searches for it. Other motions still move a caret,
-and Select mode still extends.
+In Normal mode, `w`, `b`, `e`, `W`, `B`, `E`, `f`, `t`, `F`, and `T` select the
+text they cross, as Helix's do, so `w d` deletes a word and the space after it
+and `e c` changes to the end of the word. `w` selects through the whitespace
+after the word, `e` through the end of the next word, and `b` back to the start
+of the previous one; each press starts a fresh selection, which never contains
+a line break. `f` selects from the caret through the character found, and `t`
+up to it. The selection is drawn, and anything that reads a selection reads
+this one: `p` replaces it, `s` and `/` search inside it, and `*` searches for
+it. Other motions still move a caret, and Select mode still extends. Setting
+`editor.selecting_motions: false` makes these motions move a caret too, so a
+word is selected with `v` first: `v e d` deletes to the end of the word.
 
 `Ctrl-v` and `Alt-v` paste an image in Normal, Select, Insert, and Replace
 alike. A terminal cannot draw a picture, so a clipboard holding one is
@@ -4405,7 +4404,7 @@ editor:
   word_completion: true # suggest words already open elsewhere in the workspace
   word_completion_minimum: 3 # prefix length before word candidates appear
   fast_pane_keys: false # Ctrl-h/j/k/l move between panes without the Ctrl-w prefix
-  selecting_motions: false # w/b/e/W/B/E and f/t/F/T select what they cross, as in Helix
+  selecting_motions: true # w/b/e/W/B/E and f/t/F/T select what they cross, as in Helix
   command_mode_dim: true # gray out every pane's text while a command prompt is open
 
 workspace:
