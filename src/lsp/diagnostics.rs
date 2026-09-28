@@ -100,13 +100,35 @@ impl Diagnostic {
     }
 }
 
+#[derive(Clone, Debug)]
+struct FileDiagnostics {
+    // Keep publication order for code actions and the workspace picker.
+    diagnostics: Vec<Diagnostic>,
+    // Indices into diagnostics, ordered by descending severity. Equal
+    // severities retain publication order, as the old stable row sort did.
+    rows: BTreeMap<usize, Vec<usize>>,
+}
+
+impl FileDiagnostics {
+    fn new(diagnostics: Vec<Diagnostic>) -> Self {
+        let mut rows: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (index, diagnostic) in diagnostics.iter().enumerate() {
+            rows.entry(diagnostic.row()).or_default().push(index);
+        }
+        for indices in rows.values_mut() {
+            indices.sort_by_key(|&index| std::cmp::Reverse(diagnostics[index].severity));
+        }
+        Self { diagnostics, rows }
+    }
+}
+
 /// Diagnostics for every file a server has reported on.
 ///
 /// Servers publish per file, replacing the previous set, and publish an empty
 /// list to clear one. The store mirrors exactly that.
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticStore {
-    by_path: BTreeMap<PathBuf, Vec<Diagnostic>>,
+    by_path: BTreeMap<PathBuf, FileDiagnostics>,
     by_language: BTreeMap<PathBuf, String>,
 }
 
@@ -122,7 +144,7 @@ impl DiagnosticStore {
             return;
         }
         self.by_language.insert(path.clone(), language.to_owned());
-        self.by_path.insert(path, diagnostics);
+        self.by_path.insert(path, FileDiagnostics::new(diagnostics));
     }
 
     /// Drops everything a language's server published. Used when that server
@@ -148,27 +170,31 @@ impl DiagnosticStore {
     }
 
     pub fn for_path(&self, path: &Path) -> &[Diagnostic] {
-        self.by_path.get(path).map_or(&[], Vec::as_slice)
+        self.by_path
+            .get(path)
+            .map_or(&[], |file| file.diagnostics.as_slice())
     }
 
     /// Diagnostics on one row, most severe first.
     pub fn for_row(&self, path: &Path, row: usize) -> Vec<&Diagnostic> {
-        let mut matching: Vec<&Diagnostic> = self
-            .for_path(path)
-            .iter()
-            .filter(|diagnostic| diagnostic.row() == row)
-            .collect();
-        matching.sort_by_key(|diagnostic| std::cmp::Reverse(diagnostic.severity));
-        matching
+        let Some(file) = self.by_path.get(path) else {
+            return Vec::new();
+        };
+        file.rows.get(&row).map_or_else(Vec::new, |indices| {
+            indices
+                .iter()
+                .map(|&index| &file.diagnostics[index])
+                .collect()
+        })
     }
 
     /// The sign a row's gutter cell should carry, if any.
     pub fn severity_for_row(&self, path: &Path, row: usize) -> Option<Severity> {
-        self.for_path(path)
-            .iter()
-            .filter(|diagnostic| diagnostic.row() == row)
-            .map(|diagnostic| diagnostic.severity)
-            .max()
+        let file = self.by_path.get(path)?;
+        file.rows
+            .get(&row)?
+            .first()
+            .map(|&index| file.diagnostics[index].severity)
     }
 
     /// Every diagnostic in the store, ordered by path and then position, for
@@ -177,8 +203,8 @@ impl DiagnosticStore {
         let mut entries: Vec<(&Path, &Diagnostic)> = self
             .by_path
             .iter()
-            .flat_map(|(path, diagnostics)| {
-                diagnostics
+            .flat_map(|(path, file)| {
+                file.diagnostics
                     .iter()
                     .map(move |diagnostic| (path.as_path(), diagnostic))
             })
@@ -197,7 +223,7 @@ impl DiagnosticStore {
     pub fn counts(&self) -> (usize, usize) {
         let mut errors = 0;
         let mut warnings = 0;
-        for diagnostic in self.by_path.values().flatten() {
+        for diagnostic in self.by_path.values().flat_map(|file| &file.diagnostics) {
             match diagnostic.severity {
                 Severity::Error => errors += 1,
                 Severity::Warning => warnings += 1,
@@ -220,6 +246,14 @@ mod tests {
             message: message.to_owned(),
             ..Default::default()
         })
+    }
+
+    fn messages<'a>(store: &'a DiagnosticStore, path: &Path, row: usize) -> Vec<&'a str> {
+        store
+            .for_row(path, row)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect()
     }
 
     #[test]
@@ -255,6 +289,66 @@ mod tests {
         assert_eq!(store.severity_for_row(&path, 5), None);
         assert_eq!(store.for_row(&path, 3)[0].severity, Severity::Error);
         assert_eq!(store.counts(), (1, 1));
+    }
+
+    #[test]
+    fn row_index_tracks_publication_order_replacement_and_clearing() {
+        let mut store = DiagnosticStore::default();
+        let path = PathBuf::from("/tmp/a.rs");
+        let other = PathBuf::from("/tmp/b.json");
+        store.set(
+            "rust",
+            path.clone(),
+            vec![
+                diagnostic(8, DiagnosticSeverity::WARNING, "later row"),
+                diagnostic(2, DiagnosticSeverity::WARNING, "first warning"),
+                diagnostic(2, DiagnosticSeverity::ERROR, "first error"),
+                diagnostic(2, DiagnosticSeverity::WARNING, "second warning"),
+                diagnostic(2, DiagnosticSeverity::ERROR, "second error"),
+            ],
+        );
+        assert_eq!(
+            messages(&store, &path, 2),
+            [
+                "first error",
+                "second error",
+                "first warning",
+                "second warning"
+            ]
+        );
+        assert_eq!(store.for_path(&path)[0].message, "later row");
+        assert_eq!(store.severity_for_row(&path, 2), Some(Severity::Error));
+        assert!(messages(&store, &path, 3).is_empty());
+        assert_eq!(store.counts(), (2, 3));
+
+        store.set(
+            "json",
+            other.clone(),
+            vec![diagnostic(2, DiagnosticSeverity::HINT, "other path")],
+        );
+        // A later server publication owns this path and replaces its whole
+        // index, including rows that only appeared in the previous batch.
+        store.set(
+            "json",
+            path.clone(),
+            vec![diagnostic(
+                2,
+                DiagnosticSeverity::INFORMATION,
+                "replacement",
+            )],
+        );
+        assert_eq!(messages(&store, &path, 2), ["replacement"]);
+        assert!(messages(&store, &path, 8).is_empty());
+        assert_eq!(store.severity_for_row(&path, 8), None);
+        assert_eq!(store.counts(), (0, 0));
+        store.clear_language("rust");
+        assert_eq!(messages(&store, &path, 2), ["replacement"]);
+        store.clear_path(&path);
+        assert!(messages(&store, &path, 2).is_empty());
+        assert_eq!(store.severity_for_row(&path, 2), None);
+        assert_eq!(store.for_path(&other)[0].message, "other path");
+        store.clear_language("json");
+        assert!(store.is_empty());
     }
 
     #[test]
