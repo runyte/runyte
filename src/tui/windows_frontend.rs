@@ -451,6 +451,20 @@ async fn attach_wait(
                     bail!("native workspace host exited before wait attachment");
                 }
             }
+            Some(HostResponse::EditorDamage { damage }) => {
+                if apply_editor_damage(&mut attachment.current, &damage)? {
+                    draw(terminal, &attachment.current, depth)?;
+                } else if send_or_exit(
+                    &mut attachment.client,
+                    &attachment.exit,
+                    &ClientRequest::Resynchronize,
+                )
+                .await?
+                .ended()
+                {
+                    bail!("native workspace host exited before wait attachment");
+                }
+            }
             Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
                 bail!(message)
             }
@@ -498,6 +512,9 @@ async fn visit_destination(
             Some(HostResponse::TerminalDamage { damage }) => {
                 let _ = apply_damage(&mut attachment.current, &damage)?;
             }
+            Some(HostResponse::EditorDamage { damage }) => {
+                let _ = apply_editor_damage(&mut attachment.current, &damage)?;
+            }
             Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
                 bail!(message)
             }
@@ -538,6 +555,9 @@ async fn visit_destination(
             }
             Some(HostResponse::TerminalDamage { damage }) => {
                 let _ = apply_damage(&mut attachment.current, &damage)?;
+            }
+            Some(HostResponse::EditorDamage { damage }) => {
+                let _ = apply_editor_damage(&mut attachment.current, &damage)?;
             }
             Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
                 bail!(message)
@@ -589,6 +609,11 @@ async fn record_previous_publication(
             }
             Some(HostResponse::TerminalDamage { damage }) => {
                 if apply_damage(&mut attachment.current, &damage)? {
+                    draw(terminal, &attachment.current, depth)?;
+                }
+            }
+            Some(HostResponse::EditorDamage { damage }) => {
+                if apply_editor_damage(&mut attachment.current, &damage)? {
                     draw(terminal, &attachment.current, depth)?;
                 }
             }
@@ -777,6 +802,16 @@ async fn run_attachment(
                     }
                     Some(HostResponse::TerminalDamage { damage }) => {
                         if apply_damage(current, &damage)? {
+                            draw(terminal, current, depth)?;
+                        } else if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Resynchronize)
+                            .await?
+                            .attachment_outcome()
+                        {
+                            return Ok(outcome);
+                        }
+                    }
+                    Some(HostResponse::EditorDamage { damage }) => {
+                        if apply_editor_damage(current, &damage)? {
                             draw(terminal, current, depth)?;
                         } else if let Some(outcome) = send_or_exit(client, exit, &ClientRequest::Resynchronize)
                             .await?
@@ -1057,6 +1092,18 @@ fn draw(
 fn apply_damage(
     current: &mut HostFrame,
     damage: &runyte::protocol::TerminalDamageFrame,
+) -> Result<bool> {
+    let mut wire: runyte::protocol::HostFrame = current.clone().into();
+    if !damage.apply(&mut wire) {
+        return Ok(false);
+    }
+    *current = wire.try_into().map_err(|error: String| anyhow!(error))?;
+    Ok(true)
+}
+
+fn apply_editor_damage(
+    current: &mut HostFrame,
+    damage: &runyte::protocol::EditorDamageFrame,
 ) -> Result<bool> {
     let mut wire: runyte::protocol::HostFrame = current.clone().into();
     if !damage.apply(&mut wire) {

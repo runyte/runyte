@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use ratatui::{Terminal, backend::TestBackend};
 use runyte::{
     app::FrameGeometry,
     input::{InputEvent, KeyCode, KeyStroke, Modifiers},
@@ -460,7 +461,9 @@ async fn receive_semantic_response(client: &mut LocalClient, waiting_for: &str) 
         let response = receive_response(client, waiting_for).await;
         if !matches!(
             response,
-            HostResponse::Frame { .. } | HostResponse::TerminalDamage { .. }
+            HostResponse::Frame { .. }
+                | HostResponse::TerminalDamage { .. }
+                | HostResponse::EditorDamage { .. }
         ) {
             return response;
         }
@@ -533,6 +536,9 @@ async fn next_idle_frame(client: &mut LocalClient) -> runyte::protocol::HostFram
             HostResponse::TerminalDamage { .. } => {
                 client.send(&ClientRequest::Resynchronize).await.unwrap();
             }
+            HostResponse::EditorDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
             _ => {}
         }
     }
@@ -547,6 +553,9 @@ async fn resynchronized_frame(
         match receive_response(client, waiting_for).await {
             HostResponse::Frame { frame } => return *frame,
             HostResponse::TerminalDamage { .. } => {
+                client.send(&ClientRequest::Resynchronize).await.unwrap();
+            }
+            HostResponse::EditorDamage { .. } => {
                 client.send(&ClientRequest::Resynchronize).await.unwrap();
             }
             response => {
@@ -628,7 +637,315 @@ async fn send_input_expect_frame(client: &mut LocalClient, event: InputEvent) {
         })
         .await
         .unwrap();
-    assert!(matches!(response(client).await, HostResponse::Frame { .. }));
+    assert!(matches!(
+        response(client).await,
+        HostResponse::Frame { .. } | HostResponse::EditorDamage { .. }
+    ));
+}
+
+#[tokio::test]
+async fn persistent_cursor_movement_sends_rows_only_and_reattach_starts_with_full_frame() {
+    for (width, height) in [(120, 40), (240, 80)] {
+        persistent_cursor_case(width, height).await;
+    }
+}
+
+async fn persistent_cursor_case(width: u16, height: u16) {
+    let root = project();
+    let lines = (0..120)
+        .map(|n| format!("{n:03} {}\n", "visible document text ".repeat(5)))
+        .collect::<String>();
+    fs::write(root.join("other.txt"), lines).unwrap();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut geometry = tui_geometry();
+    geometry.screen.width = width;
+    geometry.screen.height = height;
+    geometry.editor.width = width;
+    geometry.editor.height = height - 2;
+    geometry.status.y = height - 2;
+    geometry.status.width = width;
+    geometry.message.y = height - 1;
+    geometry.message.width = width;
+    let mut client = LocalClient::connect(&endpoint, geometry, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    let mut frame = resynchronized_frame(&mut client, "starting cursor damage test").await;
+    assert!(frame.editor.panes[0].rows.len() > 10);
+    // Let startup's independent Git and syntax publications finish, then
+    // retain the latest actually received base before measuring input.
+    while let Ok(Ok(Some(visual))) =
+        tokio::time::timeout(Duration::from_millis(100), client.recv()).await
+    {
+        match visual {
+            HostResponse::Frame { frame: next } => frame = *next,
+            HostResponse::EditorDamage { damage } => assert!(damage.apply(&mut frame)),
+            HostResponse::TerminalDamage { damage } => assert!(damage.apply(&mut frame)),
+            other => panic!("unexpected startup response: {other:?}"),
+        }
+    }
+    if width == 240 {
+        invoke_when_current(&mut client, "vsplit", frame.clone()).await;
+        frame = resynchronized_frame(&mut client, "opening a second visible pane").await;
+        assert_eq!(frame.editor.panes.len(), 2);
+        while let Ok(Ok(Some(visual))) =
+            tokio::time::timeout(Duration::from_millis(100), client.recv()).await
+        {
+            match visual {
+                HostResponse::Frame { frame: next } => frame = *next,
+                HostResponse::EditorDamage { damage } => assert!(damage.apply(&mut frame)),
+                HostResponse::TerminalDamage { damage } => assert!(damage.apply(&mut frame)),
+                other => panic!("unexpected post-split response: {other:?}"),
+            }
+        }
+    }
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    let rendered: runyte::workspace::HostFrame = frame.clone().try_into().unwrap();
+    terminal
+        .draw(|surface| runyte::ui::render_host_frame_exact_colors_for_test(surface, &rendered))
+        .unwrap();
+
+    let mut found = false;
+    let mut changed_document_row = false;
+    let mut measurements = Vec::new();
+    for key in ['l', 'h', 'l', 'h', 'j', 'k'] {
+        let started = Instant::now();
+        let previous_cursor = frame.editor.status.cursor;
+        client
+            .send(&ClientRequest::Input {
+                presented_frame: Some(frame.id),
+                event: InputEvent::Key(KeyStroke::char(key)).into(),
+                repeated: false,
+            })
+            .await
+            .unwrap();
+        let mut moved = false;
+        for _ in 0..16 {
+            let next = receive_response(&mut client, "cursor movement damage").await;
+            let damage = match next {
+                HostResponse::Frame { frame: next } => {
+                    frame = *next;
+                    None
+                }
+                HostResponse::EditorDamage { damage } => {
+                    assert!(damage.apply(&mut frame));
+                    Some(damage)
+                }
+                other => panic!("expected cursor visual update, got {other:?}"),
+            };
+            let rendered: runyte::workspace::HostFrame = frame.clone().try_into().unwrap();
+            terminal
+                .draw(|surface| {
+                    runyte::ui::render_host_frame_exact_colors_for_test(surface, &rendered)
+                })
+                .unwrap();
+            let input_to_render = started.elapsed();
+            if frame.editor.status.cursor != previous_cursor {
+                if let Some(damage) = damage {
+                    let bytes = serde_json::to_vec(&HostResponse::EditorDamage {
+                        damage: damage.clone(),
+                    })
+                    .unwrap()
+                    .len();
+                    changed_document_row |= damage
+                        .panes
+                        .iter()
+                        .flat_map(|pane| &pane.rows)
+                        .any(|row| matches!(&row.snapshot, SnapshotRow::Text(_)));
+                    let full_bytes = serde_json::to_vec(&HostResponse::Frame {
+                        frame: Box::new(frame.clone()),
+                    })
+                    .unwrap()
+                    .len();
+                    assert!(
+                        bytes * 4 < full_bytes,
+                        "cursor damage {bytes} bytes, full frame {full_bytes} bytes"
+                    );
+                    found = true;
+                    measurements.push((bytes, full_bytes, input_to_render));
+                }
+                moved = true;
+                break;
+            }
+        }
+        assert!(
+            moved,
+            "{key} did not move the cursor after 16 visual updates"
+        );
+    }
+    assert!(found, "cursor movement never produced editor damage");
+    assert!(
+        changed_document_row,
+        "cursor movement never changed a document row"
+    );
+    let prior_mode = frame.editor.mode;
+    client
+        .send(&ClientRequest::Input {
+            presented_frame: Some(frame.id),
+            event: InputEvent::Key(KeyStroke::char('v')).into(),
+            repeated: false,
+        })
+        .await
+        .unwrap();
+    let mut entered_select = false;
+    for _ in 0..16 {
+        let selection = receive_response(&mut client, "entering Select mode").await;
+        let was_full = matches!(&selection, HostResponse::Frame { .. });
+        match selection {
+            HostResponse::Frame { frame: selected } => frame = *selected,
+            HostResponse::EditorDamage { damage } => assert!(damage.apply(&mut frame)),
+            _ => panic!("unexpected selection visual"),
+        }
+        if frame.editor.mode != prior_mode {
+            assert!(was_full, "entering Select mode must use a complete frame");
+            entered_select = true;
+            break;
+        }
+    }
+    assert!(
+        entered_select,
+        "Select mode did not arrive after 16 visual updates"
+    );
+    let selection_base = frame.clone();
+    let previous_cursor = frame.editor.status.cursor;
+    client
+        .send(&ClientRequest::Input {
+            presented_frame: Some(frame.id),
+            event: InputEvent::Key(KeyStroke::char('j')).into(),
+            repeated: false,
+        })
+        .await
+        .unwrap();
+    let mut extended = false;
+    for _ in 0..16 {
+        let selection = receive_response(&mut client, "extending the selection").await;
+        let was_editor_damage = matches!(&selection, HostResponse::EditorDamage { .. });
+        match selection {
+            HostResponse::Frame { frame: next } => frame = *next,
+            HostResponse::EditorDamage { damage } => {
+                assert!(damage.apply(&mut frame));
+                if frame.editor.status.cursor != previous_cursor {
+                    assert!(damage.panes.iter().any(|pane| !pane.rows.is_empty()));
+                }
+            }
+            _ => panic!("unexpected selection visual"),
+        }
+        if frame.editor.status.cursor != previous_cursor {
+            assert!(
+                was_editor_damage,
+                "extending selection used a full frame; delta candidate: {}, mode: {:?}->{:?}, overlays: {}->{}, scroll: {}->{}",
+                runyte::protocol::EditorDamageFrame::between(&selection_base, &frame).is_some(),
+                selection_base.editor.mode,
+                frame.editor.mode,
+                selection_base.overlays.len(),
+                frame.overlays.len(),
+                selection_base.editor.panes[0].scroll_row,
+                frame.editor.panes[0].scroll_row
+            );
+            extended = true;
+            break;
+        }
+    }
+    assert!(extended, "selection did not extend after 16 visual updates");
+    if width == 120 {
+        client
+            .send(&ClientRequest::Input {
+                presented_frame: Some(frame.id),
+                event: InputEvent::Key(KeyStroke::char('G')).into(),
+                repeated: false,
+            })
+            .await
+            .unwrap();
+        let mut scrolled = false;
+        for _ in 0..16 {
+            let visual = receive_response(&mut client, "scrolling beyond the viewport").await;
+            let was_full = matches!(&visual, HostResponse::Frame { .. });
+            match visual {
+                HostResponse::Frame { frame: next } => frame = *next,
+                HostResponse::EditorDamage { damage } => assert!(damage.apply(&mut frame)),
+                _ => panic!("unexpected scroll visual"),
+            }
+            if frame.editor.panes.iter().any(|pane| pane.scroll_row > 0) {
+                assert!(was_full, "scrolling must publish a complete frame");
+                scrolled = true;
+                break;
+            }
+        }
+        assert!(
+            scrolled,
+            "file-end movement did not scroll after 16 visual updates"
+        );
+        let mut resized = geometry;
+        resized.screen.width += 1;
+        resized.editor.width += 1;
+        resized.status.width += 1;
+        resized.message.width += 1;
+        client
+            .send(&ClientRequest::Resize {
+                geometry: resized.into(),
+            })
+            .await
+            .unwrap();
+        let mut resized_seen = false;
+        for _ in 0..16 {
+            let visual = receive_response(&mut client, "resizing the attachment").await;
+            let was_full = matches!(&visual, HostResponse::Frame { .. });
+            match visual {
+                HostResponse::Frame { frame: next } => frame = *next,
+                HostResponse::EditorDamage { damage } => assert!(damage.apply(&mut frame)),
+                _ => panic!("unexpected resize visual"),
+            }
+            if frame.editor.geometry.screen.width == resized.screen.width {
+                assert!(was_full, "geometry change must publish a complete frame");
+                resized_seen = true;
+                break;
+            }
+        }
+        assert!(
+            resized_seen,
+            "geometry change did not arrive after 16 visual updates"
+        );
+    }
+    eprintln!(
+        "persistent cursor {width}x{height}: {:?} (wire delta bytes, full bytes, input-to-TestBackend-render)",
+        measurements
+    );
+    client.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(client);
+    let mut attached = LocalClient::connect(&endpoint, geometry, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut attached).await,
+        HostResponse::Welcome { .. }
+    ));
+    assert!(matches!(
+        response(&mut attached).await,
+        HostResponse::Frame { .. }
+    ));
+    attached.send(&ClientRequest::Shutdown).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut attached).await,
+        HostResponse::ShuttingDown
+    ));
+    let _ = host.0.take().unwrap().wait();
+    fs::remove_dir_all(root).unwrap();
 }
 
 /// What the operating system says about a process that has not exited.
@@ -1511,6 +1828,11 @@ async fn wait_for_git_command(
         match response {
             HostResponse::Frame { frame: next } => frame = *next,
             HostResponse::TerminalDamage { damage } => {
+                if !damage.apply(&mut frame) {
+                    frame = resynchronized_frame(interactive, waiting_for).await;
+                }
+            }
+            HostResponse::EditorDamage { damage } => {
                 if !damage.apply(&mut frame) {
                     frame = resynchronized_frame(interactive, waiting_for).await;
                 }

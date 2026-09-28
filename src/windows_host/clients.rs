@@ -86,6 +86,7 @@ struct Peer {
     directory_handoff: bool,
     geometry: Option<FrameGeometry>,
     pending_ready_frames: Option<(runyte::protocol::FrameId, runyte::protocol::FrameId)>,
+    last_frame: Option<runyte::protocol::HostFrame>,
     renaming: bool,
     parent_attaching: bool,
     deferred: Option<Incoming>,
@@ -180,6 +181,7 @@ impl Clients {
                     directory_handoff,
                     geometry: interactive.then_some(geometry),
                     pending_ready_frames: None,
+                    last_frame: None,
                     renaming: false,
                     parent_attaching: false,
                     deferred: None,
@@ -603,15 +605,37 @@ impl Clients {
             .prepare_frame_with_hints(geometry, Some(&self.hints))
             .into();
         let frame_id = frame.id;
-        // Complete frames can replace an unseen visual response without a
-        // delta base. The transport keeps exactly one coalesced visual slot.
         let Some(peer) = self.peers.get_mut(&id) else {
             return;
         };
-        match peer.responses.try_send(HostResponse::Frame {
-            frame: Box::new(frame),
-        }) {
+        let response = if peer.responses.visual_pending() {
+            HostResponse::Frame {
+                frame: Box::new(frame.clone()),
+            }
+        } else if let Some(damage) = peer
+            .last_frame
+            .as_ref()
+            .and_then(|base| runyte::protocol::EditorDamageFrame::between(base, &frame))
+        {
+            HostResponse::EditorDamage {
+                damage: Box::new(damage),
+            }
+        } else if let Some(damage) = peer
+            .last_frame
+            .as_ref()
+            .and_then(|base| runyte::protocol::TerminalDamageFrame::between(base, &frame))
+        {
+            HostResponse::TerminalDamage {
+                damage: Box::new(damage),
+            }
+        } else {
+            HostResponse::Frame {
+                frame: Box::new(frame.clone()),
+            }
+        };
+        match peer.responses.try_send(response) {
             Ok(()) => {
+                peer.last_frame = Some(frame);
                 if self.active_ready != Some(id) {
                     peer.pending_ready_frames = Some(match peer.pending_ready_frames {
                         Some((first, _)) => (first, frame_id),
@@ -860,6 +884,9 @@ impl Clients {
                 false
             }
             ClientRequest::Resynchronize if interactive => {
+                if let Some(peer) = self.peers.get_mut(&id) {
+                    peer.last_frame = None;
+                }
                 self.publish_requested = true;
                 false
             }

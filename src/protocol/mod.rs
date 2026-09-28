@@ -14,7 +14,8 @@ mod frame;
 mod input;
 
 pub use frame::{
-    EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow, TerminalDamageFrame,
+    EditorDamageFrame, EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow,
+    TerminalDamageFrame,
 };
 pub use input::{FrameGeometry, InputEvent, PointerEvent, Rect};
 
@@ -187,7 +188,8 @@ use crate::workspace::{
 // peers cannot deserialize the theme or render the same destination rows.
 // Version 62 combines those destination rows with live terminal cell previews
 // in picker overlays; version 61 peers cannot decode the new preview variant.
-pub const VERSION: u32 = 62;
+// Version 63 adds editor-row damage for persistent-session presentation.
+pub const VERSION: u32 = 63;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1064,6 +1066,9 @@ pub enum HostResponse {
     TerminalDamage {
         damage: Box<TerminalDamageFrame>,
     },
+    EditorDamage {
+        damage: Box<EditorDamageFrame>,
+    },
     Detached {
         /// Where `:quit-here` asked the invoking shell to go, when this response
         /// came from that command. The client owns the file a shell wrapper
@@ -1470,7 +1475,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 62);
+        assert_eq!(VERSION, 63);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
