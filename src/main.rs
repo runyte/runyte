@@ -1828,8 +1828,6 @@ async fn run(
     // Standalone mode uses the same owner and command/event boundary that a
     // persistent process will host. No transport or daemon is required.
     let mut app = WorkspaceHost::new(app);
-    #[cfg(debug_assertions)]
-    let mut input_trace = open_input_trace()?;
 
     if arguments.mode == LaunchMode::Serve {
         #[cfg(unix)]
@@ -1854,6 +1852,10 @@ async fn run(
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
 
+    // The persistent host opens its own trace, so only a standalone editor
+    // reaches this one.
+    #[cfg(debug_assertions)]
+    let mut input_trace = open_input_trace()?;
     // The standalone resources were acquired before editor construction. Move
     // them into the interactive loop now that the persistent-host branch has
     // returned.
@@ -2462,6 +2464,8 @@ async fn run_host_server(
     supervising_parent: Option<HostSupervisor>,
 ) -> Result<()> {
     let mut termination = TerminationSignals::new()?;
+    #[cfg(debug_assertions)]
+    let mut input_trace = open_input_trace()?;
     host.enable_persistent_session();
     let mut server = LocalServer::bind(&endpoint).await?;
     host.app_mut()
@@ -2746,12 +2750,41 @@ async fn run_host_server(
                             match request {
                             ClientRequest::Input { event, repeated, presented_frame } => {
                                 if !repeated && let Some(frame) = presented_frame { host.context_frame_presented(frame.into()); }
-                                dispatch_host_key_or_text(
+                                let input: InputEvent = event.into();
+                                #[cfg(debug_assertions)]
+                                let sensitive_input = host.app().plugin_input_active();
+                                #[cfg(debug_assertions)]
+                                let phase = format!(
+                                    "host connection={id} presented={:?}",
+                                    presented_frame.map(|frame| frame.get())
+                                );
+                                #[cfg(debug_assertions)]
+                                trace_input(
+                                    input_trace.as_mut(),
+                                    &format!("{phase} before"),
+                                    host.app(),
+                                    &input,
+                                    sensitive_input,
+                                    repeated,
+                                    None,
+                                )?;
+                                #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+                                let hint_result = dispatch_host_key_or_text(
                                     &mut host,
                                     &mut key_hints,
-                                    event.into(),
+                                    input.clone(),
                                     repeated,
                                 );
+                                #[cfg(debug_assertions)]
+                                trace_input(
+                                    input_trace.as_mut(),
+                                    &format!("{phase} after"),
+                                    host.app(),
+                                    &input,
+                                    sensitive_input,
+                                    repeated,
+                                    Some(hint_result),
+                                )?;
                                 host.reconcile_wait_requests();
                                 changed = true;
                             }
@@ -3328,10 +3361,10 @@ fn dispatch_host_key_or_text(
     key_hints: &mut KeyHintState,
     input: InputEvent,
     repeated: bool,
-) {
+) -> HintEventResult {
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
-        return;
+        return hint_result;
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, repeated);
     for _ in 0..dispatches {
@@ -3341,6 +3374,7 @@ fn dispatch_host_key_or_text(
             break;
         }
     }
+    hint_result
 }
 
 #[cfg(windows)]
@@ -3716,7 +3750,7 @@ async fn run_workspace_switcher(
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
-    let mut terminal_events = AttachedTerminalEvents::stream();
+    let mut terminal_events = AttachedTerminalEvents::stream()?;
     let mut current = endpoint;
     let mut previous: Option<LocalEndpoint> = None;
     let mut notice: Option<String> = None;
@@ -4152,15 +4186,64 @@ async fn attach_for_wait(
 /// lifecycle executor, and the dedicated wait process exits immediately after
 /// releasing its request.
 #[cfg(unix)]
-enum AttachedTerminalEvents {
+struct AttachedTerminalEvents {
+    source: AttachedEventSource,
+    /// The opt-in development trace of what this client sent to its host. It
+    /// lives here because this value, unlike any one attachment, spans every
+    /// workspace the client visits.
+    #[cfg(debug_assertions)]
+    trace: Option<fs::File>,
+}
+
+#[cfg(unix)]
+enum AttachedEventSource {
     Stream(EventStream),
     Isolated(tokio::sync::mpsc::UnboundedReceiver<io::Result<CrosstermEvent>>),
 }
 
 #[cfg(unix)]
 impl AttachedTerminalEvents {
-    fn stream() -> Self {
-        Self::Stream(EventStream::new())
+    fn new(source: AttachedEventSource) -> Result<Self> {
+        Ok(Self {
+            source,
+            #[cfg(debug_assertions)]
+            trace: open_input_trace()?,
+        })
+    }
+
+    fn stream() -> Result<Self> {
+        Self::new(AttachedEventSource::Stream(EventStream::new()))
+    }
+
+    /// Records one input as it leaves for the host.
+    ///
+    /// Whether a character key belongs to a plugin's private input is the
+    /// host's knowledge, not the client's, so every character is redacted
+    /// here. What the host did with it is in the host's own trace.
+    #[cfg(debug_assertions)]
+    fn trace_sent(
+        &mut self,
+        input: &InputEvent,
+        repeated: bool,
+        presented: runyte::protocol::FrameId,
+    ) -> Result<()> {
+        let Some(trace) = self.trace.as_mut() else {
+            return Ok(());
+        };
+        let input = match input {
+            InputEvent::Key(KeyStroke {
+                code: runyte::input::KeyCode::Char(_),
+                modifiers,
+            }) => format!("Key(<character> {modifiers:?})"),
+            input => format!("{input:?}"),
+        };
+        writeln!(
+            trace,
+            "client sent input={input} repeated={repeated} presented={}",
+            presented.get()
+        )
+        .context("failed to write RUNYTE_INPUT_TRACE")?;
+        trace.flush().context("failed to flush RUNYTE_INPUT_TRACE")
     }
 
     fn isolated_wait_reader() -> Result<Self> {
@@ -4177,13 +4260,13 @@ impl AttachedTerminalEvents {
                 }
             })
             .context("failed to start wait terminal input reader")?;
-        Ok(Self::Isolated(receiver))
+        Self::new(AttachedEventSource::Isolated(receiver))
     }
 
     async fn next(&mut self) -> Option<io::Result<CrosstermEvent>> {
-        match self {
-            Self::Stream(stream) => stream.next().await,
-            Self::Isolated(receiver) => receiver.recv().await,
+        match &mut self.source {
+            AttachedEventSource::Stream(stream) => stream.next().await,
+            AttachedEventSource::Isolated(receiver) => receiver.recv().await,
         }
     }
 }
@@ -4500,6 +4583,8 @@ async fn run_attached(
                         if let Some(batch) = pointer_batcher.take() {
                             client.send(&batch.request()).await?;
                         }
+                        #[cfg(debug_assertions)]
+                        terminal_events.trace_sent(&event, repeated, current_frame.id.into())?;
                         client
                             .send(&ClientRequest::Input {
                                 event: event.into(),

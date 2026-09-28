@@ -235,6 +235,10 @@ impl Pty {
         command.env_remove("TERM_PROGRAM");
         command.env_remove("TERM_PROGRAM_VERSION");
         command.env_remove(crate::workspace::parent::ENVIRONMENT);
+        // The development input trace names a file this editor owns. A Runyte
+        // started inside the terminal would open the same path and truncate
+        // the record of the input that reached it.
+        command.env_remove("RUNYTE_INPUT_TRACE");
         if let Some(context) = parent_context {
             command.env(crate::workspace::parent::ENVIRONMENT, context);
             for name in ["EDITOR", "VISUAL"] {

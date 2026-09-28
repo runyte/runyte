@@ -1721,6 +1721,15 @@ async fn wait_for_interactive_attachment(
 }
 
 async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) {
+    wait_for_terminal_screen_or_report(output, needle, String::new).await;
+}
+
+/// Waits like [`wait_for_terminal_screen`], adding `report` to a failure.
+async fn wait_for_terminal_screen_or_report(
+    output: &SharedTerminalCapture,
+    needle: &str,
+    report: impl Fn() -> String,
+) {
     let deadline = Instant::now() + ASYNC_STATE_TIMEOUT;
     loop {
         let screen = output.screen_text();
@@ -1730,10 +1739,68 @@ async fn wait_for_terminal_screen(output: &SharedTerminalCapture, needle: &str) 
         assert!(
             Instant::now() < deadline,
             "terminal screen did not contain {needle:?} after {ASYNC_STATE_TIMEOUT:?}; \
-             last screen: {screen:?}; raw output: {:?}",
+             last screen: {screen:?}; raw output: {:?}{}",
             output.raw_text(),
+            report(),
         );
         tokio::time::sleep(ASYNC_STATE_POLL_INTERVAL).await;
+    }
+}
+
+/// Development input traces kept beside, not inside, a fixture's projects,
+/// so they cannot show up as untracked files in either workspace.
+///
+/// The client records what it sent and each host records what it received
+/// and what dispatch left behind, which together say where a lost keystroke
+/// stopped. They exist only in debug builds, as the tests are.
+struct InputTraces {
+    directory: PathBuf,
+}
+
+impl InputTraces {
+    fn beside(project: &Path) -> Self {
+        let mut name = project.file_name().unwrap().to_owned();
+        name.push("-input-traces");
+        let directory = project.with_file_name(name);
+        fs::create_dir_all(&directory).unwrap();
+        Self { directory }
+    }
+
+    fn path(&self, owner: &str) -> PathBuf {
+        self.directory.join(format!("{owner}.trace"))
+    }
+
+    /// The tail of every trace, bounded so a long session cannot bury the
+    /// failure it is attached to.
+    fn report(&self) -> String {
+        const TAIL_LINES: usize = 60;
+        let mut owners: Vec<_> = fs::read_dir(&self.directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        owners.sort();
+        let mut report = String::new();
+        for path in owners {
+            let text = fs::read_to_string(&path).unwrap_or_else(|error| format!("<{error}>"));
+            let lines: Vec<_> = text.lines().collect();
+            let tail = &lines[lines.len().saturating_sub(TAIL_LINES)..];
+            report.push_str(&format!(
+                "\n--- {} (last {} of {} lines) ---\n{}",
+                path.file_name().unwrap().to_string_lossy(),
+                tail.len(),
+                lines.len(),
+                tail.join("\n"),
+            ));
+        }
+        report
+    }
+}
+
+impl Drop for InputTraces {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 
@@ -1883,8 +1950,22 @@ async fn start_host_opening(
     endpoint: &LocalEndpoint,
     target: Option<&str>,
 ) -> Option<ChildGuard> {
+    start_traced_host_opening(root, endpoint, target, None).await
+}
+
+/// Starts a host that records every input it receives and what its dispatch
+/// left behind, for a test whose failure has to say where a keystroke went.
+async fn start_traced_host_opening(
+    root: &Path,
+    endpoint: &LocalEndpoint,
+    target: Option<&str>,
+    input_trace: Option<&Path>,
+) -> Option<ChildGuard> {
     let mut command = bundled_runyte();
     command.arg("--serve");
+    if let Some(trace) = input_trace {
+        command.env("RUNYTE_INPUT_TRACE", trace);
+    }
     if let Some(target) = target {
         command.arg(target);
     }
@@ -5546,15 +5627,22 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let Some(mut source_host) =
-        start_host_opening(&root, &source_endpoint, Some("source-ready.txt")).await
+    let traces = InputTraces::beside(&root);
+    let Some(mut source_host) = start_traced_host_opening(
+        &root,
+        &source_endpoint,
+        Some("source-ready.txt"),
+        Some(&traces.path("source-host")),
+    )
+    .await
     else {
         return;
     };
-    let Some(mut destination_host) = start_host_opening(
+    let Some(mut destination_host) = start_traced_host_opening(
         &destination,
         &destination_endpoint,
         Some("destination-ready.txt"),
+        Some(&traces.path("destination-host")),
     )
     .await
     else {
@@ -5567,7 +5655,8 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
             .arg("--persistent")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
-            .env("XDG_CACHE_HOME", test_cache_dir()),
+            .env("XDG_CACHE_HOME", test_cache_dir())
+            .env("RUNYTE_INPUT_TRACE", traces.path("client")),
     );
     let mut switcher = ChildGuard(Some(switcher));
     let client_pid = switcher.0.as_ref().unwrap().id();
@@ -5629,7 +5718,7 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
     wait_for_terminal_screen(&output, "PARENT_SHELL_RETURNED").await;
     std::io::Write::write_all(&mut terminal, b"same-shell\r").unwrap();
     std::io::Write::flush(&mut terminal).unwrap();
-    wait_for_terminal_screen(&output, "parent-echo:same-shell").await;
+    wait_for_terminal_screen_or_report(&output, "parent-echo:same-shell", || traces.report()).await;
     assert_eq!(switcher.0.as_ref().unwrap().id(), client_pid);
     source.send(&ClientRequest::Health).await.unwrap();
     assert!(matches!(
