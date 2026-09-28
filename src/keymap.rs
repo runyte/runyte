@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     sync::{Arc, LazyLock},
 };
@@ -588,12 +588,19 @@ impl std::error::Error for DuplicateBinding {}
 #[derive(Clone, Debug)]
 pub struct Keymap {
     bindings: Vec<Binding>,
+    lookup_index: Arc<HashMap<(Mode, BindingScope), HashMap<KeySequence, IndexedLookup>>>,
     fast_pane_keys: bool,
     namespaces: Vec<BindingNamespace>,
     context_actions: Vec<ContextAction>,
     leader: KeyStroke,
     window: KeyStroke,
     default_spellings: HashMap<KeySequence, KeySequence>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct IndexedLookup {
+    exact: Option<usize>,
+    continuations: Vec<usize>,
 }
 
 impl Default for Keymap {
@@ -616,6 +623,7 @@ impl Keymap {
     pub(crate) fn with_test_bindings(&self, bindings: Vec<Binding>) -> Self {
         let mut keymap = self.clone();
         keymap.bindings = bindings;
+        keymap.rebuild_lookup_index();
         keymap
     }
 
@@ -684,6 +692,7 @@ impl Keymap {
                 .map(|v| v.message.as_str())
                 .unwrap_or_default()
         );
+        candidate.rebuild_lookup_index();
         Ok(candidate)
     }
 
@@ -705,6 +714,7 @@ impl Keymap {
         }
         let mut keymap = Self {
             bindings,
+            lookup_index: Arc::new(HashMap::new()),
             fast_pane_keys: false,
             namespaces: Vec::new(),
             context_actions: Vec::new(),
@@ -713,7 +723,88 @@ impl Keymap {
             default_spellings: HashMap::new(),
         };
         keymap.record_identity_spellings();
+        keymap.rebuild_lookup_index();
         Ok(keymap)
+    }
+
+    fn rebuild_lookup_index(&mut self) {
+        // Keep positions into the binding registry so cloned maps can update
+        // descriptions without leaving lookup, help, and hints out of sync.
+        let mut scopes = vec![BindingScope::Global];
+        for binding in &self.bindings {
+            if !scopes.contains(&binding.scope) {
+                scopes.push(binding.scope);
+            }
+        }
+
+        let mut index = HashMap::new();
+        for mode in [
+            Mode::Normal,
+            Mode::Insert,
+            Mode::Replace,
+            Mode::Select,
+            Mode::Command,
+            Mode::List,
+        ] {
+            for &scope in &scopes {
+                if scope != BindingScope::Global
+                    && !self
+                        .bindings
+                        .iter()
+                        .any(|binding| binding.scope == scope && binding.is_active_in(mode))
+                {
+                    continue;
+                }
+                let mut scoped = self
+                    .bindings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, binding)| {
+                        scope != BindingScope::Global
+                            && binding.is_active_in(mode)
+                            && scope_includes(scope, binding.scope)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                // Stable role order matches bindings_for_scope, with scoped
+                // bindings first and same-sequence globals hidden.
+                scoped.sort_by_key(|&index| self.bindings[index].role);
+                let shadowed = scoped
+                    .iter()
+                    .map(|&index| &self.bindings[index].sequence)
+                    .collect::<HashSet<_>>();
+                let mut global = self
+                    .bindings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, binding)| {
+                        binding.is_active_in(mode)
+                            && binding.scope == BindingScope::Global
+                            && !shadowed.contains(&binding.sequence)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                global.sort_by_key(|&index| self.bindings[index].role);
+
+                let mut sequences: HashMap<KeySequence, IndexedLookup> = HashMap::new();
+                for binding_index in scoped.into_iter().chain(global) {
+                    let binding = &self.bindings[binding_index];
+                    for prefix_len in 0..binding.sequence.len() {
+                        sequences
+                            .entry(KeySequence(
+                                binding.sequence.as_slice()[..prefix_len].to_vec(),
+                            ))
+                            .or_default()
+                            .continuations
+                            .push(binding_index);
+                    }
+                    sequences.entry(binding.sequence.clone()).or_default().exact =
+                        Some(binding_index);
+                }
+                index.insert((mode, scope), sequences);
+            }
+        }
+        self.lookup_index = Arc::new(index);
     }
 
     pub fn with_namespaces(
@@ -988,15 +1079,21 @@ impl Keymap {
     }
 
     pub fn lookup_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> Lookup<'_> {
-        let mut exact = None;
-        let mut continuations = Vec::new();
-        for binding in self.bindings_for_scope(mode, scope) {
-            if binding.sequence == *sequence {
-                exact = Some(binding);
-            } else if binding.sequence.starts_with(sequence) {
-                continuations.push(binding);
-            }
-        }
+        // Scopes without bindings in this mode inherit the global index.
+        let Some(entry) = self
+            .lookup_index
+            .get(&(mode, scope))
+            .or_else(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+            .and_then(|sequences| sequences.get(sequence))
+        else {
+            return Lookup::NoMatch;
+        };
+        let exact = entry.exact.map(|index| &self.bindings[index]);
+        let continuations = entry
+            .continuations
+            .iter()
+            .map(|&index| &self.bindings[index])
+            .collect::<Vec<_>>();
         match (exact, continuations.is_empty()) {
             (None, true) => Lookup::NoMatch,
             (None, false) => Lookup::Prefix(continuations),
@@ -2653,6 +2750,146 @@ pub fn keymap_for(fast_pane_keys: bool) -> Arc<Keymap> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn effective_lookup<'a>(bindings: &[&'a Binding], sequence: &KeySequence) -> Lookup<'a> {
+        let mut exact = None;
+        let mut continuations = Vec::new();
+        for &binding in bindings {
+            if binding.sequence == *sequence {
+                exact = Some(binding);
+            } else if binding.sequence.starts_with(sequence) {
+                continuations.push(binding);
+            }
+        }
+        match (exact, continuations.is_empty()) {
+            (None, true) => Lookup::NoMatch,
+            (None, false) => Lookup::Prefix(continuations),
+            (Some(exact), true) => Lookup::Exact(exact),
+            (Some(exact), false) => Lookup::ExactAndPrefix {
+                exact,
+                continuations,
+            },
+        }
+    }
+
+    fn assert_index_matches_effective_bindings(keymap: &Keymap, extra_scopes: &[BindingScope]) {
+        let mut scopes = BindingScope::ALL.to_vec();
+        scopes.extend_from_slice(extra_scopes);
+        let mut sequences = vec![KeySequence::default(), KeySequence::from(Key::char('!'))];
+        for binding in keymap.bindings() {
+            for len in 1..=binding.sequence.len() {
+                sequences.push(KeySequence(binding.sequence.as_slice()[..len].to_vec()));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        sequences.retain(|sequence| seen.insert(sequence.clone()));
+        for mode in [
+            Mode::Normal,
+            Mode::Insert,
+            Mode::Replace,
+            Mode::Select,
+            Mode::Command,
+            Mode::List,
+        ] {
+            for &scope in &scopes {
+                let effective = keymap.bindings_for_scope(mode, scope).collect::<Vec<_>>();
+                for sequence in &sequences {
+                    assert_eq!(
+                        keymap.lookup_in(mode, scope, sequence),
+                        effective_lookup(&effective, sequence),
+                        "{mode:?} {scope:?} {sequence}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_lookup_matches_effective_bindings_across_registry_changes() {
+        assert_index_matches_effective_bindings(default_keymap(), &[]);
+        assert_index_matches_effective_bindings(&keymap_for(true), &[]);
+
+        let section: serde_yaml::Value = serde_yaml::from_str(
+            "leader: Ctrl-x\nrebind:\n  Space g: Leader G\n  Space e: Space\n",
+        )
+        .unwrap();
+        let compiled = configured::compile(&section, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        assert_index_matches_effective_bindings(&compiled.keymap, &[]);
+
+        let invalid: serde_yaml::Value =
+            serde_yaml::from_str("rebind:\n  Space e: Space\n  Space g: Space\n").unwrap();
+        let rolled_back = configured::compile(&invalid, default_keymap());
+        assert!(!rolled_back.errors.is_empty());
+        assert_index_matches_effective_bindings(&rolled_back.keymap, &[]);
+
+        let plugin = |sequence: &str, id, scope| {
+            Binding::implemented_in(
+                MODAL,
+                scope,
+                KeySequence::parse(sequence).unwrap(),
+                BindingTarget::Plugin(id),
+            )
+        };
+        let scoped = BindingScope::Plugin(7);
+        let first = default_keymap()
+            .with_plugin_bindings(vec![
+                plugin("Space = a", 1, BindingScope::Global),
+                plugin("F12", 2, scoped),
+            ])
+            .unwrap();
+        assert_index_matches_effective_bindings(&first, &[scoped, BindingScope::Plugin(8)]);
+        let replaced = first
+            .with_plugin_bindings(vec![plugin("Space = b", 3, BindingScope::Global)])
+            .unwrap();
+        assert_index_matches_effective_bindings(&replaced, &[scoped]);
+        assert!(matches!(
+            replaced.lookup(Mode::Normal, &KeySequence::parse("Space = a").unwrap()),
+            Lookup::NoMatch
+        ));
+    }
+
+    #[test]
+    fn indexed_lookup_preserves_ambiguity_role_order_and_scoped_shadowing() {
+        let bindings = vec![
+            Binding::implemented(MODAL, [Key::char('a')], EditorCommand::MoveFileStart)
+                .with_role(BindingRole::Fast),
+            Binding::implemented(
+                MODAL,
+                [Key::char('a'), Key::char('b')],
+                EditorCommand::MoveFileEnd,
+            )
+            .with_role(BindingRole::Compatibility),
+            Binding::implemented_in(
+                MODAL,
+                BindingScope::Markdown,
+                [Key::char('a')],
+                EditorCommand::ToggleMarkdownRender,
+            ),
+            Binding::implemented_in(
+                MODAL,
+                BindingScope::Markdown,
+                [Key::char('a'), Key::char('c')],
+                EditorCommand::MoveFileStart,
+            ),
+        ];
+        let keymap = Keymap::new(bindings).unwrap();
+        assert_index_matches_effective_bindings(&keymap, &[]);
+        let Lookup::ExactAndPrefix {
+            exact,
+            continuations,
+        } = keymap.lookup_in(
+            Mode::Normal,
+            BindingScope::Markdown,
+            &KeySequence::from(Key::char('a')),
+        )
+        else {
+            panic!("expected a scoped exact binding and two continuations");
+        };
+        assert_eq!(exact.scope, BindingScope::Markdown);
+        assert_eq!(continuations[0].scope, BindingScope::Markdown);
+        assert_eq!(continuations[1].scope, BindingScope::Global);
+    }
 
     #[test]
     fn indent_command_names_are_not_key_config_rebinding_aliases() {
