@@ -39,6 +39,17 @@ fn highlighted(editor: &mut HeadlessEditor) -> bool {
     })
 }
 
+fn pending_comment_highlighted(editor: &mut HeadlessEditor) -> bool {
+    editor.snapshot(100, 20).panes.iter().any(|pane| {
+        pane.rows.iter().any(|row| {
+            matches!(row, SnapshotRow::Text(row) if row.runs.iter().any(|run| {
+                run.text.contains("pending")
+                    && matches!(run.kind, TextRunKind::Text { scope: Some(scope), .. } if scope.name() == "comment")
+            }))
+        })
+    })
+}
+
 fn rust_editor(label: &str) -> (TempDir, HeadlessEditor) {
     let root = TempDir::new(label);
     let path = root.0.join("sample.rs");
@@ -73,6 +84,7 @@ async fn stale_tree_exposes_translated_spans_but_no_structure_until_drain() {
         highlighted(&mut editor),
         "translated spans should keep colours visible while parsing"
     );
+    assert!(!pending_comment_highlighted(&mut editor));
 
     let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
@@ -87,6 +99,11 @@ async fn stale_tree_exposes_translated_spans_but_no_structure_until_drain() {
     assert!(editor.apply_syntax_event(event));
     assert!(!editor.has_pending_syntax());
     assert!(editor.active_outline().unwrap().is_some());
+    assert!(
+        highlighted(&mut editor),
+        "published syntax must replace the cached stale spans"
+    );
+    assert!(pending_comment_highlighted(&mut editor));
 }
 
 #[tokio::test(flavor = "multi_thread")]
