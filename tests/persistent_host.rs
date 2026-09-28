@@ -825,10 +825,14 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
         KeyStroke::new(KeyCode::Char('i'), Modifiers::NONE),
     )
     .await;
-    let mut edited = send_input(&mut first, InputEvent::Text("word word ".to_owned())).await;
-    while !frame_text(&edited).contains("word word base") {
-        edited = response(&mut first).await;
-    }
+    let edited = send_input(&mut first, InputEvent::Text("word word ".to_owned())).await;
+    wait_for_editor_frame(
+        &mut first,
+        edited,
+        "inserting text before detach",
+        |frame| editor_frame_text(frame).contains("word word base"),
+    )
+    .await;
     let _ = send_input(&mut first, KeyStroke::new(KeyCode::Escape, Modifiers::NONE)).await;
     let _ = send_input(&mut first, KeyStroke::plain(KeyCode::Char('b'))).await;
     first
@@ -864,10 +868,14 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
         HostResponse::Welcome { pid, .. } if pid == host_pid
     ));
     let _ = response(&mut after_disconnect).await;
-    let mut pasted = send_input(&mut after_disconnect, KeyStroke::plain(KeyCode::Char('p'))).await;
-    while frame_text(&pasted).matches("word").count() < 4 {
-        pasted = response(&mut after_disconnect).await;
-    }
+    let pasted = send_input(&mut after_disconnect, KeyStroke::plain(KeyCode::Char('p'))).await;
+    wait_for_editor_frame(
+        &mut after_disconnect,
+        pasted,
+        "pasting the yank after reconnecting",
+        |frame| editor_frame_text(frame).matches("word").count() >= 4,
+    )
+    .await;
     assert_eq!(
         detach(&mut after_disconnect, "detaching the reconnected client").await,
         None
