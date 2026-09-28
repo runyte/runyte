@@ -2367,6 +2367,85 @@ impl App {
         }
     }
 
+    /// Joins the rows each selection touches with a single space, the way Vim's
+    /// and Helix's `J` do.
+    ///
+    /// Unlike `join_selections`, a selection that touches one row — a bare
+    /// caret included — pulls up the row below it, because that is what `J` is
+    /// pressed for. The rows a selection touches are read as `join_selections`
+    /// reads its span, so the two commands agree on which breaks a multi-row
+    /// selection covers. Joining whole rows rather than the span itself changes
+    /// nothing in the result, since only the whitespace against a removed break
+    /// is touched; it is what lets overlapping row runs from several cursors be
+    /// merged into one change instead of conflicting.
+    ///
+    /// The empty row after a final line terminator is not a row to pull up:
+    /// joining it would take the file's last newline away.
+    pub(super) fn join_lines(&mut self) {
+        let buffer = self.active_buffer();
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
+        let last_row = buffer.last_row();
+        let last_joinable_row = if last_row > 0 && buffer.line_len(last_row) == 0 {
+            last_row - 1
+        } else {
+            last_row
+        };
+        let mut runs: Vec<(usize, usize)> = self
+            .active()
+            .selection
+            .ranges()
+            .iter()
+            .zip(self.operative_spans())
+            .filter_map(|(range, (from, to))| {
+                let (first, last) = if range.is_empty() {
+                    let row = buffer.offset_to_row(range.head);
+                    (row, row)
+                } else {
+                    let to = if half_open {
+                        without_trailing_line_terminator(buffer, from, to)
+                    } else {
+                        to
+                    };
+                    let last = buffer.offset_to_row(to).min(last_joinable_row);
+                    (buffer.offset_to_row(from), last)
+                };
+                if first < last {
+                    Some((first, last))
+                } else {
+                    (first < last_joinable_row).then_some((first, first + 1))
+                }
+            })
+            .collect();
+        runs.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+        for (first, last) in runs {
+            match merged.last_mut() {
+                Some((_, previous_last)) if first <= *previous_last => {
+                    *previous_last = (*previous_last).max(last);
+                }
+                _ => merged.push((first, last)),
+            }
+        }
+        let changes = merged
+            .into_iter()
+            .filter_map(|(first, last)| {
+                let from = buffer.line_to_offset(first);
+                let to = buffer.line_to_offset(last) + buffer.line_len(last);
+                let original = buffer.slice(from, to);
+                let joined = crate::wrap::join_lines_with_space(&original);
+                (joined != original).then(|| Change::new(from, to, joined))
+            })
+            .collect();
+        if self.edit(Transaction::new(changes)) {
+            self.status("joined the lines");
+        } else {
+            self.status("no line below to join");
+        }
+    }
+
     /// Aligns the columns of the table each selection covers.
     ///
     /// Alone among the selection-wide text transforms this widens each span to

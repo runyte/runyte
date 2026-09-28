@@ -493,6 +493,134 @@ fn space_p_j_joins_every_selection_as_one_transaction() {
     assert_eq!(text(&app), "alpha\nbravo\n\ncharlie\ndelta");
 }
 
+fn press_join(app: &mut App) {
+    key(app, KeyCode::Char('J'), Modifiers::SHIFT);
+}
+
+#[test]
+fn join_pulls_the_row_below_a_bare_caret_up_with_one_space() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(
+        &mut app,
+        "    let first = 1;  \n        let second = 2;\ntail\n",
+    );
+    set_cursor(&mut app, 0, 6);
+
+    press_join(&mut app);
+
+    assert_eq!(text(&app), "    let first = 1; let second = 2;\ntail\n");
+    assert_eq!(app.status, "joined the lines");
+    press(&mut app, 'u');
+    assert_eq!(
+        text(&app),
+        "    let first = 1;  \n        let second = 2;\ntail\n",
+        "the join is one undo step"
+    );
+}
+
+#[test]
+fn join_matches_space_p_j_with_a_space_over_a_multi_row_selection() {
+    let mut joined = App::new(Config::default(), None).unwrap();
+    seed(&mut joined, "alpha\nbravo\ncharlie\ndelta");
+    set_cursor(&mut joined, 0, 0);
+    for _ in 0..3 {
+        press(&mut joined, 'x');
+    }
+    press_join(&mut joined);
+
+    let mut prompted = App::new(Config::default(), None).unwrap();
+    seed(&mut prompted, "alpha\nbravo\ncharlie\ndelta");
+    set_cursor(&mut prompted, 0, 0);
+    for _ in 0..3 {
+        press(&mut prompted, 'x');
+    }
+    for character in [' ', 'p', 'j', ' '] {
+        press(&mut prompted, character);
+    }
+    key(&mut prompted, KeyCode::Enter, Modifiers::NONE);
+
+    // The row below the selection is not pulled up: only a selection that
+    // touches a single row reaches for the next one.
+    assert_eq!(text(&joined), "alpha bravo charlie\ndelta");
+    assert_eq!(text(&joined), text(&prompted));
+}
+
+#[test]
+fn join_puts_no_space_against_a_blank_row() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\n\nbeta");
+    set_cursor(&mut app, 0, 0);
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta");
+
+    let mut blank = App::new(Config::default(), None).unwrap();
+    seed(&mut blank, "alpha\n\n  beta");
+    set_cursor(&mut blank, 1, 0);
+    press_join(&mut blank);
+    assert_eq!(text(&blank), "alpha\nbeta");
+}
+
+#[test]
+fn join_keeps_the_final_line_terminator() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbeta\n");
+    set_cursor(&mut app, 1, 0);
+
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta\n");
+    assert_eq!(app.status, "no line below to join");
+
+    press(&mut app, '%');
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha beta\n");
+}
+
+#[test]
+fn join_merges_the_rows_of_neighbouring_cursors_into_one_change() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\ntwo\nthree\nfour\nfive\nsix");
+    let buffer = app.active_buffer();
+    let carets = [(0, 0), (0, 2), (1, 1), (4, 0)]
+        .map(|(row, col)| Range::point(buffer.offset_of(Position::new(row, col))));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(carets.to_vec(), 0);
+
+    press_join(&mut app);
+
+    // Two carets on one row, and one on the row they pull up, make a single
+    // run of three rows rather than conflicting changes.
+    assert_eq!(text(&app), "one two three\nfour\nfive six");
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "one\ntwo\nthree\nfour\nfive\nsix");
+}
+
+#[test]
+fn join_holds_back_the_terminator_of_a_half_open_selection() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\ncharlie\ndelta");
+    // A pointer drag from the first row to the start of the third ends at a
+    // row none of which is selected, so only the first two rows join.
+    let buffer = app.active_buffer();
+    let end = buffer.offset_of(Position::new(2, 0));
+    let pane = app.panes.get_mut(&0).unwrap();
+    pane.replace_selection(Selection::single(Range::new(0, end)));
+    pane.mark_selection_semantics(SelectionSemantics::HalfOpen);
+
+    press_join(&mut app);
+
+    assert_eq!(text(&app), "alpha bravo\ncharlie\ndelta");
+}
+
+#[test]
+fn join_is_refused_in_a_read_only_buffer() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbeta\n");
+    app.buffers[0].kind = crate::buffer::BufferKind::Help;
+    set_cursor(&mut app, 0, 0);
+    press_join(&mut app);
+    assert_eq!(text(&app), "alpha\nbeta\n");
+    assert!(app.status_error);
+}
+
 /// The table from the issue that asked for the command, formatted by
 /// selecting its rows and pressing the keys.
 #[test]

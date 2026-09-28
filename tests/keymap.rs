@@ -336,13 +336,16 @@ fn space_p_j_exposes_join_selections_in_normal_and_select_modes() {
         ));
     }
 
-    // Helix spends `J` on joining; Runyte leaves the letter unbound because the
-    // delimiter prompt is part of the command.
-    let helix = KeySequence::from([Key::char('J')]);
-    assert!(!matches!(
-        default_keymap().lookup(Mode::Normal, &helix),
-        Lookup::Exact(_)
-    ));
+    // `J` is the promptless join Vim and Helix spell that way, so it names a
+    // separate command rather than an alias that would open the prompt.
+    let promptless = KeySequence::from([Key::char('J')]);
+    for mode in [Mode::Normal, Mode::Select] {
+        assert!(matches!(
+            default_keymap().lookup(mode, &promptless),
+            Lookup::Exact(binding)
+                if binding.target == BindingTarget::Editor(EditorCommand::JoinLines)
+        ));
+    }
 }
 
 #[test]

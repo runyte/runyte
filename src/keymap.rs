@@ -1217,13 +1217,15 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('p'), Key::char('.')],
             Command::ToggleWhitespace,
         ),
-        // Joining is the inverse of `Space p w`, so it lives beside it rather
-        // than on Helix's `J`: the delimiter prompt is part of the command, and
-        // a bare letter cannot say that it is coming.
+        // Joining with a typed delimiter is the inverse of `Space p w`, so it
+        // lives beside it: the prompt is part of the command, and a bare letter
+        // cannot say that it is coming. `J` is the promptless join Vim and
+        // Helix both spell that way, with the space they both insert.
         primary_modal(
             [Key::char(' '), Key::char('p'), Key::char('j')],
             Command::JoinSelections,
         ),
+        modal(Key::char('J'), Command::JoinLines),
         // Table formatting is the third way of laying selected lines out, so it
         // joins wrapping and joining under `Space p` rather than opening a
         // namespace of its own for one command.

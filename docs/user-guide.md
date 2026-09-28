@@ -2016,6 +2016,7 @@ context; scoped explorer keys are documented under
 | `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
 | `>` / `<` | Indent / unindent |
+| `J` | Join the selected lines with a space, or pull the line below up to a single-line selection or caret |
 | `Ctrl-c` | Comment or uncomment every line the selection touches, using the buffer language's line comment; also bound in Insert mode |
 | `u` / `U` | Undo / redo |
 | `Alt-u` / `Alt-U`; `Space s u` / `Space s U` | Undo / redo selection changes, back to the last text edit |
@@ -2358,6 +2359,13 @@ even when a pointer drag ends on it. A selected blank line is still a line, so
 it joins as an empty piece and leaves a delimiter of its own behind. Every
 selection is joined in one transaction, so multiple selections and a single
 undo both behave as one edit.
+
+`J` is the promptless join Vim and Helix spell that way. It joins the lines a
+selection touches with a single space, as `Space p j Space Enter` would, but a
+single-line selection or a bare caret pulls the line below up to its own
+instead of joining nothing. A blank line contributes neither text nor a space,
+so `J` above an empty line removes it without leaving a trailing space behind.
+The file's final line terminator is never joined away, even after `%`.
 
 `Space p t` aligns the columns of the selected table, padding every cell to the
 widest one in its column, so

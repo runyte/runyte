@@ -377,26 +377,55 @@ fn hard_wrap_line(line: &str, width: usize) -> String {
 /// including its whitespace, so callers can treat an identical result as
 /// "nothing to join".
 pub fn join_lines(text: &str, delimiter: &str) -> String {
-    let mut lines = text.split('\n');
-    let Some(first) = lines.next() else {
+    let Some(pieces) = join_pieces(text) else {
         return text.to_owned();
     };
-    let mut lines = lines.peekable();
-    if lines.peek().is_none() {
-        return text.to_owned();
-    }
+    pieces.join(delimiter)
+}
 
+/// Joins like `join_lines` with a single space, except that a blank line
+/// contributes neither text nor a space.
+///
+/// This is the join Vim's and Helix's `J` perform. Joining a line with a blank
+/// one below it would otherwise leave a trailing space behind, and joining a
+/// blank line with the one below would indent it by one. `join_lines` keeps an
+/// empty piece as a piece because its delimiter is whatever was typed, and a
+/// typed delimiter is wanted even between empty cells.
+pub fn join_lines_with_space(text: &str) -> String {
+    let Some(pieces) = join_pieces(text) else {
+        return text.to_owned();
+    };
     let mut output = String::with_capacity(text.len());
-    output.push_str(first.trim_end());
-    while let Some(line) = lines.next() {
-        output.push_str(delimiter);
-        if lines.peek().is_some() {
-            output.push_str(line.trim());
-        } else {
-            output.push_str(line.trim_start());
+    for piece in pieces {
+        // The pieces are trimmed against every break, so the output never ends
+        // in whitespace that would make the space a second one.
+        if !output.is_empty() && !piece.is_empty() {
+            output.push(' ');
         }
+        output.push_str(piece);
     }
     output
+}
+
+/// The lines of `text` with the whitespace against each break trimmed away,
+/// or `None` when `text` holds no break.
+fn join_pieces(text: &str) -> Option<Vec<&str>> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.len() < 2 {
+        return None;
+    }
+    let last = lines.len() - 1;
+    Some(
+        lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| match index {
+                0 => line.trim_end(),
+                index if index == last => line.trim_start(),
+                _ => line.trim(),
+            })
+            .collect(),
+    )
 }
 
 /// Refills prose while retaining common document structure.
@@ -1199,6 +1228,20 @@ mod tests {
         // over exactly the span it means to join.
         assert_eq!(join_lines("alpha\nbeta\n", " "), "alpha beta ");
         assert_eq!(join_lines("alpha\n", "-"), "alpha-");
+    }
+
+    #[test]
+    fn join_lines_with_space_puts_no_space_against_a_blank_line() {
+        assert_eq!(
+            join_lines_with_space("alpha\n    beta\ngamma"),
+            "alpha beta gamma"
+        );
+        assert_eq!(join_lines_with_space("alpha\n"), "alpha");
+        assert_eq!(join_lines_with_space("alpha\n   \n"), "alpha");
+        assert_eq!(join_lines_with_space("\n  beta"), "beta");
+        assert_eq!(join_lines_with_space("alpha\n\nbeta"), "alpha beta");
+        assert_eq!(join_lines_with_space("  alpha  \r\n  beta"), "  alpha beta");
+        assert_eq!(join_lines_with_space("  alpha  "), "  alpha  ");
     }
 
     #[test]

@@ -654,6 +654,7 @@ editor_commands! {
     HardWrap => ("hard-wrap", "Hard-wrap the selection"),
     Reflow => ("reflow", "Reflow paragraphs in the selection"),
     JoinSelections => ("join-selections", "Join the selected lines with a typed delimiter"),
+    JoinLines => ("join-lines", "Join the selected lines, or the line below, with a space"),
     FormatTable => ("format-table", "Align the columns of the selected table"),
 
     Search => ("search", "Search for text, ignoring case"),
@@ -935,6 +936,7 @@ impl EditorCommand {
                 | Self::HardWrap
                 | Self::Reflow
                 | Self::JoinSelections
+                | Self::JoinLines
                 | Self::FormatTable
                 // These reach a buffer through the language server rather than
                 // directly, but they still end at a transaction.
@@ -1112,6 +1114,7 @@ impl EditorCommand {
             Self::HardWrap
             | Self::Reflow
             | Self::JoinSelections
+            | Self::JoinLines
             | Self::FormatTable
             | Self::TrimTrailingWhitespace => CommandCategory::Editing,
             Self::ExpandSyntaxSelection

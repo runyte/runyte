@@ -4239,6 +4239,7 @@ impl App {
             Command::HardWrap => self.hard_wrap_selections(self.config.editor.hard_wrap_width),
             Command::Reflow => self.reflow_selections(self.config.editor.hard_wrap_width),
             Command::JoinSelections => self.open_prompt(PromptKind::JoinDelimiter),
+            Command::JoinLines => self.join_lines(),
             Command::FormatTable => self.format_selected_tables(),
             Command::Search => self.open_prompt(PromptKind::Search(SearchMode::Insensitive)),
             Command::SearchRegex => self.open_prompt(PromptKind::Search(SearchMode::Regex)),
