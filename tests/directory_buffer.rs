@@ -626,6 +626,128 @@ fn writing_a_directory_inside_itself_is_rejected_before_confirmation() {
 }
 
 #[test]
+fn typing_a_new_path_inside_an_existing_directory_creates_a_file() {
+    for insert_after_docs in [true, false] {
+        let directory = TempDir::new("new-path-in-existing-directory");
+        fs::create_dir(directory.path().join("docs")).unwrap();
+        fs::write(directory.path().join("notes.md"), "notes").unwrap();
+        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        assert_eq!(app.buffers[0].to_string(), "docs/\nnotes.md\n");
+
+        let offset = if insert_after_docs {
+            "docs/\n".len()
+        } else {
+            app.buffers[0].len_chars()
+        };
+        if insert_after_docs {
+            assert!(app.buffers[0].apply(&Transaction::insert(offset, "\n")));
+        }
+        for (index, character) in "docs/roadmap.md".chars().enumerate() {
+            assert!(
+                app.buffers[0].apply(&Transaction::insert(offset + index, character.to_string()))
+            );
+        }
+
+        let plan = app.buffers[0].directory_plan().unwrap();
+        assert!(matches!(
+            plan.operations(),
+            [FsOperation::Create { path, .. }] if path == Path::new("docs/roadmap.md")
+        ));
+
+        for code in [KeyCode::Char(':'), KeyCode::Char('w'), KeyCode::Enter] {
+            app.handle_key(KeyStroke::new(code, Modifiers::NONE))
+                .unwrap();
+        }
+        assert!(app.fs_confirmation.is_some());
+        app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
+            .unwrap();
+        assert!(directory.path().join("docs/roadmap.md").is_file());
+        assert!(directory.path().join("docs").is_dir());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("notes.md")).unwrap(),
+            "notes"
+        );
+    }
+}
+
+#[test]
+fn a_cut_directory_row_restores_its_identity_on_paste() {
+    let directory = TempDir::new("cut-directory-identity");
+    fs::create_dir(directory.path().join("docs")).unwrap();
+    fs::write(directory.path().join("notes.md"), "notes").unwrap();
+    let mut buffer = Buffer::open_directory(directory.path(), listing(true)).unwrap();
+
+    assert!(buffer.apply(&Transaction::delete(0, "docs/\n".len())));
+    assert!(buffer.apply(&Transaction::insert(buffer.len_chars(), "docs/\n")));
+
+    assert!(buffer.directory_plan().unwrap().is_empty());
+}
+
+#[test]
+fn pasting_an_existing_directory_still_plans_a_copy() {
+    let directory = TempDir::new("copy-directory-identity");
+    fs::create_dir(directory.path().join("docs")).unwrap();
+    fs::write(directory.path().join("docs/guide.md"), "guide").unwrap();
+    let mut buffer = Buffer::open_directory(directory.path(), listing(true)).unwrap();
+
+    assert!(buffer.apply(&Transaction::insert("docs/\n".len(), "docs/\n")));
+    assert!(
+        buffer.directory_plan().is_err(),
+        "duplicate paths must be refused"
+    );
+    assert!(buffer.apply(&Transaction::change(
+        "docs/\n".len(),
+        "docs/\ndocs/".len(),
+        "archive/",
+    )));
+
+    let plan = buffer.directory_plan().unwrap();
+    assert!(matches!(
+        plan.operations(),
+        [FsOperation::Copy { from, to, .. }]
+            if from == Path::new("docs") && to == Path::new("archive")
+    ));
+}
+
+#[test]
+fn editing_an_existing_file_into_a_directory_still_plans_a_move() {
+    let directory = TempDir::new("move-file-into-directory");
+    fs::create_dir(directory.path().join("docs")).unwrap();
+    fs::write(directory.path().join("notes.md"), "notes").unwrap();
+    let mut buffer = Buffer::open_directory(directory.path(), listing(true)).unwrap();
+
+    assert!(buffer.apply(&Transaction::change(
+        "docs/\n".len(),
+        "docs/\nnotes.md".len(),
+        "docs/notes.md",
+    )));
+
+    let plan = buffer.directory_plan().unwrap();
+    assert!(matches!(
+        plan.operations(),
+        [FsOperation::Move { from, to, .. }]
+            if from == Path::new("notes.md") && to == Path::new("docs/notes.md")
+    ));
+}
+
+#[test]
+fn new_nested_rows_create_the_parent_before_the_file() {
+    let directory = TempDir::new("nested-new-rows");
+    let mut buffer = Buffer::open_directory(directory.path(), listing(true)).unwrap();
+    assert!(buffer.apply(&Transaction::insert(0, "plans/\nplans/roadmap.md\n")));
+
+    let plan = buffer.directory_plan().unwrap();
+    assert!(matches!(
+        plan.operations(),
+        [FsOperation::Create { path: parent, .. }, FsOperation::Create { path: child, .. }]
+            if parent == Path::new("plans") && child == Path::new("plans/roadmap.md")
+    ));
+    plan.apply(runyte::fs_plan::DeletionMode::Permanent)
+        .unwrap();
+    assert!(directory.path().join("plans/roadmap.md").is_file());
+}
+
+#[test]
 fn cut_and_paste_reordering_keeps_hidden_entry_identities() {
     let directory = TempDir::new("identity");
     fs::write(directory.path().join("a"), "a").unwrap();
