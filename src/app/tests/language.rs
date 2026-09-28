@@ -1098,6 +1098,44 @@ fn diagnostics_render_as_signs_spans_and_an_inline_message() {
 }
 
 #[test]
+fn diagnostic_row_index_keeps_encoding_and_zero_width_presentation() {
+    let (mut app, path, _queue) = rust_app("a😀x\n");
+    ready(&mut app, Encoding::Utf16);
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path: path.clone(),
+        version: None,
+        diagnostics: vec![
+            diagnostic(12, 0, 1, "offscreen"),
+            diagnostic(0, 3, 3, "zero width at x"),
+        ],
+    });
+
+    // UTF-16 column 3 follows the emoji. A zero-width range there still
+    // highlights the single character at buffer offset 2.
+    let spans = app.diagnostic_spans(0, 0);
+    assert_eq!(spans.len(), 1);
+    assert_eq!((spans[0].0, spans[0].1), (2, 3));
+    assert_eq!(app.row_severity(0, 0), Some(crate::lsp::Severity::Error));
+    assert!(
+        app.inline_diagnostic(0, 0)
+            .unwrap()
+            .0
+            .contains("zero width at x")
+    );
+
+    app.apply_lsp_event(LspEvent::Diagnostics {
+        language: "rust".to_owned(),
+        path,
+        version: None,
+        diagnostics: Vec::new(),
+    });
+    assert!(app.diagnostic_spans(0, 0).is_empty());
+    assert_eq!(app.row_severity(0, 0), None);
+    assert!(app.inline_diagnostic(0, 0).is_none());
+}
+
+#[test]
 fn diagnostics_picker_uses_the_publishing_servers_encoding() {
     let (mut app, path, _queue) = rust_app("aéx\n");
     ready(&mut app, Encoding::Utf8);

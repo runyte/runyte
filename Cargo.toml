@@ -49,6 +49,11 @@ name = "path_completion"
 path = "benches/path_completion.rs"
 harness = false
 
+[[bench]]
+name = "diagnostic_rows"
+path = "benches/diagnostic_rows.rs"
+harness = false
+
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"

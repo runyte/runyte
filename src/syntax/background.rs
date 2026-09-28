@@ -41,6 +41,10 @@ pub(crate) struct StaleSyntax {
 }
 
 impl StaleSyntax {
+    pub(crate) fn source_revision(&self) -> (u64, u64) {
+        (self.syntax.document_id(), self.syntax.revision().get())
+    }
+
     pub(crate) fn new(
         syntax: DocumentSyntax,
         before: &Text,

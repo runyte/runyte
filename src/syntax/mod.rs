@@ -1697,6 +1697,10 @@ impl DocumentSyntax {
         self.revision
     }
 
+    pub(crate) fn document_id(&self) -> u64 {
+        self.document
+    }
+
     /// Reparses incrementally after a transaction.
     ///
     /// `before` must be the text as it was when the transaction's offsets were

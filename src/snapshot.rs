@@ -692,12 +692,26 @@ struct RowContext {
     folded_lines: Option<usize>,
 }
 
+/// A pane's last visible syntax result. Text mutations receive global
+/// revisions; syntax document identities distinguish replacement trees whose
+/// own revision counters both start at zero.
+pub(crate) struct VisibleHighlightCache {
+    buffer: usize,
+    text_revision: u64,
+    syntax_source: (u64, u64, bool),
+    ranges: Vec<(Offset, Offset)>,
+    spans: Vec<Span>,
+}
+
 impl App {
     /// Captures the normal editor surface after viewport preparation.
     ///
     /// Only prepared pane rows are copied. Overlays remain separate consumers
     /// of immutable application state for now.
     pub fn snapshot(&self, prepared: &PreparedView) -> EditorSnapshot {
+        self.visible_highlights
+            .borrow_mut()
+            .retain(|pane, _| prepared.pane(*pane).is_some());
         let panes = prepared
             .panes
             .iter()
@@ -964,19 +978,53 @@ impl App {
         let mut merged: Vec<(Offset, Offset)> = Vec::new();
         for range in highlight_ranges {
             if let Some(previous) = merged.last_mut()
-                && range.0 <= previous.1
+                && (range.0 <= previous.1
+                    || (previous.1.checked_add(1) == Some(range.0)
+                        && buffer.char_at(previous.1) == Some('\n')))
             {
                 previous.1 = previous.1.max(range.1);
             } else {
                 merged.push(range);
             }
         }
-        let mut highlights = Vec::new();
-        for (from, to) in merged {
-            highlights.extend(self.highlights(prepared.buffer_id, from, to));
-        }
-        highlights.sort_by_key(|span| (span.from, span.to));
-        highlights.dedup();
+        let syntax_source = self.visible_syntax_source(prepared.buffer_id);
+        let cached = syntax_source.and_then(|source| {
+            self.visible_highlights
+                .borrow()
+                .get(&prepared.pane_id)
+                .filter(|cache| {
+                    cache.buffer == prepared.buffer_id
+                        && cache.text_revision == buffer.revision()
+                        && cache.syntax_source == source
+                        && cache.ranges == merged
+                })
+                .map(|cache| cache.spans.clone())
+        });
+        let highlights = cached.unwrap_or_else(|| {
+            let mut spans = Vec::new();
+            for &(from, to) in &merged {
+                spans.extend(self.highlights(prepared.buffer_id, from, to));
+            }
+            spans.sort_by_key(|span| (span.from, span.to));
+            spans.dedup();
+            if let Some(source) = syntax_source {
+                self.visible_highlights.borrow_mut().insert(
+                    prepared.pane_id,
+                    VisibleHighlightCache {
+                        buffer: prepared.buffer_id,
+                        text_revision: buffer.revision(),
+                        syntax_source: source,
+                        ranges: merged,
+                        spans: spans.clone(),
+                    },
+                );
+            } else {
+                self.visible_highlights
+                    .borrow_mut()
+                    .remove(&prepared.pane_id);
+            }
+            spans
+        });
 
         // Once per pane rather than once per row: the column hints align on is
         // a property of the whole listing, not of the rows currently on screen.
@@ -2975,6 +3023,171 @@ mod tests {
                 } if scope.name() == "keyword"
             )
         }));
+    }
+
+    fn lua_snapshot_fixture(lines: usize) -> App {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let source = (0..lines)
+            .map(|index| format!("local function item_{index}(x) return x + {index} end\n"))
+            .collect::<String>();
+        app.buffers[0].apply(&Transaction::insert(0, source));
+        let language = app.registry.language_for_name("lua").unwrap();
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        app
+    }
+
+    #[test]
+    fn cursor_highlights_reuse_visible_spans_and_invalidate_on_edits_trees_and_scroll() {
+        let mut app = lua_snapshot_fixture(200);
+        let first = prepared_snapshot(&mut app, 120, 40);
+        assert!(first.pane(0).unwrap().rows.iter().any(|row| {
+            matches!(row, SnapshotRow::Text(row) if row.runs.iter().any(|run| {
+                matches!(run.kind, TextRunKind::Text { scope: Some(_), .. })
+            }))
+        }));
+        let (ranges, source, spans_pointer) = {
+            let cache = app.visible_highlights.borrow();
+            let cache = &cache[&0];
+            assert_eq!(cache.ranges.len(), 1, "whole adjacent rows share a query");
+            (
+                cache.ranges.clone(),
+                cache.syntax_source,
+                cache.spans.as_ptr(),
+            )
+        };
+        for row in first
+            .pane(0)
+            .unwrap()
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                SnapshotRow::Text(row) => Some(row.document_row),
+                _ => None,
+            })
+        {
+            let from = app.buffers[0].line_to_offset(row);
+            let to = from + app.buffers[0].line_len(row);
+            let separate = app.highlights(0, from, to);
+            let cache = app.visible_highlights.borrow();
+            for offset in from..to {
+                let scope_at = |spans: &[Span]| {
+                    spans
+                        .iter()
+                        .find(|span| span.from <= offset && offset < span.to)
+                        .map(|span| span.scope)
+                };
+                assert_eq!(scope_at(&cache[&0].spans), scope_at(&separate));
+            }
+        }
+
+        app.panes.get_mut(&0).unwrap().selection =
+            Selection::point(app.buffers[0].line_to_offset(1));
+        let _ = prepared_snapshot(&mut app, 120, 40);
+        {
+            let cache = app.visible_highlights.borrow();
+            assert_eq!(cache[&0].ranges, ranges);
+            assert_eq!(cache[&0].syntax_source, source);
+            assert_eq!(cache[&0].spans.as_ptr(), spans_pointer);
+        }
+
+        // A newly published tree may start at syntax revision zero too.
+        let language = app.registry.language_for_name("lua").unwrap();
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        let _ = prepared_snapshot(&mut app, 120, 40);
+        assert_ne!(app.visible_highlights.borrow()[&0].syntax_source, source);
+
+        let old_revision = app.visible_highlights.borrow()[&0].text_revision;
+        app.buffers[0].apply(&Transaction::insert(0, "-- new comment\n"));
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        let _ = prepared_snapshot(&mut app, 120, 40);
+        assert_ne!(
+            app.visible_highlights.borrow()[&0].text_revision,
+            old_revision
+        );
+
+        app.panes.get_mut(&0).unwrap().selection =
+            Selection::point(app.buffers[0].line_to_offset(150));
+        let _ = prepared_snapshot(&mut app, 120, 40);
+        assert_ne!(app.visible_highlights.borrow()[&0].ranges, ranges);
+    }
+
+    #[test]
+    fn visible_queries_skip_folded_lines_and_clip_a_long_line() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let source = format!(
+            "fn outer() {{\n{}\n}}\nfn after() {{}}\n",
+            "    let hidden = 1;\n".repeat(500)
+        );
+        app.buffers[0].apply(&Transaction::insert(0, source));
+        let language = app.registry.language_for_name("rust").unwrap();
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        for key in [' ', 'x', 'f'] {
+            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
+        }
+        let _ = prepared_snapshot(&mut app, 80, 12);
+        let folded = app.visible_highlights.borrow()[&0].ranges.clone();
+        assert!(folded.windows(2).any(|pair| pair[1].0 - pair[0].1 > 1));
+        assert!(folded.len() >= 2);
+
+        for key in [' ', 'x', 'u'] {
+            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
+        }
+        let _ = prepared_snapshot(&mut app, 80, 12);
+        assert_ne!(app.visible_highlights.borrow()[&0].ranges, folded);
+
+        let mut app = App::new(Config::default(), None).unwrap();
+        let source = format!("-- {}\nlocal answer = 42\n", "x".repeat(100_000));
+        app.buffers[0].apply(&Transaction::insert(0, source));
+        let language = app.registry.language_for_name("lua").unwrap();
+        app.syntax[0] =
+            crate::syntax::DocumentSyntax::new(app.buffers[0].text(), language, &app.registry);
+        let _ = prepared_snapshot(&mut app, 80, 8);
+        let ranges = &app.visible_highlights.borrow()[&0].ranges;
+        assert!(
+            ranges
+                .iter()
+                .all(|&(from, to)| to - from <= 80 + ZERO_WIDTH_SCAN_LIMIT)
+        );
+        assert!(
+            ranges.len() >= 2,
+            "clipped line must not merge with the next"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual snapshot timing fixture"]
+    fn cursor_highlight_snapshot_timing() {
+        use std::time::Instant;
+
+        let mut app = lua_snapshot_fixture(2_000);
+        for (width, height) in [(120, 40), (240, 80)] {
+            for (label, invalidate) in [("uncached", true), ("cached", false)] {
+                for _ in 0..10 {
+                    if invalidate {
+                        app.visible_highlights.borrow_mut().clear();
+                    }
+                    std::hint::black_box(prepared_snapshot(&mut app, width, height));
+                }
+                let mut samples = Vec::with_capacity(200);
+                for _ in 0..200 {
+                    if invalidate {
+                        app.visible_highlights.borrow_mut().clear();
+                    }
+                    let start = Instant::now();
+                    std::hint::black_box(prepared_snapshot(&mut app, width, height));
+                    samples.push(start.elapsed().as_micros());
+                }
+                samples.sort_unstable();
+                eprintln!(
+                    "{width}x{height} {label} snapshot median: {} us",
+                    samples[100]
+                );
+            }
+        }
     }
 
     #[test]
