@@ -23,7 +23,9 @@ Regression coverage: `auto_close_is_opt_in_and_pairs_typed_characters_only`,
 `auto_close_setting_previews_rolls_back_persists_and_reloads` in
 `src/app/tests/config_reload.rs`. The exhaustive registry checks in
 `tests/settings_registry.rs` and lossless writes in `tests/settings_persistence.rs`
-also pass.
+also pass. `registry_has_stable_unique_keys_ids_and_typed_configured_values`
+in `src/settings.rs` checks that the descriptor and identity inventories agree
+in ordering as well as membership, including the added auto-close row.
 
 Known limitation: pairing is a local text heuristic, not a syntax-aware string
 or comment parser. Closer skipping and empty-pair deletion also apply to pairs
