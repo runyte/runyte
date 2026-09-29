@@ -100,6 +100,7 @@ fn health() -> HostResponse {
         pid: std::process::id(),
         interactive_attached: false,
         unsaved_buffers: 0,
+        pending_directory_tree_operations: 0,
         open_buffers: 0,
         pending_wait_requests: 0,
         plugin_jobs: 0,

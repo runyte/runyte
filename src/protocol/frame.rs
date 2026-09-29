@@ -109,6 +109,11 @@ unit_enum!(
 );
 unit_enum!(OverlayInput, core::OverlayInput, [None, Filter, Text]);
 unit_enum!(
+    TreeEntryKind,
+    crate::fs_plan::EntryKind,
+    [File, Directory, Symlink, Other]
+);
+unit_enum!(
     OverlayLayout,
     core::OverlayLayout,
     [Standard, Preview, Setting, SettingChoice, Anchored, Bottom]
@@ -184,6 +189,7 @@ impl EditorDamageFrame {
             || base.editor.theme != next.editor.theme
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
+            || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
             return None;
@@ -327,6 +333,7 @@ impl TerminalDamageFrame {
             || base.editor.theme != next.editor.theme
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
+            || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
             return None;
@@ -540,6 +547,7 @@ pub struct EditorSnapshot {
     pub geometry: FrameGeometry,
     pub theme: Theme,
     pub mode: Mode,
+    pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
@@ -551,6 +559,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
             mode: value.mode.into(),
+            directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             status: value.status.into(),
             session_strip: value.session_strip.map(Into::into),
@@ -565,6 +574,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
             mode: value.mode.into(),
+            directory_tree: value.directory_tree.map(TryInto::try_into).transpose()?,
             panes: value
                 .panes
                 .into_iter()
@@ -572,6 +582,114 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .collect::<Result<_, _>>()?,
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DirectoryTreeSnapshot {
+    pub area: Rect,
+    pub focused: bool,
+    pub title: String,
+    pub total_rows: usize,
+    pub pending_count: usize,
+    pub selected: Option<usize>,
+    pub rows: Vec<DirectoryTreeRowSnapshot>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DirectoryTreeRowSnapshot {
+    #[serde(deserialize_with = "super::deserialize_path")]
+    pub path: Vec<u8>,
+    pub label: String,
+    pub depth: usize,
+    pub kind: TreeEntryKind,
+    pub expanded: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub pending: Option<String>,
+    pub selected: bool,
+}
+
+impl From<core::DirectoryTreeSnapshot> for DirectoryTreeSnapshot {
+    fn from(value: core::DirectoryTreeSnapshot) -> Self {
+        Self {
+            area: value.area.into(),
+            focused: value.focused,
+            title: value.title,
+            total_rows: value.total_rows,
+            pending_count: value.pending_count,
+            selected: value.selected,
+            rows: value
+                .rows
+                .into_iter()
+                .map(|row| DirectoryTreeRowSnapshot {
+                    path: encode_path(&row.path),
+                    label: row.label,
+                    depth: row.depth,
+                    kind: row.kind.into(),
+                    expanded: row.expanded,
+                    loading: row.loading,
+                    error: row.error,
+                    pending: row.pending,
+                    selected: row.selected,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
+    type Error = String;
+    fn try_from(value: DirectoryTreeSnapshot) -> Result<Self, Self::Error> {
+        if value.rows.len() > core::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS
+            || value.title.len() > 1024
+            || value.total_rows > 1_000_000
+            || value.pending_count > 4096
+            || value
+                .selected
+                .is_some_and(|index| index >= value.total_rows)
+        {
+            return Err("directory tree exceeds protocol limits".into());
+        }
+        let rows = value
+            .rows
+            .into_iter()
+            .map(|row| {
+                super::validate_path_bytes(&row.path)?;
+                if row.label.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES
+                    || row.depth > 128
+                    || row
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES)
+                    || row.pending.as_ref().is_some_and(|pending| {
+                        pending.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES
+                    })
+                {
+                    return Err("directory tree row exceeds protocol limits".into());
+                }
+                Ok(core::DirectoryTreeRowSnapshot {
+                    path: decode_path(row.path).map_err(|error| error.to_string())?,
+                    label: row.label,
+                    depth: row.depth,
+                    kind: row.kind.into(),
+                    expanded: row.expanded,
+                    loading: row.loading,
+                    error: row.error,
+                    pending: row.pending,
+                    selected: row.selected,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            area: value.area.into(),
+            focused: value.focused,
+            title: value.title,
+            total_rows: value.total_rows,
+            pending_count: value.pending_count,
+            selected: value.selected,
+            rows,
         })
     }
 }
@@ -843,6 +961,7 @@ mod tests {
             active_buffer: BufferId(1),
             active_revision: BufferRevision(1),
             editor: EditorSnapshot {
+                directory_tree: None,
                 session_strip: None,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
@@ -1088,8 +1207,59 @@ mod tests {
         next.editor.geometry.screen.width += 1;
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         next = base.clone();
+        next.editor.directory_tree = Some(DirectoryTreeSnapshot {
+            area: crate::layout::Rect::default().into(),
+            title: "Files".into(),
+            rows: Vec::new(),
+            selected: None,
+            focused: false,
+            pending_count: 0,
+            total_rows: 0,
+        });
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        next = base.clone();
         next.editor.panes[0].rows.fill(SnapshotRow::Filler);
         assert!(EditorDamageFrame::between(&base, &next).is_none());
+    }
+
+    #[test]
+    fn tall_directory_tree_frames_round_trip_within_the_shared_row_bound() {
+        let core = crate::snapshot::DirectoryTreeSnapshot {
+            area: crate::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 28,
+                height: 300,
+            },
+            focused: true,
+            title: "project".into(),
+            total_rows: 271,
+            pending_count: 0,
+            selected: Some(270),
+            rows: (0..271)
+                .map(|index| crate::snapshot::DirectoryTreeRowSnapshot {
+                    path: std::path::PathBuf::from(format!("/project/file-{index}")),
+                    label: format!("file-{index}"),
+                    depth: 1,
+                    kind: crate::fs_plan::EntryKind::File,
+                    expanded: false,
+                    loading: false,
+                    error: None,
+                    pending: None,
+                    selected: index == 270,
+                })
+                .collect(),
+        };
+        let wire: DirectoryTreeSnapshot = core.clone().into();
+        assert_eq!(
+            crate::snapshot::DirectoryTreeSnapshot::try_from(wire).unwrap(),
+            core
+        );
+        let mut too_many: DirectoryTreeSnapshot = core.into();
+        too_many.rows =
+            vec![too_many.rows[0].clone(); crate::snapshot::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS + 1];
+        assert!(crate::snapshot::DirectoryTreeSnapshot::try_from(too_many).is_err());
     }
 
     #[test]

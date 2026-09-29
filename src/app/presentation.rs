@@ -404,14 +404,72 @@ impl App {
         self.diff_worker
             .retain(visible_git, self.diffs.iter().map(DiffSession::id));
         self.refresh_search_preview();
+        self.directory_tree.poll();
         self.areas.clear();
+        let tree_area = if self.directory_tree.visible
+            && self.maximized.is_none()
+            && geometry.editor.width >= 36
+        {
+            let width = 28.min(geometry.editor.width / 3);
+            Some(Rect {
+                x: geometry.editor.x,
+                y: geometry.editor.y,
+                width,
+                height: geometry.editor.height,
+            })
+        } else {
+            if geometry.editor.width < 36 {
+                self.leave_directory_tree();
+            }
+            None
+        };
+        let mut tree_rows = Vec::new();
+        if let Some(area) = tree_area {
+            let rows = self.directory_tree.rows();
+            let height = usize::from(area.height.saturating_sub(2))
+                .clamp(1, crate::snapshot::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS);
+            self.directory_tree.viewport_rows = height;
+            if let Some(selected) = rows
+                .iter()
+                .position(|row| row.path == self.directory_tree.selected)
+            {
+                if selected < self.directory_tree.scroll {
+                    self.directory_tree.scroll = selected;
+                } else if selected >= self.directory_tree.scroll.saturating_add(height) {
+                    self.directory_tree.scroll = selected + 1 - height;
+                }
+            }
+            self.directory_tree.scroll = self
+                .directory_tree
+                .scroll
+                .min(rows.len().saturating_sub(height));
+            tree_rows = rows
+                .into_iter()
+                .skip(self.directory_tree.scroll)
+                .take(
+                    usize::from(area.height.saturating_sub(2))
+                        .min(crate::snapshot::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS),
+                )
+                .map(|row| row.path)
+                .collect();
+        }
+        let pane_area = if let Some(tree) = tree_area {
+            Rect {
+                x: geometry.editor.x.saturating_add(tree.width),
+                y: geometry.editor.y,
+                width: geometry.editor.width.saturating_sub(tree.width),
+                height: geometry.editor.height,
+            }
+        } else {
+            geometry.editor
+        };
         if let Some(maximized) = self
             .maximized
             .filter(|maximized| self.panes.contains_key(&maximized.pane))
         {
             self.areas.insert(maximized.pane, geometry.editor);
         } else {
-            self.layout.rectangles(geometry.editor, &mut self.areas);
+            self.layout.rectangles(pane_area, &mut self.areas);
         }
         self.resize_revision_comparisons();
         let mut pane_ids = self.areas.keys().copied().collect::<Vec<_>>();
@@ -743,6 +801,8 @@ impl App {
         PreparedView {
             session_strip,
             geometry,
+            tree_area,
+            tree_rows,
             panes: prepared,
         }
     }
@@ -861,6 +921,9 @@ impl App {
     }
 
     pub fn key_binding_scope(&self) -> BindingScope {
+        if self.directory_tree.focused {
+            return BindingScope::DirectoryTree;
+        }
         // A terminal pane's buffer is the document behind it, not what the
         // keys are acting on. Reading its scope would give a pane showing a
         // shell the bindings of whatever explorer or Git view it will go back
@@ -935,7 +998,9 @@ impl App {
     /// Help does not depend on the mode, so every route in reaches the same
     /// document and the palette's own mode cannot leak into the answer.
     pub(super) fn open_help(&mut self) {
-        let topic = if self.active_terminal().is_some() {
+        let topic = if self.directory_tree.focused {
+            HelpTopic::DirectoryTree
+        } else if self.active_terminal().is_some() {
             HelpTopic::Terminal
         } else if self.active_buffer().is_notifications() {
             HelpTopic::Notifications
@@ -1172,6 +1237,7 @@ impl App {
             || self.plugins.provider_overwrite.is_some()
             || self.picker.is_some()
             || self.fs_confirmation.is_some()
+            || self.directory_tree_discard_confirmation
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()
@@ -1198,6 +1264,17 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        if self.directory_tree_discard_confirmation {
+            return Some(ConfirmationOverlay {
+                title: "Discard pending tree changes",
+                accept: "discard pending changes",
+                message: format!(
+                    "Discard {} pending filesystem changes?\nEnter confirms.\nEscape keeps them.",
+                    self.directory_tree.pending_count()
+                ),
+                input: None,
+            });
+        }
         if let Some(confirmation) = &self.plugins.provider_overwrite {
             return Some(ConfirmationOverlay {
                 title: "Overwrite remote document",
@@ -2255,18 +2332,27 @@ impl App {
                         None,
                     ));
                 }
-            } else if self.prompt_kind == PromptKind::FinderPath {
+            } else if self.prompt_kind == PromptKind::FinderPath
+                || self.prompt_kind
+                    == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move)
+            {
                 if let Some(hints) = self.finder_path_hints() {
                     let mut overlay = bounded(
                         OverlayKind::PathCompletion,
-                        "Choose path for finder",
+                        if self.prompt_kind == PromptKind::FinderPath {
+                            "Choose path for finder"
+                        } else {
+                            "Choose move destination"
+                        },
                         "",
                         path_hint_rows(&hints),
                         (!hints.is_empty())
                             .then_some(self.command_selection.min(hints.len().saturating_sub(1))),
                         hints.is_empty().then(|| "No matching paths".to_owned()),
                     );
-                    if self.finder_enter_accepts_path_hint(&hints) {
+                    if self.prompt_kind == PromptKind::FinderPath
+                        && self.finder_enter_accepts_path_hint(&hints)
+                    {
                         overlay.actions = enter_completes_path_actions();
                     }
                     overlays.push(overlay);

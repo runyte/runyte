@@ -101,6 +101,10 @@ Workspace
 ```
 
 Use `Ctrl-w ...` commands to manage panes.
+Use `Space d t` to toggle a narrow directory tree at the left of the editor,
+or `Space d d` to reveal the active file and focus the tree. Enter opens a
+selected file in the pane you were using. The tree keeps staged file operations
+behind a `Tab` menu and one filesystem review.
 
 ## Terminals
 

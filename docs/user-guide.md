@@ -1321,6 +1321,47 @@ save refuses a known conflicting revision before save hooks can edit the
 buffer; `:write!` is the explicit boundary for replacing it and clears
 `[STALE]` only after the installed file is verified.
 
+### Directory tree sidebar
+
+`Space d t` toggles the directory tree at the left of the editor area without
+creating a pane or buffer. Existing panes share the remaining width according
+to their current split ratios. `Space d d` shows and focuses the tree, expands
+the active file's ancestors, and selects it. The tree stays rooted at the
+workspace root when `:cd` changes the working directory. Its expansion,
+selection, scroll position, and pending changes survive hiding it. Fullscreen
+and zen temporarily cover it; terminals narrower than 36 columns suppress it.
+
+In the tree, `j`/`k` or the arrow keys move between rows, Home/End jump to the
+first or last row, and PageUp/PageDown move by a page. `l` or Right expands a
+directory or selects its first child; `h` or Left collapses it or selects its
+parent. Enter toggles a directory or opens a file in the last ordinary pane
+you used, returning focus there. Escape returns focus to that pane without
+hiding the tree. `Space r` refreshes the selected directory. Listings load in
+the background only when directories are expanded. Directory symlinks are
+shown as links and are never recursively expanded by the tree.
+
+`Tab` opens the tree's action menu:
+
+| Key | Action |
+| --- | --- |
+| `n` | Stage a new file or directory; a trailing `/` makes a directory. |
+| `r` | Stage a rename of the selected entry. |
+| `d` | Stage deletion of the selected entry. |
+| `m` | Stage a move to a typed path; Tab completes paths. |
+| `p` | Review the complete pending filesystem plan. |
+| `u` | Undo the last staged change. |
+| `c` | Ask before discarding all pending changes. |
+
+Staging changes only the tree display. Existing affected rows show their
+planned destination or deletion; new entries appear under their parent, and
+the title shows a pending count even when their directory is collapsed. The
+review keeps Enter for trash-first application and `P` for permanent deletion.
+Escape from review keeps the pending plan. A normal quit refuses to discard a
+pending plan; a forced quit discards it. Applying a plan rechecks captured
+directory listings and source identities before any mutation. A partial
+failure requires fresh staging and reports any recovery paths. The same
+filesystem safety and non-atomicity limits described below apply.
+
 ### Directory buffers
 
 Open a directory with `runyte <directory>` or `:open <directory>`. It appears

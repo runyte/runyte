@@ -573,9 +573,17 @@ impl App {
     /// The whole prompt is the path, so there is no command name to strip and
     /// no argument gate to pass.
     pub fn finder_path_hints(&self) -> Option<Vec<PathHint>> {
-        (self.prompt_kind == PromptKind::FinderPath
-            && self.command_cursor == self.command.chars().count())
-        .then(|| self.path_hints_for(&self.command))
+        if self.command_cursor != self.command.chars().count() {
+            return None;
+        }
+        if self.prompt_kind == PromptKind::FinderPath {
+            return Some(self.path_hints_for(&self.command));
+        }
+        if self.prompt_kind == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) {
+            let source = &self.directory_tree_prompt_target.as_ref()?.0;
+            return Some(self.path_hints_for_raw(&self.command, source.parent()?, false));
+        }
+        None
     }
 
     fn command_hint_count(&self) -> usize {
@@ -819,6 +827,14 @@ impl App {
         // any semantic work when this owned boundary is used by another
         // frontend.
         if event.kind == PointerEventKind::Moved {
+            if view.tree_area.is_some_and(|area| {
+                event.column >= area.x
+                    && event.column < area.x.saturating_add(area.width)
+                    && event.row >= area.y
+                    && event.row < area.y.saturating_add(area.height)
+            }) {
+                return Ok(PointerOutcome::Unchanged);
+            }
             self.forward_terminal_pointer(event, view, 1);
             return Ok(PointerOutcome::Unchanged);
         }
@@ -834,6 +850,34 @@ impl App {
             self.invalidate_all_partial_guards();
             self.status_error = false;
             self.pointer_drag = None;
+            return Ok(PointerOutcome::Changed);
+        }
+        if let Some(area) = view.tree_area
+            && event.column >= area.x
+            && event.column < area.x.saturating_add(area.width)
+            && event.row >= area.y
+            && event.row < area.y.saturating_add(area.height)
+        {
+            match event.kind {
+                PointerEventKind::Down(PointerButton::Left) => {
+                    let row = usize::from(event.row.saturating_sub(area.y.saturating_add(1)));
+                    if let Some(selected) = view.tree_rows.get(row) {
+                        self.directory_tree.selected = selected.clone();
+                    }
+                    if !self.directory_tree.focused {
+                        self.directory_tree_previous_mode = self.mode;
+                        self.mode = Mode::Normal;
+                        self.directory_tree.focused = true;
+                    }
+                }
+                PointerEventKind::ScrollUp => self
+                    .directory_tree
+                    .select_relative(-3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
+                PointerEventKind::ScrollDown => self
+                    .directory_tree
+                    .select_relative(3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
+                _ => {}
+            }
             return Ok(PointerOutcome::Changed);
         }
         let active_pane = self.active_pane;
@@ -1555,6 +1599,21 @@ impl App {
         if self.fs_confirmation.is_some() {
             return self.handle_fs_confirmation(key);
         }
+        if self.directory_tree_discard_confirmation {
+            match key.code {
+                KeyCode::Enter => {
+                    self.directory_tree_discard_confirmation = false;
+                    self.directory_tree.clear_pending();
+                    self.status("discarded pending directory tree changes");
+                }
+                KeyCode::Escape => {
+                    self.directory_tree_discard_confirmation = false;
+                    self.status("pending directory tree changes kept");
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
         if self.directory_reload_confirmation.is_some() {
             return self.handle_directory_reload_confirmation(key);
         }
@@ -1984,6 +2043,11 @@ impl App {
     }
 
     fn apply_editor_intent(&mut self, intent: EditorIntent) -> Result<Option<CommandOutcome>> {
+        if self.directory_tree.focused
+            && !matches!(intent, EditorIntent::Command(_) | EditorIntent::Notice(_))
+        {
+            return Ok(None);
+        }
         if let EditorIntent::Range(range) = &intent {
             let repetitions = match range {
                 RangeIntent::SelectLine { count, .. }
@@ -3128,13 +3192,31 @@ impl App {
         let Some(confirmation) = self.fs_confirmation.take() else {
             return;
         };
+        if let super::FsConfirmationOrigin::DirectoryTree { revision } = confirmation.origin
+            && revision != self.directory_tree.revision
+        {
+            self.action_failed("directory tree plan changed; review it again");
+            return;
+        }
         let root = confirmation.plan.root().to_path_buf();
-        let initiating_buffer = Some(confirmation.buffer);
+        let tree_origin = matches!(
+            confirmation.origin,
+            super::FsConfirmationOrigin::DirectoryTree { .. }
+        );
+        let initiating_buffer = match confirmation.origin {
+            super::FsConfirmationOrigin::Explorer { buffer }
+            | super::FsConfirmationOrigin::Plugin { buffer } => Some(buffer),
+            super::FsConfirmationOrigin::DirectoryTree { .. } => None,
+        };
         match confirmation
             .plan
             .apply_with_trash(deletion, self.ports.trash())
         {
             Ok(report) => {
+                if tree_origin {
+                    self.directory_tree.clear_pending();
+                    self.refresh_directory_tree_after_report(&root, &report);
+                }
                 let count = report.applied.len();
                 let warning =
                     self.reconcile_applied_filesystem(&root, initiating_buffer, &report, true);
@@ -3149,6 +3231,12 @@ impl App {
                 self.status(status);
             }
             Err(error) => {
+                if tree_origin
+                    && (!error.report.applied.is_empty() || !error.report.recovery.is_empty())
+                {
+                    self.directory_tree.clear_pending();
+                    self.refresh_directory_tree_after_report(&root, &error.report);
+                }
                 let warning = self.reconcile_applied_filesystem(
                     &root,
                     initiating_buffer,
@@ -3965,6 +4053,9 @@ impl App {
 
     fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
+        if self.handle_directory_tree_command(command)? {
+            return Ok(());
+        }
         if let Some(reason) = CommandId::Editor(command).platform_unavailable() {
             self.mark_unavailable(reason);
             return Ok(());
@@ -4023,6 +4114,26 @@ impl App {
             self.mode = mode;
         }
         match command {
+            Command::ToggleDirectoryTree
+            | Command::FocusDirectoryTree
+            | Command::DirectoryTreeUp
+            | Command::DirectoryTreeDown
+            | Command::DirectoryTreeLeft
+            | Command::DirectoryTreeRight
+            | Command::DirectoryTreeFirst
+            | Command::DirectoryTreeLast
+            | Command::DirectoryTreePageUp
+            | Command::DirectoryTreePageDown
+            | Command::DirectoryTreeOpen
+            | Command::DirectoryTreeClose
+            | Command::DirectoryTreeRefresh => unreachable!("tree commands are handled first"),
+            Command::DirectoryTreeNew
+            | Command::DirectoryTreeRename
+            | Command::DirectoryTreeDelete
+            | Command::DirectoryTreeMove
+            | Command::DirectoryTreeReview
+            | Command::DirectoryTreeUndo
+            | Command::DirectoryTreeClear => unreachable!("tree commands are handled first"),
             Command::EnterNormalMode => self.enter_normal_mode(),
             Command::OpenCommandPalette => self.open_prompt(PromptKind::Command),
             Command::MoveLeft => self.motion(Motion::Left),
@@ -4559,6 +4670,7 @@ impl App {
                 #[cfg(any(unix, windows))]
                 let session_number_target = self.session_number_target.take();
                 let terminal_rename_target = self.terminal_rename_target.take();
+                let directory_tree_prompt_target = self.directory_tree_prompt_target.take();
                 let start_point = self.git_branch_start.take();
                 let worktree_start = self.git_worktree_start.take();
                 let worktree_new_branch = self.git_worktree_new_branch.take();
@@ -4653,6 +4765,10 @@ impl App {
                     {
                         self.action_failed(error.to_string());
                     }
+                } else if let PromptKind::DirectoryTreeAction(action) = kind {
+                    if let Some(target) = directory_tree_prompt_target {
+                        self.accept_directory_tree_prompt(action, target, &value);
+                    }
                 } else if let PromptKind::FilterSelections { keep } = kind {
                     if value.is_empty() {
                         self.action_failed("filter pattern is empty");
@@ -4734,16 +4850,28 @@ impl App {
             KeyCode::Tab if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.open_program_actions();
             }
-            KeyCode::Up | KeyCode::BackTab if self.prompt_kind == PromptKind::FinderPath => {
+            KeyCode::Up | KeyCode::BackTab
+                if self.prompt_kind == PromptKind::FinderPath
+                    || self.prompt_kind
+                        == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
+            {
                 self.command_selection = self.command_selection.saturating_sub(1);
             }
-            KeyCode::Down if self.prompt_kind == PromptKind::FinderPath => {
+            KeyCode::Down
+                if self.prompt_kind == PromptKind::FinderPath
+                    || self.prompt_kind
+                        == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
+            {
                 let last = self
                     .finder_path_hints()
                     .map_or(0, |hints| hints.len().saturating_sub(1));
                 self.command_selection = (self.command_selection + 1).min(last);
             }
-            KeyCode::Tab if self.prompt_kind == PromptKind::FinderPath => {
+            KeyCode::Tab
+                if self.prompt_kind == PromptKind::FinderPath
+                    || self.prompt_kind
+                        == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
+            {
                 self.complete_selected_finder_path();
             }
             KeyCode::Char(ch) => {
@@ -4969,6 +5097,7 @@ impl App {
         // cannot inherit a target nobody asked about. The branch a new one
         // would have started from is dropped for the same reason.
         self.external_target = None;
+        self.directory_tree_prompt_target = None;
         #[cfg(any(unix, windows))]
         {
             self.session_rename_target = None;
@@ -5208,6 +5337,23 @@ impl App {
         parameters: InvocationParameters,
         execution: CommandExecutionContext,
     ) -> Result<()> {
+        if command == EditorCommand::ShowHelp && self.directory_tree.focused {
+            match &parameters {
+                InvocationParameters::Help(HelpInvocation::ActiveView) => {
+                    self.open_help();
+                    self.leave_directory_tree();
+                    self.mode = Mode::Normal;
+                    return Ok(());
+                }
+                InvocationParameters::Help(HelpInvocation::Manual(_)) => {
+                    self.leave_directory_tree();
+                }
+                _ => {}
+            }
+        }
+        if self.handle_directory_tree_command(command)? {
+            return Ok(());
+        }
         match (command, parameters) {
             (EditorCommand::ShowHelp, InvocationParameters::Help(request)) => {
                 match request {

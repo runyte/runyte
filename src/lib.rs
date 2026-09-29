@@ -18,6 +18,7 @@ pub mod diff;
 pub mod diff_view;
 pub mod directory_buffer;
 pub mod directory_listing;
+pub mod directory_tree;
 pub mod external_open;
 pub mod file_monitor;
 pub mod file_picker;

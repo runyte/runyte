@@ -85,6 +85,11 @@ pub(super) fn handle_workspace_request(
             pid: std::process::id(),
             interactive_attached,
             unsaved_buffers: host.protected_state().unsaved_buffers,
+            pending_directory_tree_operations: host
+                .protected_state()
+                .pending_directory_tree_operations
+                .try_into()
+                .unwrap_or(u16::MAX),
             open_buffers: host.open_buffer_count(),
             pending_wait_requests: host.protected_state().pending_wait_requests,
             live_terminals: host.protected_state().live_terminals,

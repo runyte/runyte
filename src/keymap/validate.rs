@@ -125,7 +125,10 @@ pub fn validate(
                     });
                 }
             }
-            if scope != BindingScope::Global {
+            // The sidebar owns input independently of the document pane. Its
+            // navigation keys intentionally replace document motions while it
+            // has focus; ordinary buffer scopes still may only add bindings.
+            if scope != BindingScope::Global && scope != BindingScope::DirectoryTree {
                 let globals_by_sequence = globals
                     .iter()
                     .map(|binding| (&binding.sequence, *binding))

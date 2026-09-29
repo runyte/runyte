@@ -1619,7 +1619,7 @@ impl App {
                 Ok(plan) => {
                     let count = plan.operations().len();
                     self.fs_confirmation = Some(FsConfirmation {
-                        buffer: buffer_id,
+                        origin: super::FsConfirmationOrigin::Explorer { buffer: buffer_id },
                         plan,
                         selected: 0,
                     });
@@ -2682,6 +2682,7 @@ impl App {
     }
 
     pub(super) fn activate_pane(&mut self, pane: usize) {
+        self.leave_directory_tree();
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
         if pane != self.active_pane {
@@ -2700,6 +2701,7 @@ impl App {
     /// current document pane can still reposition its Insert caret. The drag
     /// path remains free to enter Select mode.
     pub(super) fn activate_pane_from_pointer(&mut self, pane: usize) {
+        self.leave_directory_tree();
         if pane != self.active_pane && matches!(self.mode, Mode::Insert | Mode::Replace) {
             self.enter_normal_mode();
         }

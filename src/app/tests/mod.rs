@@ -184,6 +184,7 @@ mod commands;
 mod comparisons;
 mod config_reload;
 mod diff_latency;
+mod directory_tree;
 mod editing;
 mod editing_and_buffers;
 mod external_dispatch;

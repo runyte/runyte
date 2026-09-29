@@ -1054,7 +1054,9 @@ fn filesystem_plan_review_supports_single_step_page_and_boundary_navigation() {
     let plan = crate::fs_plan::FsPlan::build(root.clone(), snapshot, desired).unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
     app.fs_confirmation = Some(FsConfirmation {
-        buffer: app.active().buffer,
+        origin: super::FsConfirmationOrigin::Explorer {
+            buffer: app.active().buffer,
+        },
         plan,
         selected: 0,
     });
@@ -3117,7 +3119,9 @@ fn filesystem_confirmation_retains_recovery_paths_in_an_error_notification() {
         second_source.clone(),
     ])));
     app.fs_confirmation = Some(FsConfirmation {
-        buffer: app.active().buffer,
+        origin: super::FsConfirmationOrigin::Explorer {
+            buffer: app.active().buffer,
+        },
         plan,
         selected: 0,
     });

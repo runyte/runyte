@@ -17,7 +17,7 @@ impl App {
         self.plugins.filesystem_confirmation =
             Some((owner, handle, self.confirmation_revision, buffer));
         self.fs_confirmation = Some(FsConfirmation {
-            buffer,
+            origin: super::FsConfirmationOrigin::Plugin { buffer },
             plan,
             selected: 0,
         });

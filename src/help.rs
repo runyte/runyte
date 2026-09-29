@@ -28,6 +28,7 @@ const KEY_COLUMN: usize = 12;
 pub enum HelpTopic {
     Text,
     Explorer,
+    DirectoryTree,
     Config,
     Notifications,
     GitStatus,
@@ -48,6 +49,7 @@ impl HelpTopic {
     pub const ALL: &'static [Self] = &[
         Self::Text,
         Self::Explorer,
+        Self::DirectoryTree,
         Self::Config,
         Self::Notifications,
         Self::GitStatus,
@@ -73,6 +75,7 @@ impl HelpTopic {
     pub fn for_context(scope: BindingScope) -> Self {
         match scope {
             BindingScope::Directory => Self::Explorer,
+            BindingScope::DirectoryTree => Self::DirectoryTree,
             BindingScope::Settings => Self::Config,
             BindingScope::GitStatus => Self::GitStatus,
             BindingScope::GitBranches => Self::GitBranches,
@@ -113,6 +116,7 @@ impl HelpTopic {
         let context = match self {
             Self::Text => "TEXT",
             Self::Explorer => "EXPLORER",
+            Self::DirectoryTree => "DIRECTORY TREE",
             Self::Config => "CONFIG",
             Self::Notifications => "NOTIFICATIONS",
             Self::GitStatus => "GIT STATUS",
@@ -158,6 +162,10 @@ impl HelpTopic {
                 "A symlink carries a muted → target hint that is not part of the text. Enter opens what the link points at; renaming and deleting stay with the link.",
                 "An explorer whose directory changed outside Runyte gains [STALE] and keeps its rows, selections, and unsaved edits. {binding:Space r} re-reads the directory and clears it.",
                 "{binding:Tab} offers what the explorer can be asked to show: dotfiles, file details, and the order rows are listed in. Each is a setting, so a choice is saved and every open explorer follows it. {binding:.} and {binding:?} toggle the first two directly.",
+            ],
+            Self::DirectoryTree => &[
+                "The directory tree is a sidebar beside the panes. Move with j/k, expand with l, collapse with h, and press Enter to open a file in the previous pane.",
+                "{binding:Space d t} toggles it. {binding:Space d d} reveals the active file and focuses it. Escape returns focus to the pane.",
             ],
             Self::Config => &[
                 "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",

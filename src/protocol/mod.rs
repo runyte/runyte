@@ -191,7 +191,8 @@ use crate::workspace::{
 // Version 63 adds editor-row damage for persistent-session presentation.
 // Version 64 adds a secondary-caret text role and theme colour to bundled
 // frames, so older clients cannot safely decode or paint multi-selections.
-pub const VERSION: u32 = 64;
+// Version 65 carries the semantic directory-tree sidebar in editor frames.
+pub const VERSION: u32 = 65;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -680,6 +681,15 @@ pub enum PromptKind {
     JoinDelimiter,
     SettingValue(String),
     FinderPath,
+    DirectoryTreeAction(TreePromptAction),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TreePromptAction {
+    New,
+    Rename,
+    Move,
 }
 
 impl From<CorePromptKind> for PromptKind {
@@ -705,6 +715,13 @@ impl From<CorePromptKind> for PromptKind {
                 Self::SettingValue(setting.descriptor().key.to_owned())
             }
             CorePromptKind::FinderPath => Self::FinderPath,
+            CorePromptKind::DirectoryTreeAction(action) => {
+                Self::DirectoryTreeAction(match action {
+                    crate::app::TreePromptAction::New => TreePromptAction::New,
+                    crate::app::TreePromptAction::Rename => TreePromptAction::Rename,
+                    crate::app::TreePromptAction::Move => TreePromptAction::Move,
+                })
+            }
         }
     }
 }
@@ -1141,6 +1158,8 @@ pub enum HostResponse {
         /// Live buffers holding unsaved work, which is what makes this
         /// workspace refuse to stop. The scratch buffer is not one of them.
         unsaved_buffers: usize,
+        /// Staged sidebar filesystem operations protected from idle retirement.
+        pending_directory_tree_operations: u16,
         /// Every buffer the host holds open, unsaved or not. Reported rather
         /// than derived from the buffer list so a listing and the host agree
         /// about what this session is holding without transferring it.
@@ -1477,7 +1496,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 64);
+        assert_eq!(VERSION, 65);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

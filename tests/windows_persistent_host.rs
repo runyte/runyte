@@ -343,6 +343,74 @@ fn frame_text(frame: &runyte::protocol::HostFrame) -> String {
 }
 
 #[test]
+fn native_directory_tree_listing_wakes_an_idle_attached_client() {
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        fs::write(fixture.project.join("listed.txt"), "listed").unwrap();
+        let (mut process, metadata) = fixture.start().await;
+        let geometry = FrameGeometry {
+            screen: runyte::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            },
+            editor: runyte::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 22,
+            },
+            status: runyte::layout::Rect {
+                x: 0,
+                y: 22,
+                width: 80,
+                height: 1,
+            },
+            message: runyte::layout::Rect {
+                x: 0,
+                y: 23,
+                width: 80,
+                height: 1,
+            },
+        };
+        let mut attached = BufferedLocalClient::connect_with_handoff(&metadata, geometry, false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            timeout(BUDGET, attached.recv_handshake())
+                .await
+                .unwrap()
+                .unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        let initial = buffered_frame(&mut attached, "tree initial frame").await;
+        buffered_invoke(&mut attached, &initial, "toggle-directory-tree").await;
+        timeout(BUDGET, async {
+            loop {
+                match attached.recv().await.unwrap().expect("native host closed") {
+                    HostResponse::Frame { frame }
+                        if frame.editor.directory_tree.as_ref().is_some_and(|tree| {
+                            tree.rows.iter().any(|row| row.label == "listed.txt")
+                        }) =>
+                    {
+                        break;
+                    }
+                    HostResponse::Error { message } => panic!("tree invocation failed: {message}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("background tree listing did not wake attached client");
+        drop(attached);
+        let stopped = force_shutdown_host(&metadata).await.unwrap();
+        await_host_stopped(&stopped).await.unwrap();
+        fixture.exited(&mut process).await;
+    });
+}
+
+#[test]
 fn native_host_edits_unsaved_revisions_saves_and_refuses_dirty_shutdown() {
     runtime().block_on(async {
         let fixture = Fixture::new();
