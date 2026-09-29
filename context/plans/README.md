@@ -18,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Editing commands and action bindings](completed/PLAN_EDITING_AND_ACTION_BINDINGS.md):
+  outer-edge line extension, independent mode-specific action sequences,
+  preserved open-line indentation, and optional bracket and quote auto-closing;
 - [Directory tree sidebar](completed/PLAN_DIRECTORY_TREE_SIDEBAR.md): a narrow
   left navigation surface with staged filesystem changes and one reviewed plan
   across directories;

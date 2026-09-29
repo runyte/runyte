@@ -1,7 +1,7 @@
 # Editing commands and action bindings
 
-Approved 2026-09-29. Implement as independently reviewable changes, with the
-action-binding implementation separate from the default `X` change.
+Approved and completed 2026-09-29. Implemented as independently reviewable
+changes, with action bindings separate from the default `X` change.
 
 ## Line extension — issue #4
 
@@ -54,7 +54,7 @@ declared. Keep plugin binding ownership in `plugins[].bindings` for this change.
 
 Sequences run directly, in order, without recursively resolving keys. Only
 synchronous actions that do not transfer input ownership may precede another
-action. Interactive, asynchronous, mode-changing, and character-taking actions
+action. Interactive, asynchronous, mode-entry, and character-taking actions
 must be last; runtime errors, unavailability, confirmations, prompts, or async
 requests stop execution. Completed effects are not rolled back. Single actions
 retain existing count behavior; counts on multiple actions are rejected before
@@ -103,3 +103,57 @@ guide, configuration example, keymap register, and teaching prose with each
 change. Commit fixes separately; follow each tracked issue fix with its resolved
 record citing the implementation commit. Do not publish GitHub comments or close
 remote issues as part of local implementation.
+
+## Implementation notes
+
+`src/keymap/actions.rs` owns bounded action parsing and assignment rollback.
+Editor mode admission comes from the implemented global command registry plus
+explicitly admitted commands without default keys. A conservative synchronous
+command inventory controls sequence continuation. The same metadata generates
+`:help key-actions`; it is not a separately maintained list of command names.
+
+`Binding.actions` contains editor identities or validated `CommandInvocation`
+values. Ordinary bindings keep an empty action list. The target remains a
+leading identity for existing registry consumers; callers advertising an
+individual command use `is_plain_action` so a sequence or a different argument
+cannot masquerade as that command. The grammar produces ordered intents and
+uses the final identity for completed-action feedback. The application stops
+at errors or input/async handoffs while retaining the existing selection-action
+boundary around the physical input.
+
+Insert/Replace overrides preserve the original terminal binding in Terminal
+scope. Configured editing actions are invisible in terminal input, including
+window-prefix suffixes. Lookup, validation and help use the same visibility
+predicate. Normal/Select overrides remain available in terminal review.
+
+Alias advertisements are removed when their effective destination changes.
+Teaching markers follow remaining bindings separately by mode or label the
+action unbound. Help retains complete action lists and arguments; the hint
+snapshot does too, while fixed-width hint cells abbreviate long descriptions.
+
+## Implementation commits
+
+- `4c8363f`: outer-edge line extension and the default `X` binding.
+  `b95eaa8` corrects first-use and count handling on short rows.
+- `3371da0`: exact indentation preservation for `o` and `O`.
+- `2248071`: optional bracket and quote auto-closing. `608fbf9` aligns
+  settings inventories; `baa3c1a` covers paired Backspace after backslashes.
+- `312ef18`: mode-specific action bindings, sequences, generated action
+  reference, and teaching-surface integration, separate from the `X` change.
+
+Each newly tracked issue has a separate resolved-record commit after its fix.
+The existing configurable-key-bindings resolution was updated with its
+action-binding extension while retaining the original implementation hash.
+
+## Final validation
+
+On native `x86_64-unknown-linux-gnu`, Rust 1.97.1 and cargo-llvm-cov 0.9.0:
+
+- `cargo fmt --check` passed.
+- `cargo clippy --all-targets -- -D warnings` passed.
+- `cargo test` passed 4,207 tests, with 41 ignored.
+- `cargo llvm-cov --locked --workspace` passed with 92.01% total line
+  coverage (137,309 of 149,236 lines), above the unchanged 89% floor.
+
+Native macOS and Windows checks were unavailable locally and remain CI-owned.
+No remote issue changes or publishing were performed.

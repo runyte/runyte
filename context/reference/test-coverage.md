@@ -74,6 +74,28 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-29 — editing commands and action bindings
+
+Measured natively on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and
+cargo-llvm-cov 0.9.0 using `cargo llvm-cov --locked --workspace`, with
+unrestricted local socket/process access for integration fixtures.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 137,309 | 149,236 | 92.01% |
+| Functions | 12,432 | 13,510 | 92.02% |
+| Regions | 209,202 | 228,689 | 91.48% |
+
+Formatting and warnings-as-errors all-target Clippy pass. The ordinary and
+instrumented suites each pass 4,207 tests with 41 ignored. Added behavior
+coverage exercises line extension and counts, document and terminal review,
+open-line indentation and undo, optional pair insertion/deletion, settings
+preview and persistence, action-binding compilation and rollback, physical
+dispatch, argument/count handling, macros, input ownership, and live help.
+
+The enforced floor remains 89%. This is a Linux measurement; native macOS
+and Windows validation remains CI-owned and was not performed locally.
+
 ## 2026-09-25 — macOS PTY, paste, and Git wait regressions
 
 Measured natively on `aarch64-apple-darwin` with Rust 1.97.1 and
