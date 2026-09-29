@@ -3,9 +3,9 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-https://github.com/user-attachments/assets/b11679ab-0369-4bca-be4c-43c419b528c0
+https://github.com/user-attachments/assets/86edfda0-f8cb-4999-b35d-4f450f4ad3c3
 
-*[Watch the 60-second demo](https://runyte.com/videos/runyte-demo.mp4): Claude Code works in one pane while you manage files in another, and the Navigator tells you when it is done.*
+*[Watch the 40-second demo](https://runyte.com/videos/runyte-demo.mp4?v=acb069b9306f): modal editing, search, file navigation, terminals, Markdown, persistent sessions, and a four-pane workspace. Matrix → gruvbox.*
 
 Runyte is a fast modal text editor for focused work. Everything is accessed
 through keybindings. No need to remember them though — every keybinding sequence
