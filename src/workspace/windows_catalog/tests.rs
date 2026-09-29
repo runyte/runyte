@@ -45,7 +45,6 @@ pub(crate) fn health() -> HostResponse {
         pid: std::process::id(),
         interactive_attached: false,
         unsaved_buffers: 2,
-        pending_directory_tree_operations: 0,
         open_buffers: 3,
         pending_wait_requests: 1,
         plugin_jobs: 0,

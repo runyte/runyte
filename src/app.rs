@@ -1782,6 +1782,7 @@ enum SettingsView {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PointerDrag {
+    DirectoryTreeResize,
     Selection {
         pane: usize,
         buffer: usize,
@@ -1869,7 +1870,6 @@ pub struct FsConfirmation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FsConfirmationOrigin {
     Explorer { buffer: usize },
-    DirectoryTree { revision: u64 },
     Plugin { buffer: usize },
 }
 
@@ -2834,6 +2834,7 @@ pub struct App {
     /// Sidebar focus is independent of the ordinary pane layout.
     pub directory_tree: crate::directory_tree::DirectoryTree,
     directory_tree_previous_mode: Mode,
+    directory_tree_geometry: Option<(Rect, Rect)>,
     /// The pane temporarily presented across the complete editor area by
     /// `:zen` or `:fullscreen`, if either is active.
     maximized: Option<MaximizedPane>,
@@ -2854,8 +2855,10 @@ pub struct App {
     pub command_cursor: usize,
     pub command_selection: usize,
     pub prompt_kind: PromptKind,
-    directory_tree_prompt_target: Option<(PathBuf, u64)>,
-    directory_tree_discard_confirmation: bool,
+    directory_tree_prompt_target: Option<PathBuf>,
+    directory_tree_delete: Option<FsPlan>,
+    directory_tree_legend: std::cell::RefCell<Option<directory_tree::TreeLegendCache>>,
+    pub(crate) directory_tree_destination: Option<directory_tree::TreeDestination>,
     /// Static native input feedback; rejected text never enters presentation.
     prompt_input_error: Option<&'static str>,
     /// The binary file waiting for a program to open it, set while
@@ -3502,6 +3505,7 @@ impl App {
             active_pane: 0,
             directory_tree: crate::directory_tree::DirectoryTree::new(project_root.clone()),
             directory_tree_previous_mode: initial_mode,
+            directory_tree_geometry: None,
             maximized: None,
             mode: initial_mode,
             replace_session: None,
@@ -3511,7 +3515,9 @@ impl App {
             command_selection: 0,
             prompt_kind: PromptKind::Command,
             directory_tree_prompt_target: None,
-            directory_tree_discard_confirmation: false,
+            directory_tree_delete: None,
+            directory_tree_legend: Default::default(),
+            directory_tree_destination: None,
             prompt_input_error: None,
             picker: None,
             finder: None,

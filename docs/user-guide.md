@@ -1324,42 +1324,61 @@ buffer; `:write!` is the explicit boundary for replacing it and clears
 ### Directory tree sidebar
 
 `Space d t` toggles the directory tree at the left of the editor area without
-creating a pane or buffer. Existing panes share the remaining width according
-to their current split ratios. `Space d d` shows and focuses the tree, expands
-the active file's ancestors, and selects it. The tree stays rooted at the
-workspace root when `:cd` changes the working directory. Its expansion,
-selection, scroll position, and pending changes survive hiding it. Fullscreen
-and zen temporarily cover it; terminals narrower than 36 columns suppress it.
+creating a pane or buffer. `Space d d` shows and focuses it, expands the active
+file's ancestors, and selects that file. The `[dir tree]` title sits above the
+workspace-root row. The tree stays rooted at the workspace root when `:cd`
+changes the working directory. Expansion, selection, scroll position, legend
+visibility, and a resized width survive hiding it. Fullscreen and zen cover
+it temporarily; terminals narrower than 36 columns suppress it.
 
-In the tree, `j`/`k` or the arrow keys move between rows, Home/End jump to the
-first or last row, and PageUp/PageDown move by a page. `l` or Right expands a
-directory or selects its first child; `h` or Left collapses it or selects its
-parent. Enter toggles a directory or opens a file in the last ordinary pane
-you used, returning focus there. Escape returns focus to that pane without
-hiding the tree. `Space r` refreshes the selected directory. Listings load in
-the background only when directories are expanded. Directory symlinks are
-shown as links and are never recursively expanded by the tree.
+The preferred width is `editor.directory_tree_width`, initially 33 columns,
+with accepted values from 12 to 240.
+Change it in `Space o o` or the configuration file. Drag the tree's right border
+to resize it for the current workspace. While the tree has focus,
+`:resize-right + 5` widens it by five cells and `:resize-right - 5` narrows it.
+From an adjacent pane, `:resize-left + 5` widens that pane by narrowing the tree.
+Other edges retain their ordinary pane behavior. Width is limited to leave at
+least 24 columns for the ordinary pane layout.
 
-`Tab` opens the tree's action menu:
+`Ctrl-w h/l` moves focus across the tree boundary, as does `Ctrl-h/l` when
+`editor.fast_pane_keys` is enabled. Escape returns to the previous pane without
+hiding the tree. In the tree, `j/k` and the arrows move between rows. Home/End
+jump to the first/last row, and PageUp/PageDown move a page. `l` or Right expands
+a directory or selects its first child; `h` or Left collapses it or selects its
+parent. Enter on a directory toggles expansion. `Space r` refreshes the selected
+directory. Listings load in the background only as directories are expanded;
+directory symlinks are shown as links and are never recursively expanded.
+
+The following keys work directly while the tree has focus:
 
 | Key | Action |
 | --- | --- |
-| `n` | Stage a new file or directory; a trailing `/` makes a directory. |
-| `r` | Stage a rename of the selected entry. |
-| `d` | Stage deletion of the selected entry. |
-| `m` | Stage a move to a typed path; Tab completes paths. |
-| `p` | Review the complete pending filesystem plan. |
-| `u` | Undo the last staged change. |
-| `c` | Ask before discarding all pending changes. |
+| `n` | Create a file; end its relative path with `/` to create a directory. |
+| `d` | Delete the selected entry after `Delete <path>? [y/N]` in the interaction line. |
+| `m` | Move to a typed path; Tab completes paths in this prompt. |
+| `r` | Rename the selected entry. |
+| `v` | Open the selected file in a vertical split. |
+| `s` | Open the selected file in a horizontal split. |
+| Enter | Open the selected file in an existing pane. |
+| `1`–`9` | Open the selected file directly in that numbered pane. |
+| Tab | Toggle the dimmed key legend below the horizontal rule. |
 
-Staging changes only the tree display. Existing affected rows show their
-planned destination or deletion; new entries appear under their parent, and
-the title shows a pending count even when their directory is collapsed. The
-review keeps Enter for trash-first application and `P` for permanent deletion.
-Escape from review keeps the pending plan. A normal quit refuses to discard a
-pending plan; a forced quit discards it. Applying a plan rechecks captured
-directory listings and source identities before any mutation. A partial
-failure requires fresh staging and reports any recovery paths. The same
+The legend is visible by default and wraps to fit the tree width. Its labels
+are `n: new`, `d: delete`, `m: move`, `r: rename`, `v: open in v-split`,
+`s: open in h-split`, and `Tab: legend`; remapped keys use their live spellings.
+
+With one pane, Enter, `v`, and `s` act immediately. With multiple panes, they
+replace the pane titles with numbers starting at 1, ordered top to bottom and
+left to right. Choose a digit to open in that pane or split it. Escape cancels
+and restores the titles. If more than nine panes are present, type a longer
+number; Enter accepts a number that is also the prefix of another number.
+The numbering is recalculated for each new request and excludes the tree.
+
+Creating, moving, and renaming apply as soon as the name/path prompt is
+submitted. Escape cancels the prompt. There is no pending review stage. Delete
+requires `y`; Enter, `n`, or Escape cancels. Deletion uses the existing trash-first
+path. Operations recheck filesystem identities and destination collisions before
+mutation, refuse overwrites, and reconcile affected open buffers. The same
 filesystem safety and non-atomicity limits described below apply.
 
 ### Directory buffers
@@ -4439,6 +4458,7 @@ editor:
   smart_newline: true # adds syntax indentation and continues Markdown lists; false keeps only leading indent
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
+  directory_tree_width: 33 # preferred sidebar width in columns; editable in Space o o
   show_hidden_files: false # explorer, finder, and workspace search; . toggles it in an explorer
   explorer_sort: name # name/modified/size, each also _descending; directories group first
   explorer_details: false # ls -l columns before each explorer row; ? toggles it in an explorer

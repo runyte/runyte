@@ -580,7 +580,7 @@ impl App {
             return Some(self.path_hints_for(&self.command));
         }
         if self.prompt_kind == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) {
-            let source = &self.directory_tree_prompt_target.as_ref()?.0;
+            let source = self.directory_tree_prompt_target.as_ref()?;
             return Some(self.path_hints_for_raw(&self.command, source.parent()?, false));
         }
         None
@@ -852,6 +852,19 @@ impl App {
             self.pointer_drag = None;
             return Ok(PointerOutcome::Changed);
         }
+        if matches!(self.pointer_drag, Some(PointerDrag::DirectoryTreeResize)) {
+            match event.kind {
+                PointerEventKind::Drag(PointerButton::Left) => self.resize_tree(
+                    i32::from(event.column) - i32::from(view.geometry.editor.x) + 1,
+                    view.geometry.editor.width,
+                ),
+                PointerEventKind::Up(_) => {
+                    self.cancel_pointer_drag();
+                }
+                _ => {}
+            }
+            return Ok(PointerOutcome::Changed);
+        }
         if let Some(area) = view.tree_area
             && event.column >= area.x
             && event.column < area.x.saturating_add(area.width)
@@ -860,6 +873,13 @@ impl App {
         {
             match event.kind {
                 PointerEventKind::Down(PointerButton::Left) => {
+                    if event.column == area.x.saturating_add(area.width).saturating_sub(1) {
+                        self.pointer_drag = Some(PointerDrag::DirectoryTreeResize);
+                        return Ok(PointerOutcome::Changed);
+                    }
+                    if event.row <= area.y {
+                        return Ok(PointerOutcome::Unchanged);
+                    }
                     let row = usize::from(event.row.saturating_sub(area.y.saturating_add(1)));
                     if let Some(selected) = view.tree_rows.get(row) {
                         self.directory_tree.selected = selected.clone();
@@ -1123,7 +1143,16 @@ impl App {
                         self.layout.resize_between_cells(
                             first,
                             second,
-                            view.geometry.editor,
+                            crate::layout::Rect {
+                                x: view.geometry.editor.x
+                                    + view.tree_area.map_or(0, |tree| tree.width),
+                                width: view
+                                    .geometry
+                                    .editor
+                                    .width
+                                    .saturating_sub(view.tree_area.map_or(0, |tree| tree.width)),
+                                ..view.geometry.editor
+                            },
                             delta,
                         );
                     }
@@ -1134,6 +1163,9 @@ impl App {
                         last_column: event.column,
                         last_row: event.row,
                     });
+                }
+                Some(PointerDrag::DirectoryTreeResize) => {
+                    unreachable!("tree drag is handled before pane input")
                 }
                 None => {}
             },
@@ -1596,23 +1628,15 @@ impl App {
         {
             key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
         }
+        if self.directory_tree_delete.is_some() {
+            self.handle_tree_delete_key(key);
+            return Ok(());
+        }
+        if self.directory_tree_destination.is_some() {
+            return self.handle_tree_destination_key(key);
+        }
         if self.fs_confirmation.is_some() {
             return self.handle_fs_confirmation(key);
-        }
-        if self.directory_tree_discard_confirmation {
-            match key.code {
-                KeyCode::Enter => {
-                    self.directory_tree_discard_confirmation = false;
-                    self.directory_tree.clear_pending();
-                    self.status("discarded pending directory tree changes");
-                }
-                KeyCode::Escape => {
-                    self.directory_tree_discard_confirmation = false;
-                    self.status("pending directory tree changes kept");
-                }
-                _ => {}
-            }
-            return Ok(());
         }
         if self.directory_reload_confirmation.is_some() {
             return self.handle_directory_reload_confirmation(key);
@@ -1705,6 +1729,7 @@ impl App {
         }
 
         if key.code == KeyCode::Tab
+            && !self.directory_tree.focused
             && key.modifiers.is_empty()
             && matches!(self.mode, Mode::Normal | Mode::Select)
             && self.grammar.pending_sequence().is_empty()
@@ -1797,7 +1822,9 @@ impl App {
         if let Some(confirmation) = &self.git_worktree_removal {
             return confirmation.typed();
         }
-        if self.fs_confirmation.is_some()
+        if self.directory_tree_delete.is_some()
+            || self.directory_tree_destination.is_some()
+            || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.context_action_menu.is_some()
@@ -1859,7 +1886,9 @@ impl App {
             }
             return Ok(());
         }
-        if self.fs_confirmation.is_some()
+        if self.directory_tree_delete.is_some()
+            || self.directory_tree_destination.is_some()
+            || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.context_action_menu.is_some()
@@ -3177,7 +3206,7 @@ impl App {
         Ok(())
     }
 
-    fn apply_fs_confirmation(&mut self, deletion: DeletionMode) {
+    pub(super) fn apply_fs_confirmation(&mut self, deletion: DeletionMode) {
         if self.plugins.filesystem_applying || !self.plugins.document_saves.is_empty() {
             self.action_warning(
                 "Save pending",
@@ -3192,29 +3221,26 @@ impl App {
         let Some(confirmation) = self.fs_confirmation.take() else {
             return;
         };
-        if let super::FsConfirmationOrigin::DirectoryTree { revision } = confirmation.origin
-            && revision != self.directory_tree.revision
-        {
-            self.action_failed("directory tree plan changed; review it again");
-            return;
-        }
-        let root = confirmation.plan.root().to_path_buf();
-        let tree_origin = matches!(
-            confirmation.origin,
-            super::FsConfirmationOrigin::DirectoryTree { .. }
-        );
         let initiating_buffer = match confirmation.origin {
             super::FsConfirmationOrigin::Explorer { buffer }
-            | super::FsConfirmationOrigin::Plugin { buffer } => Some(buffer),
-            super::FsConfirmationOrigin::DirectoryTree { .. } => None,
+            | super::FsConfirmationOrigin::Plugin { buffer } => buffer,
         };
-        match confirmation
-            .plan
-            .apply_with_trash(deletion, self.ports.trash())
-        {
+        self.apply_native_filesystem_plan(confirmation.plan, Some(initiating_buffer), deletion);
+    }
+
+    /// Apply a captured native plan independently of any pending approval.
+    /// Tree callers have no initiating buffer; explorer callers retain theirs.
+    pub(super) fn apply_native_filesystem_plan(
+        &mut self,
+        plan: super::FsPlan,
+        initiating_buffer: Option<usize>,
+        deletion: DeletionMode,
+    ) {
+        let root = plan.root().to_path_buf();
+        let tree_origin = initiating_buffer.is_none();
+        match plan.apply_with_trash(deletion, self.ports.trash()) {
             Ok(report) => {
                 if tree_origin {
-                    self.directory_tree.clear_pending();
                     self.refresh_directory_tree_after_report(&root, &report);
                 }
                 let count = report.applied.len();
@@ -3234,7 +3260,6 @@ impl App {
                 if tree_origin
                     && (!error.report.applied.is_empty() || !error.report.recovery.is_empty())
                 {
-                    self.directory_tree.clear_pending();
                     self.refresh_directory_tree_after_report(&root, &error.report);
                 }
                 let warning = self.reconcile_applied_filesystem(
@@ -4127,13 +4152,22 @@ impl App {
             | Command::DirectoryTreeOpen
             | Command::DirectoryTreeClose
             | Command::DirectoryTreeRefresh => unreachable!("tree commands are handled first"),
-            Command::DirectoryTreeNew
+            Command::DirectoryTreeLegend
+            | Command::DirectoryTreeVertical
+            | Command::DirectoryTreeHorizontal
+            | Command::DirectoryTreePane1
+            | Command::DirectoryTreePane2
+            | Command::DirectoryTreePane3
+            | Command::DirectoryTreePane4
+            | Command::DirectoryTreePane5
+            | Command::DirectoryTreePane6
+            | Command::DirectoryTreePane7
+            | Command::DirectoryTreePane8
+            | Command::DirectoryTreePane9
+            | Command::DirectoryTreeNew
             | Command::DirectoryTreeRename
             | Command::DirectoryTreeDelete
-            | Command::DirectoryTreeMove
-            | Command::DirectoryTreeReview
-            | Command::DirectoryTreeUndo
-            | Command::DirectoryTreeClear => unreachable!("tree commands are handled first"),
+            | Command::DirectoryTreeMove => unreachable!("tree commands are handled first"),
             Command::EnterNormalMode => self.enter_normal_mode(),
             Command::OpenCommandPalette => self.open_prompt(PromptKind::Command),
             Command::MoveLeft => self.motion(Motion::Left),

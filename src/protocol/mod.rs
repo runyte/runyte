@@ -192,7 +192,9 @@ use crate::workspace::{
 // Version 64 adds a secondary-caret text role and theme colour to bundled
 // frames, so older clients cannot safely decode or paint multi-selections.
 // Version 65 carries the semantic directory-tree sidebar in editor frames.
-pub const VERSION: u32 = 65;
+// Version 66 adds the directory tree footer to bundled frames.
+// Version 67 removes obsolete directory tree staging from frames and health.
+pub const VERSION: u32 = 67;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1158,8 +1160,6 @@ pub enum HostResponse {
         /// Live buffers holding unsaved work, which is what makes this
         /// workspace refuse to stop. The scratch buffer is not one of them.
         unsaved_buffers: usize,
-        /// Staged sidebar filesystem operations protected from idle retirement.
-        pending_directory_tree_operations: u16,
         /// Every buffer the host holds open, unsaved or not. Reported rather
         /// than derived from the buffer list so a listing and the host agree
         /// about what this session is holding without transferring it.
@@ -1496,7 +1496,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 65);
+        assert_eq!(VERSION, 67);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

@@ -181,9 +181,9 @@ pub struct DirectoryTreeSnapshot {
     pub focused: bool,
     pub title: String,
     pub total_rows: usize,
-    pub pending_count: usize,
     pub selected: Option<usize>,
     pub rows: Vec<DirectoryTreeRowSnapshot>,
+    pub legend: Vec<String>,
 }
 
 /// Keep tree frame payloads bounded even on unusually tall terminals.
@@ -199,7 +199,6 @@ pub struct DirectoryTreeRowSnapshot {
     pub expanded: bool,
     pub loading: bool,
     pub error: Option<String>,
-    pub pending: Option<String>,
     pub selected: bool,
 }
 
@@ -810,7 +809,21 @@ impl App {
         let panes = prepared
             .panes
             .iter()
-            .map(|pane| self.snapshot_cached_pane(pane))
+            .map(|pane| {
+                let mut snapshot = self.snapshot_cached_pane(pane);
+                if let Some(destination) = &self.directory_tree_destination
+                    && let Some(index) = destination.panes.iter().position(|id| *id == pane.pane_id)
+                {
+                    snapshot.title = PaneTitle {
+                        name: (index + 1).to_string(),
+                        dirty: false,
+                        external_file_status: ExternalFileStatus::Synchronized,
+                        read_only: false,
+                        maximized: None,
+                    };
+                }
+                snapshot
+            })
             .collect();
         let active = self.active();
         let buffer = self.active_buffer();
@@ -826,7 +839,9 @@ impl App {
         let is_prompt =
             matches!(self.prompt_kind, PromptKind::SettingValue(_)) || self.mode == Mode::Command;
         let live_pending_display = self.live_pending_display();
-        let message = if matches!(self.prompt_kind, PromptKind::SettingValue(_)) {
+        let message = if let Some(interaction) = self.tree_interaction() {
+            interaction
+        } else if matches!(self.prompt_kind, PromptKind::SettingValue(_)) {
             String::new()
         } else if self.mode == Mode::Command {
             format!("{}{}", prompt_prefix(self.prompt_kind), self.command)
@@ -861,24 +876,17 @@ impl App {
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
                 let rows = self.directory_tree.rows();
-                let body_height = usize::from(area.height.saturating_sub(2))
-                    .min(MAX_DIRECTORY_TREE_SNAPSHOT_ROWS);
+                let body_height = self.tree_body_height(area);
                 let selected = rows
                     .iter()
                     .position(|row| row.path == self.directory_tree.selected);
                 let start = self.directory_tree.scroll.min(rows.len());
                 DirectoryTreeSnapshot {
+                    legend: self.tree_legend(area),
                     area,
                     focused: self.directory_tree.focused,
-                    title: self
-                        .directory_tree
-                        .root
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned(),
+                    title: "[dir tree]".into(),
                     total_rows: rows.len(),
-                    pending_count: self.directory_tree.pending_count(),
                     selected,
                     rows: rows
                         .into_iter()
@@ -896,7 +904,6 @@ impl App {
                                 expanded: row.expanded,
                                 loading: row.loading,
                                 error: row.error.map(|error| escape_tree_controls(&error)),
-                                pending: row.pending.map(|pending| escape_tree_controls(&pending)),
                             }
                         })
                         .collect(),

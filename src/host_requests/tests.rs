@@ -146,23 +146,6 @@ fn health_is_read_only_and_lifecycle_requests_stay_with_the_host_loop() {
 }
 
 #[test]
-fn health_reports_staged_directory_tree_operations() {
-    let (root, mut host) = fixture("host-tree-health");
-    host.app_mut()
-        .directory_tree
-        .stage_create(root.path(), "pending.txt", true)
-        .unwrap();
-    let reply = control(&mut host, ClientRequest::Health);
-    assert!(matches!(
-        reply.response,
-        HostResponse::Health {
-            pending_directory_tree_operations: 1,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn destination_labels_respect_the_byte_budget_without_splitting_utf8() {
     let limit = runyte::protocol::MAX_DESTINATION_LABEL_BYTES;
     let prefix = "a".repeat(limit - 1);

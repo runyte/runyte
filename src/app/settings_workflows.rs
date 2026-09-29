@@ -956,10 +956,7 @@ impl App {
             );
             return false;
         }
-        if !force
-            && (self.buffers.iter().any(|buffer| buffer.dirty)
-                || self.directory_tree.pending_count() > 0)
-        {
+        if !force && (self.buffers.iter().any(|buffer| buffer.dirty)) {
             self.action_warning(
                 "Quit refused",
                 format!("unsaved changes; use {force_command} to discard them"),

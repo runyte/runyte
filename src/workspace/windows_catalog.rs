@@ -394,7 +394,6 @@ fn apply_health(
         pid,
         interactive_attached,
         unsaved_buffers,
-        pending_directory_tree_operations: _,
         open_buffers,
         pending_wait_requests,
         plugin_jobs,

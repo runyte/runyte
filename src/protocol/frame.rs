@@ -592,9 +592,9 @@ pub struct DirectoryTreeSnapshot {
     pub focused: bool,
     pub title: String,
     pub total_rows: usize,
-    pub pending_count: usize,
     pub selected: Option<usize>,
     pub rows: Vec<DirectoryTreeRowSnapshot>,
+    pub legend: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -607,7 +607,6 @@ pub struct DirectoryTreeRowSnapshot {
     pub expanded: bool,
     pub loading: bool,
     pub error: Option<String>,
-    pub pending: Option<String>,
     pub selected: bool,
 }
 
@@ -618,7 +617,7 @@ impl From<core::DirectoryTreeSnapshot> for DirectoryTreeSnapshot {
             focused: value.focused,
             title: value.title,
             total_rows: value.total_rows,
-            pending_count: value.pending_count,
+            legend: value.legend,
             selected: value.selected,
             rows: value
                 .rows
@@ -631,7 +630,6 @@ impl From<core::DirectoryTreeSnapshot> for DirectoryTreeSnapshot {
                     expanded: row.expanded,
                     loading: row.loading,
                     error: row.error,
-                    pending: row.pending,
                     selected: row.selected,
                 })
                 .collect(),
@@ -645,7 +643,8 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
         if value.rows.len() > core::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS
             || value.title.len() > 1024
             || value.total_rows > 1_000_000
-            || value.pending_count > 4096
+            || value.legend.len() > 64
+            || value.legend.iter().any(|line| line.len() > 4096)
             || value
                 .selected
                 .is_some_and(|index| index >= value.total_rows)
@@ -663,9 +662,6 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
                         .error
                         .as_ref()
                         .is_some_and(|error| error.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES)
-                    || row.pending.as_ref().is_some_and(|pending| {
-                        pending.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES
-                    })
                 {
                     return Err("directory tree row exceeds protocol limits".into());
                 }
@@ -677,7 +673,6 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
                     expanded: row.expanded,
                     loading: row.loading,
                     error: row.error,
-                    pending: row.pending,
                     selected: row.selected,
                 })
             })
@@ -687,7 +682,7 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
             focused: value.focused,
             title: value.title,
             total_rows: value.total_rows,
-            pending_count: value.pending_count,
+            legend: value.legend,
             selected: value.selected,
             rows,
         })
@@ -1213,7 +1208,7 @@ mod tests {
             rows: Vec::new(),
             selected: None,
             focused: false,
-            pending_count: 0,
+            legend: Vec::new(),
             total_rows: 0,
         });
         assert!(EditorDamageFrame::between(&base, &next).is_none());
@@ -1235,7 +1230,7 @@ mod tests {
             focused: true,
             title: "project".into(),
             total_rows: 271,
-            pending_count: 0,
+            legend: Vec::new(),
             selected: Some(270),
             rows: (0..271)
                 .map(|index| crate::snapshot::DirectoryTreeRowSnapshot {
@@ -1246,7 +1241,6 @@ mod tests {
                     expanded: false,
                     loading: false,
                     error: None,
-                    pending: None,
                     selected: index == 270,
                 })
                 .collect(),

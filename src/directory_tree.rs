@@ -38,21 +38,6 @@ pub struct TreeRow {
     pub expanded: bool,
     pub loading: bool,
     pub error: Option<String>,
-    pub pending: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct StagedIntention {
-    pub source: Option<PathBuf>,
-    pub destination: Option<PathBuf>,
-    pub kind: EntryKind,
-    pub fingerprint: Option<SourceFingerprint>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingState {
-    intentions: Vec<StagedIntention>,
-    baselines: HashMap<PathBuf, DirectorySnapshot>,
 }
 
 struct ListingRequest {
@@ -76,6 +61,9 @@ pub struct DirectoryTree {
     pub selected: PathBuf,
     pub scroll: usize,
     pub viewport_rows: usize,
+    pub legend_visible: bool,
+    /// Runtime override paired with the configured width when it was set.
+    pub width_override: Option<(usize, u16)>,
     expanded: HashSet<PathBuf>,
     revealed_hidden: HashSet<PathBuf>,
     listings: HashMap<PathBuf, Vec<TreeEntry>>,
@@ -87,9 +75,6 @@ pub struct DirectoryTree {
     results: Receiver<ListingResult>,
     result_sender: Option<Sender<ListingResult>>,
     wake: Arc<Notify>,
-    pending: PendingState,
-    history: Vec<PendingState>,
-    pub revision: u64,
 }
 
 impl DirectoryTree {
@@ -98,6 +83,8 @@ impl DirectoryTree {
         let wake = Arc::new(Notify::new());
         Self {
             selected: root.clone(),
+            legend_visible: true,
+            width_override: None,
             root,
             visible: false,
             focused: false,
@@ -114,12 +101,6 @@ impl DirectoryTree {
             results,
             result_sender: Some(result_sender),
             wake,
-            pending: PendingState {
-                intentions: Vec::new(),
-                baselines: HashMap::new(),
-            },
-            history: Vec::new(),
-            revision: 0,
         }
     }
 
@@ -136,11 +117,7 @@ impl DirectoryTree {
                 return;
             }
             self.expanded.insert(path.clone());
-            if !self.listings.contains_key(&path)
-                && !self.pending.intentions.iter().any(|intent| {
-                    intent.source.is_none() && intent.destination.as_deref() == Some(&path)
-                })
-            {
+            if !self.listings.contains_key(&path) {
                 let include_hidden = show_hidden || self.revealed_hidden.contains(&path);
                 self.refresh(path, include_hidden);
             }
@@ -222,7 +199,16 @@ impl DirectoryTree {
                 continue;
             }
             self.outstanding.remove(&result.path);
-            let refreshed_path = result.path.clone();
+            if !self.expanded.contains(&result.path) {
+                self.queued_refresh.remove(&result.path);
+                continue;
+            }
+            // A queued refresh supersedes this observation, including any
+            // rows published immediately after an applied filesystem change.
+            if let Some(show_hidden) = self.queued_refresh.remove(&result.path) {
+                self.refresh(result.path, show_hidden);
+                continue;
+            }
             match result.entries {
                 Ok(entries) => {
                     if !self.listings.contains_key(&result.path)
@@ -249,9 +235,6 @@ impl DirectoryTree {
                 Err(error) => {
                     self.errors.insert(result.path, error);
                 }
-            }
-            if let Some(show_hidden) = self.queued_refresh.remove(&refreshed_path) {
-                self.refresh(refreshed_path, show_hidden);
             }
             changed = true;
         }
@@ -286,31 +269,9 @@ impl DirectoryTree {
             expanded,
             loading: self.outstanding.contains_key(path),
             error: self.errors.get(path).cloned(),
-            pending: self.pending_for(path).map(|intent| {
-                match (&intent.source, &intent.destination) {
-                    (None, Some(_)) => "new".to_owned(),
-                    (Some(_), None) => "delete".to_owned(),
-                    (Some(_), Some(to)) => {
-                        format!("→ {}", to.strip_prefix(&self.root).unwrap_or(to).display())
-                    }
-                    (None, None) => String::new(),
-                }
-            }),
         });
         if expanded && depth < 128 {
             let mut entries = self.listings.get(path).cloned().unwrap_or_default();
-            for intent in &self.pending.intentions {
-                if intent.source.is_none()
-                    && let Some(target) = &intent.destination
-                    && target.parent() == Some(path)
-                    && !entries.iter().any(|entry| entry.path == *target)
-                {
-                    entries.push(TreeEntry {
-                        path: target.clone(),
-                        kind: intent.kind,
-                    });
-                }
-            }
             entries.sort_by(|left, right| {
                 (left.kind != EntryKind::Directory)
                     .cmp(&(right.kind != EntryKind::Directory))
@@ -326,17 +287,9 @@ impl DirectoryTree {
         if path == self.root {
             return Some(EntryKind::Directory);
         }
-        if let Some(intent) =
-            self.pending.intentions.iter().find(|intent| {
-                intent.source.is_none() && intent.destination.as_deref() == Some(path)
-            })
-        {
-            return Some(intent.kind);
-        }
         self.listings
-            .get(path.parent()?)?
-            .iter()
-            .find(|entry| entry.path == path)
+            .get(path.parent()?)
+            .and_then(|entries| entries.iter().find(|entry| entry.path == path))
             .map(|entry| entry.kind)
     }
 
@@ -441,49 +394,6 @@ impl DirectoryTree {
         Ok(())
     }
 
-    pub fn pending_count(&self) -> usize {
-        self.pending.intentions.len()
-    }
-
-    pub fn pending_for(&self, path: &Path) -> Option<&StagedIntention> {
-        self.pending.intentions.iter().find(|intent| {
-            intent.source.as_deref() == Some(path)
-                || intent.source.is_none() && intent.destination.as_deref() == Some(path)
-        })
-    }
-
-    pub fn planned_destination(&self, source: &Path) -> Option<&Path> {
-        self.pending
-            .intentions
-            .iter()
-            .find(|intent| intent.source.as_deref() == Some(source))
-            .and_then(|intent| intent.destination.as_deref())
-    }
-
-    fn remember_state(&mut self) {
-        self.history.push(self.pending.clone());
-        if self.history.len() > 128 {
-            self.history.remove(0);
-        }
-        self.revision = self.revision.wrapping_add(1);
-    }
-
-    fn capture_parent(
-        &self,
-        parent: &Path,
-        show_hidden: bool,
-    ) -> Result<Option<(PathBuf, DirectorySnapshot)>> {
-        if self.pending.baselines.contains_key(parent)
-            || self.pending.intentions.iter().any(|intent| {
-                intent.source.is_none() && intent.destination.as_deref() == Some(parent)
-            })
-        {
-            return Ok(None);
-        }
-        let snapshot = DirectorySnapshot::read_bounded(parent, show_hidden, MAX_DIRECTORY_ENTRIES)?;
-        Ok(Some((parent.to_path_buf(), snapshot)))
-    }
-
     fn validate_target(&self, target: &Path) -> Result<()> {
         ensure!(
             target.is_absolute(),
@@ -495,24 +405,16 @@ impl DirectoryTree {
             "tree operation target is outside the workspace"
         );
         ensure!(
-            target
+            !target
                 .components()
-                .all(|component| !matches!(component, Component::ParentDir)),
+                .any(|part| matches!(part, Component::ParentDir)),
             "parent traversal is not allowed"
         );
         Ok(())
     }
 
-    pub fn stage_create(
-        &mut self,
-        parent: &Path,
-        name: &str,
-        show_hidden: bool,
-    ) -> Result<PathBuf> {
-        ensure!(
-            self.pending.intentions.len() < 4096,
-            "too many staged operations"
-        );
+    /// Capture one operation's preconditions without changing navigation state.
+    pub fn prepare_create(&self, parent: &Path, name: &str, show_hidden: bool) -> Result<FsPlan> {
         ensure!(!name.trim().is_empty(), "new entry needs a name");
         let directory = name.ends_with(std::path::MAIN_SEPARATOR) || name.ends_with('/');
         let name = name.trim_end_matches(['/', '\\']);
@@ -527,179 +429,110 @@ impl DirectoryTree {
         let target = parent.join(relative);
         self.validate_target(&target)?;
         ensure!(
-            !self
-                .pending
-                .intentions
-                .iter()
-                .any(|intent| intent.kind == EntryKind::Directory
-                    && intent
-                        .source
-                        .as_ref()
-                        .is_some_and(|source| target.starts_with(source))),
-            "apply the parent directory change separately"
-        );
-        ensure!(
             fs::symlink_metadata(&target)
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-                && !self
-                    .pending
-                    .intentions
-                    .iter()
-                    .any(|intent| intent.destination.as_deref() == Some(&target)),
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
             "target already exists: {}",
             target.display()
         );
-        let baseline = self.capture_parent(target.parent().unwrap_or(parent), show_hidden)?;
-        self.remember_state();
-        if let Some((parent, snapshot)) = baseline {
-            self.pending.baselines.insert(parent, snapshot);
-        }
-        self.pending.intentions.push(StagedIntention {
-            source: None,
-            destination: Some(target.clone()),
-            kind: if directory {
-                EntryKind::Directory
-            } else {
-                EntryKind::File
-            },
-            fingerprint: None,
-        });
-        Ok(target)
+        let parent = target.parent().unwrap_or(parent);
+        let baseline = DirectorySnapshot::read_bounded(parent, show_hidden, MAX_DIRECTORY_ENTRIES)?;
+        FsPlan::build_explicit(
+            self.root.clone(),
+            vec![FsOperation::Create {
+                path: relative_from_root(&self.root, &target)?,
+                kind: if directory {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                },
+            }],
+            vec![(relative_from_root(&self.root, parent)?, baseline)],
+            vec![],
+        )
     }
 
-    fn stage_existing(
-        &mut self,
+    fn prepare_existing(
+        &self,
         source: &Path,
         destination: Option<PathBuf>,
         show_hidden: bool,
-    ) -> Result<()> {
-        ensure!(
-            self.pending.intentions.len() < 4096,
-            "too many staged operations"
-        );
+    ) -> Result<FsPlan> {
         self.validate_target(source)?;
-        if let Some(destination) = &destination {
+        let fingerprint = SourceFingerprint::capture_limited(
+            source,
+            Some(OperationLimits {
+                entries: 50_000,
+                depth: 128,
+                bytes: u64::MAX,
+                metadata_bytes: 64 * 1024 * 1024,
+            }),
+        )?;
+        let kind = fingerprint.kind();
+        let from = relative_from_root(&self.root, source)?;
+        let parent = source.parent().unwrap_or(&self.root);
+        let mut baselines = vec![(
+            relative_from_root(&self.root, parent)?,
+            DirectorySnapshot::read_bounded(parent, show_hidden, MAX_DIRECTORY_ENTRIES)?,
+        )];
+        let operation = if let Some(target) = destination {
+            ensure!(target.is_absolute(), "move destination must be absolute");
+            ensure!(source != target, "source and destination are the same");
             ensure!(
-                destination.is_absolute(),
-                "move destination must be absolute"
-            );
-            ensure!(source != destination, "source and destination are the same");
-            ensure!(
-                !destination.starts_with(source) || self.kind(source) != Some(EntryKind::Directory),
+                !target.starts_with(source) || kind != EntryKind::Directory,
                 "cannot move a directory inside itself"
             );
-            ensure!(
-                !self
-                    .pending
-                    .intentions
-                    .iter()
-                    .any(|intent| intent.destination.as_deref() == Some(destination)
-                        && intent.source.as_deref() != Some(source)),
-                "duplicate final target: {}",
-                destination.display()
-            );
-        }
-        if let Some(index) = self.pending.intentions.iter().position(|intent| {
-            intent.source.is_none() && intent.destination.as_deref() == Some(source)
-        }) {
-            if destination.is_none() {
-                self.remember_state();
-                self.pending.intentions.remove(index);
-                self.pending.intentions.retain(|intent| {
-                    !intent
-                        .destination
-                        .as_ref()
-                        .is_some_and(|target| target.starts_with(source))
-                });
-                return Ok(());
-            }
-            anyhow::bail!("apply the new entry before moving it");
-        }
-        let index = self
-            .pending
-            .intentions
-            .iter()
-            .position(|intent| intent.source.as_deref() == Some(source));
-        let (kind, fingerprint) = if let Some(index) = index {
-            let intent = &self.pending.intentions[index];
-            (intent.kind, intent.fingerprint.clone())
-        } else {
-            let fingerprint = SourceFingerprint::capture_limited(
-                source,
-                Some(OperationLimits {
-                    entries: 50_000,
-                    depth: 128,
-                    bytes: u64::MAX,
-                    metadata_bytes: 64 * 1024 * 1024,
-                }),
-            )?;
-            (fingerprint.kind(), Some(fingerprint))
-        };
-        if kind == EntryKind::Directory {
-            ensure!(
-                !self.pending.intentions.iter().any(|intent| intent
-                    .source
-                    .as_ref()
-                    .is_some_and(|other| other != source && other.starts_with(source))
-                    || intent
-                        .destination
-                        .as_ref()
-                        .is_some_and(|other| other != source && other.starts_with(source))),
-                "apply directory and descendant changes separately"
-            );
-        }
-        let source_baseline =
-            self.capture_parent(source.parent().unwrap_or(&self.root), show_hidden)?;
-        let destination_baseline =
-            if let Some(parent) = destination.as_ref().and_then(|path| path.parent()) {
-                self.capture_parent(parent, show_hidden)?
+            let to = relative_from_root(&self.root, &target)?;
+            if target.parent() == Some(parent) {
+                FsOperation::Rename {
+                    from: from.clone(),
+                    to,
+                    kind,
+                }
             } else {
-                None
-            };
-        self.remember_state();
-        if let Some((parent, snapshot)) = source_baseline {
-            self.pending.baselines.insert(parent, snapshot);
-        }
-        if let Some((parent, snapshot)) = destination_baseline {
-            self.pending.baselines.entry(parent).or_insert(snapshot);
-        }
-        let intent = StagedIntention {
-            source: Some(source.to_path_buf()),
-            destination,
-            kind,
-            fingerprint,
-        };
-        if let Some(index) = index {
-            self.pending.intentions[index] = intent;
+                let target_parent = target.parent().unwrap_or(&self.root);
+                baselines.push((
+                    relative_from_root(&self.root, target_parent)?,
+                    DirectorySnapshot::read_bounded(
+                        target_parent,
+                        show_hidden,
+                        MAX_DIRECTORY_ENTRIES,
+                    )?,
+                ));
+                FsOperation::Move {
+                    from: from.clone(),
+                    to,
+                    kind,
+                }
+            }
         } else {
-            self.pending.intentions.push(intent);
-        }
-        Ok(())
+            FsOperation::Delete {
+                path: from.clone(),
+                kind,
+            }
+        };
+        FsPlan::build_explicit(
+            self.root.clone(),
+            vec![operation],
+            baselines,
+            vec![(from, fingerprint)],
+        )
     }
 
-    pub fn stage_rename(
-        &mut self,
-        source: &Path,
-        name: &str,
-        show_hidden: bool,
-    ) -> Result<PathBuf> {
+    pub fn prepare_rename(&self, source: &Path, name: &str, show_hidden: bool) -> Result<FsPlan> {
         let name = Path::new(name);
         ensure!(
             name.components().count() == 1
                 && matches!(name.components().next(), Some(Component::Normal(_))),
             "rename accepts one name"
         );
-        let target = self
-            .planned_destination(source)
-            .unwrap_or(source)
-            .parent()
-            .unwrap_or(&self.root)
-            .join(name);
-        self.stage_existing(source, Some(target.clone()), show_hidden)?;
-        Ok(target)
+        self.prepare_existing(
+            source,
+            Some(source.parent().unwrap_or(&self.root).join(name)),
+            show_hidden,
+        )
     }
 
-    pub fn stage_move(&mut self, source: &Path, path: &str, show_hidden: bool) -> Result<PathBuf> {
+    pub fn prepare_move(&self, source: &Path, path: &str, show_hidden: bool) -> Result<FsPlan> {
         ensure!(!path.trim().is_empty(), "move needs a destination");
         let input = Path::new(path);
         let mut target = lexical_normalize(&if input.is_absolute() {
@@ -708,88 +541,69 @@ impl DirectoryTree {
             source.parent().unwrap_or(&self.root).join(input)
         });
         if target.is_dir() || path.ends_with('/') || path.ends_with(std::path::MAIN_SEPARATOR) {
-            let current_name = self
-                .pending
-                .intentions
-                .iter()
-                .find(|intent| intent.source.as_deref() == Some(source))
-                .and_then(|intent| intent.destination.as_ref())
-                .and_then(|destination| destination.file_name())
-                .or_else(|| source.file_name())
-                .ok_or_else(|| anyhow::anyhow!("source has no name"))?
-                .to_os_string();
-            target.push(current_name);
+            target.push(
+                source
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("source has no name"))?,
+            );
         }
-        self.stage_existing(source, Some(target.clone()), show_hidden)?;
-        Ok(target)
+        self.prepare_existing(source, Some(target), show_hidden)
     }
 
-    pub fn stage_delete(&mut self, source: &Path, show_hidden: bool) -> Result<()> {
-        self.stage_existing(source, None, show_hidden)
+    pub fn prepare_delete(&self, source: &Path, show_hidden: bool) -> Result<FsPlan> {
+        self.prepare_existing(source, None, show_hidden)
     }
 
-    pub fn undo(&mut self) -> bool {
-        if let Some(previous) = self.history.pop() {
-            self.pending = previous;
-            self.revision = self.revision.wrapping_add(1);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn clear_pending(&mut self) {
-        self.pending.intentions.clear();
-        self.pending.baselines.clear();
-        self.history.clear();
-        self.revision = self.revision.wrapping_add(1);
-    }
-
-    pub fn build_plan(&self) -> Result<FsPlan> {
-        let mut operations = Vec::new();
-        let mut sources = Vec::new();
-        for intent in &self.pending.intentions {
-            let relative = |path: &Path| relative_from_root(&self.root, path);
-            let operation = match (&intent.source, &intent.destination) {
-                (None, Some(to)) => FsOperation::Create {
-                    path: relative(to)?,
-                    kind: intent.kind,
-                },
-                (Some(from), None) => FsOperation::Delete {
-                    path: relative(from)?,
-                    kind: intent.kind,
-                },
-                (Some(from), Some(to)) => {
-                    let from_relative = relative(from)?;
-                    let to_relative = relative(to)?;
-                    if from.parent() == to.parent() {
-                        FsOperation::Rename {
-                            from: from_relative,
-                            to: to_relative,
-                            kind: intent.kind,
-                        }
-                    } else {
-                        FsOperation::Move {
-                            from: from_relative,
-                            to: to_relative,
-                            kind: intent.kind,
-                        }
+    /// Publish known operation results immediately, without stat calls. Queued
+    /// listings from before the operation cannot replace this newer observation.
+    pub fn note_applied(&mut self, root: &Path, report: &crate::fs_plan::ApplyReport) {
+        for operation in &report.applied {
+            let (source, destination) = match operation {
+                FsOperation::Create { path, kind } => (None, Some((path, *kind))),
+                FsOperation::Delete { path, .. } => (Some(path), None),
+                FsOperation::Rename { from, to, kind } | FsOperation::Move { from, to, kind } => {
+                    (Some(from), Some((to, *kind)))
+                }
+                FsOperation::Copy { to, kind, .. } => (None, Some((to, *kind))),
+            };
+            if let Some(source) = source {
+                let source = lexical_normalize(&root.join(source));
+                if let Some(entries) = source
+                    .parent()
+                    .and_then(|parent| self.listings.get_mut(parent))
+                {
+                    entries.retain(|entry| entry.path != source);
+                }
+                self.listings.retain(|path, _| !path.starts_with(&source));
+                self.expanded.retain(|path| !path.starts_with(&source));
+                self.revealed_hidden
+                    .retain(|path| !path.starts_with(&source));
+                self.errors.retain(|path, _| !path.starts_with(&source));
+                // Discard results for removed/renamed directories without
+                // scheduling new work at the old path.
+                self.queued_refresh
+                    .retain(|path, _| !path.starts_with(&source));
+                if self.selected.starts_with(&source) {
+                    self.selected = source.parent().unwrap_or(&self.root).to_path_buf();
+                }
+            }
+            if let Some((path, kind)) = destination {
+                let path = lexical_normalize(&root.join(path));
+                if !path.starts_with(&self.root) {
+                    continue;
+                }
+                if let Some(parent) = path.parent()
+                    && (self.listings.contains_key(parent)
+                        || self.listings.len() < MAX_CACHED_LISTINGS)
+                {
+                    let entries = self.listings.entry(parent.to_path_buf()).or_default();
+                    entries.retain(|entry| entry.path != path);
+                    if entries.len() < MAX_DIRECTORY_ENTRIES {
+                        entries.push(TreeEntry { path, kind });
                     }
                 }
-                (None, None) => unreachable!(),
-            };
-            if let (Some(from), Some(fingerprint)) = (&intent.source, &intent.fingerprint) {
-                sources.push((relative(from)?, fingerprint.clone()));
             }
-            operations.push(operation);
         }
-        let baselines = self
-            .pending
-            .baselines
-            .iter()
-            .map(|(path, snapshot)| Ok((relative_from_root(&self.root, path)?, snapshot.clone())))
-            .collect::<Result<Vec<_>>>()?;
-        FsPlan::build_explicit(self.root.clone(), operations, baselines, sources)
     }
 }
 
@@ -932,152 +746,125 @@ mod tests {
     }
 
     #[test]
-    fn staged_cross_directory_plan_is_reviewed_together() {
-        let root = Temp::new("staging");
-        fs::create_dir(root.0.join("left")).unwrap();
-        fs::create_dir(root.0.join("right")).unwrap();
-        fs::write(root.0.join("left/a.txt"), "a").unwrap();
-        fs::write(root.0.join("right/b.txt"), "b").unwrap();
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_move(&root.0.join("left/a.txt"), "../right/a.txt", true)
+    fn immediate_plans_validate_paths_collisions_and_changed_sources() {
+        let root = Temp::new("checked-plans");
+        let tree = DirectoryTree::new(root.0.clone());
+        for name in ["", "../escape", "/absolute"] {
+            assert!(tree.prepare_create(&root.0, name, false).is_err());
+        }
+        assert!(tree.prepare_delete(&root.0, false).is_err());
+        tree.prepare_create(&root.0, "folder/", false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
             .unwrap();
-        tree.stage_rename(&root.0.join("right/b.txt"), "c.txt", true)
-            .unwrap();
-        assert!(root.0.join("left/a.txt").exists());
-        assert!(root.0.join("right/b.txt").exists());
-        assert_eq!(tree.pending_count(), 2);
-        let plan = tree.build_plan().unwrap();
-        assert_eq!(plan.operations().len(), 2);
-        plan.apply(DeletionMode::Permanent).unwrap();
-        assert_eq!(fs::read(root.0.join("right/a.txt")).unwrap(), b"a");
-        assert_eq!(fs::read(root.0.join("right/c.txt")).unwrap(), b"b");
-        assert!(!root.0.join("left/a.txt").exists());
-    }
-
-    #[test]
-    fn staged_source_and_directory_changes_refuse_every_operation() {
-        let root = Temp::new("stale");
-        fs::create_dir(root.0.join("left")).unwrap();
-        fs::create_dir(root.0.join("right")).unwrap();
-        fs::write(root.0.join("left/a.txt"), "a").unwrap();
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_move(&root.0.join("left/a.txt"), "../right/a.txt", true)
-            .unwrap();
-        tree.stage_create(&root.0.join("right"), "new.txt", true)
-            .unwrap();
-        let plan = tree.build_plan().unwrap();
-        fs::write(root.0.join("left/a.txt"), "external").unwrap();
-        assert!(plan.apply(DeletionMode::Permanent).is_err());
-        assert!(!root.0.join("right/a.txt").exists());
-        assert!(!root.0.join("right/new.txt").exists());
-        fs::write(root.0.join("left/a.txt"), "a").unwrap();
-        // The captured source identity is still stale even if text is restored.
-        assert!(plan.apply(DeletionMode::Permanent).is_err());
-    }
-
-    #[test]
-    fn staged_creation_undo_and_synthetic_parent() {
-        let root = Temp::new("undo");
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.show(true);
-        tree.stage_create(&root.0, "new/", true).unwrap();
-        tree.expand(root.0.join("new"), true);
-        tree.stage_create(&root.0.join("new"), "child.txt", true)
-            .unwrap();
-        assert_eq!(tree.pending_count(), 2);
+        let file = root.0.join("file");
+        fs::write(&file, "original").unwrap();
+        assert!(tree.prepare_create(&root.0, "file", false).is_err());
+        assert!(tree.prepare_rename(&file, "a/b", false).is_err());
         assert!(
-            tree.rows()
-                .iter()
-                .any(|row| row.path == root.0.join("new/child.txt"))
+            tree.prepare_move(&root.0.join("folder"), "folder/child", false)
+                .is_err()
         );
-        assert!(tree.undo());
-        assert_eq!(tree.pending_count(), 1);
-        tree.stage_delete(&root.0.join("new"), true).unwrap();
-        assert_eq!(tree.pending_count(), 0);
-        assert!(!root.0.join("new").exists());
-    }
-
-    #[test]
-    fn staged_nested_creation_applies_in_parent_order() {
-        let root = Temp::new("nested-create");
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_create(&root.0, "new/", true).unwrap();
-        tree.stage_create(&root.0.join("new"), "child.txt", true)
-            .unwrap();
-        let plan = tree.build_plan().unwrap();
-        assert!(!root.0.join("new").exists());
-        plan.apply(DeletionMode::Permanent).unwrap();
-        assert!(root.0.join("new/child.txt").is_file());
-    }
-
-    #[test]
-    fn all_tree_actions_stage_without_changing_disk_and_apply_together() {
-        let root = Temp::new("four-actions");
-        fs::create_dir(root.0.join("other")).unwrap();
-        for name in ["rename.txt", "move.txt", "delete.txt"] {
-            fs::write(root.0.join(name), name).unwrap();
-        }
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_create(&root.0, "new.txt", true).unwrap();
-        tree.stage_rename(&root.0.join("rename.txt"), "renamed.txt", true)
-            .unwrap();
-        tree.stage_move(&root.0.join("move.txt"), "other/moved.txt", true)
-            .unwrap();
-        tree.stage_delete(&root.0.join("delete.txt"), true).unwrap();
-        assert_eq!(tree.pending_count(), 4);
-        assert!(!root.0.join("new.txt").exists());
-        for name in ["rename.txt", "move.txt", "delete.txt"] {
-            assert!(root.0.join(name).exists());
-        }
-        let plan = tree.build_plan().unwrap();
-        plan.apply(DeletionMode::Permanent).unwrap();
-        assert!(root.0.join("new.txt").exists());
-        assert!(root.0.join("renamed.txt").exists());
-        assert!(root.0.join("other/moved.txt").exists());
-        assert!(!root.0.join("delete.txt").exists());
-    }
-
-    #[test]
-    fn moving_a_staged_rename_into_a_directory_keeps_the_new_basename() {
-        let root = Temp::new("rename-then-move");
-        fs::create_dir(root.0.join("dest")).unwrap();
-        let source = root.0.join("old.txt");
-        fs::write(&source, "content").unwrap();
-        let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_rename(&source, "new.txt", true).unwrap();
-        assert_eq!(
-            tree.stage_move(&source, "dest/", true).unwrap(),
-            root.0.join("dest/new.txt")
-        );
-        assert_eq!(tree.pending_count(), 1);
-        tree.build_plan()
+        let plan = tree.prepare_delete(&file, false).unwrap();
+        fs::write(&file, "changed contents").unwrap();
+        assert!(plan.apply(DeletionMode::Permanent).is_err());
+        assert!(file.exists());
+        tree.prepare_move(&file, "folder/", false)
             .unwrap()
             .apply(DeletionMode::Permanent)
             .unwrap();
-        assert_eq!(fs::read(root.0.join("dest/new.txt")).unwrap(), b"content");
+        assert!(root.0.join("folder/file").exists());
+        assert!(!file.exists());
     }
 
     #[test]
-    fn renaming_a_staged_move_keeps_the_destination_directory() {
-        let root = Temp::new("move-then-rename");
-        fs::create_dir(root.0.join("dest")).unwrap();
-        let source = root.0.join("old.txt");
-        fs::write(&source, "content").unwrap();
+    fn applied_entries_are_known_without_disk_fallback_and_deleted_subtrees_disappear() {
+        let root = Temp::new("known-entries");
         let mut tree = DirectoryTree::new(root.0.clone());
-        tree.stage_move(&source, "dest/", true).unwrap();
-        assert_eq!(
-            tree.planned_destination(&source),
-            Some(root.0.join("dest/old.txt").as_path())
-        );
-        assert_eq!(
-            tree.stage_rename(&source, "new.txt", true).unwrap(),
-            root.0.join("dest/new.txt")
-        );
-        assert_eq!(tree.pending_count(), 1);
-        tree.build_plan()
+        let folder = root.0.join("folder");
+        let report = tree
+            .prepare_create(&root.0, "folder/", false)
             .unwrap()
             .apply(DeletionMode::Permanent)
             .unwrap();
-        assert_eq!(fs::read(root.0.join("dest/new.txt")).unwrap(), b"content");
+        tree.note_applied(&root.0, &report);
+        assert_eq!(tree.kind(&folder), Some(EntryKind::Directory));
+        fs::create_dir(root.0.join(".hidden")).unwrap();
+        assert_eq!(tree.kind(&root.0.join(".hidden")), None);
+        tree.expanded.insert(folder.clone());
+        tree.listings.insert(folder.clone(), vec![]);
+        tree.selected = folder.join("child");
+        let report = tree
+            .prepare_rename(&folder, "renamed", false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
+            .unwrap();
+        tree.note_applied(&root.0, &report);
+        assert_eq!(tree.kind(&folder), None);
+        assert!(!tree.expanded.contains(&folder));
+        assert!(!tree.listings.contains_key(&folder));
+        assert_eq!(tree.selected, root.0);
+        let renamed = root.0.join("renamed");
+        assert_eq!(tree.kind(&renamed), Some(EntryKind::Directory));
+        let report = tree
+            .prepare_delete(&renamed, false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
+            .unwrap();
+        tree.note_applied(&root.0, &report);
+        assert_eq!(tree.kind(&renamed), None);
+    }
+    #[test]
+    fn queued_refresh_discards_results_from_before_an_applied_change() {
+        let root = Temp::new("superseded-listing");
+        let mut tree = DirectoryTree::new(root.0.clone());
+        tree.expanded.insert(root.0.clone());
+        tree.outstanding.insert(root.0.clone(), 0);
+        tree.queued_refresh.insert(root.0.clone(), false);
+        tree.result_sender
+            .as_ref()
+            .unwrap()
+            .send(ListingResult {
+                path: root.0.clone(),
+                generation: 0,
+                entries: Ok(vec![]),
+            })
+            .unwrap();
+        let report = tree
+            .prepare_create(&root.0, "folder/", false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
+            .unwrap();
+        tree.note_applied(&root.0, &report);
+        tree.poll();
+        assert_eq!(
+            tree.kind(&root.0.join("folder")),
+            Some(EntryKind::Directory)
+        );
+        await_rows(&mut tree, 2);
+    }
+    #[test]
+    fn applied_move_outside_workspace_does_not_publish_outside_rows() {
+        let root = Temp::new("move-outside-source");
+        let destination = Temp::new("move-outside-destination");
+        let mut tree = DirectoryTree::new(root.0.clone());
+        let report = tree
+            .prepare_create(&root.0, "file", false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
+            .unwrap();
+        tree.note_applied(&root.0, &report);
+        tree.selected = root.0.join("file");
+        let report = tree
+            .prepare_move(&tree.selected, destination.0.to_str().unwrap(), false)
+            .unwrap()
+            .apply(DeletionMode::Permanent)
+            .unwrap();
+        tree.note_applied(&root.0, &report);
+        assert!(destination.0.join("file").exists());
+        assert_eq!(tree.kind(&root.0.join("file")), None);
+        assert_eq!(tree.kind(&destination.0.join("file")), None);
+        assert!(tree.listings.keys().all(|path| path.starts_with(&root.0)));
+        assert_eq!(tree.selected, root.0);
     }
 }

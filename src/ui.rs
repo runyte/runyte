@@ -1945,11 +1945,7 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
     if area.width < 2 || area.height < 2 {
         return;
     }
-    let title = if tree.pending_count == 0 {
-        format!(" {} ", tree.title)
-    } else {
-        format!(" {} · {} pending ", tree.title, tree.pending_count)
-    };
+    let title = format!(" {} ", tree.title);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -1966,6 +1962,38 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
         width: area.width.saturating_sub(2),
         height: area.height.saturating_sub(2),
     };
+    let footer_height = if tree.legend.is_empty() {
+        0
+    } else {
+        (tree.legend.len() + 1) as u16
+    };
+    let entries = TuiRect {
+        height: body.height.saturating_sub(footer_height),
+        ..body
+    };
+    if footer_height > 0 {
+        let y = body.y.saturating_add(entries.height);
+        let muted = Style::default()
+            .fg(theme.muted)
+            .bg(theme.background)
+            .add_modifier(Modifier::DIM);
+        frame.render_widget(
+            Paragraph::new("─".repeat(usize::from(body.width))).style(muted),
+            TuiRect {
+                y,
+                height: 1,
+                ..body
+            },
+        );
+        frame.render_widget(
+            Paragraph::new(tree.legend.join("\n")).style(muted),
+            TuiRect {
+                y: y.saturating_add(1),
+                height: footer_height.saturating_sub(1),
+                ..body
+            },
+        );
+    }
     let lines = tree
         .rows
         .iter()
@@ -1979,7 +2007,7 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
                 crate::fs_plan::EntryKind::Other => "? ",
             };
             let label = format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}",
                 " ".repeat(row.depth.saturating_mul(2).min(64)),
                 marker,
                 row.label,
@@ -1987,10 +2015,7 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
                     "/"
                 } else {
                     ""
-                },
-                row.pending
-                    .as_ref()
-                    .map_or_else(String::new, |pending| format!("  [{pending}]"))
+                }
             );
             let style = if row.selected {
                 Style::default().fg(theme.background).bg(theme.accent)
@@ -2006,7 +2031,7 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(theme.background)),
-        body,
+        entries,
     );
 }
 
@@ -4900,6 +4925,36 @@ mod tests {
         buffer::Position, config::Config, jump_labels::LabelPart, key_hints::KeyHintState,
         selection::Selection, snapshot::LongRunningActionSnapshot, text::Transaction,
     };
+
+    #[test]
+    fn directory_tree_legend_is_dimmed_below_a_separator() {
+        let source = Config::default().resolve_theme("mocha").unwrap();
+        let theme = TuiTheme::new(&source);
+        let tree = DirectoryTreeSnapshot {
+            area: Rect {
+                x: 0,
+                y: 0,
+                width: 33,
+                height: 12,
+            },
+            focused: true,
+            title: "[dir tree]".into(),
+            total_rows: 0,
+            selected: None,
+            rows: Vec::new(),
+            legend: vec!["n: new, d: delete".into(), "Tab: legend".into()],
+        };
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| draw_directory_tree(frame, &theme, &tree))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(1, 8)].symbol(), "─");
+        assert_eq!(buffer[(1, 9)].symbol(), "n");
+        assert_eq!(buffer[(1, 10)].symbol(), "T");
+        assert!(buffer[(1, 9)].modifier.contains(Modifier::DIM));
+        assert_eq!(buffer[(1, 9)].fg, theme.muted);
+    }
 
     #[test]
     fn resolved_theme_roles_reach_the_frontend_adapter() {

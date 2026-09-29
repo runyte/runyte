@@ -21,6 +21,9 @@ The retained completed records cover:
 - [Directory tree sidebar](completed/PLAN_DIRECTORY_TREE_SIDEBAR.md): a narrow
   left navigation surface with staged filesystem changes and one reviewed plan
   across directories;
+- [Directory tree interactions](completed/PLAN_DIRECTORY_TREE_INTERACTIONS.md):
+  direct file actions, a footer legend, numbered opening and split destinations,
+  pane focus integration, and configurable mouse/command resizing;
 - [Elixir language support](completed/PLAN_ELIXIR_LANGUAGE_SUPPORT.md): a statically
   linked grammar, local scope repairs, Markdown injection, and explicit limits
   on dedicated structural features;

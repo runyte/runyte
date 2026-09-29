@@ -2771,6 +2771,52 @@ impl App {
     }
 
     pub(super) fn focus_from_terminal_insert(&mut self, dx: i32, dy: i32) {
+        if self.directory_tree.focused {
+            if dx > 0 {
+                let previous = self.active_pane;
+                let current_row = self.areas.get(&previous).map_or(0, |area| area.y);
+                let next = self.directory_tree_geometry.and_then(|(tree, _)| {
+                    self.areas
+                        .iter()
+                        .filter(|(_, area)| area.x == tree.x.saturating_add(tree.width))
+                        .max_by_key(|(id, area)| {
+                            (
+                                area.y <= current_row
+                                    && current_row < area.y.saturating_add(area.height),
+                                self.pane_focus_rank(**id),
+                            )
+                        })
+                        .map(|(id, _)| *id)
+                });
+                let terminal_input = self.directory_tree_previous_mode == Mode::Insert
+                    && self.terminal_of_pane(previous).is_some();
+                self.leave_directory_tree();
+                if let Some(next) = next {
+                    self.activate_pane(next);
+                    self.finish_pane_focus(previous, terminal_input);
+                    if self.active_terminal().is_none()
+                        && self.active_buffer().is_read_only()
+                        && matches!(self.mode, Mode::Insert | Mode::Replace)
+                    {
+                        self.enter_normal_mode();
+                    }
+                }
+            }
+            return;
+        }
+        if dx < 0
+            && self.directory_tree.visible
+            && self.maximized.is_none()
+            && self.pane_neighbor(dx, dy).is_none()
+            && self.directory_tree_geometry.is_some_and(|(tree, _)| {
+                self.areas
+                    .get(&self.active_pane)
+                    .is_some_and(|area| area.x == tree.x + tree.width)
+            })
+        {
+            self.enter_directory_tree();
+            return;
+        }
         let terminal_input = self.mode == Mode::Insert && self.active_terminal().is_some();
         let replacing = self.mode == Mode::Replace;
         let previous_pane = self.active_pane;
@@ -2794,6 +2840,10 @@ impl App {
     }
 
     pub(super) fn next_window_from_terminal_insert(&mut self) {
+        if self.directory_tree.focused {
+            self.leave_directory_tree();
+            return;
+        }
         let terminal_input = self.mode == Mode::Insert && self.active_terminal().is_some();
         let replacing = self.mode == Mode::Replace;
         let previous_pane = self.active_pane;
@@ -2873,6 +2923,24 @@ impl App {
     }
 
     pub(super) fn resize_pane_edge(&mut self, dx: i32, dy: i32, delta: i16) -> Result<()> {
+        let tree_boundary = self.directory_tree.visible
+            && self.maximized.is_none()
+            && ((self.directory_tree.focused && dx > 0)
+                || (!self.directory_tree.focused
+                    && dx < 0
+                    && self.pane_neighbor(dx, dy).is_none()));
+        if tree_boundary && let Some((tree, editor)) = self.directory_tree_geometry {
+            let editor_width = editor.width;
+            let width = tree.width;
+            let delta = i32::from(delta) * if self.directory_tree.focused { 1 } else { -1 };
+            self.resize_tree(i32::from(width) + delta, editor_width);
+            self.status("resized directory tree");
+            return Ok(());
+        }
+        if self.directory_tree.focused {
+            self.status("directory tree has no boundary in that direction");
+            return Ok(());
+        }
         let Some(neighbor) = self.pane_neighbor(dx, dy) else {
             self.status("active pane has no boundary in that direction");
             return Ok(());

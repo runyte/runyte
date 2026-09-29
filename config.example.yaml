@@ -13,6 +13,7 @@ editor:
   scroll_offset: 3
   # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.
   motion_repeat_multiplier: 2
+  directory_tree_width: 33 # preferred sidebar width in columns
   show_hidden_files: false # press . in an explorer to toggle for the session
   soft_wrap: false
   # Draw spaces as ·, tabs from →, and line endings as ¬.

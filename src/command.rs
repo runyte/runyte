@@ -723,13 +723,22 @@ editor_commands! {
     DirectoryTreeOpen => ("directory-tree-open", "Open or expand the selected tree entry"),
     DirectoryTreeClose => ("directory-tree-close", "Return focus to the previous pane"),
     DirectoryTreeRefresh => ("directory-tree-refresh", "Refresh the selected tree directory"),
-    DirectoryTreeNew => ("directory-tree-new", "Stage a new file or directory"),
-    DirectoryTreeRename => ("directory-tree-rename", "Stage a rename"),
-    DirectoryTreeDelete => ("directory-tree-delete", "Stage deletion"),
-    DirectoryTreeMove => ("directory-tree-move", "Stage a move"),
-    DirectoryTreeReview => ("directory-tree-review", "Review pending filesystem changes"),
-    DirectoryTreeUndo => ("directory-tree-undo", "Undo the last staged change"),
-    DirectoryTreeClear => ("directory-tree-clear", "Discard all staged changes"),
+    DirectoryTreeLegend => ("directory-tree-legend", "Toggle the directory tree legend"),
+    DirectoryTreeVertical => ("directory-tree-open-vertical", "Open the file in a vertical split"),
+    DirectoryTreeHorizontal => ("directory-tree-open-horizontal", "Open the file in a horizontal split"),
+    DirectoryTreePane1 => ("directory-tree-pane-1", "Open the file in pane 1"),
+    DirectoryTreePane2 => ("directory-tree-pane-2", "Open the file in pane 2"),
+    DirectoryTreePane3 => ("directory-tree-pane-3", "Open the file in pane 3"),
+    DirectoryTreePane4 => ("directory-tree-pane-4", "Open the file in pane 4"),
+    DirectoryTreePane5 => ("directory-tree-pane-5", "Open the file in pane 5"),
+    DirectoryTreePane6 => ("directory-tree-pane-6", "Open the file in pane 6"),
+    DirectoryTreePane7 => ("directory-tree-pane-7", "Open the file in pane 7"),
+    DirectoryTreePane8 => ("directory-tree-pane-8", "Open the file in pane 8"),
+    DirectoryTreePane9 => ("directory-tree-pane-9", "Open the file in pane 9"),
+    DirectoryTreeNew => ("directory-tree-new", "Create a file or directory"),
+    DirectoryTreeRename => ("directory-tree-rename", "Rename the selected entry"),
+    DirectoryTreeDelete => ("directory-tree-delete", "Delete the selected entry"),
+    DirectoryTreeMove => ("directory-tree-move", "Move the selected entry"),
     OpenWorkingDirectoryExplorer => (
         "open-working-directory-explorer",
         "Open file explorer in the working directory"
@@ -1216,13 +1225,22 @@ impl EditorCommand {
             | Self::DirectoryTreeOpen
             | Self::DirectoryTreeClose
             | Self::DirectoryTreeRefresh
+            | Self::DirectoryTreeLegend
+            | Self::DirectoryTreeVertical
+            | Self::DirectoryTreeHorizontal
+            | Self::DirectoryTreePane1
+            | Self::DirectoryTreePane2
+            | Self::DirectoryTreePane3
+            | Self::DirectoryTreePane4
+            | Self::DirectoryTreePane5
+            | Self::DirectoryTreePane6
+            | Self::DirectoryTreePane7
+            | Self::DirectoryTreePane8
+            | Self::DirectoryTreePane9
             | Self::DirectoryTreeNew
             | Self::DirectoryTreeRename
             | Self::DirectoryTreeDelete
             | Self::DirectoryTreeMove
-            | Self::DirectoryTreeReview
-            | Self::DirectoryTreeUndo
-            | Self::DirectoryTreeClear
             | Self::OpenWorkingDirectoryExplorer
             | Self::OpenFilePicker
             | Self::OpenAllFilesPicker

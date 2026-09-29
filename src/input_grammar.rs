@@ -1027,6 +1027,7 @@ impl RunyteGrammar {
         }
 
         if self.pending.is_empty()
+            && context.scope() != BindingScope::DirectoryTree
             && key.modifiers.is_empty()
             && let KeyCode::Char(digit @ '0'..='9') = key.code
             && (digit != '0' || self.count.is_some())

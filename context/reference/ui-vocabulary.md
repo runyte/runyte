@@ -16,10 +16,15 @@ them, regardless of which extensibility direction is chosen.
   by several panes. The active pane keeps the theme background; inactive panes
   use a derived ground halfway between it and the overlay ground.
 - **Directory tree sidebar** — a persistent navigation surface at the left of
-  the editor area. It has its own focus and selected path, keeps the last
-  ordinary pane as the destination for opened files, and reserves width before
-  the pane layout is calculated. It is neither a pane nor a buffer. Its Tab
-  menu stages explicit filesystem actions for one reviewed plan.
+  the editor area. It has its own focus and selected path, retains the last
+  ordinary pane for focus restoration, and reserves width before
+  the pane layout is calculated. It is neither a pane nor a buffer. Its title is
+  `[dir tree]`; the root row names the workspace directory. Direct action keys
+  apply individual filesystem operations, with deletion alone asking `y/N` on
+  the interaction line. Tab toggles a dimmed bottom legend separated by a rule.
+  Pane focus motions cross its boundary, and its right border can be resized.
+  File opening and splitting use temporary numbered pane titles when several
+  destination panes exist.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,

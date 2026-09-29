@@ -103,8 +103,10 @@ Workspace
 Use `Ctrl-w ...` commands to manage panes.
 Use `Space d t` to toggle a narrow directory tree at the left of the editor,
 or `Space d d` to reveal the active file and focus the tree. Enter opens a
-selected file in the pane you were using. The tree keeps staged file operations
-behind a `Tab` menu and one filesystem review.
+selected file directly, or asks for a numbered destination when several panes
+are open. `n`, `d`, `m`, and `r` create, delete, move, and rename entries; only
+delete asks for confirmation. `Tab` toggles the bottom legend. Drag the right
+border to resize it, or set `editor.directory_tree_width` in `Space o o`.
 
 ## Terminals
 

@@ -42,6 +42,7 @@ pub enum SettingId {
     EditorScrollOffset,
     EditorMotionRepeatMultiplier,
     EditorShowHiddenFiles,
+    EditorDirectoryTreeWidth,
     EditorExplorerSort,
     EditorExplorerDetails,
     EditorSoftWrap,
@@ -186,6 +187,18 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         value_type: SettingType::Integer {
             minimum: 1,
             maximum: 10,
+        },
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorDirectoryTreeWidth,
+        key: "editor.directory_tree_width",
+        title: "Directory tree width",
+        description: "Preferred sidebar width in terminal columns",
+        value_type: SettingType::Integer {
+            minimum: 12,
+            maximum: 240,
         },
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -419,6 +432,7 @@ impl SettingId {
         Self::EditorSmartNewline,
         Self::EditorScrollOffset,
         Self::EditorMotionRepeatMultiplier,
+        Self::EditorDirectoryTreeWidth,
         Self::EditorShowHiddenFiles,
         Self::EditorExplorerSort,
         Self::EditorExplorerDetails,
@@ -477,6 +491,9 @@ impl SettingId {
             Self::EditorScrollOffset => SettingValue::Integer(config.editor.scroll_offset),
             Self::EditorMotionRepeatMultiplier => {
                 SettingValue::Integer(config.editor.motion_repeat_multiplier)
+            }
+            Self::EditorDirectoryTreeWidth => {
+                SettingValue::Integer(config.editor.directory_tree_width)
             }
             Self::EditorShowHiddenFiles => SettingValue::Boolean(config.editor.show_hidden_files),
             Self::EditorSoftWrap => SettingValue::Boolean(config.editor.soft_wrap),
@@ -606,6 +623,9 @@ impl SettingId {
             }
             (Self::EditorMotionRepeatMultiplier, SettingValue::Integer(value)) => {
                 config.editor.motion_repeat_multiplier = *value;
+            }
+            (Self::EditorDirectoryTreeWidth, SettingValue::Integer(value)) => {
+                config.editor.directory_tree_width = *value;
             }
             (Self::EditorShowHiddenFiles, SettingValue::Boolean(value)) => {
                 config.editor.show_hidden_files = *value;

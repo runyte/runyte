@@ -787,6 +787,10 @@ impl Keymap {
                         binding.is_active_in(mode)
                             && binding.scope == BindingScope::Global
                             && !shadowed.contains(&binding.sequence)
+                            && !(scope == BindingScope::DirectoryTree
+                                && shadowed
+                                    .iter()
+                                    .any(|sequence| binding.sequence.starts_with(sequence)))
                     })
                     .map(|(index, _)| index)
                     .collect::<Vec<_>>();
@@ -963,7 +967,9 @@ impl Keymap {
                         || !self.bindings.iter().any(|scoped| {
                             scoped.is_active_in(mode)
                                 && scope_includes(scope, scoped.scope)
-                                && scoped.sequence == binding.sequence
+                                && (scoped.sequence == binding.sequence
+                                    || (scope == BindingScope::DirectoryTree
+                                        && binding.sequence.starts_with(&scoped.sequence)))
                         }))
             })
             .collect::<Vec<_>>();
@@ -993,13 +999,17 @@ impl Keymap {
     /// place the collision is still visible.
     pub fn shadowed_bindings(&self, mode: Mode, scope: BindingScope) -> Vec<(&Binding, &Binding)> {
         self.scoped_bindings(mode, scope)
-            .filter_map(|scoped| {
-                let global = self.bindings.iter().find(|binding| {
-                    binding.is_active_in(mode)
-                        && binding.scope == BindingScope::Global
-                        && binding.sequence == scoped.sequence
-                })?;
-                Some((scoped, global))
+            .flat_map(|scoped| {
+                self.bindings
+                    .iter()
+                    .filter(move |binding| {
+                        binding.is_active_in(mode)
+                            && binding.scope == BindingScope::Global
+                            && (binding.sequence == scoped.sequence
+                                || (scope == BindingScope::DirectoryTree
+                                    && binding.sequence.starts_with(&scoped.sequence)))
+                    })
+                    .map(move |global| (scoped, global))
             })
             .collect()
     }
@@ -2222,6 +2232,22 @@ fn built_in_bindings() -> Vec<Binding> {
         insert(Key::plain(KeyCode::PageDown), Command::PageDown),
         // Preserve Runyte's original global shortcuts in Insert mode.
         insert(Key::ctrl('s'), Command::Save),
+        directory_tree(Key::char('n'), Command::DirectoryTreeNew),
+        directory_tree(Key::char('d'), Command::DirectoryTreeDelete),
+        directory_tree(Key::char('m'), Command::DirectoryTreeMove),
+        directory_tree(Key::char('r'), Command::DirectoryTreeRename),
+        directory_tree(Key::plain(KeyCode::Tab), Command::DirectoryTreeLegend),
+        directory_tree(Key::char('v'), Command::DirectoryTreeVertical),
+        directory_tree(Key::char('s'), Command::DirectoryTreeHorizontal),
+        directory_tree(Key::char('1'), Command::DirectoryTreePane1),
+        directory_tree(Key::char('2'), Command::DirectoryTreePane2),
+        directory_tree(Key::char('3'), Command::DirectoryTreePane3),
+        directory_tree(Key::char('4'), Command::DirectoryTreePane4),
+        directory_tree(Key::char('5'), Command::DirectoryTreePane5),
+        directory_tree(Key::char('6'), Command::DirectoryTreePane6),
+        directory_tree(Key::char('7'), Command::DirectoryTreePane7),
+        directory_tree(Key::char('8'), Command::DirectoryTreePane8),
+        directory_tree(Key::char('9'), Command::DirectoryTreePane9),
         directory_tree(Key::char('j'), Command::DirectoryTreeDown),
         directory_tree(Key::plain(KeyCode::Down), Command::DirectoryTreeDown),
         directory_tree(Key::char('k'), Command::DirectoryTreeUp),
@@ -2579,48 +2605,6 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             Key::char('s'),
             "session",
             EditorCommand::OpenExplorerSession,
-        ),
-        ContextAction::row(
-            BindingScope::DirectoryTree,
-            Key::char('n'),
-            "new",
-            EditorCommand::DirectoryTreeNew,
-        ),
-        ContextAction::row(
-            BindingScope::DirectoryTree,
-            Key::char('r'),
-            "rename",
-            EditorCommand::DirectoryTreeRename,
-        ),
-        ContextAction::row(
-            BindingScope::DirectoryTree,
-            Key::char('d'),
-            "delete",
-            EditorCommand::DirectoryTreeDelete,
-        ),
-        ContextAction::row(
-            BindingScope::DirectoryTree,
-            Key::char('m'),
-            "move",
-            EditorCommand::DirectoryTreeMove,
-        ),
-        ContextAction::buffer(
-            BindingScope::DirectoryTree,
-            Key::char('p'),
-            "review",
-            EditorCommand::DirectoryTreeReview,
-        ),
-        ContextAction::buffer(
-            BindingScope::DirectoryTree,
-            Key::char('u'),
-            "undo",
-            EditorCommand::DirectoryTreeUndo,
-        ),
-        ContextAction::buffer(
-            BindingScope::DirectoryTree,
-            Key::char('c'),
-            "clear",
-            EditorCommand::DirectoryTreeClear,
         ),
         ContextAction::buffer(
             BindingScope::Directory,
@@ -3037,6 +3021,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tree_shadowed_bindings_include_global_continuations() {
+        let keymap = default_keymap();
+        let hidden = keymap.shadowed_bindings(Mode::Normal, BindingScope::DirectoryTree);
+        assert!(hidden.iter().any(|(scoped, global)| {
+            scoped.sequence.to_string() == "m" && global.sequence.to_string() == "m i w"
+        }));
+        let effective = keymap
+            .bindings_for_scope(Mode::Normal, BindingScope::DirectoryTree)
+            .map(|binding| binding.sequence.to_string())
+            .collect::<Vec<_>>();
+        assert!(!effective.contains(&"m i w".to_owned()));
+        assert!(
+            keymap
+                .bindings_for_scope(Mode::Normal, BindingScope::Global)
+                .any(|binding| binding.sequence.to_string() == "m i w")
+        );
     }
 
     /// A namespace is presentation data for a real registry prefix, not an

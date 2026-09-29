@@ -393,6 +393,8 @@ pub struct EditorConfig {
     /// Number of cursor motions dispatched for one held-key repeat event.
     pub motion_repeat_multiplier: usize,
     pub show_hidden_files: bool,
+    /// Preferred directory tree width in terminal columns.
+    pub directory_tree_width: usize,
     /// Order an explorer lists a directory's entries in.
     pub explorer_sort: ExplorerSort,
     /// Show the mode, owner, size, and modification time beside each explorer
@@ -939,6 +941,7 @@ impl Default for EditorConfig {
             scroll_offset: 3,
             motion_repeat_multiplier: 2,
             show_hidden_files: false,
+            directory_tree_width: 33,
             explorer_sort: ExplorerSort::Name,
             explorer_details: false,
             soft_wrap: false,
@@ -1119,6 +1122,9 @@ impl Config {
         }
         if !(1..=10).contains(&self.editor.motion_repeat_multiplier) {
             return Err("editor.motion_repeat_multiplier must be between 1 and 10".to_owned());
+        }
+        if !(12..=240).contains(&self.editor.directory_tree_width) {
+            return Err("editor.directory_tree_width must be between 12 and 240".to_owned());
         }
         if !(1..=1000).contains(&self.editor.hard_wrap_width) {
             return Err("editor.hard_wrap_width must be between 1 and 1000".to_owned());

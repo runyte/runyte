@@ -164,8 +164,10 @@ impl HelpTopic {
                 "{binding:Tab} offers what the explorer can be asked to show: dotfiles, file details, and the order rows are listed in. Each is a setting, so a choice is saved and every open explorer follows it. {binding:.} and {binding:?} toggle the first two directly.",
             ],
             Self::DirectoryTree => &[
-                "The directory tree is a sidebar beside the panes. Move with j/k, expand with l, collapse with h, and press Enter to open a file in the previous pane.",
-                "{binding:Space d t} toggles it. {binding:Space d d} reveals the active file and focuses it. Escape returns focus to the pane.",
+                "The [dir tree] sidebar owns {binding:j}/{binding:k} navigation and {binding:h}/{binding:l} expansion. {binding:Enter} opens a file; with multiple panes, choose its numbered destination. {binding:v} opens in a vertical split and {binding:s} in a horizontal split, choosing which pane to split the same way. Direct keys {binding:1} through {binding:9} open in that pane.",
+                "{binding:n} creates a file or a directory with a trailing /. {binding:r} renames and {binding:m} moves; submitting the name applies the change. {binding:d} asks y/N in the interaction line before trashing. {binding:Tab} toggles the dimmed bottom legend.",
+                "Pane motions cross the tree boundary. Drag its right border or use :resize-right while focused. Set editor.directory_tree_width in the config page; the default is 33 columns.",
+                "{binding:Space d t} toggles it. {binding:Space d d} reveals the active file and focuses it. {binding:Esc} returns focus to the pane.",
             ],
             Self::Config => &[
                 "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",

@@ -75,7 +75,12 @@ pub fn validate(
                 .collect::<HashSet<_>>();
             let mut effective = scoped;
             effective.extend(globals.iter().copied().filter(|binding| {
-                scope == BindingScope::Global || !scoped_sequences.contains(&binding.sequence)
+                scope == BindingScope::Global
+                    || (!scoped_sequences.contains(&binding.sequence)
+                        && !(scope == BindingScope::DirectoryTree
+                            && scoped_sequences
+                                .iter()
+                                .any(|sequence| binding.sequence.starts_with(sequence))))
             }));
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
