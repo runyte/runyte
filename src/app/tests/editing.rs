@@ -2141,10 +2141,12 @@ fn extend_line_commands_cover_partial_reversed_and_empty_ranges() {
         .replace_selection(Selection::new(vec![Range::new(6, 5), Range::point(8)], 1));
     app.execute_editor_command(EditorCommand::ExtendLineAbove)
         .unwrap();
-    assert_eq!(selected_rows(&app), (1, 2));
+    assert_eq!(selected_rows(&app), (2, 2));
+    assert_eq!(app.active().selection.ranges().len(), 2);
     app.execute_editor_command(EditorCommand::ExtendLineBelow)
         .unwrap();
-    assert_eq!(selected_rows(&app), (1, 3));
+    assert_eq!(selected_rows(&app), (2, 3));
+    assert_eq!(app.active().selection.ranges()[0], Range::new(4, 8));
     app.execute_editor_command(EditorCommand::ExtendLineAbove)
         .unwrap();
     assert_eq!(selected_rows(&app), (0, 3));
@@ -2324,4 +2326,22 @@ fn auto_close_backspace_handles_backslashes_and_overlapping_pairs() {
     key(&mut app, KeyCode::Backspace, Modifiers::NONE);
     assert_eq!(app.active_buffer().text().to_string(), "");
     assert_eq!(app.active().selection.ranges(), &[Range::point(0)]);
+}
+
+#[test]
+fn extend_line_counts_first_snap_on_empty_and_single_character_rows() {
+    for row in ["x", ""] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, &format!("first\nsecond\n{row}\nlast"));
+        set_cursor(&mut app, 2, 0);
+        press(&mut app, 'X');
+        assert_eq!(selected_rows(&app), (2, 2));
+        press(&mut app, 'X');
+        assert_eq!(selected_rows(&app), (1, 2));
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        set_cursor(&mut app, 2, 0);
+        press(&mut app, '2');
+        press(&mut app, 'X');
+        assert_eq!(selected_rows(&app), (1, 2));
+    }
 }

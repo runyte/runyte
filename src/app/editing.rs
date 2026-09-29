@@ -1821,10 +1821,12 @@ impl App {
     /// Grow at an outer line boundary, never retract the existing selection.
     pub(super) fn extend_line(&mut self, down: bool) {
         let buffer = self.active_buffer();
+        let live = self.line_select.is_some();
         let selection = self.active().selection.transform(|range| {
             let mut first = buffer.offset_to_row(range.from());
             let mut last = buffer.offset_to_row(range.to());
-            let full = range.from() == buffer.line_to_offset(first)
+            let full = (live || !range.is_empty())
+                && range.from() == buffer.line_to_offset(first)
                 && range.to() == buffer.row_end_offset(last, false);
             if full {
                 if down {

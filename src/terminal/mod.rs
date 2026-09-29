@@ -1381,13 +1381,14 @@ impl TerminalSession {
     }
 
     /// Extend terminal review at its outer line boundary without shrinking.
-    pub fn extend_review_line(&mut self, down: bool) {
+    pub fn extend_review_line(&mut self, down: bool, live: bool) {
         let viewport_rows = self.emulator.grid().rows();
         let review = self.ensure_review();
         review.selection = review.selection.transform(|range| {
             let mut first = review_line_for_offset(review, range.from());
             let mut last = review_line_for_offset(review, range.to());
-            if range.from() == review.lines[first].text_start
+            if (live || !range.is_empty())
+                && range.from() == review.lines[first].text_start
                 && range.to() == review_line_last_offset(&review.lines[last])
             {
                 if down {
@@ -3611,17 +3612,28 @@ mod tests {
     }
 
     #[test]
+    fn review_line_extension_first_snaps_a_single_character_row() {
+        let mut session = session(12, 3);
+        session.feed(b"one\r\nx\r\nthree");
+        session.search_review("x", false).unwrap();
+        session.extend_review_line(false, false);
+        assert_eq!(session.review_selection_text(), "x");
+        session.extend_review_line(false, true);
+        assert_eq!(session.review_selection_text(), "one\nx");
+    }
+
+    #[test]
     fn review_line_extension_grows_both_outer_edges() {
         let mut session = session(12, 5);
         session.feed(b"one\r\ntwo\r\nthree\r\nfour");
         session.search_review("two", false).unwrap();
         session.select_review_line(true, false);
         session.select_review_line(true, true);
-        session.extend_review_line(false);
+        session.extend_review_line(false, true);
         assert_eq!(session.review_selection_text(), "one\ntwo\nthree");
-        session.extend_review_line(true);
+        session.extend_review_line(true, true);
         assert_eq!(session.review_selection_text(), "one\ntwo\nthree\nfour");
-        session.extend_review_line(false);
+        session.extend_review_line(false, true);
         assert_eq!(session.review_selection_text(), "one\ntwo\nthree\nfour");
     }
 

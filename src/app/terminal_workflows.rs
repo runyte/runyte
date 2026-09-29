@@ -759,7 +759,10 @@ impl App {
             | Command::ExtendLineAbove
             | Command::ExtendLineBelow => {
                 if matches!(command, Command::ExtendLineAbove | Command::ExtendLineBelow) {
-                    session.extend_review_line(command == Command::ExtendLineBelow);
+                    session.extend_review_line(
+                        command == Command::ExtendLineBelow,
+                        self.line_select.is_some(),
+                    );
                 } else {
                     session.select_review_line(
                         command == Command::SelectLine,
