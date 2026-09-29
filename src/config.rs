@@ -389,6 +389,8 @@ pub struct EditorConfig {
     pub indent: IndentStyle,
     /// Add syntax indentation and align list continuations when inserting a newline.
     pub smart_newline: bool,
+    /// Pair typed Insert-mode brackets and quotes.
+    pub auto_close: bool,
     pub scroll_offset: usize,
     /// Number of cursor motions dispatched for one held-key repeat event.
     pub motion_repeat_multiplier: usize,
@@ -938,6 +940,7 @@ impl Default for EditorConfig {
             tab_width: 4,
             indent: IndentStyle::Spaces,
             smart_newline: true,
+            auto_close: false,
             scroll_offset: 3,
             motion_repeat_multiplier: 2,
             show_hidden_files: false,

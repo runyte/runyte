@@ -1991,6 +1991,13 @@ impl App {
                 return Ok(());
             }
 
+            let typed_character = match &input {
+                InputEvent::Key(key) => match key.code {
+                    KeyCode::Char(character) => Some(character),
+                    _ => None,
+                },
+                _ => None,
+            };
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_recording_macro(self.recording_macro.is_some());
             let GrammarOutput {
@@ -2001,7 +2008,9 @@ impl App {
             } = self.grammar.translate(input, context)?;
             let mut command_outcome = None;
             for intent in intents {
-                command_outcome = self.apply_editor_intent(intent)?.or(command_outcome);
+                command_outcome = self
+                    .apply_editor_intent(intent, typed_character)?
+                    .or(command_outcome);
                 self.reconcile_search_selection_presentation();
             }
             self.grammar.complete(post_action, self.mode);
@@ -2071,7 +2080,11 @@ impl App {
         }
     }
 
-    fn apply_editor_intent(&mut self, intent: EditorIntent) -> Result<Option<CommandOutcome>> {
+    fn apply_editor_intent(
+        &mut self,
+        intent: EditorIntent,
+        typed_character: Option<char>,
+    ) -> Result<Option<CommandOutcome>> {
         if self.directory_tree.focused
             && !matches!(intent, EditorIntent::Command(_) | EditorIntent::Notice(_))
         {
@@ -2109,6 +2122,10 @@ impl App {
                 }
                 if self.mode == Mode::Replace {
                     self.replace_mode_text(&text);
+                } else if let Some(character) =
+                    typed_character.filter(|character| text == character.to_string())
+                {
+                    self.insert_typed_character(character);
                 } else {
                     self.insert_text(&text);
                 }

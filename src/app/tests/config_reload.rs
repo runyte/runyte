@@ -508,3 +508,46 @@ fn an_unchanged_plugins_section_asks_the_host_for_nothing() {
     assert!(app.plugins.configuration_reload);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn auto_close_setting_previews_rolls_back_persists_and_reloads() {
+    let (mut app, path) = editor("pairs.yaml", "# kept\neditor:\n  auto_close: false\n");
+    assert!(!app.config.editor.auto_close);
+    for commit in [false, true] {
+        app.open_setting_values(SettingId::EditorAutoClose);
+        let yes = app
+            .list_actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    ListAction::SettingValue {
+                        setting: SettingId::EditorAutoClose,
+                        value: SettingValue::Boolean(true)
+                    }
+                )
+            })
+            .unwrap();
+        app.list.as_mut().unwrap().selected = yes;
+        app.preview_selected_setting_value();
+        assert!(app.config.editor.auto_close);
+        key(
+            &mut app,
+            if commit {
+                KeyCode::Enter
+            } else {
+                KeyCode::Escape
+            },
+            Modifiers::NONE,
+        );
+        assert_eq!(app.config.editor.auto_close, commit);
+    }
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# kept\neditor:\n  auto_close: true\n"
+    );
+    fs::write(&path, "editor:\n  auto_close: false\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(!app.config.editor.auto_close);
+    fs::remove_file(path).unwrap();
+}

@@ -1042,6 +1042,65 @@ impl App {
         self.edit(transaction);
     }
 
+    pub(super) fn insert_typed_character(&mut self, ch: char) {
+        if !self.config.editor.auto_close || self.mode != Mode::Insert {
+            self.insert_char(ch);
+            return;
+        }
+        let buffer = self.active_buffer();
+        let selection = self.active().selection.clone();
+        let mut changes = Vec::new();
+        let mut carets = Vec::new();
+        for range in selection.ranges() {
+            let head = range.from();
+            let next = buffer.char_at(head);
+            let previous = head
+                .checked_sub(1)
+                .and_then(|offset| buffer.char_at(offset));
+            let quote = matches!(ch, '\'' | '"');
+            let escaped = quote && pair_quote_escaped(buffer, head);
+            if range.is_empty()
+                && matches!(ch, ')' | ']' | '}' | '\'' | '"')
+                && next == Some(ch)
+                && !escaped
+            {
+                carets.push((head + 1, Assoc::Before, 0));
+                continue;
+            }
+            let closer = pair_closer(ch).filter(|_| {
+                range.is_empty()
+                    && !escaped
+                    && next.is_none_or(|next| {
+                        next.is_whitespace()
+                            || matches!(next, ')' | ']' | '}' | '\'' | '"' | ',' | ';')
+                    })
+                    && (!quote
+                        || previous.is_none_or(|previous| {
+                            !previous.is_alphanumeric() && !matches!(previous, '_' | '\'' | '"')
+                        }))
+            });
+            if let Some(closer) = closer {
+                changes.push(Change::new(head, head, format!("{ch}{closer}")));
+                carets.push((head, Assoc::Before, 1));
+            } else {
+                changes.push(Change::new(range.from(), range.to(), ch.to_string()));
+                carets.push((range.to(), Assoc::After, 0));
+            }
+        }
+        let has_changes = !changes.is_empty();
+        let transaction = Transaction::new(changes);
+        let ranges = carets
+            .into_iter()
+            .map(|(offset, assoc, extra)| {
+                Range::point(transaction.map_offset(offset, assoc) + extra)
+            })
+            .collect();
+        if !has_changes || self.edit(transaction) {
+            self.active_mut()
+                .replace_selection(Selection::new(ranges, selection.primary_index()));
+        }
+    }
+
     pub(super) fn insert_text(&mut self, text: &str) {
         let selection = self.active().selection.clone();
         let transaction = selection.change_by(|_| Some(text.to_owned()));
@@ -1402,6 +1461,15 @@ impl App {
             }
             let head = range.head;
             if head == 0 {
+                continue;
+            }
+            if self.config.editor.auto_close
+                && self.mode == Mode::Insert
+                && buffer.char_at(head - 1).and_then(pair_closer) == buffer.char_at(head)
+                && buffer.char_at(head).is_some()
+                && !pair_quote_escaped(buffer, head - 1)
+            {
+                ordinary.push((head - 1, head + 1));
                 continue;
             }
             if markdown {
@@ -3848,4 +3916,26 @@ fn crlf_safe_deletions(
         .into_iter()
         .map(|(from, to)| Change::new(from, to, ""))
         .collect()
+}
+
+fn pair_closer(character: char) -> Option<char> {
+    match character {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '\'' | '"' => Some(character),
+        _ => None,
+    }
+}
+
+/// A bounded scan; a longer backslash run conservatively disables pairing.
+fn pair_quote_escaped(buffer: &Buffer, offset: Offset) -> bool {
+    let mut slashes = 0;
+    for before in (offset.saturating_sub(64)..offset).rev() {
+        if buffer.char_at(before) != Some('\\') {
+            break;
+        }
+        slashes += 1;
+    }
+    slashes == 64 || slashes % 2 == 1
 }

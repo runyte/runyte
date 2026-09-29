@@ -3643,6 +3643,16 @@ bounds with the block cursor on the last included character, matching ordinary
 Select mode; yank, delete, change, and indentation still act on exactly the
 highlighted syntax span.
 
+`editor.auto_close` is off by default. Enable it in `Space o o` to pair typed
+Insert-mode `()`, `[]`, `{}`, single quotes and double quotes. The caret stays
+inside the pair; typing a matching closer already under it moves past that
+character. Backspace between an empty pair removes both characters, including
+pairs already present in the document. Openers pair before whitespace, closing
+punctuation, or the end of the buffer. Quotes also need a non-word boundary
+before them; escaped quotes and apostrophes within words stay literal. This is
+a local text heuristic, independent of language syntax. Paste, Replace mode,
+prompts and terminal input remain literal. Each caret is handled independently.
+
 `o` and `O` preserve the current row's exact leading spaces and tabs, placing
 the new caret after that indentation. They do not continue list markers or
 add a syntax-driven indentation level. This also works with smart newline off.
@@ -4476,6 +4486,7 @@ editor:
   tab_width: 4
   indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
   smart_newline: true # adds syntax indentation and continues Markdown lists; false keeps only leading indent
+  auto_close: false # pair typed brackets and quotes in Insert mode
   scroll_offset: 3
   motion_repeat_multiplier: 2 # held cursor motions; 1 retains terminal/Helix speed
   directory_tree_width: 33 # preferred sidebar width in columns; editable in Space o o

@@ -39,6 +39,7 @@ pub enum SettingId {
     EditorTabWidth,
     EditorIndent,
     EditorSmartNewline,
+    EditorAutoClose,
     EditorScrollOffset,
     EditorMotionRepeatMultiplier,
     EditorShowHiddenFiles,
@@ -155,6 +156,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         title: "Indent style",
         description: "Use spaces or tabs for new indentation",
         value_type: SettingType::Indent,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorAutoClose,
+        key: "editor.auto_close",
+        title: "Auto-close brackets and quotes",
+        description: "Pair typed brackets and quotes in Insert mode",
+        value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
     },
@@ -430,6 +440,7 @@ impl SettingId {
         Self::EditorTabWidth,
         Self::EditorIndent,
         Self::EditorSmartNewline,
+        Self::EditorAutoClose,
         Self::EditorScrollOffset,
         Self::EditorMotionRepeatMultiplier,
         Self::EditorDirectoryTreeWidth,
@@ -487,6 +498,7 @@ impl SettingId {
             Self::EditorLineNumbers => SettingValue::Boolean(config.editor.line_numbers),
             Self::EditorTabWidth => SettingValue::Integer(config.editor.tab_width),
             Self::EditorIndent => SettingValue::Indent(config.editor.indent),
+            Self::EditorAutoClose => SettingValue::Boolean(config.editor.auto_close),
             Self::EditorSmartNewline => SettingValue::Boolean(config.editor.smart_newline),
             Self::EditorScrollOffset => SettingValue::Integer(config.editor.scroll_offset),
             Self::EditorMotionRepeatMultiplier => {
@@ -614,6 +626,9 @@ impl SettingId {
             }
             (Self::EditorIndent, SettingValue::Indent(value)) => {
                 config.editor.indent = *value;
+            }
+            (Self::EditorAutoClose, SettingValue::Boolean(value)) => {
+                config.editor.auto_close = *value;
             }
             (Self::EditorSmartNewline, SettingValue::Boolean(value)) => {
                 config.editor.smart_newline = *value;

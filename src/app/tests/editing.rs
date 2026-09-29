@@ -2211,3 +2211,96 @@ fn open_lines_preserve_crlf_and_deduplicate_selected_rows() {
         );
     }
 }
+
+#[test]
+fn auto_close_is_opt_in_and_pairs_typed_characters_only() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    press(&mut app, 'i');
+    press(&mut app, '(');
+    assert_eq!(app.active_buffer().text().to_string(), "(");
+    app.config.editor.auto_close = true;
+    for (opener, closer) in [('(', ')'), ('[', ']'), ('{', '}'), ('\'', '\''), ('"', '"')] {
+        let mut app = App::new(app.config.clone(), None).unwrap();
+        press(&mut app, 'i');
+        press(&mut app, opener);
+        assert_eq!(
+            app.active_buffer().text().to_string(),
+            format!("{opener}{closer}")
+        );
+        assert_eq!(cursor(&app).col, 1);
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        assert_eq!(app.active_buffer().text().to_string(), "");
+        press(&mut app, opener);
+        press(&mut app, closer);
+        assert_eq!(cursor(&app).col, 2);
+        assert_eq!(
+            app.active_buffer().text().to_string(),
+            format!("{opener}{closer}")
+        );
+        app.handle_input(InputEvent::Text("([".to_owned())).unwrap();
+        assert_eq!(
+            app.active_buffer().text().to_string(),
+            format!("{opener}{closer}([")
+        );
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        press(&mut app, 'u');
+        assert_eq!(app.active_buffer().text().to_string(), "");
+    }
+}
+
+#[test]
+fn auto_close_respects_quote_boundaries_escapes_and_replace_mode() {
+    let mut config = Config::default();
+    config.editor.auto_close = true;
+    for (source, typed, expected) in [
+        ("can", '\'', "can'"),
+        ("\\", '"', "\\\""),
+        ("\\\\", '"', "\\\\\"\""),
+        ("界", '\'', "界'"),
+    ] {
+        let mut app = App::new(config.clone(), None).unwrap();
+        seed(&mut app, source);
+        press(&mut app, 'A');
+        press(&mut app, typed);
+        assert_eq!(app.active_buffer().text().to_string(), expected);
+    }
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "abc");
+    press(&mut app, 'i');
+    press(&mut app, '(');
+    assert_eq!(app.active_buffer().text().to_string(), "(abc");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    set_cursor(&mut app, 0, 0);
+    press(&mut app, 'R');
+    press(&mut app, '[');
+    assert_eq!(app.active_buffer().text().to_string(), "[abc");
+}
+
+#[test]
+fn auto_close_maps_mixed_multi_caret_edits_and_nesting() {
+    let mut config = Config::default();
+    config.editor.auto_close = true;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "α\n \n");
+    app.active_mut().replace_selection(Selection::new(
+        vec![Range::point(0), Range::point(3), Range::point(4)],
+        1,
+    ));
+    press(&mut app, 'i');
+    press(&mut app, '(');
+    assert_eq!(app.active_buffer().text().to_string(), "(α\n ()\n()");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(1), Range::point(5), Range::point(8)]
+    );
+    press(&mut app, ')');
+    assert_eq!(app.active_buffer().text().to_string(), "()α\n ()\n()");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(2), Range::point(7), Range::point(10)]
+    );
+    app.active_mut().replace_selection(Selection::point(1));
+    press(&mut app, '[');
+    press(&mut app, '{');
+    assert!(app.active_buffer().text().to_string().starts_with("([{}])"));
+}
