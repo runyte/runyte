@@ -1264,3 +1264,134 @@ fn tree_jump_uses_scrolled_viewport_and_ignores_removed_targets() {
     assert!(app.jump.is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn focus_tree_reveals_active_file_through_collapsed_and_hidden_ancestors() {
+    let (mut app, root) = isolated("tree-focus-active");
+    fs::create_dir_all(root.join("nested/.hidden/deep")).unwrap();
+    let path = root.join("nested/.hidden/deep/active.txt");
+    fs::write(&path, "active").unwrap();
+    for index in 0..30 {
+        fs::write(root.join(format!("file-{index:02}")), "").unwrap();
+    }
+    app.config.editor.show_hidden_files = false;
+    app.open_file(path.clone()).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.directory_tree.selected, path);
+    assert!(tree.rows.iter().any(|row| row.path == path && row.selected));
+    app.directory_tree.selected = root.join("nested");
+    key(&mut app, KeyCode::Char('h'), Modifiers::NONE);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    assert!(
+        app.snapshot(&view)
+            .directory_tree
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.path == path && row.selected)
+    );
+    assert!(!app.config.editor.show_hidden_files);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn focus_tree_refreshes_cached_ancestors_to_reveal_an_externally_created_file() {
+    let (mut app, root) = isolated("tree-focus-stale");
+    fs::create_dir_all(root.join("nested")).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    app.directory_tree.selected = root.join("nested");
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    fs::create_dir_all(root.join("nested/new/deep")).unwrap();
+    let path = root.join("nested/new/deep/active.txt");
+    fs::write(&path, "active").unwrap();
+    app.open_file(path.clone()).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.directory_tree.selected, path);
+    assert!(tree.rows.iter().any(|row| row.path == path && row.selected));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn focus_tree_selects_root_for_a_file_outside_the_workspace() {
+    let (mut app, root) = isolated("tree-focus-outside");
+    let outside = temporary("tree-focus-external");
+    fs::create_dir_all(&outside).unwrap();
+    let path = outside.join("active.txt");
+    fs::write(&path, "active").unwrap();
+    app.open_file(path).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.directory_tree.selected, root);
+    assert!(tree.rows[0].selected);
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
+fn focus_tree_reveals_file_opened_through_parent_components() {
+    let (mut app, root) = isolated("tree-focus-path-spelling");
+    fs::create_dir_all(root.join("nested/deep")).unwrap();
+    let path = root.join("nested/active.txt");
+    fs::write(&path, "active").unwrap();
+    app.open_file(root.join("nested/deep/../active.txt"))
+        .unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.directory_tree.selected, path);
+    assert!(tree.rows.iter().any(|row| row.path == path && row.selected));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn focus_tree_selects_root_from_a_non_file_buffer() {
+    let (mut app, root) = isolated("tree-focus-scratch");
+    fs::write(root.join("entry.txt"), "").unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    app.directory_tree.select_last();
+    assert_ne!(app.directory_tree.selected, root);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.active_buffer().path.is_none());
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.directory_tree.selected, root);
+    assert!(tree.rows[0].selected);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn focus_tree_resolves_parent_symlinks_but_selects_a_final_symlink_entry() {
+    let (mut app, root) = isolated("tree-focus-symlinks");
+    fs::create_dir_all(root.join("nested")).unwrap();
+    fs::write(root.join("nested/target.txt"), "active").unwrap();
+    std::os::unix::fs::symlink(root.join("nested"), root.join("alias")).unwrap();
+    std::os::unix::fs::symlink("target.txt", root.join("nested/link.txt")).unwrap();
+    app.open_file(root.join("alias/link.txt")).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 15));
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    let path = root.join("nested/link.txt");
+    assert_eq!(app.directory_tree.selected, path);
+    assert!(tree.rows.iter().any(|row| row.path == path && row.selected));
+    fs::remove_dir_all(root).unwrap();
+}

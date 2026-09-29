@@ -1333,9 +1333,11 @@ buffer; `:write!` is the explicit boundary for replacing it and clears
 
 `Space d t` toggles the directory tree at the left of the editor area without
 creating a pane or buffer. `Space d d` shows and focuses it, expands the active
-file's ancestors, and selects that file. The `[dir tree]` title sits above the
-workspace-root row. The tree stays rooted at the workspace root when `:cd`
-changes the working directory. Expansion, selection, scroll position, legend
+file's ancestors, and selects that file, scrolling it into view. It refreshes
+those directory listings so files created or moved outside the editor can be
+revealed too. A file outside the workspace, or a buffer without an associated
+file, selects the workspace-root row. The `[dir tree]` title sits above that row.
+The tree stays rooted at the workspace root when `:cd` changes the working directory. Expansion, selection, scroll position, legend
 visibility, and a resized width survive hiding it. Fullscreen and zen cover
 it temporarily; terminals narrower than 36 columns suppress it.
 

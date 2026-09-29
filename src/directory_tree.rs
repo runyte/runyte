@@ -423,6 +423,13 @@ impl DirectoryTree {
     }
 
     pub fn reveal(&mut self, path: &Path, show_hidden: bool) -> Result<()> {
+        // Buffer paths can retain `..` or a symlinked parent. Match the
+        // spelling produced by tree listings, keeping a final symlink as the
+        // entry itself rather than selecting its target.
+        let path = match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => parent.canonicalize()?.join(name),
+            _ => path.canonicalize()?,
+        };
         self.show_hidden = show_hidden;
         ensure!(
             path.starts_with(&self.root),
@@ -451,14 +458,11 @@ impl DirectoryTree {
                 })
             {
                 self.revealed_hidden.insert(parent.clone());
-                self.expanded.insert(parent.clone());
-                self.refresh(parent);
-            } else {
-                self.expanded.insert(parent.clone());
-                if !self.listings.contains_key(&parent) {
-                    self.refresh(parent);
-                }
             }
+            self.expanded.insert(parent.clone());
+            // An explicit reveal must observe files and ancestors created or
+            // moved since an earlier expansion cached this directory.
+            self.refresh(parent);
         }
         self.selected = path.to_path_buf();
         Ok(())

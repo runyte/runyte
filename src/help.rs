@@ -171,7 +171,7 @@ impl HelpTopic {
                 "{binding:.} toggles dotfiles for this tree. {binding:/} searches visible names by regular expression, ignoring case; Enter finds the next match and an empty prompt repeats the search. {binding:Ctrl-n}/{binding:Ctrl-p} repeat forward/backward. Collapsed directories remain unsearched.",
                 "While the tree is focused, :q, :wc, and :close hide it and return focus to the previous pane.",
                 "Pane motions cross the tree boundary. Drag its right border or use :resize-right while focused. Set editor.directory_tree_width in the config page; the default is 33 columns.",
-                "{binding:Space d t} toggles it. {binding:Space d d} reveals the active file and focuses it. {binding:Esc} returns focus to the pane.",
+                "{binding:Space d t} toggles it. {binding:Space d d} refreshes and expands the active file's ancestors, selects the file, and focuses the tree. Files outside the workspace select its root. {binding:Esc} returns focus to the pane.",
             ],
             Self::Config => &[
                 "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",
