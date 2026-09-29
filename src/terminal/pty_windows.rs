@@ -29,7 +29,12 @@ use windows_sys::Win32::{
 };
 
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
-const INPUT_QUEUE: usize = 8;
+/// Unwritten input one console may hold before a write is refused, counted
+/// in bytes for the reason given beside the Unix bound: a count of writes
+/// dropped the end of a keystroke burst the writer had not yet reached.
+const INPUT_QUEUE_BYTES: usize = 8 * MAX_INPUT_BYTES;
+/// What one queued write costs beyond its bytes.
+const INPUT_WRITE_OVERHEAD: usize = 64;
 const READ_CHUNK: usize = 64 * 1024;
 
 #[derive(Debug)]
@@ -54,6 +59,11 @@ struct SetupRetention(Mutex<Option<Arc<dyn Send + Sync>>>);
 struct Input {
     bytes: Vec<u8>,
     delivery: Option<super::proposal::Delivery>,
+}
+impl Input {
+    fn charge(&self) -> usize {
+        self.bytes.len().saturating_add(INPUT_WRITE_OVERHEAD)
+    }
 }
 impl Drop for Input {
     fn drop(&mut self) {
@@ -91,7 +101,8 @@ impl Control {
                 "Terminal input writer is closed",
             ));
         }
-        if pending.len() >= INPUT_QUEUE {
+        let queued = pending.iter().map(Input::charge).sum::<usize>();
+        if queued.saturating_add(input.charge()) > INPUT_QUEUE_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "Terminal input queue is full",

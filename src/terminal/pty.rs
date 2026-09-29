@@ -27,8 +27,20 @@ use crate::process_group;
 /// How much of one read is handed upward at a time.
 const READ_CHUNK: usize = 64 * 1024;
 const WRITE_CHUNK: usize = 16 * 1024;
-const INPUT_QUEUE: usize = 8;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+/// Unwritten input one PTY may hold before a write is refused.
+///
+/// The bound counts bytes rather than writes. Every keystroke is its own
+/// write of a few bytes, and a bound of eight writes dropped the end of any
+/// burst the editor forwarded before the writer thread next ran: on a busy
+/// machine, the last characters and the Enter of a line typed at a prompt.
+/// Bytes are what a child that has stopped reading actually pins, so they are
+/// what the backpressure counts; this matches the eight full writes the old
+/// bound allowed.
+const INPUT_QUEUE_BYTES: usize = 8 * MAX_INPUT_BYTES;
+/// What one queued write costs beyond its bytes, so a flood of one-byte
+/// writes is bounded by its allocations as well as by its payload.
+const INPUT_WRITE_OVERHEAD: usize = 64;
 
 /// What a running child produces.
 #[derive(Debug)]
@@ -49,7 +61,10 @@ pub(super) struct PendingActivation {
 /// A child process attached to a pseudoterminal.
 pub struct Pty {
     master: Option<OwnedFd>,
-    input: mpsc::SyncSender<Input>,
+    input: mpsc::Sender<Input>,
+    /// Charged by [`Pty::enqueue`] and refunded by the writer thread once a
+    /// write has been attempted.
+    queued: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     child: Child,
 }
 
@@ -60,6 +75,10 @@ struct Input {
     delivery: Option<super::proposal::Delivery>,
 }
 impl Input {
+    fn charge(&self) -> usize {
+        self.bytes.len().saturating_add(INPUT_WRITE_OVERHEAD)
+    }
+
     fn deliver(&self, mut write: impl FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
         if let Some(delivery) = &self.delivery
             && !delivery.claim()
@@ -235,6 +254,10 @@ impl Pty {
         command.env_remove("TERM_PROGRAM");
         command.env_remove("TERM_PROGRAM_VERSION");
         command.env_remove(crate::workspace::parent::ENVIRONMENT);
+        // The development input trace names a file this editor owns. A Runyte
+        // started inside the terminal would open the same path and truncate
+        // the record of the input that reached it.
+        command.env_remove("RUNYTE_INPUT_TRACE");
         if let Some(context) = parent_context {
             command.env(crate::workspace::parent::ENVIRONMENT, context);
             for name in ["EDITOR", "VISUAL"] {
@@ -283,7 +306,9 @@ impl Pty {
         // the child and all of its descendants finally close theirs.
         drop(slave);
 
-        let (input, pending) = mpsc::sync_channel::<Input>(INPUT_QUEUE);
+        let (input, pending) = mpsc::channel::<Input>();
+        let queued = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writer_queued = queued.clone();
         let reader = duplicate(master.as_raw_fd())?;
         checkpoint(SpawnCheckpoint::ReaderDuplicated, child.id())?;
         let writer = duplicate(master.as_raw_fd())?;
@@ -307,10 +332,9 @@ impl Pty {
                     drop(activation.lifetime);
                 }
                 while let Ok(input) = pending.recv() {
-                    if input
-                        .deliver(|chunk| write_all(writer.as_raw_fd(), chunk))
-                        .is_err()
-                    {
+                    let delivered = input.deliver(|chunk| write_all(writer.as_raw_fd(), chunk));
+                    writer_queued.fetch_sub(input.charge(), std::sync::atomic::Ordering::AcqRel);
+                    if delivered.is_err() {
                         return;
                     }
                 }
@@ -358,7 +382,25 @@ impl Pty {
         Ok(Self {
             master: Some(master),
             input,
+            queued,
             child: child.disarm(),
+        })
+    }
+
+    /// Charges one write against the unwritten-input budget and hands it to
+    /// the writer thread, refunding the charge if either step refuses it.
+    fn enqueue(&self, input: Input) -> Result<(), mpsc::TrySendError<Input>> {
+        use std::sync::atomic::Ordering;
+
+        let charge = input.charge();
+        let before = self.queued.fetch_add(charge, Ordering::AcqRel);
+        if before.saturating_add(charge) > INPUT_QUEUE_BYTES {
+            self.queued.fetch_sub(charge, Ordering::AcqRel);
+            return Err(mpsc::TrySendError::Full(input));
+        }
+        self.input.send(input).map_err(|mpsc::SendError(input)| {
+            self.queued.fetch_sub(charge, Ordering::AcqRel);
+            mpsc::TrySendError::Disconnected(input)
         })
     }
 
@@ -370,12 +412,11 @@ impl Pty {
         if bytes.len() > MAX_INPUT_BYTES {
             return false;
         }
-        self.input
-            .try_send(Input {
-                bytes,
-                delivery: None,
-            })
-            .is_ok()
+        self.enqueue(Input {
+            bytes,
+            delivery: None,
+        })
+        .is_ok()
     }
 
     /// Admits only validated literal text; paste framing is generated here.
@@ -393,19 +434,18 @@ impl Pty {
             bytes.extend_from_slice(b"\x1b[201~");
         }
         let delivery = super::proposal::Delivery::queued();
-        self.input
-            .try_send(Input {
-                bytes,
-                delivery: Some(delivery.clone()),
-            })
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => {
-                    io::Error::new(io::ErrorKind::WouldBlock, "Terminal input queue is full")
-                }
-                mpsc::TrySendError::Disconnected(_) => {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "Terminal input writer is closed")
-                }
-            })?;
+        self.enqueue(Input {
+            bytes,
+            delivery: Some(delivery.clone()),
+        })
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => {
+                io::Error::new(io::ErrorKind::WouldBlock, "Terminal input queue is full")
+            }
+            mpsc::TrySendError::Disconnected(_) => {
+                io::Error::new(io::ErrorKind::BrokenPipe, "Terminal input writer is closed")
+            }
+        })?;
         Ok(delivery)
     }
 
@@ -892,6 +932,113 @@ mod tests {
         assert!(wait_until(Duration::from_secs(5), || {
             String::from_utf8_lossy(&running.output.lock().unwrap()).contains("ping")
         }));
+    }
+
+    /// Holds a PTY's reader and writer threads until the test opens it, as a
+    /// busy machine does by not scheduling them.
+    struct Gate(Arc<(Mutex<bool>, std::sync::Condvar)>);
+
+    impl Gate {
+        fn new() -> Self {
+            Self(Arc::new((Mutex::new(false), std::sync::Condvar::new())))
+        }
+
+        fn activation(&self) -> PendingActivation {
+            let gate = Arc::clone(&self.0);
+            PendingActivation {
+                wait: Arc::new(move || {
+                    let (open, opened) = &*gate;
+                    let mut open = open.lock().unwrap();
+                    while !*open {
+                        open = opened.wait(open).unwrap();
+                    }
+                    true
+                }),
+                lifetime: Arc::new(()),
+            }
+        }
+
+        fn open(&self) {
+            let (open, opened) = &*self.0;
+            *open.lock().unwrap() = true;
+            opened.notify_all();
+        }
+    }
+
+    fn gated(program: &str, arguments: &[&str], gate: &Gate) -> Running {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let exited = Arc::new(Mutex::new(false));
+        let sink = Arc::clone(&output);
+        let done = Arc::clone(&exited);
+        let arguments = arguments
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+        let pty = Pty::spawn_gated_in_context(
+            OsStr::new(program),
+            &arguments,
+            Path::new("/"),
+            80,
+            10,
+            None,
+            move |event| match event {
+                PtyEvent::Output(bytes) => sink.lock().unwrap().extend_from_slice(&bytes),
+                PtyEvent::Exited(_) => *done.lock().unwrap() = true,
+            },
+            gate.activation(),
+        )
+        .expect("a pty can be opened in a test environment");
+        Running {
+            output,
+            exited,
+            pty,
+        }
+    }
+
+    /// Every keystroke is its own write, and the editor can forward a whole
+    /// burst of them before the writer thread next runs. A bound of eight
+    /// writes dropped the end of such a line, Enter included.
+    #[test]
+    fn a_burst_of_keystrokes_queued_before_the_writer_runs_is_not_dropped() {
+        let gate = Gate::new();
+        let running = gated(
+            "/bin/sh",
+            &["-c", "IFS= read -r line; printf 'got:%s\\n' \"$line\""],
+            &gate,
+        );
+        let line = "a-line-typed-faster-than-the-writer-thread-is-scheduled-to-run";
+        for key in line.bytes().chain(*b"\r") {
+            assert!(
+                running.pty.write(vec![key]),
+                "keystroke {:?} was refused while the writer was held",
+                key as char
+            );
+        }
+        gate.open();
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                String::from_utf8_lossy(&running.output.lock().unwrap())
+                    .contains(&format!("got:{line}"))
+            }),
+            "child output: {:?}",
+            String::from_utf8_lossy(&running.output.lock().unwrap())
+        );
+    }
+
+    /// The bound that replaced the count still stops a child that has
+    /// stopped reading from pinning unbounded editor memory.
+    #[test]
+    fn unwritten_input_is_bounded_by_bytes() {
+        let gate = Gate::new();
+        let running = gated("/bin/cat", &[], &gate);
+        let full_writes = INPUT_QUEUE_BYTES / MAX_INPUT_BYTES;
+        let accepted = (0..=full_writes)
+            .take_while(|_| running.pty.write(vec![b'x'; MAX_INPUT_BYTES]))
+            .count();
+        // Each write also costs its overhead, so the last full write no
+        // longer fits beside the others.
+        assert_eq!(accepted, full_writes - 1);
+        gate.open();
     }
 }
 

@@ -1828,8 +1828,6 @@ async fn run(
     // Standalone mode uses the same owner and command/event boundary that a
     // persistent process will host. No transport or daemon is required.
     let mut app = WorkspaceHost::new(app);
-    #[cfg(debug_assertions)]
-    let mut input_trace = open_input_trace()?;
 
     if arguments.mode == LaunchMode::Serve {
         #[cfg(unix)]
@@ -1854,6 +1852,10 @@ async fn run(
         anyhow::bail!("persistent mode is not yet supported on this platform");
     }
 
+    // The persistent host opens its own trace, so only a standalone editor
+    // reaches this one.
+    #[cfg(debug_assertions)]
+    let mut input_trace = open_input_trace()?;
     // The standalone resources were acquired before editor construction. Move
     // them into the interactive loop now that the persistent-host branch has
     // returned.
@@ -2468,6 +2470,8 @@ async fn run_host_server(
     supervising_parent: Option<HostSupervisor>,
 ) -> Result<()> {
     let mut termination = TerminationSignals::new()?;
+    #[cfg(debug_assertions)]
+    let mut input_trace = open_input_trace()?;
     host.enable_persistent_session();
     let mut server = LocalServer::bind(&endpoint).await?;
     host.app_mut()
@@ -2590,7 +2594,14 @@ async fn run_host_server(
                                     host.finder_scan_refills(),
                                     &mut frame_pending,
                                 ) {
-                                    publish_attached_frame(&mut host, &mut active, &key_hints);
+                                    #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+                                    let published =
+                                        publish_attached_frame(&mut host, &mut active, &key_hints);
+                                    #[cfg(debug_assertions)]
+                                    trace_host_event(
+                                        input_trace.as_mut(),
+                                        format_args!("published {published:?} on attach"),
+                                    )?;
                                     frame_pending = false;
                                 }
                             }
@@ -2756,12 +2767,41 @@ async fn run_host_server(
                             match request {
                             ClientRequest::Input { event, repeated, presented_frame } => {
                                 if !repeated && let Some(frame) = presented_frame { host.context_frame_presented(frame.into()); }
-                                dispatch_host_key_or_text(
+                                let input: InputEvent = event.into();
+                                #[cfg(debug_assertions)]
+                                let sensitive_input = host.app().plugin_input_active();
+                                #[cfg(debug_assertions)]
+                                let phase = format!(
+                                    "host connection={id} presented={:?}",
+                                    presented_frame.map(|frame| frame.get())
+                                );
+                                #[cfg(debug_assertions)]
+                                trace_input(
+                                    input_trace.as_mut(),
+                                    &format!("{phase} before"),
+                                    host.app(),
+                                    &input,
+                                    sensitive_input,
+                                    repeated,
+                                    None,
+                                )?;
+                                #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+                                let hint_result = dispatch_host_key_or_text(
                                     &mut host,
                                     &mut key_hints,
-                                    event.into(),
+                                    input.clone(),
                                     repeated,
                                 );
+                                #[cfg(debug_assertions)]
+                                trace_input(
+                                    input_trace.as_mut(),
+                                    &format!("{phase} after"),
+                                    host.app(),
+                                    &input,
+                                    sensitive_input,
+                                    repeated,
+                                    Some(hint_result),
+                                )?;
                                 host.reconcile_wait_requests();
                                 changed = true;
                             }
@@ -2998,10 +3038,21 @@ async fn run_host_server(
             output = services.terminal_events.recv() => {
                 if let Some(output) = output {
                     let observed = active.is_some();
+                    // Only sizes are recorded: the bytes are the child's
+                    // output and may be as private as anything typed.
+                    #[cfg(debug_assertions)]
+                    let mut received = vec![terminal_output_summary(&output)];
                     host.apply_terminal_output(output, observed);
                     terminal::drain(&mut services.terminal_events, |output| {
+                        #[cfg(debug_assertions)]
+                        received.push(terminal_output_summary(&output));
                         host.apply_terminal_output(output, observed);
                     });
+                    #[cfg(debug_assertions)]
+                    trace_host_event(
+                        input_trace.as_mut(),
+                        format_args!("output {} observed={observed}", received.join(" ")),
+                    )?;
                     frame_pending = true;
                 }
             }
@@ -3200,7 +3251,13 @@ async fn run_host_server(
             }
         }
         if frame_publication_ready(changed, host.finder_scan_refills(), &mut frame_pending) {
-            publish_attached_frame(&mut host, &mut active, &key_hints);
+            #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+            let published = publish_attached_frame(&mut host, &mut active, &key_hints);
+            #[cfg(debug_assertions)]
+            trace_host_event(
+                input_trace.as_mut(),
+                format_args!("published {published:?}"),
+            )?;
             frame_pending = false;
         }
     }
@@ -3264,15 +3321,18 @@ async fn flush_connections(
     }
 }
 
+/// What one publication put in the attached client's visual slot, for the
+/// development input trace: the response kind and the frame it carries.
+#[cfg(unix)]
+type FramePublication = Option<(&'static str, u64)>;
+
 #[cfg(unix)]
 fn publish_attached_frame(
     host: &mut WorkspaceHost,
     active: &mut Option<AttachedClient>,
     key_hints: &KeyHintState,
-) {
-    let Some(client) = active.as_mut() else {
-        return;
-    };
+) -> FramePublication {
+    let client = active.as_mut()?;
     host.mark_visible_terminals_viewed();
     let frame: runyte::protocol::HostFrame = host
         .prepare_frame_with_hints(client.geometry, Some(key_hints))
@@ -3314,8 +3374,18 @@ fn publish_attached_frame(
     // Only a closed connection means the client is actually gone. Detaching on a merely
     // full channel used to end the session mid-keystroke, which reached the
     // person as an unexplained clean exit.
+    let kind = match &response {
+        HostResponse::Frame { .. } => "frame",
+        HostResponse::EditorDamage { .. } => "editor-damage",
+        HostResponse::TerminalDamage { .. } => "terminal-damage",
+        _ => "other",
+    };
+    let id = frame.id.get();
     match client.responses.try_send(response) {
-        Ok(()) => client.last_frame = Some(frame),
+        Ok(()) => {
+            client.last_frame = Some(frame);
+            return Some((kind, id));
+        }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
             // The write is where the closure is observed, so this is the
             // boundary that records it. The `Disconnected` event that follows
@@ -3331,6 +3401,26 @@ fn publish_attached_frame(
         }
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
     }
+    None
+}
+
+#[cfg(all(unix, debug_assertions))]
+fn terminal_output_summary(output: &terminal::TerminalOutput) -> String {
+    match output {
+        terminal::TerminalOutput::Bytes { id, bytes } => format!("{id}:{}b", bytes.len()),
+        terminal::TerminalOutput::Exited { id, code } => format!("{id}:exit={code:?}"),
+    }
+}
+
+/// Adds one host event other than input to the development input trace, so
+/// a keystroke can be ordered against the output and frames that followed it.
+#[cfg(all(unix, debug_assertions))]
+fn trace_host_event(trace: Option<&mut impl Write>, event: std::fmt::Arguments<'_>) -> Result<()> {
+    let Some(trace) = trace else {
+        return Ok(());
+    };
+    writeln!(trace, "host {event}").context("failed to write RUNYTE_INPUT_TRACE")?;
+    trace.flush().context("failed to flush RUNYTE_INPUT_TRACE")
 }
 
 fn dispatch_host_key_or_text(
@@ -3338,10 +3428,10 @@ fn dispatch_host_key_or_text(
     key_hints: &mut KeyHintState,
     input: InputEvent,
     repeated: bool,
-) {
+) -> HintEventResult {
     let hint_result = observe_key_or_text_hint(host.app(), key_hints, &input);
     if hint_result != HintEventResult::Forward {
-        return;
+        return hint_result;
     }
     let dispatches = motion_repeat_dispatches(host.app(), &input, repeated);
     for _ in 0..dispatches {
@@ -3351,6 +3441,7 @@ fn dispatch_host_key_or_text(
             break;
         }
     }
+    hint_result
 }
 
 #[cfg(windows)]
@@ -3726,7 +3817,7 @@ async fn run_workspace_switcher(
     let _terminal = TerminalGuard::enter(mouse_enabled)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut geometry = current_frame_geometry()?;
-    let mut terminal_events = AttachedTerminalEvents::stream();
+    let mut terminal_events = AttachedTerminalEvents::stream()?;
     let mut current = endpoint;
     let mut previous: Option<LocalEndpoint> = None;
     let mut notice: Option<String> = None;
@@ -4162,15 +4253,76 @@ async fn attach_for_wait(
 /// lifecycle executor, and the dedicated wait process exits immediately after
 /// releasing its request.
 #[cfg(unix)]
-enum AttachedTerminalEvents {
+struct AttachedTerminalEvents {
+    source: AttachedEventSource,
+    /// The opt-in development trace of what this client sent to its host. It
+    /// lives here because this value, unlike any one attachment, spans every
+    /// workspace the client visits.
+    #[cfg(debug_assertions)]
+    trace: Option<fs::File>,
+}
+
+#[cfg(unix)]
+enum AttachedEventSource {
     Stream(EventStream),
     Isolated(tokio::sync::mpsc::UnboundedReceiver<io::Result<CrosstermEvent>>),
 }
 
 #[cfg(unix)]
 impl AttachedTerminalEvents {
-    fn stream() -> Self {
-        Self::Stream(EventStream::new())
+    fn new(source: AttachedEventSource) -> Result<Self> {
+        Ok(Self {
+            source,
+            #[cfg(debug_assertions)]
+            trace: open_input_trace()?,
+        })
+    }
+
+    fn stream() -> Result<Self> {
+        Self::new(AttachedEventSource::Stream(EventStream::new()))
+    }
+
+    /// Records one input as it leaves for the host.
+    ///
+    /// Whether a character key belongs to a plugin's private input is the
+    /// host's knowledge, not the client's, so every character is redacted
+    /// here. What the host did with it is in the host's own trace.
+    #[cfg(debug_assertions)]
+    fn trace_sent(
+        &mut self,
+        input: &InputEvent,
+        repeated: bool,
+        presented: runyte::protocol::FrameId,
+    ) -> Result<()> {
+        let Some(trace) = self.trace.as_mut() else {
+            return Ok(());
+        };
+        let input = match input {
+            InputEvent::Key(KeyStroke {
+                code: runyte::input::KeyCode::Char(_),
+                modifiers,
+            }) => format!("Key(<character> {modifiers:?})"),
+            input => format!("{input:?}"),
+        };
+        writeln!(
+            trace,
+            "client sent input={input} repeated={repeated} presented={}",
+            presented.get()
+        )
+        .context("failed to write RUNYTE_INPUT_TRACE")?;
+        trace.flush().context("failed to flush RUNYTE_INPUT_TRACE")
+    }
+
+    /// Records one visual response and whether it reached the screen, so the
+    /// trace can say whether output the host published was ever drawn.
+    #[cfg(debug_assertions)]
+    fn trace_received(&mut self, kind: &str, id: u64, applied: bool) -> Result<()> {
+        let Some(trace) = self.trace.as_mut() else {
+            return Ok(());
+        };
+        writeln!(trace, "client received {kind} frame={id} applied={applied}")
+            .context("failed to write RUNYTE_INPUT_TRACE")?;
+        trace.flush().context("failed to flush RUNYTE_INPUT_TRACE")
     }
 
     fn isolated_wait_reader() -> Result<Self> {
@@ -4187,13 +4339,13 @@ impl AttachedTerminalEvents {
                 }
             })
             .context("failed to start wait terminal input reader")?;
-        Ok(Self::Isolated(receiver))
+        Self::new(AttachedEventSource::Isolated(receiver))
     }
 
     async fn next(&mut self) -> Option<io::Result<CrosstermEvent>> {
-        match self {
-            Self::Stream(stream) => stream.next().await,
-            Self::Isolated(receiver) => receiver.recv().await,
+        match &mut self.source {
+            AttachedEventSource::Stream(stream) => stream.next().await,
+            AttachedEventSource::Isolated(receiver) => receiver.recv().await,
         }
     }
 }
@@ -4510,6 +4662,8 @@ async fn run_attached(
                         if let Some(batch) = pointer_batcher.take() {
                             client.send(&batch.request()).await?;
                         }
+                        #[cfg(debug_assertions)]
+                        terminal_events.trace_sent(&event, repeated, current_frame.id.into())?;
                         client
                             .send(&ClientRequest::Input {
                                 event: event.into(),
@@ -4531,6 +4685,8 @@ async fn run_attached(
                         current_frame = (*frame)
                             .try_into()
                             .map_err(|error: String| anyhow::anyhow!(error))?;
+                        #[cfg(debug_assertions)]
+                        terminal_events.trace_received("frame", current_frame.id.get(), true)?;
                         terminal.draw(|frame| {
                             ui::render_host_frame(
                                 frame,
@@ -4540,7 +4696,10 @@ async fn run_attached(
                         })?;
                     }
                     Some(HostResponse::TerminalDamage { damage }) => {
-                        if apply_terminal_damage(&mut current_frame, &damage)? {
+                        let applied = apply_terminal_damage(&mut current_frame, &damage)?;
+                        #[cfg(debug_assertions)]
+                        terminal_events.trace_received("terminal-damage", damage.id.get(), applied)?;
+                        if applied {
                             terminal.draw(|frame| {
                                 ui::render_host_frame(
                                     frame,
@@ -4553,7 +4712,10 @@ async fn run_attached(
                         }
                     }
                     Some(HostResponse::EditorDamage { damage }) => {
-                        if apply_editor_damage(&mut current_frame, &damage)? {
+                        let applied = apply_editor_damage(&mut current_frame, &damage)?;
+                        #[cfg(debug_assertions)]
+                        terminal_events.trace_received("editor-damage", damage.id.get(), applied)?;
+                        if applied {
                             terminal.draw(|frame| {
                                 ui::render_host_frame(frame, &current_frame, color_depth)
                             })?;
