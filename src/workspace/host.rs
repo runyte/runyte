@@ -328,6 +328,7 @@ pub struct WorkspaceHost {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ProtectedHostState {
     pub unsaved_buffers: usize,
+    pub pending_directory_tree_operations: usize,
     pub pending_wait_requests: usize,
     pub live_terminals: usize,
     pub plugin_jobs: usize,
@@ -337,6 +338,7 @@ pub struct ProtectedHostState {
 impl ProtectedHostState {
     pub const fn is_empty(self) -> bool {
         self.unsaved_buffers == 0
+            && self.pending_directory_tree_operations == 0
             && self.pending_wait_requests == 0
             && self.live_terminals == 0
             && self.plugin_jobs == 0
@@ -356,6 +358,17 @@ impl ProtectedHostState {
                 "{} unsaved buffer{}",
                 self.unsaved_buffers,
                 if self.unsaved_buffers == 1 { "" } else { "s" }
+            ));
+        }
+        if self.pending_directory_tree_operations > 0 {
+            parts.push(format!(
+                "{} pending directory tree operation{}",
+                self.pending_directory_tree_operations,
+                if self.pending_directory_tree_operations == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             ));
         }
         if self.pending_wait_requests > 0 {
@@ -663,6 +676,7 @@ impl WorkspaceHost {
                     })
                     .count(),
             unsaved_buffers: self.unsaved_buffers(),
+            pending_directory_tree_operations: self.app.directory_tree.pending_count(),
             pending_wait_requests: self
                 .wait_requests
                 .values()
@@ -3106,6 +3120,37 @@ mod tests {
         let (token, buffers) = host.create_wait_request([path], false).unwrap();
         assert!(!host.may_retire_idle());
         host.complete_wait_buffer(token, buffers[0]).unwrap();
+        assert!(host.may_retire_idle());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_directory_tree_plan_protects_detached_host_from_idle_retirement() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-host-tree-plan-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let app =
+            App::new_in_isolated_project(&root, HostPorts::isolated(Box::new(InertClipboard)))
+                .unwrap();
+        let mut host = WorkspaceHost::new(app);
+        assert!(host.may_retire_idle());
+        host.app_mut()
+            .directory_tree
+            .stage_create(&root, "pending.txt", true)
+            .unwrap();
+        let protected = host.protected_state();
+        assert_eq!(protected.pending_directory_tree_operations, 1);
+        assert!(
+            protected
+                .refusal()
+                .contains("1 pending directory tree operation")
+        );
+        assert!(!host.may_retire_idle());
+        host.app_mut().directory_tree.clear_pending();
         assert!(host.may_retire_idle());
         std::fs::remove_dir_all(root).unwrap();
     }

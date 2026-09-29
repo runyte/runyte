@@ -11,8 +11,9 @@ use crate::{
     key_hints::{KeyHintRow, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     layout::Rect,
     snapshot::{
-        EditorSnapshot, OverlayAction, OverlayKind, OverlayLayout, OverlayPreview, OverlaySnapshot,
-        PaneSnapshot, SnapshotRow, StatusSnapshot, TextRole, TextRunKind,
+        DirectoryTreeSnapshot, EditorSnapshot, OverlayAction, OverlayKind, OverlayLayout,
+        OverlayPreview, OverlaySnapshot, PaneSnapshot, SnapshotRow, StatusSnapshot, TextRole,
+        TextRunKind,
     },
     terminal::{Cell as TerminalCell, TerminalView},
     workspace::HostFrame,
@@ -764,8 +765,14 @@ fn render_editor_frame(
     let interaction_line_area = to_tui_rect(snapshot.geometry.message);
 
     draw_session_strip(frame, &app.theme, snapshot);
+    if let Some(tree) = &snapshot.directory_tree {
+        draw_directory_tree(frame, &app.theme, tree);
+    }
     for pane in &snapshot.panes {
         draw_pane(frame, &app.theme, snapshot.mode, pane);
+    }
+    if let Some(tree) = &snapshot.directory_tree {
+        place_directory_tree_cursor(frame, tree);
     }
 
     draw_status(
@@ -976,8 +983,14 @@ fn render_attached_frame(
 ) {
     let theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
     draw_session_strip(frame, &theme, &snapshot.editor);
+    if let Some(tree) = &snapshot.editor.directory_tree {
+        draw_directory_tree(frame, &theme, tree);
+    }
     for pane in &snapshot.editor.panes {
         draw_pane(frame, &theme, snapshot.editor.mode, pane);
+    }
+    if let Some(tree) = &snapshot.editor.directory_tree {
+        place_directory_tree_cursor(frame, tree);
     }
     draw_status(
         frame,
@@ -1846,6 +1859,93 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
             .style(Style::default().fg(app.theme.muted)),
             footer,
         );
+    }
+}
+
+fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &DirectoryTreeSnapshot) {
+    let area = to_tui_rect(tree.area);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let title = if tree.pending_count == 0 {
+        format!(" {} ", tree.title)
+    } else {
+        format!(" {} · {} pending ", tree.title, tree.pending_count)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(if tree.focused {
+            theme.accent
+        } else {
+            theme.muted
+        }))
+        .style(Style::default().fg(theme.foreground).bg(theme.background));
+    frame.render_widget(block, area);
+    let body = TuiRect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    let lines = tree
+        .rows
+        .iter()
+        .map(|row| {
+            let marker = match row.kind {
+                crate::fs_plan::EntryKind::Directory if row.loading => "… ",
+                crate::fs_plan::EntryKind::Directory if row.expanded => "▾ ",
+                crate::fs_plan::EntryKind::Directory => "▸ ",
+                crate::fs_plan::EntryKind::File => "  ",
+                crate::fs_plan::EntryKind::Symlink => "↗ ",
+                crate::fs_plan::EntryKind::Other => "? ",
+            };
+            let label = format!(
+                "{}{}{}{}{}",
+                " ".repeat(row.depth.saturating_mul(2).min(64)),
+                marker,
+                row.label,
+                if row.kind == crate::fs_plan::EntryKind::Directory {
+                    "/"
+                } else {
+                    ""
+                },
+                row.pending
+                    .as_ref()
+                    .map_or_else(String::new, |pending| format!("  [{pending}]"))
+            );
+            let style = if row.selected {
+                Style::default().fg(theme.background).bg(theme.accent)
+            } else if row.error.is_some() {
+                Style::default().fg(theme.muted).bg(theme.background)
+            } else if row.kind == crate::fs_plan::EntryKind::Directory {
+                Style::default().fg(theme.directory).bg(theme.background)
+            } else {
+                Style::default().fg(theme.foreground).bg(theme.background)
+            };
+            Line::from(Span::styled(label, style))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.background)),
+        body,
+    );
+}
+
+fn place_directory_tree_cursor(frame: &mut Frame<'_>, tree: &DirectoryTreeSnapshot) {
+    if !tree.focused || tree.area.width < 3 || tree.area.height < 3 {
+        return;
+    }
+    if let Some(index) = tree.rows.iter().position(|row| row.selected) {
+        let y = tree.area.y.saturating_add(1).saturating_add(index as u16);
+        if y < tree
+            .area
+            .y
+            .saturating_add(tree.area.height)
+            .saturating_sub(1)
+        {
+            frame.set_cursor_position(ScreenPosition::new(tree.area.x.saturating_add(1), y));
+        }
     }
 }
 
@@ -8235,7 +8335,7 @@ mod tests {
         .unwrap();
         let mut app = App::new(Config::default(), None).unwrap();
         app.fs_confirmation = Some(crate::app::FsConfirmation {
-            buffer: 0,
+            origin: crate::app::FsConfirmationOrigin::Explorer { buffer: 0 },
             plan,
             selected: 0,
         });
@@ -8378,7 +8478,7 @@ mod tests {
         let plan = crate::fs_plan::FsPlan::build(root.clone(), snapshot, desired).unwrap();
         let mut app = App::new(Config::default(), None).unwrap();
         app.fs_confirmation = Some(crate::app::FsConfirmation {
-            buffer: 0,
+            origin: crate::app::FsConfirmationOrigin::Explorer { buffer: 0 },
             plan,
             selected: 0,
         });

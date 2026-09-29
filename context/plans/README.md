@@ -18,6 +18,9 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Directory tree sidebar](completed/PLAN_DIRECTORY_TREE_SIDEBAR.md): a narrow
+  left navigation surface with staged filesystem changes and one reviewed plan
+  across directories;
 - [Elixir language support](completed/PLAN_ELIXIR_LANGUAGE_SUPPORT.md): a statically
   linked grammar, local scope repairs, Markdown injection, and explicit limits
   on dedicated structural features;

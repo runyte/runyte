@@ -200,7 +200,7 @@ impl SourceFingerprint {
         Self::capture_limited(path, None)
     }
 
-    fn capture_limited(path: &Path, limits: Option<OperationLimits>) -> Result<Self> {
+    pub(crate) fn capture_limited(path: &Path, limits: Option<OperationLimits>) -> Result<Self> {
         let entry = EntryFingerprint::capture(path, "transfer source")?;
         let mut descendants = Vec::new();
         let mut budget = limits.map(TreeBudget::new);
@@ -851,7 +851,8 @@ impl std::error::Error for ApplyError {}
 pub struct FsPlan {
     limits: Option<OperationLimits>,
     root: PathBuf,
-    expected: DirectorySnapshot,
+    expected: Option<DirectorySnapshot>,
+    expected_directories: Vec<(PathBuf, DirectorySnapshot)>,
     operations: Vec<FsOperation>,
     transfer_sources: Vec<(PathBuf, SourceFingerprint)>,
     confirmed_sources: Vec<(PathBuf, Option<SourceFingerprint>)>,
@@ -1125,12 +1126,226 @@ impl FsPlan {
         Ok(Self {
             limits,
             root,
-            expected,
+            expected: Some(expected),
+            expected_directories: Vec::new(),
             operations: creates,
             transfer_sources,
             confirmed_sources,
             retained_sources: Vec::new(),
         })
+    }
+
+    /// Builds one plan from explicitly staged operations across directories.
+    /// The caller supplies baselines and source fingerprints captured when
+    /// each intention was staged, never freshly during review.
+    pub fn build_explicit(
+        root: PathBuf,
+        operations: Vec<FsOperation>,
+        expected_directories: Vec<(PathBuf, DirectorySnapshot)>,
+        sources: Vec<(PathBuf, SourceFingerprint)>,
+    ) -> Result<Self> {
+        ensure!(root.is_absolute(), "directory plan root must be absolute");
+        let root = fs::canonicalize(root)?;
+        ensure!(!operations.is_empty(), "directory plan has no operations");
+        ensure!(operations.len() <= 4096, "too many directory operations");
+        let mut normalized = Vec::with_capacity(operations.len());
+        let mut targets = HashSet::new();
+        let mut sources_used = HashSet::new();
+        for operation in operations {
+            let operation = match operation {
+                FsOperation::Create { path, kind } => FsOperation::Create {
+                    path: normalize_desired_path(&root, &path)?,
+                    kind,
+                },
+                FsOperation::Delete { path, kind } => FsOperation::Delete {
+                    path: normalize_desired_path(&root, &path)?,
+                    kind,
+                },
+                FsOperation::Rename { from, to, kind } => FsOperation::Rename {
+                    from: normalize_desired_path(&root, &from)?,
+                    to: normalize_desired_path(&root, &to)?,
+                    kind,
+                },
+                FsOperation::Move { from, to, kind } => FsOperation::Move {
+                    from: normalize_desired_path(&root, &from)?,
+                    to: normalize_desired_path(&root, &to)?,
+                    kind,
+                },
+                FsOperation::Copy { from, to, kind } => FsOperation::Copy {
+                    from: normalize_desired_path(&root, &from)?,
+                    to: normalize_desired_path(&root, &to)?,
+                    kind,
+                },
+            };
+            if let Some(target) = operation.target() {
+                ensure!(
+                    targets.insert(target.to_path_buf()),
+                    "duplicate final target: {}",
+                    target.display()
+                );
+            }
+            if let Some(source) = match &operation {
+                FsOperation::Delete { path, .. } => Some(path),
+                FsOperation::Rename { from, .. }
+                | FsOperation::Move { from, .. }
+                | FsOperation::Copy { from, .. } => Some(from),
+                FsOperation::Create { .. } => None,
+            } {
+                ensure!(
+                    sources_used.insert(source.clone()),
+                    "duplicate source: {}",
+                    source.display()
+                );
+            }
+            normalized.push(operation);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            let mut target_names: Vec<Vec<u16>> = targets
+                .iter()
+                .map(|path| path.as_os_str().encode_wide().collect())
+                .collect();
+            target_names
+                .sort_unstable_by(|left, right| crate::windows_fs::compare_names(left, right));
+            ensure!(
+                !target_names
+                    .windows(2)
+                    .any(|pair| { crate::windows_fs::compare_names(&pair[0], &pair[1]).is_eq() }),
+                "duplicate Windows final target (case-insensitive)"
+            );
+        }
+        let sources = sources
+            .into_iter()
+            .map(|(path, fingerprint)| Ok((normalize_desired_path(&root, &path)?, fingerprint)))
+            .collect::<Result<Vec<_>>>()?;
+        for source in &sources_used {
+            ensure!(
+                sources.iter().any(|(path, _)| path == source),
+                "source was not captured when staged: {}",
+                source.display()
+            );
+        }
+        let expected_directories = expected_directories
+            .into_iter()
+            .map(|(path, baseline)| {
+                let path = if path.as_os_str().is_empty() {
+                    path
+                } else {
+                    normalize_desired_path(&root, &path)?
+                };
+                Ok((path, baseline))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let baseline_paths = expected_directories
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<HashSet<_>>();
+        let created_directories = normalized
+            .iter()
+            .filter_map(|operation| match operation {
+                FsOperation::Create {
+                    path,
+                    kind: EntryKind::Directory,
+                } => Some(path.clone()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        for operation in &normalized {
+            let (source, target, kind) = match operation {
+                FsOperation::Create { path, kind } => (None, Some(path), *kind),
+                FsOperation::Delete { path, kind } => (Some(path), None, *kind),
+                FsOperation::Rename { from, to, kind }
+                | FsOperation::Move { from, to, kind }
+                | FsOperation::Copy { from, to, kind } => (Some(from), Some(to), *kind),
+            };
+            if let Some(source) = source {
+                ensure!(
+                    baseline_paths.contains(source.parent().unwrap_or(Path::new(""))),
+                    "source parent baseline was not captured: {}",
+                    source.display()
+                );
+                ensure!(
+                    sources
+                        .iter()
+                        .any(|(path, fingerprint)| path == source && fingerprint.kind() == kind),
+                    "source kind changed: {}",
+                    source.display()
+                );
+                if kind == EntryKind::Directory {
+                    if let Some(target) = target {
+                        ensure!(
+                            !target.starts_with(source),
+                            "cannot move a directory inside itself"
+                        );
+                    }
+                    for other in &normalized {
+                        if std::ptr::eq(operation, other) {
+                            continue;
+                        }
+                        let other_paths = match other {
+                            FsOperation::Create { path, .. } | FsOperation::Delete { path, .. } => {
+                                [Some(path), None]
+                            }
+                            FsOperation::Rename { from, to, .. }
+                            | FsOperation::Move { from, to, .. }
+                            | FsOperation::Copy { from, to, .. } => [Some(from), Some(to)],
+                        };
+                        ensure!(
+                            other_paths
+                                .into_iter()
+                                .flatten()
+                                .all(|path| !path.starts_with(source)),
+                            "directory and descendant changes must be applied separately: {}",
+                            source.display()
+                        );
+                    }
+                }
+            }
+            if let Some(target) = target {
+                let parent = target.parent().unwrap_or(Path::new(""));
+                ensure!(
+                    baseline_paths.contains(parent) || created_directories.contains(parent),
+                    "destination parent baseline was not captured: {}",
+                    target.display()
+                );
+            }
+        }
+        let mut creates = Vec::new();
+        let mut changes = Vec::new();
+        let mut deletes = Vec::new();
+        for operation in normalized {
+            match operation {
+                FsOperation::Create { .. } => creates.push(operation),
+                FsOperation::Delete { .. } => deletes.push(operation),
+                _ => changes.push(operation),
+            }
+        }
+        creates.sort_by_key(operation_order);
+        changes.sort_by_key(operation_order);
+        deletes.sort_by_key(|operation| Reverse(operation_order(operation)));
+        creates.extend(changes);
+        creates.extend(deletes);
+        let plan = Self {
+            limits: Some(OperationLimits {
+                entries: 50_000,
+                depth: 128,
+                bytes: u64::MAX,
+                metadata_bytes: 64 * 1024 * 1024,
+            }),
+            root,
+            expected: None,
+            expected_directories,
+            operations: creates,
+            transfer_sources: Vec::new(),
+            confirmed_sources: sources
+                .into_iter()
+                .map(|(path, expected)| (path, Some(expected)))
+                .collect(),
+            retained_sources: Vec::new(),
+        };
+        plan.preflight()?;
+        Ok(plan)
     }
 
     pub(crate) fn retain_source(
@@ -1231,10 +1446,14 @@ impl FsPlan {
                 ));
             }
         }
-        let current =
-            DirectorySnapshot::read_bounded(&self.root, self.expected.show_hidden(), limit)
-                .map_err(|error| ApplyError::new(ApplyReport::default(), None, error))?;
-        if !self.expected.matches_current(&current)
+        let baseline_matches = self.expected.as_ref().is_none_or(|expected| {
+            DirectorySnapshot::read_bounded(&self.root, expected.show_hidden(), limit)
+                .is_ok_and(|current| expected.matches_current(&current))
+        }) && self.expected_directories.iter().all(|(path, expected)| {
+            DirectorySnapshot::read_bounded(&self.root.join(path), expected.show_hidden(), limit)
+                .is_ok_and(|current| expected.matches_current(&current))
+        });
+        if !baseline_matches
             || !self.operation_sources_unchanged()
             || !self.confirmed_sources_unchanged()
         {
@@ -1420,10 +1639,12 @@ impl FsPlan {
                 FsOperation::Create { .. } => None,
             })
             .filter_map(|source| {
-                self.expected
-                    .entries()
-                    .iter()
-                    .find(|entry| &entry.path == source)
+                self.expected.as_ref().and_then(|expected| {
+                    expected
+                        .entries()
+                        .iter()
+                        .find(|entry| &entry.path == source)
+                })
             })
             .all(|expected| {
                 SourceFingerprint::shallow(&self.root.join(&expected.path), "plan source")
@@ -1717,7 +1938,7 @@ fn directory_contains(source: &Path, target: &Path, allow_same: bool) -> std::io
     }
 }
 
-fn lexical_normalize(path: &Path) -> PathBuf {
+pub(crate) fn lexical_normalize(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

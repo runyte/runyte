@@ -233,6 +233,7 @@ pub enum BindingScope {
     #[default]
     Global,
     Directory,
+    DirectoryTree,
     Settings,
     GitStatus,
     GitBranches,
@@ -270,6 +271,7 @@ impl BindingScope {
     pub const ALL: &'static [Self] = &[
         Self::Global,
         Self::Directory,
+        Self::DirectoryTree,
         Self::Settings,
         Self::GitStatus,
         Self::GitBranches,
@@ -297,7 +299,11 @@ impl BindingScope {
     pub const fn is_special_buffer_scope(self) -> bool {
         !matches!(
             self,
-            Self::Global | Self::Terminal | Self::Markdown | Self::SessionManager
+            Self::Global
+                | Self::Terminal
+                | Self::Markdown
+                | Self::SessionManager
+                | Self::DirectoryTree
         )
     }
 }
@@ -1126,6 +1132,10 @@ fn directory(sequence: impl Into<KeySequence>, command: EditorCommand) -> Bindin
     Binding::implemented_in(MODAL, BindingScope::Directory, sequence, command).with_role(role)
 }
 
+fn directory_tree(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
+    Binding::implemented_in(MODAL, BindingScope::DirectoryTree, sequence, command)
+}
+
 fn markdown(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
     Binding::implemented_in(MODAL, BindingScope::Markdown, sequence, command)
 }
@@ -1451,6 +1461,14 @@ fn built_in_bindings() -> Vec<Binding> {
         modal([Key::char('Z'), Key::ctrl('u')], Command::HalfPageUp),
         modal([Key::char('Z'), Key::ctrl('d')], Command::HalfPageDown),
         modal([Key::char(' '), Key::char('e')], Command::OpenExplorer),
+        modal(
+            [Key::char(' '), Key::char('d'), Key::char('t')],
+            Command::ToggleDirectoryTree,
+        ),
+        modal(
+            [Key::char(' '), Key::char('d'), Key::char('d')],
+            Command::FocusDirectoryTree,
+        ),
         modal(
             [Key::char(' '), Key::char('E')],
             Command::OpenWorkingDirectoryExplorer,
@@ -2204,6 +2222,27 @@ fn built_in_bindings() -> Vec<Binding> {
         insert(Key::plain(KeyCode::PageDown), Command::PageDown),
         // Preserve Runyte's original global shortcuts in Insert mode.
         insert(Key::ctrl('s'), Command::Save),
+        directory_tree(Key::char('j'), Command::DirectoryTreeDown),
+        directory_tree(Key::plain(KeyCode::Down), Command::DirectoryTreeDown),
+        directory_tree(Key::char('k'), Command::DirectoryTreeUp),
+        directory_tree(Key::plain(KeyCode::Up), Command::DirectoryTreeUp),
+        directory_tree(Key::char('h'), Command::DirectoryTreeLeft),
+        directory_tree(Key::plain(KeyCode::Left), Command::DirectoryTreeLeft),
+        directory_tree(Key::char('l'), Command::DirectoryTreeRight),
+        directory_tree(Key::plain(KeyCode::Right), Command::DirectoryTreeRight),
+        directory_tree(Key::plain(KeyCode::Home), Command::DirectoryTreeFirst),
+        directory_tree(Key::plain(KeyCode::End), Command::DirectoryTreeLast),
+        directory_tree(Key::plain(KeyCode::PageUp), Command::DirectoryTreePageUp),
+        directory_tree(
+            Key::plain(KeyCode::PageDown),
+            Command::DirectoryTreePageDown,
+        ),
+        directory_tree(Key::plain(KeyCode::Enter), Command::DirectoryTreeOpen),
+        directory_tree(Key::plain(KeyCode::Escape), Command::DirectoryTreeClose),
+        directory_tree(
+            [Key::char(' '), Key::char('r')],
+            Command::DirectoryTreeRefresh,
+        ),
     ]
     .into_iter()
     .chain(list_bindings())
@@ -2338,6 +2377,7 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         BindingNamespace::global(INSERT, Key::ctrl('w'), "Move between panes"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('b')], "Buffers"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('c')], "Clipboard"),
+        BindingNamespace::global(MODAL, [Key::char(' '), Key::char('d')], "Directory tree"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('g')], "Git")
             .with_capability(CommandCapability::GitProject),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('l')], "Language (LSP)")
@@ -2539,6 +2579,48 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             Key::char('s'),
             "session",
             EditorCommand::OpenExplorerSession,
+        ),
+        ContextAction::row(
+            BindingScope::DirectoryTree,
+            Key::char('n'),
+            "new",
+            EditorCommand::DirectoryTreeNew,
+        ),
+        ContextAction::row(
+            BindingScope::DirectoryTree,
+            Key::char('r'),
+            "rename",
+            EditorCommand::DirectoryTreeRename,
+        ),
+        ContextAction::row(
+            BindingScope::DirectoryTree,
+            Key::char('d'),
+            "delete",
+            EditorCommand::DirectoryTreeDelete,
+        ),
+        ContextAction::row(
+            BindingScope::DirectoryTree,
+            Key::char('m'),
+            "move",
+            EditorCommand::DirectoryTreeMove,
+        ),
+        ContextAction::buffer(
+            BindingScope::DirectoryTree,
+            Key::char('p'),
+            "review",
+            EditorCommand::DirectoryTreeReview,
+        ),
+        ContextAction::buffer(
+            BindingScope::DirectoryTree,
+            Key::char('u'),
+            "undo",
+            EditorCommand::DirectoryTreeUndo,
+        ),
+        ContextAction::buffer(
+            BindingScope::DirectoryTree,
+            Key::char('c'),
+            "clear",
+            EditorCommand::DirectoryTreeClear,
         ),
         ContextAction::buffer(
             BindingScope::Directory,
@@ -2938,14 +3020,16 @@ mod tests {
         assert!(global.iter().all(|entry| !entry.scoped));
     }
 
-    /// Scoped direct keys may add behavior, but never replace a key that means
-    /// something globally. Contextual action mnemonics are isolated inside the
-    /// Tab menu and therefore do not participate in this check.
+    /// Buffer scopes may add behavior but never replace a global key. The
+    /// sidebar is a separate focus surface and owns navigation outright.
     #[test]
     fn no_scoped_binding_shadows_a_global_binding() {
         for (keymap_name, keymap) in built_in_keymaps() {
             for mode in [Mode::Normal, Mode::Select] {
                 for &scope in BindingScope::ALL {
+                    if scope == BindingScope::DirectoryTree {
+                        continue;
+                    }
                     assert!(
                         keymap.shadowed_bindings(mode, scope).is_empty(),
                         "{keymap_name} keymap {scope:?} shadows a global binding in {mode:?}"

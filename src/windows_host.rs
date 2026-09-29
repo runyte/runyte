@@ -606,6 +606,7 @@ async fn run_loop(
     finder_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut frame_pending = false;
     let mut ended = HashSet::new();
+    let directory_tree_wake = host.app().directory_tree.wake();
     let mut switch_receipt = 0_u64;
     let mut switch_preparation: Option<PreparingNativeSwitch> = None;
     let mut pending_switch: Option<PendingNativeSwitch> = None;
@@ -654,6 +655,9 @@ async fn run_loop(
         let mut stop = false;
         let mut changed = false;
         tokio::select! {
+            _ = directory_tree_wake.notified() => {
+                changed = host.app_mut().directory_tree.poll();
+            }
             event = termination.recv() => {
                 log_warn!("host", "native console termination requested"; "event" => format!("{event:?}"));
                 return Err(super::terminated(event));

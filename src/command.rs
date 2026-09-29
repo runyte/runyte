@@ -710,6 +710,26 @@ editor_commands! {
         "open-explorer",
         "Open file explorer in the active buffer's directory"
     ),
+    ToggleDirectoryTree => ("toggle-directory-tree", "Show or hide the directory tree"),
+    FocusDirectoryTree => ("focus-directory-tree", "Reveal the active file in the directory tree"),
+    DirectoryTreeUp => ("directory-tree-up", "Select the previous tree entry"),
+    DirectoryTreeDown => ("directory-tree-down", "Select the next tree entry"),
+    DirectoryTreeLeft => ("directory-tree-left", "Collapse or select the parent directory"),
+    DirectoryTreeRight => ("directory-tree-right", "Expand or select the first child"),
+    DirectoryTreeFirst => ("directory-tree-first", "Select the workspace root"),
+    DirectoryTreeLast => ("directory-tree-last", "Select the last visible tree entry"),
+    DirectoryTreePageUp => ("directory-tree-page-up", "Move up one tree page"),
+    DirectoryTreePageDown => ("directory-tree-page-down", "Move down one tree page"),
+    DirectoryTreeOpen => ("directory-tree-open", "Open or expand the selected tree entry"),
+    DirectoryTreeClose => ("directory-tree-close", "Return focus to the previous pane"),
+    DirectoryTreeRefresh => ("directory-tree-refresh", "Refresh the selected tree directory"),
+    DirectoryTreeNew => ("directory-tree-new", "Stage a new file or directory"),
+    DirectoryTreeRename => ("directory-tree-rename", "Stage a rename"),
+    DirectoryTreeDelete => ("directory-tree-delete", "Stage deletion"),
+    DirectoryTreeMove => ("directory-tree-move", "Stage a move"),
+    DirectoryTreeReview => ("directory-tree-review", "Review pending filesystem changes"),
+    DirectoryTreeUndo => ("directory-tree-undo", "Undo the last staged change"),
+    DirectoryTreeClear => ("directory-tree-clear", "Discard all staged changes"),
     OpenWorkingDirectoryExplorer => (
         "open-working-directory-explorer",
         "Open file explorer in the working directory"
@@ -1183,6 +1203,26 @@ impl EditorCommand {
             | Self::ToggleZen
             | Self::ToggleFullscreen => CommandCategory::View,
             Self::OpenExplorer
+            | Self::ToggleDirectoryTree
+            | Self::FocusDirectoryTree
+            | Self::DirectoryTreeUp
+            | Self::DirectoryTreeDown
+            | Self::DirectoryTreeLeft
+            | Self::DirectoryTreeRight
+            | Self::DirectoryTreeFirst
+            | Self::DirectoryTreeLast
+            | Self::DirectoryTreePageUp
+            | Self::DirectoryTreePageDown
+            | Self::DirectoryTreeOpen
+            | Self::DirectoryTreeClose
+            | Self::DirectoryTreeRefresh
+            | Self::DirectoryTreeNew
+            | Self::DirectoryTreeRename
+            | Self::DirectoryTreeDelete
+            | Self::DirectoryTreeMove
+            | Self::DirectoryTreeReview
+            | Self::DirectoryTreeUndo
+            | Self::DirectoryTreeClear
             | Self::OpenWorkingDirectoryExplorer
             | Self::OpenFilePicker
             | Self::OpenAllFilesPicker

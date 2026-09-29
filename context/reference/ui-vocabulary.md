@@ -15,6 +15,11 @@ them, regardless of which extensibility direction is chosen.
 - **Pane** — one view of one buffer. Splits create panes; buffers may be shared
   by several panes. The active pane keeps the theme background; inactive panes
   use a derived ground halfway between it and the overlay ground.
+- **Directory tree sidebar** — a persistent navigation surface at the left of
+  the editor area. It has its own focus and selected path, keeps the last
+  ordinary pane as the destination for opened files, and reserves width before
+  the pane layout is calculated. It is neither a pane nor a buffer. Its Tab
+  menu stages explicit filesystem actions for one reviewed plan.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,

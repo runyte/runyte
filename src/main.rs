@@ -1952,6 +1952,7 @@ async fn run(
     // editor keeps working without it, so nothing else reports the loss.
     let mut ended_services: std::collections::HashSet<&'static str> =
         std::collections::HashSet::new();
+    let directory_tree_wake = app.app().directory_tree.wake();
     loop {
         key_hints.expire_at(Instant::now());
         if app.should_quit {
@@ -1965,6 +1966,11 @@ async fn run(
         app.sync_context();
         let context_delay = app.context_delay();
         tokio::select! {
+            _ = directory_tree_wake.notified() => {
+                if !app.app_mut().directory_tree.poll() {
+                    continue;
+                }
+            }
             Some(event) = services.context_events.recv() => { app.handle_context_event(event); if !app.plugin_presentation_pending() { continue; } }
             _ = context_timeout(context_delay) => { app.sync_context(); if !app.plugin_presentation_pending() { continue; } }
             _ = std::future::ready(()), if app.plugin_presentation_pending() => { app.take_plugin_presentation_change(); }
@@ -2504,6 +2510,7 @@ async fn run_host_server(
     // host's life, and a detached host has no other way to say so.
     let mut ended_services: std::collections::HashSet<&'static str> =
         std::collections::HashSet::new();
+    let directory_tree_wake = host.app().directory_tree.wake();
     while !shutting_down {
         key_hints.expire_at(Instant::now());
         let mut changed = false;
@@ -2518,6 +2525,9 @@ async fn run_host_server(
         host.sync_context();
         let context_delay = host.context_delay();
         tokio::select! {
+            _ = directory_tree_wake.notified() => {
+                changed = host.app_mut().directory_tree.poll();
+            }
             Some(event) = services.context_events.recv() => { host.handle_context_event(event); changed |= host.plugin_presentation_pending(); }
             _ = context_timeout(context_delay) => { host.sync_context(); changed |= host.plugin_presentation_pending(); }
             _ = std::future::ready(()), if host.plugin_presentation_pending() => { changed = host.take_plugin_presentation_change(); }

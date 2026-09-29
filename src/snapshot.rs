@@ -160,9 +160,59 @@ pub struct EditorSnapshot {
     pub geometry: crate::app::FrameGeometry,
     pub theme: Theme,
     pub mode: Mode,
+    pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
+}
+
+/// A bounded viewport of the sidebar, with real paths kept apart from labels.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryTreeSnapshot {
+    pub area: Rect,
+    pub focused: bool,
+    pub title: String,
+    pub total_rows: usize,
+    pub pending_count: usize,
+    pub selected: Option<usize>,
+    pub rows: Vec<DirectoryTreeRowSnapshot>,
+}
+
+/// Keep tree frame payloads bounded even on unusually tall terminals.
+pub const MAX_DIRECTORY_TREE_SNAPSHOT_ROWS: usize = 4096;
+pub const MAX_DIRECTORY_TREE_ROW_TEXT_BYTES: usize = 4096;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryTreeRowSnapshot {
+    pub path: PathBuf,
+    pub label: String,
+    pub depth: usize,
+    pub kind: crate::fs_plan::EntryKind,
+    pub expanded: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub pending: Option<String>,
+    pub selected: bool,
+}
+
+fn escape_tree_controls(value: &str) -> String {
+    let mut escaped = String::new();
+    for character in value.chars() {
+        let rendered = if character.is_control() {
+            character.escape_default().collect::<String>()
+        } else {
+            character.to_string()
+        };
+        if escaped.len() + rendered.len() > MAX_DIRECTORY_TREE_ROW_TEXT_BYTES {
+            while escaped.len() > MAX_DIRECTORY_TREE_ROW_TEXT_BYTES - '…'.len_utf8() {
+                escaped.pop();
+            }
+            escaped.push('…');
+            return escaped;
+        }
+        escaped.push_str(&rendered);
+    }
+    escaped
 }
 
 /// Running persistent sessions in catalog order; this contains no remote text.
@@ -800,6 +850,49 @@ impl App {
             });
         EditorSnapshot {
             geometry: prepared.geometry,
+            directory_tree: prepared.tree_area.map(|area| {
+                let rows = self.directory_tree.rows();
+                let body_height = usize::from(area.height.saturating_sub(2))
+                    .min(MAX_DIRECTORY_TREE_SNAPSHOT_ROWS);
+                let selected = rows
+                    .iter()
+                    .position(|row| row.path == self.directory_tree.selected);
+                let start = self.directory_tree.scroll.min(rows.len());
+                DirectoryTreeSnapshot {
+                    area,
+                    focused: self.directory_tree.focused,
+                    title: self
+                        .directory_tree
+                        .root
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    total_rows: rows.len(),
+                    pending_count: self.directory_tree.pending_count(),
+                    selected,
+                    rows: rows
+                        .into_iter()
+                        .skip(start)
+                        .take(body_height)
+                        .map(|row| {
+                            let label = row.path.file_name().unwrap_or_default().to_string_lossy();
+                            let label = escape_tree_controls(&label);
+                            DirectoryTreeRowSnapshot {
+                                selected: row.path == self.directory_tree.selected,
+                                path: row.path,
+                                label,
+                                depth: row.depth.min(128),
+                                kind: row.kind,
+                                expanded: row.expanded,
+                                loading: row.loading,
+                                error: row.error.map(|error| escape_tree_controls(&error)),
+                                pending: row.pending.map(|pending| escape_tree_controls(&pending)),
+                            }
+                        })
+                        .collect(),
+                }
+            }),
             session_strip: prepared
                 .session_strip
                 .as_ref()
@@ -935,7 +1028,7 @@ impl App {
                 pane_id: prepared.pane_id,
                 area: prepared.area,
                 body: prepared.body,
-                active: prepared.pane_id == self.active_pane,
+                active: prepared.pane_id == self.active_pane && !self.directory_tree.focused,
                 jump_active,
                 // A terminal under review is frozen: the child has stopped
                 // painting and the keys move a cursor over a still image
@@ -996,7 +1089,7 @@ impl App {
             pane_id: prepared.pane_id,
             area: prepared.area,
             body: prepared.body,
-            active: prepared.pane_id == self.active_pane,
+            active: prepared.pane_id == self.active_pane && !self.directory_tree.focused,
             jump_active,
             dimmed: jump_active || self.command_prompt_dims_panes(),
             drawable: prepared.drawable,
@@ -1893,6 +1986,15 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
         PromptKind::JoinDelimiter => "join with (empty joins directly): ".to_owned(),
         PromptKind::SettingValue(setting) => format!("{}: ", setting.descriptor().title),
         PromptKind::FinderPath => "find under path: ".to_owned(),
+        PromptKind::DirectoryTreeAction(crate::app::TreePromptAction::New) => {
+            "new file or directory: ".to_owned()
+        }
+        PromptKind::DirectoryTreeAction(crate::app::TreePromptAction::Rename) => {
+            "rename to: ".to_owned()
+        }
+        PromptKind::DirectoryTreeAction(crate::app::TreePromptAction::Move) => {
+            "move to: ".to_owned()
+        }
     }
 }
 
@@ -1942,6 +2044,15 @@ mod long_line_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn escaped_tree_pending_text_fits_its_wire_bound_without_losing_unicode_boundaries() {
+        let pending = format!("→ {}", "a".repeat(4094));
+        let rendered = super::escape_tree_controls(&pending);
+        assert_eq!(rendered.len(), super::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES);
+        assert!(rendered.ends_with('…'));
+        assert!(rendered.starts_with("→ "));
+        assert_eq!(super::escape_tree_controls("雪\n"), "雪\\n");
+    }
     use super::*;
     use crate::{
         command::{CommandExecutionContext, CommandInvocation, EditorCommand},

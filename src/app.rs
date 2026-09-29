@@ -261,6 +261,7 @@ impl FinderContentSource {
 // snapshot rendering from those existing boundaries.
 mod completion_support;
 mod config_reload;
+mod directory_tree;
 mod editing;
 mod external_opening;
 mod file_workflows;
@@ -403,6 +404,8 @@ impl PreparedRow {
 pub struct PreparedView {
     pub(crate) session_strip: Option<crate::session_strip::PreparedSessionStrip>,
     pub geometry: FrameGeometry,
+    pub tree_area: Option<Rect>,
+    pub tree_rows: Vec<PathBuf>,
     pub panes: Vec<PreparedPane>,
 }
 
@@ -1211,6 +1214,14 @@ pub enum PromptKind {
     /// the filesystem as it is typed, and accepts a path outside the
     /// workspace, which is the point of it.
     FinderPath,
+    DirectoryTreeAction(TreePromptAction),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TreePromptAction {
+    New,
+    Rename,
+    Move,
 }
 
 #[derive(Clone, Debug)]
@@ -1848,11 +1859,18 @@ impl CommandState {
 
 #[derive(Clone, Debug)]
 pub struct FsConfirmation {
-    pub buffer: usize,
+    pub origin: FsConfirmationOrigin,
     pub plan: FsPlan,
     /// Operation currently being reviewed. Its plan identity survives redraw
     /// and terminal resize; frontends derive only the visible window.
     pub selected: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FsConfirmationOrigin {
+    Explorer { buffer: usize },
+    DirectoryTree { revision: u64 },
+    Plugin { buffer: usize },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2813,6 +2831,9 @@ pub struct App {
     pub panes: HashMap<usize, Pane>,
     pub layout: Layout,
     pub active_pane: usize,
+    /// Sidebar focus is independent of the ordinary pane layout.
+    pub directory_tree: crate::directory_tree::DirectoryTree,
+    directory_tree_previous_mode: Mode,
     /// The pane temporarily presented across the complete editor area by
     /// `:zen` or `:fullscreen`, if either is active.
     maximized: Option<MaximizedPane>,
@@ -2833,6 +2854,8 @@ pub struct App {
     pub command_cursor: usize,
     pub command_selection: usize,
     pub prompt_kind: PromptKind,
+    directory_tree_prompt_target: Option<(PathBuf, u64)>,
+    directory_tree_discard_confirmation: bool,
     /// Static native input feedback; rejected text never enters presentation.
     prompt_input_error: Option<&'static str>,
     /// The binary file waiting for a program to open it, set while
@@ -3477,6 +3500,8 @@ impl App {
             diffs: Vec::new(),
             pending_diff: None,
             active_pane: 0,
+            directory_tree: crate::directory_tree::DirectoryTree::new(project_root.clone()),
+            directory_tree_previous_mode: initial_mode,
             maximized: None,
             mode: initial_mode,
             replace_session: None,
@@ -3485,6 +3510,8 @@ impl App {
             command_cursor: 0,
             command_selection: 0,
             prompt_kind: PromptKind::Command,
+            directory_tree_prompt_target: None,
+            directory_tree_discard_confirmation: false,
             prompt_input_error: None,
             picker: None,
             finder: None,
