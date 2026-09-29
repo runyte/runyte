@@ -2078,7 +2078,7 @@ context; scoped explorer keys are documented under
 | `o` / `O` | Open line below / above |
 | `r` / `R` / `~` | Replace once / enter Replace mode / toggle case |
 | `v` | Enter Select mode |
-| `x` / `X` | Select current line, then extend down / up |
+| `x` / `X` | Select whole lines and walk down / extend whole lines above |
 | `%` | Select the entire buffer |
 | `C` / `Alt-C` | Add a cursor on the nearest line below / above holding a character at the cursor's column, skipping the ones too short |
 | `V` / `Alt-V` | Add a cursor on the next / previous line, padding short or empty lines with spaces to the same display column |
@@ -2115,6 +2115,12 @@ context; scoped explorer keys are documented under
 | `m i …` / `m a …` | Select inside / around a word, paragraph, delimiter pair, function, type, or argument; see [Text objects](#text-objects) |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
+
+`X` (`:extend-line-above`) expands a partial selection to whole lines, then
+grows upward without removing already selected lines. `x x X` adds the line
+above the two selected lines. `:extend-line-below` grows the lower edge;
+`:select-line-up` retains the former upward edge-walking behavior for custom
+bindings. All three support counts and multiple selections.
 
 `Alt-u` (`:selection-undo`) recovers a selection lost to a motion, Escape,
 collapse, or removal of extra cursors. `Alt-U` (`Alt-Shift-u`,

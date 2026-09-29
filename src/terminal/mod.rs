@@ -1380,6 +1380,36 @@ impl TerminalSession {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Extend terminal review at its outer line boundary without shrinking.
+    pub fn extend_review_line(&mut self, down: bool) {
+        let viewport_rows = self.emulator.grid().rows();
+        let review = self.ensure_review();
+        review.selection = review.selection.transform(|range| {
+            let mut first = review_line_for_offset(review, range.from());
+            let mut last = review_line_for_offset(review, range.to());
+            if range.from() == review.lines[first].text_start
+                && range.to() == review_line_last_offset(&review.lines[last])
+            {
+                if down {
+                    last = (last + 1).min(review.lines.len().saturating_sub(1));
+                } else {
+                    first = first.saturating_sub(1);
+                }
+            }
+            let start = review.lines[first].text_start;
+            let end = review_line_last_offset(&review.lines[last]);
+            if down {
+                Range::new(start, end)
+            } else {
+                Range::new(end, start)
+            }
+        });
+        review.matches.clear();
+        review.active_match = None;
+        focus_review_range(review, review.selection.primary(), viewport_rows);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     /// Adds a caret on the nearest row in the requested direction that holds
     /// a character at each current caret's terminal-cell column.
     pub fn copy_review_selection(&mut self, down: bool) -> bool {
@@ -3578,6 +3608,21 @@ mod tests {
         assert_eq!(session.review_selection_text(), "two");
         session.select_review_line(false, true);
         assert_eq!(session.review_selection_text(), "one\ntwo");
+    }
+
+    #[test]
+    fn review_line_extension_grows_both_outer_edges() {
+        let mut session = session(12, 5);
+        session.feed(b"one\r\ntwo\r\nthree\r\nfour");
+        session.search_review("two", false).unwrap();
+        session.select_review_line(true, false);
+        session.select_review_line(true, true);
+        session.extend_review_line(false);
+        assert_eq!(session.review_selection_text(), "one\ntwo\nthree");
+        session.extend_review_line(true);
+        assert_eq!(session.review_selection_text(), "one\ntwo\nthree\nfour");
+        session.extend_review_line(false);
+        assert_eq!(session.review_selection_text(), "one\ntwo\nthree\nfour");
     }
 
     #[test]

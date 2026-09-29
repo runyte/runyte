@@ -124,7 +124,7 @@ fn tutorial_curriculum_advances_through_the_real_input_grammar() {
 
     press(&mut app, 'x');
     press(&mut app, 'x');
-    press(&mut app, 'X');
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
     press(&mut app, 'd');
     assert_eq!(app.tutorial_state().unwrap().lesson, 5);
 

@@ -66,7 +66,7 @@ way `Space / f` advertises `Space f`.
 
 Audited 2026-09-03, the editable-buffer surface holds to this: every active
 single letter is standard in one or both editors, except the deviations `0`,
-`$`, `X`, and `s` — which take standard letters and change their meaning rather
+`$`, and `s` — which take standard letters and change their meaning rather
 than claiming new ones — and the genuine addition `V`. `S` is unbound: the
 regular-expression search it used to hold now spells itself `/`. `Y`, `H`, `M`,
 `L`, and `R` are not Helix bindings but are Vim's, each with Vim's meaning.
@@ -121,7 +121,7 @@ is open. Help's scoped `q` is also globally unbound.
 | `d`, `c` | delete/change selection | matching edit commands | Implemented | Applies to every selection. An empty range represents one character. `d` after a transient `x`/`X` selection writes and removes whole lines, while an explicit `v` selection remains characterwise. |
 | `v` | `select_mode` | `enter-select-mode` | Implemented | Toggles Select mode. |
 | `x` | `extend_line_below` | `select-line` | Implemented | The first press snaps each range to whole lines; repeated presses extend downward, per selection. Unlike `v`, the resulting selection is transient: any other command ends it and restores the previous mode. |
-| `X` | `extend_line_above` | `select-line-up` | Deviation | Mirrors `x` upward rather than Helix's "extend to line bounds": it walks the same edge, so `x x X` leaves one line selected and a further `X` takes the line above. |
+| `X` | `extend_line_above` | `extend-line-above` | Implemented | Snaps partial selections to whole lines, then grows at the upper outer edge without shrinking. `x x X` adds the line above. `extend-line-below` is available by command; `select-line-up` retains the old edge walk for custom bindings. Runyte keeps transient whole-line mode and inclusive offsets. |
 | `%` | `select_all` | `select-all` | Implemented | Selects the complete buffer. |
 | `;` | `collapse_selection` | `collapse-selection` | Implemented | Collapses every range to its head. |
 | `Alt-;` | `flip_selections` | `flip-selection` | Implemented | Swaps cursor and anchor. |

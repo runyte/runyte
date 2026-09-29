@@ -1301,7 +1301,7 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('c'), Command::ChangeSelection),
         modal(Key::char('v'), Command::EnterSelectMode),
         modal(Key::char('x'), Command::SelectLine),
-        modal(Key::char('X'), Command::SelectLineUp),
+        modal(Key::char('X'), Command::ExtendLineAbove),
         modal(Key::char('%'), Command::SelectAll),
         modal(Key::char(';'), Command::CollapseSelection),
         modal(Key::alt(';'), Command::FlipSelection),

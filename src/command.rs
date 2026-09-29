@@ -451,6 +451,8 @@ macro_rules! editor_commands {
                         | Self::ScrollViewUp
                         | Self::SelectLine
                         | Self::SelectLineUp
+                        | Self::ExtendLineAbove
+                        | Self::ExtendLineBelow
                         | Self::PasteAfter
                         | Self::PasteBefore
                         | Self::ClipboardPasteAfter
@@ -537,6 +539,8 @@ editor_commands! {
 
     EnterSelectMode => ("enter-select-mode", "Toggle select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
+    ExtendLineAbove => ("extend-line-above", "Extend whole lines above"),
+    ExtendLineBelow => ("extend-line-below", "Extend whole lines below"),
     SelectLineUp => ("select-line-up", "Select the current line, then extend upward"),
     SelectAll => ("select-all", "Select all text"),
     CollapseSelection => ("collapse-selection", "Collapse selection to the cursor"),
@@ -1120,6 +1124,8 @@ impl EditorCommand {
             | Self::EnterSelectMode
             | Self::SelectLine
             | Self::SelectLineUp
+            | Self::ExtendLineAbove
+            | Self::ExtendLineBelow
             | Self::SelectAll
             | Self::CollapseSelection
             | Self::FlipSelection
@@ -1544,6 +1550,27 @@ use CommandId::{Colon as ColonId, Editor as EditorId};
 use EditorCommand as Editor;
 
 pub const COMMANDS: &[CommandSpec] = &[
+    editor_spec!(
+        Editor::ExtendLineAbove,
+        "extend-line-above",
+        [],
+        "extend-line-above",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ExtendLineBelow,
+        "extend-line-below",
+        [],
+        "extend-line-below",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::SelectLineUp,
+        "select-line-up",
+        [],
+        "select-line-up",
+        NoArguments
+    ),
     editor_spec!(
         Editor::SelectionUndo,
         "selection-undo",
@@ -3076,6 +3103,9 @@ fn invocation_from_parts(
             }
             (
                 EditorCommand::SelectionUndo
+                | EditorCommand::ExtendLineAbove
+                | EditorCommand::ExtendLineBelow
+                | EditorCommand::SelectLineUp
                 | EditorCommand::SelectionRedo
                 | EditorCommand::ShowAbout
                 | EditorCommand::ToggleMarkdownRender

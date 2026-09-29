@@ -2602,10 +2602,13 @@ mod tests {
                 BindingScope::Global,
                 Key::char('X'),
             )),
-            EditorIntent::Range(RangeIntent::SelectLine {
-                direction: LineDirection::Up,
-                count: NonZeroUsize::new(3).unwrap(),
-            })
+            EditorIntent::Command(
+                CommandInvocation::editor(
+                    EditorCommand::ExtendLineAbove,
+                    CommandExecutionContext::resolved(NonZeroUsize::new(3).unwrap(), None),
+                )
+                .unwrap()
+            )
         );
     }
 

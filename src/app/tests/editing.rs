@@ -255,9 +255,11 @@ fn line_selection_walks_one_edge_in_both_directions() {
 
     // `X` retraces the edge `x` walked before it starts consuming rows
     // above the line the walk began on.
-    press(&mut app, 'X');
+    app.execute_editor_command(EditorCommand::SelectLineUp)
+        .unwrap();
     assert_eq!(selected_rows(&app), (1, 1));
-    press(&mut app, 'X');
+    app.execute_editor_command(EditorCommand::SelectLineUp)
+        .unwrap();
     assert_eq!(selected_rows(&app), (0, 1));
     press(&mut app, 'x');
     assert_eq!(selected_rows(&app), (1, 1));
@@ -275,7 +277,12 @@ fn line_selection_down_up_down_preserves_exact_direction() {
         ('X', Range::new(3, 5)),
         ('x', Range::new(3, 10)),
     ] {
-        press(&mut app, key);
+        if key == 'X' {
+            app.execute_editor_command(EditorCommand::SelectLineUp)
+                .unwrap();
+        } else {
+            press(&mut app, key);
+        }
         assert_eq!(app.active().selection.primary(), expected, "after {key}");
     }
 }
@@ -292,7 +299,12 @@ fn line_selection_up_down_up_preserves_exact_direction() {
         ('x', Range::new(3, 5)),
         ('X', Range::new(5, 0)),
     ] {
-        press(&mut app, key);
+        if key == 'X' {
+            app.execute_editor_command(EditorCommand::SelectLineUp)
+                .unwrap();
+        } else {
+            press(&mut app, key);
+        }
         assert_eq!(app.active().selection.primary(), expected, "after {key}");
     }
 }
@@ -1700,7 +1712,7 @@ fn keyed_and_direct_counted_line_selection_are_equivalent() {
     direct
         .execute(
             CommandInvocation::editor(
-                EditorCommand::SelectLineUp,
+                EditorCommand::ExtendLineAbove,
                 CommandExecutionContext::resolved(std::num::NonZeroUsize::new(3).unwrap(), None),
             )
             .unwrap(),
@@ -2100,4 +2112,46 @@ fn a_line_selection_ending_on_an_empty_row_deletes_that_row_too() {
     set_cursor(&mut upward, 2, 0);
     type_keys(&mut upward, "XXd");
     assert_eq!(text(&upward), "alpha\n");
+}
+
+#[test]
+fn extend_line_above_grows_outer_edge_and_selection_undo_restores_it() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "αα\nbravo\ncharlie\ndelta");
+    set_cursor(&mut app, 1, 2);
+    press(&mut app, 'x');
+    press(&mut app, 'x');
+    let before = app.active().selection.clone();
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (0, 2));
+    assert!(app.active().selection.primary().anchor > app.active().selection.primary().head);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(app.active().selection, before);
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    assert_eq!(selected_rows(&app), (0, 2));
+    press(&mut app, 'd');
+    assert_eq!(app.active_buffer().text().to_string(), "delta");
+}
+
+#[test]
+fn extend_line_commands_cover_partial_reversed_and_empty_ranges() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc\ndef\n\nxyz");
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::new(6, 5), Range::point(8)], 1));
+    app.execute_editor_command(EditorCommand::ExtendLineAbove)
+        .unwrap();
+    assert_eq!(selected_rows(&app), (1, 2));
+    app.execute_editor_command(EditorCommand::ExtendLineBelow)
+        .unwrap();
+    assert_eq!(selected_rows(&app), (1, 3));
+    app.execute_editor_command(EditorCommand::ExtendLineAbove)
+        .unwrap();
+    assert_eq!(selected_rows(&app), (0, 3));
+    app.execute_editor_command(EditorCommand::ExtendLineAbove)
+        .unwrap();
+    assert_eq!(selected_rows(&app), (0, 3));
+    let mut app = App::new(Config::default(), None).unwrap();
+    press(&mut app, 'X');
+    assert_eq!(app.active().selection.primary(), Range::point(0));
 }

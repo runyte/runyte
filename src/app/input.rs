@@ -4091,8 +4091,13 @@ impl App {
         // check reads is the one hidden behind it.
         if let Some(id) = self.active_terminal() {
             let transient_line_selection = self.line_select.is_some();
-            if !matches!(command, Command::SelectLine | Command::SelectLineUp)
-                && let Some(mode) = self.line_select.take()
+            if !matches!(
+                command,
+                Command::SelectLine
+                    | Command::SelectLineUp
+                    | Command::ExtendLineAbove
+                    | Command::ExtendLineBelow
+            ) && let Some(mode) = self.line_select.take()
             {
                 self.mode = mode;
             }
@@ -4132,6 +4137,8 @@ impl App {
             command,
             Command::SelectLine
                 | Command::SelectLineUp
+                | Command::ExtendLineAbove
+                | Command::ExtendLineBelow
                 | Command::SelectionUndo
                 | Command::SelectionRedo
         ) && let Some(mode) = self.line_select.take()
@@ -4252,6 +4259,8 @@ impl App {
             Command::EnterSelectMode => self.toggle_select_mode(),
             Command::SelectLine => self.select_line(true),
             Command::SelectLineUp => self.select_line(false),
+            Command::ExtendLineAbove => self.extend_line(false),
+            Command::ExtendLineBelow => self.extend_line(true),
             Command::SelectAll => self.select_all(),
             Command::MatchBracket => self.match_bracket(),
             Command::CollapseSelection => self.collapse_selection(),

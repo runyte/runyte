@@ -754,9 +754,18 @@ impl App {
                 self.status("kept primary selection");
                 true
             }
-            Command::SelectLine | Command::SelectLineUp => {
-                session
-                    .select_review_line(command == Command::SelectLine, self.line_select.is_some());
+            Command::SelectLine
+            | Command::SelectLineUp
+            | Command::ExtendLineAbove
+            | Command::ExtendLineBelow => {
+                if matches!(command, Command::ExtendLineAbove | Command::ExtendLineBelow) {
+                    session.extend_review_line(command == Command::ExtendLineBelow);
+                } else {
+                    session.select_review_line(
+                        command == Command::SelectLine,
+                        self.line_select.is_some(),
+                    );
+                }
                 session.focus_review_selection(page, scroll_offset);
                 if self.line_select.is_none() {
                     self.line_select = Some(self.mode);
