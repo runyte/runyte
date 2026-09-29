@@ -4568,7 +4568,8 @@ configuration can be shared, but keeps its existing state storage behavior.
 
 ### Key remapping
 
-Key remapping moves bindings Runyte already ships. Plugin commands use the separate
+`keys.rebind` moves bindings Runyte already ships; `keys.bind` assigns named
+actions directly, including action sequences and unbinding. Plugin commands use the separate
 `plugins[].bindings` configuration described in the [plugin guide](plugins.md).
 `keys.rebind` cannot unbind a command,
 bind a command that has no default, or move most direct single-key editing
@@ -4613,8 +4614,77 @@ Malformed sections, unknown members, bad key spellings, unmatched defaults,
 overlong sequences, and conflicts are non-fatal. Runyte rejects the affected
 section or rules, restores valid built-in behavior, and opens an error
 notification titled `Key bindings`. YAML syntax errors and invalid settings
-outside `keys` retain their normal startup failure behavior. Key remapping is
+outside `keys` retain their normal startup failure behavior. Key configuration is
 read from the file only; it is not written by the `[config]` buffer.
+Run `:config-reload` after editing it.
+
+
+### Action bindings
+
+`keys.bind` has independent `normal`, `select`, `insert`, and `replace` maps.
+A string runs one action, a list runs actions in order, and `null` removes an
+exact binding in that mode. Use `:help key-actions` for the generated inventory
+of action names, supported modes, descriptions and sequence restrictions.
+Actions use their canonical hyphenated names; they need not have default keys.
+Colon commands also accept their existing palette aliases and arguments.
+
+```yaml
+keys:
+  leader: Ctrl-x
+  rebind:
+    Space g: Leader G
+  bind:
+    normal:
+      X: extend-line-above
+      Alt-x: select-line-up
+      F6: [select-all, yank]
+      F7: { command: pipe, argument: sort }
+      F8: null
+    select:
+      X: extend-line-above
+    insert:
+      Ctrl-s: save
+```
+
+Bindings apply **after** remapping. Their left sides name final key sequences;
+`Leader` and `Window` expand to the effective prefixes. An exact assignment
+replaces the global action in that mode. Assigning an executable action to a
+prefix that still has descendants is an error. Scoped buffer actions, prompts,
+lists, native confirmations and terminal input retain their input ownership.
+In Normal/Select, initial digits `1`–`9` remain count prefixes and `Tab` remains
+context actions; Escape and Backspace cannot appear inside a sequence. Insert
+and Replace maps do not implicitly inherit each other's assignments.
+
+Actions execute directly, without synthesizing keys or invoking other bindings.
+Commands marked `last` in the action reference must finish a sequence: this
+includes interactive commands, commands waiting for a character, mode-entry
+commands and asynchronous work. A sequence can end with `find-next-char`, then
+wait for the next character, or with `enter-insert-mode`, then accept typing.
+There is no automatic continuation after a prompt or asynchronous operation.
+Errors and unavailable operations stop execution. Earlier completed effects
+remain applied; sequences do not roll back file saves or external work.
+
+Single actions keep their ordinary count behavior. A count on a multi-action
+binding is rejected before any action runs. Selection-only sequences form one
+selection-history step. Text undo follows the existing actions' checkpoints
+and Insert-session grouping; a sequence is not an implicit text transaction.
+Paste remains literal and macros record physical input as before.
+
+A structured action supplies a separate `argument` string using the command
+palette's existing parsing rules. The same form can appear inside a list.
+Required arguments must be supplied. General editor actions do not acquire new
+arguments merely by being bindable. Internal transitions, retired grammar
+commands, unsupported actions and list-only actions are excluded. Plugin
+commands continue to use `plugins[].bindings`.
+
+The limits are 256 assignments, 8 keys per sequence, 16 actions per binding,
+and 4,096 bytes per argument, without control characters. Empty action lists
+are rejected; use `null` explicitly. Invalid assignments are reported without
+losing valid remappings; conflicting assignments are rejected independently of
+file order. Help lists complete actions and arguments. Key hints retain the
+same descriptions, abbreviating long text to fit their cells. Overwritten or
+removed aliases stop being advertised; teaching text uses a remaining binding
+or explicitly labels an action unbound.
 
 
 Built-in themes are `ocean-dark` (the default) and `ocean-light`,

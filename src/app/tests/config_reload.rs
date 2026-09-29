@@ -551,3 +551,22 @@ fn auto_close_setting_previews_rolls_back_persists_and_reloads() {
     assert!(!app.config.editor.auto_close);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn action_bindings_reload_and_cancel_pending_sequences() {
+    let (mut app, path) = editor(
+        "actions.yaml",
+        "keys:\n  bind:\n    normal:\n      F1 x: move-right\n",
+    );
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    fs::write(
+        &path,
+        "keys:\n  bind:\n    normal:\n      F1: [move-right, move-right]\n",
+    )
+    .unwrap();
+    app.execute_command("config-reload").unwrap();
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    assert_eq!(cursor(&app).col, 2);
+    fs::remove_file(path).unwrap();
+}

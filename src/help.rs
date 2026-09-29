@@ -479,14 +479,19 @@ pub(crate) fn render_document_with_descriptions(
         let _ = writeln!(out, "Buffer keys");
         let _ = writeln!(out, "  Only this view answers to these.\n");
         for binding in &scoped {
-            let label = description(binding.target);
+            let label = binding
+                .actions
+                .is_empty()
+                .then(|| description(binding.target))
+                .flatten();
             let detail = platform_description(
                 binding.target,
                 label.as_deref().unwrap_or(&binding.description),
             );
             // A plugin wrote this description, and Runyte validates it for
             // length and control characters, not for braces.
-            let plugin = matches!(binding.target, BindingTarget::Plugin(_));
+            let plugin =
+                matches!(binding.target, BindingTarget::Plugin(_)) || !binding.actions.is_empty();
             let detail = if plugin {
                 std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
             } else {
@@ -961,14 +966,19 @@ fn write_mode_bindings(
         } else {
             binding.sequence.to_string()
         };
-        let configured = description(binding.target);
+        let configured = binding
+            .actions
+            .is_empty()
+            .then(|| description(binding.target))
+            .flatten();
         let detail = platform_description(
             binding.target,
             configured
                 .as_deref()
                 .unwrap_or(binding.description.as_ref()),
         );
-        let plugin = matches!(binding.target, BindingTarget::Plugin(_));
+        let plugin =
+            matches!(binding.target, BindingTarget::Plugin(_)) || !binding.actions.is_empty();
         let detail = if plugin {
             std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
         } else {

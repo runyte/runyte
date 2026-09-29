@@ -1998,6 +1998,23 @@ impl App {
                 },
                 _ => None,
             };
+            let configured_description = if let InputEvent::Key(key) = &input
+                && self.grammar.awaiting_character().is_none()
+            {
+                let mut sequence = self.grammar.pending_sequence().clone();
+                sequence.push(*key);
+                match self
+                    .keymap
+                    .lookup_in(self.mode, self.key_binding_scope(), &sequence)
+                {
+                    crate::keymap::Lookup::Exact(binding) if !binding.actions.is_empty() => {
+                        Some(binding.description.to_string())
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_recording_macro(self.recording_macro.is_some());
             let GrammarOutput {
@@ -2012,6 +2029,22 @@ impl App {
                     .apply_editor_intent(intent, typed_character)?
                     .or(command_outcome);
                 self.reconcile_search_selection_presentation();
+                if configured_description.is_some()
+                    && (self.status_error
+                        || matches!(
+                            command_outcome,
+                            Some(
+                                CommandOutcome::UserError(_)
+                                    | CommandOutcome::Unavailable(_)
+                                    | CommandOutcome::Confirmation(_)
+                                    | CommandOutcome::Prompt(_)
+                                    | CommandOutcome::AsynchronousRequest(_)
+                            )
+                        ))
+                {
+                    self.grammar.reset();
+                    break;
+                }
             }
             self.grammar.complete(post_action, self.mode);
             if let Some((sequence, target)) = resolved_binding {
@@ -2028,7 +2061,13 @@ impl App {
                 ) {
                     self.note_tutorial_action(target.id(), &sequence.to_string());
                 }
-                self.report_completed_action(&sequence.to_string(), target.description(), outcome);
+                self.report_completed_action(
+                    &sequence.to_string(),
+                    configured_description
+                        .as_deref()
+                        .unwrap_or_else(|| target.description()),
+                    outcome,
+                );
             }
             if let Some(mode) = self.grammar.preferred_mode()
                 && matches!(self.mode, Mode::Normal | Mode::Select)
@@ -2206,6 +2245,9 @@ impl App {
                 } else {
                     format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
                 }),
+                GrammarNotice::ActionSequenceCount => {
+                    self.action_failed("bindings with multiple actions do not support a count");
+                }
                 GrammarNotice::CountNotSupported(target) => {
                     self.action_failed(format!(
                         "{} does not support a count",

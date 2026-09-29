@@ -14,6 +14,7 @@ use crate::{
     input::{KeyCode, KeyStroke, Modifiers},
 };
 
+pub mod actions;
 pub mod configured;
 pub mod validate;
 
@@ -314,6 +315,8 @@ pub struct Binding {
     pub scope: BindingScope,
     pub sequence: KeySequence,
     pub target: BindingTarget,
+    /// Configured semantic actions; empty for ordinary built-in bindings.
+    pub actions: Vec<actions::Action>,
     pub description: std::borrow::Cow<'static, str>,
     pub availability: BindingAvailability,
     pub role: BindingRole,
@@ -328,6 +331,28 @@ pub struct Binding {
 }
 
 impl Binding {
+    /// Capability needed by a configured action or the ordinary target.
+    pub fn action_capability(&self) -> Option<CommandCapability> {
+        self.actions
+            .iter()
+            .find_map(|action| action.target().id().capability())
+            .or_else(|| self.target.id().capability())
+    }
+
+    /// Whether this binding invokes exactly its target, without arguments.
+    pub fn is_plain_action(&self) -> bool {
+        match self.actions.as_slice() {
+            [] => true,
+            [actions::Action::Editor(command)] => self.target == BindingTarget::Editor(*command),
+            [actions::Action::Invocation(invocation)] => self
+                .target
+                .invocation()
+                .as_ref()
+                .is_ok_and(|default| default == invocation),
+            _ => false,
+        }
+    }
+
     pub fn implemented(
         modes: &'static [Mode],
         sequence: impl Into<KeySequence>,
@@ -339,6 +364,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
+            actions: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
@@ -359,6 +385,7 @@ impl Binding {
             scope,
             sequence: sequence.into(),
             target,
+            actions: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
@@ -388,6 +415,15 @@ impl Binding {
         self
     }
 
+    /// Custom editing bindings do not take input away from a terminal child,
+    /// including suffixes of the editor-owned window prefix.
+    pub fn visible_in(&self, mode: Mode, scope: BindingScope) -> bool {
+        self.is_active_in(mode)
+            && !(scope == BindingScope::Terminal
+                && matches!(mode, Mode::Insert | Mode::Replace)
+                && !self.actions.is_empty())
+    }
+
     pub fn is_active_in(&self, mode: Mode) -> bool {
         self.modes.contains(&mode)
     }
@@ -404,6 +440,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
+            actions: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Planned(reason),
             role: BindingRole::Primary,
@@ -424,6 +461,7 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
+            actions: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Unsupported(reason),
             role: BindingRole::Primary,
@@ -638,6 +676,9 @@ impl Keymap {
     pub(crate) fn with_indent_style(&self, style: crate::config::IndentStyle) -> Self {
         let mut keymap = self.clone();
         for binding in &mut keymap.bindings {
+            if !binding.actions.is_empty() {
+                continue;
+            }
             binding.description = match (binding.target, style) {
                 (
                     BindingTarget::Editor(EditorCommand::InsertTab),
@@ -784,7 +825,7 @@ impl Keymap {
                     .iter()
                     .enumerate()
                     .filter(|(_, binding)| {
-                        binding.is_active_in(mode)
+                        binding.visible_in(mode, scope)
                             && binding.scope == BindingScope::Global
                             && !shadowed.contains(&binding.sequence)
                             && !(scope == BindingScope::DirectoryTree
@@ -935,6 +976,7 @@ impl Keymap {
         self.bindings_for_mode(mode)
             .find(|binding| {
                 binding.target == target
+                    && binding.is_plain_action()
                     && matches!(binding.availability, BindingAvailability::Implemented)
             })
             .map(|binding| &binding.sequence)
@@ -961,7 +1003,7 @@ impl Keymap {
             .bindings
             .iter()
             .filter(|binding| {
-                binding.is_active_in(mode)
+                binding.visible_in(mode, scope)
                     && binding.scope == BindingScope::Global
                     && (scope == BindingScope::Global
                         || !self.bindings.iter().any(|scoped| {
@@ -1003,7 +1045,7 @@ impl Keymap {
                 self.bindings
                     .iter()
                     .filter(move |binding| {
-                        binding.is_active_in(mode)
+                        binding.visible_in(mode, scope)
                             && binding.scope == BindingScope::Global
                             && (binding.sequence == scoped.sequence
                                 || (scope == BindingScope::DirectoryTree

@@ -61,6 +61,11 @@ pub fn validate(
             .filter(|binding| binding.is_active_in(mode) && binding.scope == BindingScope::Global)
             .collect::<Vec<_>>();
         for &scope in &scopes {
+            let globals = globals
+                .iter()
+                .copied()
+                .filter(|binding| binding.visible_in(mode, scope))
+                .collect::<Vec<_>>();
             let scoped = if scope == BindingScope::Global {
                 Vec::new()
             } else {

@@ -67,6 +67,18 @@ notifications:
 #     Ctrl-w x: Window e
 #     Space e: Space
 #     ",": F12
+#   bind:
+#     normal:
+#       X: extend-line-above
+#       Alt-x: select-line-up
+#       F6: [select-all, yank]
+#       F7: { command: pipe, argument: sort }
+#       F8: null
+#     select:
+#       X: extend-line-above
+#     insert:
+#       Ctrl-s: save
+# Action names, modes and sequence restrictions: :help key-actions
 
 # rust-analyzer is configured automatically. Other servers are keyed directly
 # by Runyte's language name; see docs/lsp/ for copy-ready examples.

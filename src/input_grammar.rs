@@ -191,6 +191,7 @@ pub enum GrammarNotice {
         macros_only: bool,
     },
     CountNotSupported(BindingTarget),
+    ActionSequenceCount,
     UnavailableBinding {
         target: BindingTarget,
         availability: BindingAvailability,
@@ -875,6 +876,41 @@ impl RunyteGrammar {
         }
     }
 
+    fn configured_intents(
+        &mut self,
+        binding: &crate::keymap::Binding,
+    ) -> Result<Vec<EditorIntent>, CommandInvocationError> {
+        use crate::keymap::actions::Action;
+        if binding.actions.is_empty() {
+            return Ok(vec![
+                self.binding_intent(binding.target, binding.availability)?,
+            ]);
+        }
+        if binding.actions.len() > 1 && self.count.take().is_some() {
+            return Ok(vec![EditorIntent::Notice(
+                GrammarNotice::ActionSequenceCount,
+            )]);
+        }
+        binding
+            .actions
+            .iter()
+            .map(|action| match action {
+                Action::Editor(command) => {
+                    self.editor_binding_intent(*command, BindingAvailability::Implemented)
+                }
+                Action::Invocation(invocation) => {
+                    if self.count.take().is_some() {
+                        Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
+                            action.target(),
+                        )))
+                    } else {
+                        Ok(EditorIntent::Command(invocation.clone()))
+                    }
+                }
+            })
+            .collect()
+    }
+
     fn translate_insert(
         &mut self,
         input: InputEvent,
@@ -895,19 +931,24 @@ impl RunyteGrammar {
         candidate.push(key);
         match context
             .keymap()
-            .lookup_in(Mode::Insert, context.scope(), &candidate)
+            .lookup_in(context.mode(), context.scope(), &candidate)
         {
             Lookup::Exact(binding) => {
-                let target = binding.target;
-                let availability = binding.availability;
+                let target = binding
+                    .actions
+                    .last()
+                    .map_or(binding.target, |action| action.target());
                 self.pending.clear();
-                let intent = self.binding_intent(target, availability)?;
+                let intents = self.configured_intents(binding)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((candidate, target));
-                    Ok(GrammarOutput::one(intent))
+                    Ok(GrammarOutput {
+                        intents,
+                        ..GrammarOutput::default()
+                    })
                 } else {
                     Ok(GrammarOutput {
-                        intents: vec![intent],
+                        intents,
                         resolved_binding: Some((candidate, target)),
                         ..GrammarOutput::default()
                     })
@@ -924,20 +965,24 @@ impl RunyteGrammar {
                 let fallback =
                     match context
                         .keymap()
-                        .lookup_in(Mode::Insert, context.scope(), &prefix)
+                        .lookup_in(context.mode(), context.scope(), &prefix)
                     {
                         Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
-                            Some((binding.target, binding.availability))
+                            Some(binding)
                         }
                         Lookup::NoMatch | Lookup::Prefix(_) => None,
                     };
-                if let Some((target, availability)) = fallback {
-                    let intent = self.binding_intent(target, availability)?;
+                if let Some(binding) = fallback {
+                    let target = binding
+                        .actions
+                        .last()
+                        .map_or(binding.target, |action| action.target());
+                    let intents = self.configured_intents(binding)?;
                     if self.awaiting_character.is_some() {
                         self.awaiting_binding = Some((prefix.clone(), target));
                     }
                     Ok(GrammarOutput {
-                        intents: vec![intent],
+                        intents,
                         reprocess: Some(InputEvent::Key(key)),
                         post_action: GrammarPostAction::None,
                         resolved_binding: self
@@ -1067,21 +1112,24 @@ impl RunyteGrammar {
                 )))
             }
             Lookup::Exact(binding) => {
-                let target = binding.target;
-                let availability = binding.availability;
+                let target = binding
+                    .actions
+                    .last()
+                    .map_or(binding.target, |action| action.target());
                 let count_keys = std::mem::take(&mut self.count_keys);
                 let resolved_sequence = Self::resolved_sequence(&count_keys, &candidate);
-                let sticky = candidate
-                    .as_slice()
-                    .first()
-                    .is_some_and(|key| *key == Key::char('Z'));
+                let sticky = binding.actions.is_empty()
+                    && candidate
+                        .as_slice()
+                        .first()
+                        .is_some_and(|key| *key == Key::char('Z'));
                 self.pending.clear();
-                let intent = self.binding_intent(target, availability)?;
+                let intents = self.configured_intents(binding)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((resolved_sequence.clone(), target));
                 }
                 Ok(GrammarOutput {
-                    intents: vec![intent],
+                    intents,
                     reprocess: None,
                     post_action: if sticky {
                         GrammarPostAction::RetainPrefixIfModal(Key::char('Z'))

@@ -806,6 +806,7 @@ fn unavailable_action_is_dimmed_and_labeled() {
     const NORMAL: &[Mode] = &[Mode::Normal];
     let keymap = std::sync::Arc::new(
         Keymap::new(vec![Binding {
+            actions: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,
             sequence: [Key::char(' '), Key::char('x')].into(),

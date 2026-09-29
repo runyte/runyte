@@ -144,39 +144,92 @@ fn command_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
     if pieces.next().is_some() {
         return Err(format!("invalid key marker {body:?}"));
     }
+    if let Some(original) = default_keymap().bindings().iter().find(|binding| {
+        binding.scope == BindingScope::Global
+            && binding.target.name() == name
+            && binding.role == role
+    }) {
+        return binding_spelling(&original.sequence.to_string(), keymap);
+    }
     let matches = keymap
         .bindings()
         .iter()
         .filter(|binding| {
             binding.scope == BindingScope::Global
                 && binding.target.name() == name
+                && binding.is_plain_action()
                 && binding.role == role
                 && matches!(binding.availability, BindingAvailability::Implemented)
         })
         .map(|binding| &binding.sequence)
         .collect::<HashSet<_>>();
-    match matches.into_iter().collect::<Vec<_>>().as_slice() {
-        [sequence] => Ok(sequence.to_string()),
-        [] => Err(format!(
-            "no implemented global {role:?} binding for {name:?}"
-        )),
-        _ => Err(format!("ambiguous global {role:?} binding for {name:?}")),
+    let mut matches = matches.into_iter().collect::<Vec<_>>();
+    matches.sort_by_key(|sequence| (sequence.len(), sequence.to_string()));
+    if let Some(sequence) = matches.first() {
+        return Ok(sequence.to_string());
     }
+    if default_keymap()
+        .bindings()
+        .iter()
+        .any(|binding| binding.target.name() == name && binding.role == role)
+    {
+        return Ok(format!("[unbound: {name}]"));
+    }
+    Err(format!(
+        "no implemented global {role:?} binding for {name:?}"
+    ))
 }
 
 fn binding_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
     let default = KeySequence::parse(body)?;
-    let exists = default_keymap()
+    let originals = default_keymap()
         .bindings()
         .iter()
-        .any(|binding| binding.sequence == default || binding.alias.as_ref() == Some(&default));
-    if !exists {
+        .filter(|binding| binding.sequence == default || binding.alias.as_ref() == Some(&default))
+        .collect::<Vec<_>>();
+    if originals.is_empty() {
         return Err(format!("unknown default binding {body:?}"));
     }
-    keymap
-        .spelling_for_default(&default)
-        .map(ToString::to_string)
-        .ok_or_else(|| format!("default binding {body:?} has no live spelling"))
+    let original = originals[0];
+    let mut by_mode = Vec::new();
+    for &mode in original
+        .alias_modes
+        .filter(|_| original.alias.as_ref() == Some(&default))
+        .unwrap_or(original.modes)
+    {
+        let mut candidates = keymap
+            .bindings()
+            .iter()
+            .filter(|binding| {
+                binding.is_plain_action()
+                    && binding.target == original.target
+                    && binding.scope == original.scope
+                    && binding.is_active_in(mode)
+            })
+            .map(|binding| &binding.sequence)
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|sequence| (sequence.len(), sequence.to_string()));
+        let chosen = keymap
+            .spelling_for_default(&default)
+            .filter(|preferred| candidates.contains(preferred))
+            .or_else(|| candidates.first().copied());
+        let spelling = chosen.map_or_else(
+            || format!("[unbound: {}]", original.target.name()),
+            ToString::to_string,
+        );
+        by_mode.push((mode, spelling));
+    }
+    if by_mode
+        .iter()
+        .all(|(_, spelling)| *spelling == by_mode[0].1)
+    {
+        return Ok(by_mode[0].1.clone());
+    }
+    Ok(by_mode
+        .into_iter()
+        .map(|(mode, spelling)| format!("{spelling} ({})", mode.label()))
+        .collect::<Vec<_>>()
+        .join(" / "))
 }
 
 fn prefix_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
@@ -190,7 +243,17 @@ fn prefix_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
     }
     keymap
         .spelling_for_default(&default)
-        .map(ToString::to_string)
+        .map(|sequence| {
+            if keymap
+                .namespaces()
+                .iter()
+                .any(|namespace| namespace.sequence == *sequence)
+            {
+                sequence.to_string()
+            } else {
+                format!("[unbound prefix: {body}]")
+            }
+        })
         .ok_or_else(|| format!("default prefix {body:?} has no live spelling"))
 }
 

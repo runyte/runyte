@@ -188,6 +188,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         .with_context_actions(built_in.all_context_actions().to_vec())
         .with_fast_pane_keys_enabled(built_in.fast_pane_keys())
         .with_spelling_metadata(resolution.leader, resolution.window, resolution.spelling);
+    let keymap = super::actions::apply(section.get("bind"), keymap, &mut errors);
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,
@@ -204,7 +205,7 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
             errors.push("keys section rejected: member names must be strings".to_owned());
             return None;
         };
-        if !matches!(key, "leader" | "window" | "rebind") {
+        if !matches!(key, "leader" | "window" | "rebind" | "bind") {
             errors.push(format!("keys section rejected: unknown member {key:?}"));
             return None;
         }

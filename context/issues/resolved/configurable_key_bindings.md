@@ -60,14 +60,34 @@ canonical shifted input are covered by
 `configured_window_prefix_is_reserved_and_control_w_returns_to_the_child` and
 the related tests in `tests/terminal.rs`.
 
-Known limitation: remapping is intentionally bounded rather than a general
-keymap language. It cannot unbind commands or introduce a binding for a
-command without an eligible default, and rebind left-hand sides are limited to
-the default `Space` and `Ctrl-w` namespaces plus advertised aliases. Because a
-left-hand side names a default spelling, a later release that changes that
-default reports the rule as unmatched. Typed colon-command names do not
-change, although their existing key aliases may move. The configured window
-prefix remains reserved by the editor while a terminal has focus.
+The action-binding extension adds `keys.bind` after remapping. Independent
+Normal/Select/Insert/Replace assignments can replace or remove exact global
+bindings, name actions without default keys, or run bounded sequences. Structured
+arguments reuse the colon parser. The compiler shares mode eligibility and
+sequence-position metadata with the generated `:help key-actions` reference.
+Prompt-opening, asynchronous and character-taking actions must finish a sequence;
+runtime refusals stop it. Pending input resets on reload. Stale aliases are
+removed and authored teaching text follows remaining bindings by mode or labels
+the action unbound. Physical macro input and selection-history grouping survive.
+Insert/Replace overrides preserve terminal-native bindings; a shared visibility
+predicate keeps configured editing actions out of terminal input, even under
+the window prefix.
+
+Additional regression coverage lives in `tests/key_actions.rs` (compilation,
+rollback, limits, modes, aliases and reference eligibility),
+`src/app/tests/key_actions.rs` (dispatch, counts, character arguments, refusal,
+help, macros and prompt ownership), and
+`action_bindings_reload_and_cancel_pending_sequences` in
+`src/app/tests/config_reload.rs`.
+
+Known limitation: `keys.rebind` still addresses default spellings, so a later
+release can report a changed default as unmatched. General action assignments
+do not provide scope-specific assignments for special buffers, lists, prompts,
+terminal input or plugin commands. Sequences do not wait for asynchronous
+completion or roll back prior effects, and text undo follows existing command
+checkpoints. Long action sequences are abbreviated in fixed-width hints; help
+retains the full text.
+The configured window prefix remains reserved while a terminal has focus.
 
 ## Report
 

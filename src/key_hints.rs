@@ -53,10 +53,10 @@ impl KeyHintRow {
             grouped_keys: None,
             alias: binding.alias.clone(),
             alias_modes: binding.alias_modes,
-            target: Some(binding.target),
+            target: binding.actions.is_empty().then_some(binding.target),
             description: binding.description.clone(),
             availability: binding.availability,
-            capability: binding.target.id().capability(),
+            capability: binding.action_capability(),
             unavailable_reason: None,
             role: binding.role,
             exact,
@@ -177,6 +177,23 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         return full;
     }
 
+    // Configured action lists and arguments have no shorter semantic name.
+    // Keep their complete text in the snapshot/help and abbreviate only the
+    // fixed-width hint cell, rather than replacing it with the first action.
+    if row.target.is_none() && !row.namespace && row.grouped_keys.is_none() {
+        let mut abbreviated = String::new();
+        for character in full.chars() {
+            if UnicodeWidthStr::width(abbreviated.as_str())
+                + unicode_width::UnicodeWidthChar::width(character).unwrap_or(0)
+                >= KEY_HINT_MAX_DESCRIPTION_WIDTH
+            {
+                break;
+            }
+            abbreviated.push(character);
+        }
+        abbreviated.push('…');
+        return abbreviated;
+    }
     let compact = row.target.map_or_else(
         || row.description.to_string(),
         |target| match target {
@@ -1237,6 +1254,7 @@ mod tests {
     fn unavailable_rows_preserve_registry_status() {
         const NORMAL: &[Mode] = &[Mode::Normal];
         let unavailable = Binding {
+            actions: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,
             sequence: [Key::char('x'), Key::char('y')].into(),

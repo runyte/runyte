@@ -3,6 +3,10 @@
 This register records Runyte's default spellings. A `keys` section in
 `config.yaml` may move the two named prefixes, their descendants, and
 advertised aliases without changing the compatibility status recorded here.
+`keys.bind` additionally overrides or removes exact global bindings by mode,
+using semantic action names or bounded action sequences after remapping. These
+custom assignments do not change the default-key compatibility rows below.
+`:help key-actions` is generated from the configurable action inventory.
 
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.

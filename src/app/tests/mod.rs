@@ -398,3 +398,5 @@ fn configured_spellings_reach_about_manual_help_and_the_tutorial() {
     assert!(instructions.contains("Ctrl-x s c"));
     assert!(instructions.contains("Ctrl-a"));
 }
+
+mod key_actions;
