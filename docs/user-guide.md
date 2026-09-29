@@ -1361,6 +1361,12 @@ expands a directory or selects its first child; `h` or Left collapses it or sele
 parent. Enter on a directory toggles expansion. `Space r` refreshes the selected
 directory. Listings load in the background only as directories are expanded;
 directory symlinks are shown as links and are never recursively expanded.
+While the tree is shown, expanded directories are checked in the background
+every two seconds. Files and directories created, renamed, moved, or deleted
+outside Runyte appear automatically. The selected path stays selected when it
+still exists; otherwise selection returns to its nearest visible ancestor.
+Collapsed branches and the hidden sidebar are not scanned. Expanding a branch
+refreshes its listing, and showing the sidebar resumes automatic checks.
 
 The following keys work directly while the tree has focus:
 

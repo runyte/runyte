@@ -547,7 +547,7 @@ impl App {
     }
 
     pub(super) fn hide_directory_tree(&mut self) {
-        self.directory_tree.visible = false;
+        self.directory_tree.hide();
         self.leave_directory_tree();
     }
 

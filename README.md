@@ -104,7 +104,8 @@ Use `Ctrl-w ...` commands to manage panes.
 Use `Space d t` to toggle a narrow directory tree at the left of the editor,
 or `Space d d` to reveal the active file and focus the tree. Enter opens a
 selected file directly, or asks for a numbered destination when several panes
-are open. `n`, `d`, `m`, and `r` create, delete, move, and rename entries; only
+are open. Expanded directories update automatically as files change outside
+Runyte. `n`, `d`, `m`, and `r` create, delete, move, and rename entries; only
 delete asks for confirmation. Use `gg`/`ge`/`G` to jump to the first/last row,
 `.` to toggle dotfiles, `/` to search visible entry names, and `gw` to label
 onscreen entries and jump to one. While the tree

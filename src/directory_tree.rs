@@ -6,9 +6,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
-    sync::Arc,
     sync::mpsc::{self, Receiver, Sender},
+    sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, ensure};
@@ -23,6 +24,13 @@ const MAX_DIRECTORY_ENTRIES: usize = 4096;
 const MAX_OUTSTANDING: usize = 64;
 const MAX_CACHED_LISTINGS: usize = 512;
 const MAX_VISIBLE_ROWS: usize = 100_000;
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct Monitor {
+    targets: HashSet<PathBuf>,
+    changed: HashSet<PathBuf>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreeEntry {
@@ -77,6 +85,7 @@ pub struct DirectoryTree {
     results: Receiver<ListingResult>,
     result_sender: Option<Sender<ListingResult>>,
     wake: Arc<Notify>,
+    monitor: Arc<Mutex<Monitor>>,
 }
 
 impl DirectoryTree {
@@ -106,12 +115,48 @@ impl DirectoryTree {
             results,
             result_sender: Some(result_sender),
             wake,
+            monitor: Arc::default(),
         }
     }
 
     pub fn show(&mut self, show_hidden: bool) {
         self.visible = true;
         self.expand(self.root.clone(), show_hidden);
+        self.sync_monitor();
+    }
+
+    pub fn hide(&mut self) {
+        self.visible = false;
+        self.sync_monitor();
+    }
+
+    fn sync_monitor(&self) {
+        let targets = if self.visible {
+            self.expanded
+                .iter()
+                .filter(|path| {
+                    path.ancestors()
+                        .take_while(|path| *path != self.root)
+                        .all(|path| {
+                            self.kind(path) == Some(EntryKind::Directory)
+                                && path.parent().is_some_and(|parent| {
+                                    self.expanded.contains(parent)
+                                        && (self.show_hidden
+                                            || self.revealed_hidden.contains(parent)
+                                            || !path.file_name().is_some_and(|name| {
+                                                name.to_string_lossy().starts_with('.')
+                                            }))
+                                })
+                        })
+                })
+                .cloned()
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let mut monitor = self.monitor.lock().unwrap();
+        monitor.changed.retain(|path| targets.contains(path));
+        monitor.targets = targets;
     }
 
     pub fn expand(&mut self, path: PathBuf, show_hidden: bool) {
@@ -122,8 +167,9 @@ impl DirectoryTree {
                     .insert(path, "too many expanded directories".into());
                 return;
             }
-            self.expanded.insert(path.clone());
-            if !self.listings.contains_key(&path) {
+            let newly_expanded = self.expanded.insert(path.clone());
+            self.sync_monitor();
+            if newly_expanded || !self.listings.contains_key(&path) {
                 self.refresh(path);
             }
         }
@@ -150,25 +196,10 @@ impl DirectoryTree {
             let (requests, receiver) = mpsc::channel::<ListingRequest>();
             let result_sender = self.result_sender.take().expect("tree worker starts once");
             let wake = Arc::clone(&self.wake);
+            let monitor = Arc::clone(&self.monitor);
             thread::Builder::new()
                 .name("directory-tree-listing".into())
-                .spawn(move || {
-                    while let Ok(request) = receiver.recv() {
-                        let entries =
-                            read_directory(&request.path).map_err(|error| error.to_string());
-                        if result_sender
-                            .send(ListingResult {
-                                path: request.path,
-                                generation: request.generation,
-                                entries,
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                        wake.notify_one();
-                    }
-                })
+                .spawn(move || run_worker(receiver, result_sender, wake, monitor))
                 .expect("tree listing worker starts");
             self.requests = Some(requests);
         }
@@ -229,6 +260,32 @@ impl DirectoryTree {
                             continue;
                         }
                     }
+                    // Removed directories must not leave cached descendants that
+                    // reappear if a different directory later takes the same name.
+                    let directories = entries
+                        .iter()
+                        .filter(|entry| entry.kind == EntryKind::Directory)
+                        .map(|entry| &entry.path)
+                        .collect::<HashSet<_>>();
+                    let removed = self
+                        .listings
+                        .get(&result.path)
+                        .into_iter()
+                        .flatten()
+                        .filter(|old| {
+                            old.kind == EntryKind::Directory && !directories.contains(&old.path)
+                        })
+                        .map(|entry| entry.path.clone())
+                        .collect::<Vec<_>>();
+                    for path in removed {
+                        self.listings.retain(|child, _| !child.starts_with(&path));
+                        self.expanded.retain(|child| !child.starts_with(&path));
+                        self.revealed_hidden
+                            .retain(|child| !child.starts_with(&path));
+                        self.errors.retain(|child, _| !child.starts_with(&path));
+                        self.queued_refresh
+                            .retain(|child| !child.starts_with(&path));
+                    }
                     self.listings.insert(result.path.clone(), entries);
                     self.errors.remove(&result.path);
                 }
@@ -236,6 +293,19 @@ impl DirectoryTree {
                     self.errors.insert(result.path, error);
                 }
             }
+            changed = true;
+        }
+        if changed {
+            self.sync_monitor();
+        }
+        let pending = self.monitor.lock().unwrap().changed.clone();
+        for path in pending {
+            // Keep excess invalidations until a listing completion frees a slot.
+            if self.outstanding.len() >= MAX_OUTSTANDING {
+                break;
+            }
+            self.monitor.lock().unwrap().changed.remove(&path);
+            self.refresh(path);
             changed = true;
         }
         if changed
@@ -312,6 +382,7 @@ impl DirectoryTree {
         self.show_hidden = !self.show_hidden(configured);
         self.hidden_override = Some(self.show_hidden);
         self.revealed_hidden.clear();
+        self.sync_monitor();
         let rows = self.rows();
         while !rows.iter().any(|row| row.path == self.selected) {
             self.selected = self.selected.parent().unwrap_or(&self.root).to_path_buf();
@@ -386,6 +457,7 @@ impl DirectoryTree {
 
     pub fn collapse_or_parent(&mut self) {
         if self.selected != self.root && self.expanded.remove(&self.selected) {
+            self.sync_monitor();
             return;
         }
         if let Some(parent) = self
@@ -420,6 +492,7 @@ impl DirectoryTree {
         {
             self.expand(self.selected.clone(), show_hidden);
         }
+        self.sync_monitor();
     }
 
     pub fn reveal(&mut self, path: &Path, show_hidden: bool) -> Result<()> {
@@ -465,6 +538,7 @@ impl DirectoryTree {
             self.refresh(parent);
         }
         self.selected = path.to_path_buf();
+        self.sync_monitor();
         Ok(())
     }
 
@@ -678,10 +752,71 @@ impl DirectoryTree {
                 }
             }
         }
+        self.sync_monitor();
+    }
+}
+
+/// One lazy worker serves explicit reads and periodic reconciliation. Both
+/// inputs and invalidations are bounded by the tree's existing listing limits;
+/// unchanged observations never wake the editor. No filesystem IO runs in poll.
+fn run_worker(
+    receiver: Receiver<ListingRequest>,
+    results: Sender<ListingResult>,
+    wake: Arc<Notify>,
+    monitor: Arc<Mutex<Monitor>>,
+) {
+    let mut observed = HashMap::new();
+    let mut next_check = Instant::now() + RECONCILE_INTERVAL;
+    loop {
+        match receiver.recv_timeout(next_check.saturating_duration_since(Instant::now())) {
+            Ok(request) => {
+                let entries = read_directory(&request.path).map_err(|error| error.to_string());
+                let targets = monitor.lock().unwrap().targets.clone();
+                observed.retain(|path, _| targets.contains(path));
+                if targets.contains(&request.path) {
+                    observed.insert(request.path.clone(), entries.clone());
+                }
+                if results
+                    .send(ListingResult {
+                        path: request.path,
+                        generation: request.generation,
+                        entries,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                wake.notify_one();
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if Instant::now() >= next_check {
+            let targets = monitor.lock().unwrap().targets.clone();
+            observed.retain(|path, _| targets.contains(path));
+            for path in targets {
+                if !monitor.lock().unwrap().targets.contains(&path) {
+                    continue;
+                }
+                let entries = read_directory(&path).map_err(|error| error.to_string());
+                if observed.get(&path) != Some(&entries) {
+                    observed.insert(path.clone(), entries);
+                    let mut monitor = monitor.lock().unwrap();
+                    if monitor.targets.contains(&path) && monitor.changed.insert(path) {
+                        wake.notify_one();
+                    }
+                }
+            }
+            next_check = Instant::now() + RECONCILE_INTERVAL;
+        }
     }
 }
 
 fn read_directory(path: &Path) -> Result<Vec<TreeEntry>> {
+    ensure!(
+        fs::symlink_metadata(path)?.is_dir(),
+        "path is not a directory"
+    );
     let mut entries = Vec::new();
     for result in fs::read_dir(path)? {
         let entry = result?;
@@ -689,7 +824,7 @@ fn read_directory(path: &Path) -> Result<Vec<TreeEntry>> {
             entries.len() < MAX_DIRECTORY_ENTRIES,
             "directory has too many entries"
         );
-        let kind = match fs::symlink_metadata(entry.path())?.file_type() {
+        let kind = match entry.file_type()? {
             kind if kind.is_dir() => EntryKind::Directory,
             kind if kind.is_file() => EntryKind::File,
             kind if kind.is_symlink() => EntryKind::Symlink,
@@ -743,6 +878,181 @@ mod tests {
             thread::yield_now();
         }
         panic!("tree listing did not arrive");
+    }
+
+    async fn until(tree: &mut DirectoryTree, ready: impl Fn(&DirectoryTree) -> bool) {
+        let wake = tree.wake();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                tree.poll();
+                if tree.outstanding.is_empty() && ready(tree) {
+                    break;
+                }
+                wake.notified().await;
+            }
+        })
+        .await
+        .expect("background reconciliation should wake the editor");
+    }
+
+    #[tokio::test]
+    async fn external_creates_renames_deletes_and_type_changes_reconcile_without_input() {
+        let root = Temp::new("automatic");
+        let folder = root.0.join("folder");
+        fs::create_dir(&folder).unwrap();
+        let selected = root.0.join("selected");
+        fs::write(&selected, "keep selection").unwrap();
+        let mut tree = DirectoryTree::new(root.0.clone());
+        tree.show(false);
+        until(&mut tree, |tree| tree.kind(&folder).is_some()).await;
+        tree.expand(folder.clone(), false);
+        until(&mut tree, |tree| tree.listings.contains_key(&folder)).await;
+        tree.selected = selected.clone();
+        let created = folder.join("created");
+        fs::write(&created, "new").unwrap();
+        until(&mut tree, |tree| {
+            tree.kind(&created) == Some(EntryKind::File)
+        })
+        .await;
+        assert_eq!(tree.selected, selected);
+        let renamed = folder.join("renamed");
+        fs::rename(&created, &renamed).unwrap();
+        until(&mut tree, |tree| {
+            tree.kind(&created).is_none() && tree.kind(&renamed).is_some()
+        })
+        .await;
+        tree.selected = renamed.clone();
+        fs::remove_file(&renamed).unwrap();
+        until(&mut tree, |tree| tree.kind(&renamed).is_none()).await;
+        assert_eq!(tree.selected, folder);
+        fs::remove_dir(&folder).unwrap();
+        fs::write(&folder, "directory replaced by a file").unwrap();
+        until(&mut tree, |tree| {
+            tree.kind(&folder) == Some(EntryKind::File)
+        })
+        .await;
+        assert!(!tree.expanded.contains(&folder));
+        assert!(!tree.listings.contains_key(&folder));
+        assert!(!tree.monitor.lock().unwrap().targets.contains(&folder));
+    }
+
+    #[tokio::test]
+    async fn collapsed_and_hidden_trees_stop_monitoring_and_refresh_on_return() {
+        let root = Temp::new("automatic-visibility");
+        let folder = root.0.join("folder");
+        fs::create_dir_all(folder.join("nested")).unwrap();
+        let mut tree = DirectoryTree::new(root.0.clone());
+        assert!(tree.requests.is_none(), "startup creates no worker");
+        tree.show(false);
+        until(&mut tree, |tree| tree.kind(&folder).is_some()).await;
+        tree.expand(folder.clone(), false);
+        until(&mut tree, |tree| {
+            tree.kind(&folder.join("nested")).is_some()
+        })
+        .await;
+        tree.expand(folder.join("nested"), false);
+        until(&mut tree, |_| true).await;
+        tree.selected = folder.clone();
+        tree.collapse_or_parent();
+        assert_eq!(
+            tree.monitor.lock().unwrap().targets,
+            HashSet::from([root.0.clone()])
+        );
+        let file = folder.join("new");
+        fs::write(&file, "new").unwrap();
+        tree.expand_or_child(false);
+        until(&mut tree, |tree| tree.kind(&file).is_some()).await;
+        tree.hide();
+        assert!(tree.monitor.lock().unwrap().targets.is_empty());
+        let hidden_change = root.0.join("while-hidden");
+        fs::write(&hidden_change, "new").unwrap();
+        tree.show(false);
+        until(&mut tree, |tree| tree.kind(&hidden_change).is_some()).await;
+        // Drain the last completion permit, then ensure unchanged periodic
+        // reads do not cause redraws or idle event-loop work.
+        let wake = tree.wake();
+        while tokio::time::timeout(Duration::from_millis(10), wake.notified())
+            .await
+            .is_ok()
+        {}
+        assert!(
+            tokio::time::timeout(RECONCILE_INTERVAL * 2, wake.notified())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn hidden_directory_monitoring_follows_dotfile_visibility() {
+        let root = Temp::new("automatic-dotfiles");
+        let hidden = root.0.join(".hidden");
+        fs::create_dir(&hidden).unwrap();
+        let mut tree = DirectoryTree::new(root.0.clone());
+        tree.show(true);
+        until(&mut tree, |tree| tree.kind(&hidden).is_some()).await;
+        tree.expand(hidden.clone(), true);
+        until(&mut tree, |_| true).await;
+        assert!(tree.monitor.lock().unwrap().targets.contains(&hidden));
+        tree.toggle_hidden(true);
+        assert!(!tree.monitor.lock().unwrap().targets.contains(&hidden));
+        let file = hidden.join("new");
+        fs::write(&file, "new").unwrap();
+        tree.toggle_hidden(true);
+        until(&mut tree, |tree| tree.kind(&file).is_some()).await;
+        tree.selected = root.0.clone();
+        tree.toggle_selected(true);
+        assert!(tree.monitor.lock().unwrap().targets.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_replaced_by_a_symlink_is_not_scanned() {
+        let root = Temp::new("automatic-symlink");
+        let target = Temp::new("automatic-symlink-target");
+        fs::write(target.0.join("outside"), "outside").unwrap();
+        let link = root.0.join("link");
+        std::os::unix::fs::symlink(&target.0, &link).unwrap();
+        assert!(read_directory(&link).is_err());
+        assert_eq!(read_directory(&root.0).unwrap()[0].kind, EntryKind::Symlink);
+    }
+
+    #[test]
+    fn automatic_refresh_overflow_is_retained_until_completions_free_slots() {
+        let root = Temp::new("automatic-overflow");
+        let mut tree = DirectoryTree::new(root.0.clone());
+        tree.visible = true;
+        tree.expanded.insert(root.0.clone());
+        tree.listings.insert(
+            root.0.clone(),
+            (0..MAX_OUTSTANDING)
+                .map(|index| {
+                    let path = root.0.join(index.to_string());
+                    tree.expanded.insert(path.clone());
+                    tree.outstanding.insert(path.clone(), 0);
+                    TreeEntry {
+                        path,
+                        kind: EntryKind::Directory,
+                    }
+                })
+                .collect(),
+        );
+        tree.sync_monitor();
+        tree.monitor.lock().unwrap().changed.insert(root.0.clone());
+        tree.poll();
+        assert!(tree.monitor.lock().unwrap().changed.contains(&root.0));
+        let path = root.0.join("0");
+        tree.result_sender
+            .as_ref()
+            .unwrap()
+            .send(ListingResult {
+                path,
+                generation: 0,
+                entries: Ok(vec![]),
+            })
+            .unwrap();
+        tree.poll();
+        assert!(!tree.monitor.lock().unwrap().changed.contains(&root.0));
+        assert!(tree.outstanding.contains_key(&root.0));
     }
 
     #[test]
