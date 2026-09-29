@@ -66,6 +66,30 @@ impl Session {
         Self::start_from_app(App::new(config, file).unwrap(), command)
     }
 
+    /// Starts `command` after another terminal has come and gone, so the
+    /// new terminal's number (1) and its identity (2) differ and a title or
+    /// message that shows the wrong one cannot pass by coincidence.
+    fn start_after_a_closed_terminal(command: &str) -> Self {
+        let mut app = App::new(Config::default(), None).unwrap();
+        render(&mut app, 60, 12);
+        type_colon(&mut app, "terminal /bin/cat");
+        let closed = app.active_terminal().unwrap();
+        // Out of Terminal Insert and back to the buffer, so the next colon
+        // command reaches the editor rather than this child.
+        app.handle_key(KeyStroke::new(KeyCode::Char('\\'), Modifiers::CONTROL))
+            .unwrap();
+        for character in " tq".chars() {
+            app.handle_key(KeyStroke::char(character)).unwrap();
+        }
+        assert_eq!(app.active_terminal(), None);
+        assert!(app.terminals.close(closed));
+        let session = Self::start_from_app(app, command);
+        let id = session.app.active_terminal().unwrap();
+        assert_ne!(id, closed);
+        assert_eq!(session.app.terminals.get(id).unwrap().number(), Some(1));
+        session
+    }
+
     fn start_from_app(mut app: App, command: &str) -> Self {
         let output = app
             .terminals
@@ -1517,29 +1541,22 @@ fn terminal_review_comma_and_semicolon_manage_copied_selections() {
 
 #[test]
 fn the_pane_is_named_by_the_title_the_child_sets() {
-    let mut session = Session::start(r#"/bin/sh -c 'printf "\033]0;agent\007"; cat'"#);
+    let mut session =
+        Session::start_after_a_closed_terminal(r#"/bin/sh -c 'printf "\033]0;agent\007"; cat'"#);
     assert!(session.settle(|app| {
         app.active_terminal()
             .and_then(|id| app.terminals.get(id))
             .is_some_and(|session| session.name() == "agent")
     }));
-    let id = session.app.active_terminal().unwrap();
-    let number = session.app.terminals.get(id).unwrap().number().unwrap();
     let insert = session.screen(60, 12);
-    assert!(
-        insert.contains(&format!("[terminal #{number}] agent [insert]")),
-        "{insert}"
-    );
+    assert!(insert.contains("[terminal #1] agent [insert]"), "{insert}");
 
     // NORMAL is the unmarked state: leaving input drops the marker rather
     // than replacing it, so the title only ever answers whether typing
     // reaches the child.
     session.leave_input();
     let normal = session.screen(60, 12);
-    assert!(
-        normal.contains(&format!("[terminal #{number}] agent")),
-        "{normal}"
-    );
+    assert!(normal.contains("[terminal #1] agent"), "{normal}");
     assert!(!normal.contains("[insert]"), "{normal}");
     assert!(!normal.contains("[normal]"), "{normal}");
 }
@@ -1808,8 +1825,9 @@ fn closing_a_terminal_ends_its_child_and_forgets_it() {
 #[test]
 fn force_kill_requires_confirmation_for_visible_and_hidden_stubborn_terminals() {
     for hidden in [false, true] {
-        let mut session =
-            Session::start("/bin/sh -c 'trap \"\" HUP INT TERM; printf ready; exec /bin/cat'");
+        let mut session = Session::start_after_a_closed_terminal(
+            "/bin/sh -c 'trap \"\" HUP INT TERM; printf ready; exec /bin/cat'",
+        );
         let id = session.app.active_terminal().unwrap();
         assert!(session.settle(|app| {
             app.terminals
@@ -1838,13 +1856,7 @@ fn force_kill_requires_confirmation_for_visible_and_hidden_stubborn_terminals() 
             .unwrap();
         assert_eq!(confirmation.title, "Force kill terminal");
         let message = confirmation.message.unwrap();
-        assert!(
-            message.contains(&format!(
-                "[terminal] stuck (#{})",
-                session.app.terminals.get(id).unwrap().number().unwrap()
-            )),
-            "{message}"
-        );
+        assert!(message.contains("[terminal] stuck (#1)"), "{message}");
         assert!(message.contains("discard its retained output"));
         assert!(session.screen(100, 30).contains("Force kill terminal"));
 

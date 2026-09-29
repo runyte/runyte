@@ -1928,7 +1928,9 @@ fn terminal_finder_item(
         session.display_name(),
         session.launch_label().to_owned(),
     ];
-    fields.extend(session.number().map(|number| number.to_string()));
+    if let Some(number) = session.number() {
+        fields.extend([number.to_string(), format!("#{number}")]);
+    }
     if let Some(name) = session.user_name() {
         fields.push(name.to_owned());
     }

@@ -31,9 +31,11 @@ sees the same number and a number survives detach and reattachment.
 reports `no running terminal is numbered N` otherwise. Exact-name resolution
 and the refusal of duplicate names are unchanged. The pane title reads
 `[terminal #<number>] <name>` while the child runs and `[terminal] <name>` once
-it has exited. The Navigator and terminal-list rows, their previews, the
-Finder item, the force-kill confirmation, the agent terminal-insert approval,
-and the rename status show the number when there is one and nothing otherwise.
+it has exited. The Navigator and terminal-list previews, the Finder item's
+detail, the force-kill confirmation, the agent terminal-insert approval, and
+the rename status show the number when there is one and nothing otherwise; the
+list rows themselves do not, and the list and Finder filters answer to both
+`N` and `#N`.
 The fallback names used when a closed terminal's session is already gone no
 longer print the raw id. Command usage reads `<number|name>`, and the
 `ShowTerminal` description says "number or name".
@@ -63,7 +65,13 @@ Tests:
 - `sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot` and
   `the_terminal_list_describes_each_session_and_says_so_when_there_are_none`
   in `src/app/tests/commands.rs`.
-- The title and force-kill assertions in `tests/terminal.rs`.
+- `project_finder_matches_the_number_a_terminal_shows` in
+  `src/app/tests/search_and_pickers.rs` covers the Finder's `#N` detail and
+  filter, and an exited terminal's unnumbered detail.
+- `the_pane_is_named_by_the_title_the_child_sets` and
+  `force_kill_requires_confirmation_for_visible_and_hidden_stubborn_terminals`
+  in `tests/terminal.rs` start their terminal after another has been closed,
+  so the expected `#1` differs from the terminal's id.
 
 Known limitation: an exited terminal is no longer addressable by number from
 the command line. Several exited terminals often share a name, such as a
