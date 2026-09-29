@@ -350,7 +350,10 @@ impl TerminalDamageFrame {
                 return None;
             }
             match (&old.terminal, &new.terminal) {
-                (None, None) => {}
+                // Only terminal titles are carried by this update. A document
+                // title change (including a tree destination number) needs a
+                // complete frame or the attached client keeps the old title.
+                (None, None) if old.title == new.title => {}
                 (Some(old_terminal), Some(new_terminal))
                     if old_terminal.columns == new_terminal.columns
                         && old_terminal.rows.len() == new_terminal.rows.len()
@@ -1154,6 +1157,51 @@ mod tests {
         pane.rows = vec![SnapshotRow::Placeholder; 12];
         pane.cursor_screen_row = Some(0);
         frame
+    }
+
+    #[test]
+    fn terminal_damage_requires_full_frame_when_a_file_pane_title_changes() {
+        let mut base = terminal_frame(1, 1, 'x');
+        let mut file = editor_frame(1).editor.panes.remove(0);
+        file.pane_id = 2;
+        file.active = false;
+        file.title.name = "[file] /workspace/NOTICE".into();
+        base.editor.panes.push(file);
+
+        let mut numbered = base.clone();
+        numbered.id = FrameId::from_raw(2);
+        numbered.editor.panes[0].title.name = "1".into();
+        numbered.editor.panes[1].title.name = "2".into();
+        // Opening and cancelling the directory-tree destination chooser must
+        // publish both titles, even when the terminal has no new output.
+        assert!(TerminalDamageFrame::between(&base, &numbered).is_none());
+        assert!(TerminalDamageFrame::between(&numbered, &base).is_none());
+
+        // Buffer markers are title changes too, including during PTY output.
+        for marker in 0..3 {
+            let mut next = base.clone();
+            next.id = FrameId::from_raw(2);
+            match marker {
+                0 => next.editor.panes[1].title.dirty = true,
+                1 => next.editor.panes[1].title.read_only = true,
+                _ => next.editor.panes[1].title.name = "[file] /workspace/renamed".into(),
+            }
+            let terminal = next.editor.panes[0].terminal.as_mut().unwrap();
+            terminal.revision += 1;
+            terminal.rows[0][0].character = 'y';
+            assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        }
+
+        // A terminal's own title still travels in a compact update alongside
+        // an unchanged file pane.
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.panes[0].title.name = "renamed terminal".into();
+        let damage = TerminalDamageFrame::between(&base, &next).unwrap();
+        assert!(damage.panes[0].rows.is_empty());
+        let mut received = base;
+        assert!(damage.apply(&mut received));
+        assert_eq!(received, next);
     }
 
     #[test]
