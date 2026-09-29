@@ -16,10 +16,13 @@ literal insertion or closer skipping independently at each caret from pre-edit
 text. One transaction maps every resulting caret. `edit_backspace` removes
 adjacent empty pairs when enabled. Replace mode and text paste remain literal.
 Quotes require word boundaries and use a bounded backslash-parity check.
+That escape rule applies only to quote-pair deletion too, so Backspace can
+remove an automatically inserted bracket pair after a backslash.
 
 Regression coverage: `auto_close_is_opt_in_and_pairs_typed_characters_only`,
 `auto_close_respects_quote_boundaries_escapes_and_replace_mode`, and
-`auto_close_maps_mixed_multi_caret_edits_and_nesting` in `src/app/tests/editing.rs`;
+`auto_close_maps_mixed_multi_caret_edits_and_nesting`, and
+`auto_close_backspace_handles_backslashes_and_overlapping_pairs` in `src/app/tests/editing.rs`;
 `auto_close_setting_previews_rolls_back_persists_and_reloads` in
 `src/app/tests/config_reload.rs`. The exhaustive registry checks in
 `tests/settings_registry.rs` and lossless writes in `tests/settings_persistence.rs`

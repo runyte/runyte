@@ -2304,3 +2304,24 @@ fn auto_close_maps_mixed_multi_caret_edits_and_nesting() {
     press(&mut app, '{');
     assert!(app.active_buffer().text().to_string().starts_with("([{}])"));
 }
+
+#[test]
+fn auto_close_backspace_handles_backslashes_and_overlapping_pairs() {
+    let mut config = Config::default();
+    config.editor.auto_close = true;
+    let mut app = App::new(config.clone(), None).unwrap();
+    seed(&mut app, "\\");
+    press(&mut app, 'A');
+    press(&mut app, '(');
+    assert_eq!(app.active_buffer().text().to_string(), "\\()");
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "\\");
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "\"\"\"");
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::point(1), Range::point(2)], 1));
+    press(&mut app, 'i');
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "");
+    assert_eq!(app.active().selection.ranges(), &[Range::point(0)]);
+}

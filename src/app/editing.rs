@@ -1467,7 +1467,8 @@ impl App {
                 && self.mode == Mode::Insert
                 && buffer.char_at(head - 1).and_then(pair_closer) == buffer.char_at(head)
                 && buffer.char_at(head).is_some()
-                && !pair_quote_escaped(buffer, head - 1)
+                && !(matches!(buffer.char_at(head - 1), Some('\'' | '"'))
+                    && pair_quote_escaped(buffer, head - 1))
             {
                 ordinary.push((head - 1, head + 1));
                 continue;
