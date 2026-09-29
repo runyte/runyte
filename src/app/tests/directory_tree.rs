@@ -688,6 +688,8 @@ fn tree_focus_from_terminal_input_into_document_enters_normal_mode() {
     key(&mut app, KeyCode::Char('l'), Modifiers::CONTROL);
     assert_eq!(app.active_pane, destination);
     assert_eq!(app.mode, Mode::Normal);
+    // ConPTY cleanup outlives App::drop and can still hold the fixture cwd.
+    close_test_terminals(&mut app);
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
@@ -1117,6 +1119,8 @@ fn tree_close_preserves_the_backing_terminal_and_unfocused_close_targets_the_pan
     assert!(app.directory_tree.visible);
     assert_eq!(app.panes.len(), 1);
     assert_eq!(app.terminals.len(), 1);
+    // ConPTY cleanup outlives App::drop and can still hold the fixture cwd.
+    close_test_terminals(&mut app);
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
