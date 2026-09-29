@@ -2008,6 +2008,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
         PromptKind::JoinDelimiter => "join with (empty joins directly): ".to_owned(),
         PromptKind::SettingValue(setting) => format!("{}: ", setting.descriptor().title),
         PromptKind::FinderPath => "find under path: ".to_owned(),
+        PromptKind::DirectoryTreeSearch => "tree search (regex): ".to_owned(),
         PromptKind::DirectoryTreeAction(crate::app::TreePromptAction::New) => {
             "new file or directory: ".to_owned()
         }

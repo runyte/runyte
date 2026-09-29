@@ -24,7 +24,9 @@ them, regardless of which extensibility direction is chosen.
   the interaction line. Tab toggles a dimmed bottom legend separated by a rule.
   Pane focus motions cross its boundary, and its right border can be resized.
   File opening and splitting use temporary numbered pane titles when several
-  destination panes exist.
+  destination panes exist. Tree search uses `tree search (regex):` on the
+  interaction line and selects matching visible entry names. Closing the focused
+  tree with `:q`, `:wc`, or `:close` hides the sidebar and restores pane focus.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,

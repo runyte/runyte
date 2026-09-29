@@ -194,7 +194,8 @@ use crate::workspace::{
 // Version 65 carries the semantic directory-tree sidebar in editor frames.
 // Version 66 adds the directory tree footer to bundled frames.
 // Version 67 removes obsolete directory tree staging from frames and health.
-pub const VERSION: u32 = 67;
+// Version 68 adds the directory tree search prompt.
+pub const VERSION: u32 = 68;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -684,6 +685,7 @@ pub enum PromptKind {
     SettingValue(String),
     FinderPath,
     DirectoryTreeAction(TreePromptAction),
+    DirectoryTreeSearch,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -717,6 +719,7 @@ impl From<CorePromptKind> for PromptKind {
                 Self::SettingValue(setting.descriptor().key.to_owned())
             }
             CorePromptKind::FinderPath => Self::FinderPath,
+            CorePromptKind::DirectoryTreeSearch => Self::DirectoryTreeSearch,
             CorePromptKind::DirectoryTreeAction(action) => {
                 Self::DirectoryTreeAction(match action {
                     crate::app::TreePromptAction::New => TreePromptAction::New,
@@ -1496,7 +1499,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 67);
+        assert_eq!(VERSION, 68);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

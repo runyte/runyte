@@ -43,7 +43,6 @@ pub struct TreeRow {
 struct ListingRequest {
     path: PathBuf,
     generation: u64,
-    show_hidden: bool,
 }
 
 struct ListingResult {
@@ -69,7 +68,10 @@ pub struct DirectoryTree {
     listings: HashMap<PathBuf, Vec<TreeEntry>>,
     errors: HashMap<PathBuf, String>,
     outstanding: HashMap<PathBuf, u64>,
-    queued_refresh: HashMap<PathBuf, bool>,
+    queued_refresh: HashSet<PathBuf>,
+    show_hidden: bool,
+    hidden_override: Option<bool>,
+    search: Option<regex::Regex>,
     generation: u64,
     requests: Option<Sender<ListingRequest>>,
     results: Receiver<ListingResult>,
@@ -95,7 +97,10 @@ impl DirectoryTree {
             listings: HashMap::new(),
             errors: HashMap::new(),
             outstanding: HashMap::new(),
-            queued_refresh: HashMap::new(),
+            queued_refresh: HashSet::new(),
+            show_hidden: false,
+            hidden_override: None,
+            search: None,
             generation: 0,
             requests: None,
             results,
@@ -110,6 +115,7 @@ impl DirectoryTree {
     }
 
     pub fn expand(&mut self, path: PathBuf, show_hidden: bool) {
+        self.show_hidden = show_hidden;
         if path == self.root || self.kind(&path) == Some(EntryKind::Directory) {
             if !self.expanded.contains(&path) && self.expanded.len() >= MAX_CACHED_LISTINGS {
                 self.errors
@@ -118,22 +124,17 @@ impl DirectoryTree {
             }
             self.expanded.insert(path.clone());
             if !self.listings.contains_key(&path) {
-                let include_hidden = show_hidden || self.revealed_hidden.contains(&path);
-                self.refresh(path, include_hidden);
+                self.refresh(path);
             }
         }
     }
 
-    pub fn refresh(&mut self, path: PathBuf, show_hidden: bool) {
+    pub fn refresh(&mut self, path: PathBuf) {
         if !self.expanded.contains(&path) {
             return;
         }
-        let show_hidden = show_hidden || self.revealed_hidden.contains(&path);
         if self.outstanding.contains_key(&path) {
-            self.queued_refresh
-                .entry(path)
-                .and_modify(|hidden| *hidden |= show_hidden)
-                .or_insert(show_hidden);
+            self.queued_refresh.insert(path);
             return;
         }
         if self.outstanding.len() >= MAX_OUTSTANDING {
@@ -153,8 +154,8 @@ impl DirectoryTree {
                 .name("directory-tree-listing".into())
                 .spawn(move || {
                     while let Ok(request) = receiver.recv() {
-                        let entries = read_directory(&request.path, request.show_hidden)
-                            .map_err(|error| error.to_string());
+                        let entries =
+                            read_directory(&request.path).map_err(|error| error.to_string());
                         if result_sender
                             .send(ListingResult {
                                 path: request.path,
@@ -176,7 +177,6 @@ impl DirectoryTree {
                 .send(ListingRequest {
                     path: path.clone(),
                     generation,
-                    show_hidden,
                 })
                 .is_err()
         }) {
@@ -205,8 +205,8 @@ impl DirectoryTree {
             }
             // A queued refresh supersedes this observation, including any
             // rows published immediately after an applied filesystem change.
-            if let Some(show_hidden) = self.queued_refresh.remove(&result.path) {
-                self.refresh(result.path, show_hidden);
+            if self.queued_refresh.remove(&result.path) {
+                self.refresh(result.path);
                 continue;
             }
             match result.entries {
@@ -278,6 +278,15 @@ impl DirectoryTree {
                     .then_with(|| left.path.file_name().cmp(&right.path.file_name()))
             });
             for entry in entries {
+                if !self.show_hidden
+                    && !self.revealed_hidden.contains(path)
+                    && entry
+                        .path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+                {
+                    continue;
+                }
                 self.append_rows(&entry.path, entry.kind, depth + 1, rows);
             }
         }
@@ -291,6 +300,66 @@ impl DirectoryTree {
             .get(path.parent()?)
             .and_then(|entries| entries.iter().find(|entry| entry.path == path))
             .map(|entry| entry.kind)
+    }
+
+    pub fn show_hidden(&self, configured: bool) -> bool {
+        self.hidden_override.unwrap_or(configured)
+    }
+
+    /// Listings retain dotfiles so toggling visibility also covers collapsed
+    /// cached directories and results still in flight without another scan.
+    pub fn toggle_hidden(&mut self, configured: bool) {
+        self.show_hidden = !self.show_hidden(configured);
+        self.hidden_override = Some(self.show_hidden);
+        self.revealed_hidden.clear();
+        let rows = self.rows();
+        while !rows.iter().any(|row| row.path == self.selected) {
+            self.selected = self.selected.parent().unwrap_or(&self.root).to_path_buf();
+        }
+    }
+
+    pub fn select_row(&mut self, row: usize) {
+        let rows = self.rows();
+        self.selected = rows[row.min(rows.len() - 1)].path.clone();
+    }
+
+    /// Search only displayed names; collapsed subtrees stay lazy.
+    pub fn search(&mut self, pattern: &str) -> Result<bool> {
+        if !pattern.is_empty() {
+            self.search = Some(
+                regex::RegexBuilder::new(pattern)
+                    .case_insensitive(true)
+                    .build()?,
+            );
+        }
+        self.search_next(true)
+    }
+
+    pub fn search_next(&mut self, forward: bool) -> Result<bool> {
+        let Some(pattern) = self.search.as_ref() else {
+            anyhow::bail!("tree search pattern is empty");
+        };
+        let rows = self.rows();
+        let current = rows
+            .iter()
+            .position(|row| row.path == self.selected)
+            .unwrap_or(0);
+        for step in 1..=rows.len() {
+            let index = if forward {
+                (current + step) % rows.len()
+            } else {
+                (current + rows.len() - step) % rows.len()
+            };
+            if rows[index]
+                .path
+                .file_name()
+                .is_some_and(|name| pattern.is_match(&name.to_string_lossy()))
+            {
+                self.selected = rows[index].path.clone();
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn select_relative(&mut self, amount: isize) {
@@ -354,6 +423,7 @@ impl DirectoryTree {
     }
 
     pub fn reveal(&mut self, path: &Path, show_hidden: bool) -> Result<()> {
+        self.show_hidden = show_hidden;
         ensure!(
             path.starts_with(&self.root),
             "path is outside this workspace"
@@ -382,11 +452,11 @@ impl DirectoryTree {
             {
                 self.revealed_hidden.insert(parent.clone());
                 self.expanded.insert(parent.clone());
-                self.refresh(parent, true);
+                self.refresh(parent);
             } else {
                 self.expanded.insert(parent.clone());
                 if !self.listings.contains_key(&parent) {
-                    self.refresh(parent, show_hidden);
+                    self.refresh(parent);
                 }
             }
         }
@@ -582,7 +652,7 @@ impl DirectoryTree {
                 // Discard results for removed/renamed directories without
                 // scheduling new work at the old path.
                 self.queued_refresh
-                    .retain(|path, _| !path.starts_with(&source));
+                    .retain(|path| !path.starts_with(&source));
                 if self.selected.starts_with(&source) {
                     self.selected = source.parent().unwrap_or(&self.root).to_path_buf();
                 }
@@ -607,13 +677,10 @@ impl DirectoryTree {
     }
 }
 
-fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<TreeEntry>> {
+fn read_directory(path: &Path) -> Result<Vec<TreeEntry>> {
     let mut entries = Vec::new();
     for result in fs::read_dir(path)? {
         let entry = result?;
-        if !show_hidden && entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
         ensure!(
             entries.len() < MAX_DIRECTORY_ENTRIES,
             "directory has too many entries"
@@ -738,7 +805,7 @@ mod tests {
         tree.show(false);
         let generation = tree.outstanding[&root.0];
         for _ in 0..10_000 {
-            tree.refresh(root.0.clone(), false);
+            tree.refresh(root.0.clone());
         }
         assert_eq!(tree.outstanding.len(), 1);
         assert_eq!(tree.outstanding[&root.0], generation);
@@ -820,7 +887,7 @@ mod tests {
         let mut tree = DirectoryTree::new(root.0.clone());
         tree.expanded.insert(root.0.clone());
         tree.outstanding.insert(root.0.clone(), 0);
-        tree.queued_refresh.insert(root.0.clone(), false);
+        tree.queued_refresh.insert(root.0.clone());
         tree.result_sender
             .as_ref()
             .unwrap()

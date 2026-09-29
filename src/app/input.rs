@@ -4867,6 +4867,9 @@ impl App {
                     {
                         self.action_failed(error.to_string());
                     }
+                } else if kind == PromptKind::DirectoryTreeSearch {
+                    let result = self.directory_tree.search(&value);
+                    self.report_tree_search(result);
                 } else if let PromptKind::DirectoryTreeAction(action) = kind {
                     if let Some(target) = directory_tree_prompt_target {
                         self.accept_directory_tree_prompt(action, target, &value);
@@ -5760,6 +5763,16 @@ impl App {
         platform_supports_persistent_sessions: bool,
     ) -> Result<()> {
         use ColonCommand as Colon;
+
+        if self.directory_tree.focused
+            && matches!(
+                command,
+                Colon::Quit | Colon::ForceQuit | Colon::CloseBuffer | Colon::ForceCloseBuffer
+            )
+        {
+            self.hide_directory_tree();
+            return Ok(());
+        }
 
         match (command, parameters) {
             (Colon::ChangeDirectory, InvocationParameters::Path(path)) => {

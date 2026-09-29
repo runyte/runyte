@@ -1215,6 +1215,7 @@ pub enum PromptKind {
     /// workspace, which is the point of it.
     FinderPath,
     DirectoryTreeAction(TreePromptAction),
+    DirectoryTreeSearch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

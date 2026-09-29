@@ -170,7 +170,7 @@ fn stale_pointer_frame_uses_the_rows_that_were_drawn() {
     chord(&mut app, 'd');
     fs::write(root.join("a"), "a").unwrap();
     fs::write(root.join("b"), "b").unwrap();
-    app.directory_tree.refresh(root.clone(), true);
+    app.directory_tree.refresh(root.clone());
     let deadline = Instant::now() + Duration::from_secs(3);
     while app.directory_tree.rows().len() < 3 {
         assert!(Instant::now() < deadline);
@@ -758,7 +758,14 @@ fn tree_cached_legend_and_help_follow_remapped_keys_and_resize() {
             spellings.insert(alias.clone(), alias.clone());
         }
     }
-    for (old, new) in [("n", "F6"), ("v", "F7"), ("Tab", "F8")] {
+    for (old, new) in [
+        ("n", "F6"),
+        ("v", "F7"),
+        ("Tab", "F8"),
+        (".", "F9"),
+        ("/", "F10"),
+        ("g g", "F11"),
+    ] {
         let old = crate::keymap::KeySequence::parse(old).unwrap();
         let new = crate::keymap::KeySequence::parse(new).unwrap();
         for binding in &mut bindings {
@@ -778,6 +785,8 @@ fn tree_cached_legend_and_help_follow_remapped_keys_and_resize() {
     assert!(legend.contains("F6: new"));
     assert!(legend.contains("F7: open in v-split"));
     assert!(legend.contains("F8: legend"));
+    assert!(legend.contains("F9: hidden files"));
+    assert!(legend.contains("F10: search"));
     let narrow = app.tree_legend(Rect { width: 25, ..area });
     assert!(narrow.len() > app.tree_legend(area).len());
     assert_eq!(narrow.join(" "), legend);
@@ -791,9 +800,15 @@ fn tree_cached_legend_and_help_follow_remapped_keys_and_resize() {
     assert!(help.contains("F6 creates"), "{help}");
     assert!(help.contains("F7 opens in a vertical split"));
     assert!(help.contains("F8 toggles"));
+    assert!(help.contains("F9 toggles dotfiles"));
+    assert!(help.contains("F10 searches visible names"));
+    assert!(help.contains("F11 selects the root"));
     assert!(!help.contains("{binding:"));
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
     assert!(!app.directory_tree.legend_visible);
+    key(&mut app, KeyCode::Function(10), Modifiers::NONE);
+    assert_eq!(app.prompt_kind, PromptKind::DirectoryTreeSearch);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     assert_eq!(app.mode, Mode::Command);
     fs::remove_dir_all(root).unwrap();
@@ -850,5 +865,258 @@ fn tree_move_into_uncached_directory_keeps_its_existing_siblings() {
         std::thread::yield_now();
     }
     assert_eq!(app.directory_tree.selected, root.join("destination/source"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn wait_tree(app: &mut App) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        app.directory_tree.poll();
+        if !app.directory_tree.rows().iter().any(|row| row.loading) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "tree listing did not finish");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn tree_modal_motions_use_tree_rows_and_viewport() {
+    let (mut app, root) = isolated("tree-modal-motions");
+    for number in 0..30 {
+        fs::write(root.join(format!("file-{number:02}")), "unchanged").unwrap();
+    }
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let rows = app.directory_tree.rows();
+    app.directory_tree.viewport_rows = 10;
+    for (keys, expected) in [("G", 30), ("gg", 0), ("ge", 30), ("gg", 0)] {
+        for character in keys.chars() {
+            key(&mut app, KeyCode::Char(character), Modifiers::NONE);
+        }
+        assert_eq!(app.directory_tree.selected, rows[expected].path, "{keys}");
+    }
+    for (character, expected) in [('f', 10), ('d', 15), ('u', 10), ('b', 0), ('b', 0)] {
+        key(&mut app, KeyCode::Char(character), Modifiers::CONTROL);
+        assert_eq!(app.directory_tree.selected, rows[expected].path);
+    }
+    app.directory_tree.scroll = 10;
+    for (keys, expected) in [
+        ("H", 10),
+        ("M", 15),
+        ("L", 19),
+        ("gt", 10),
+        ("gc", 15),
+        ("gb", 19),
+    ] {
+        for character in keys.chars() {
+            key(&mut app, KeyCode::Char(character), Modifiers::NONE);
+        }
+        assert_eq!(app.directory_tree.selected, rows[expected].path, "{keys}");
+    }
+    assert!(app.directory_tree.focused);
+    assert!(!app.active_buffer().dirty);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_dot_toggle_handles_pending_and_cached_listings_and_hidden_ancestors() {
+    let (mut app, root) = isolated("tree-dot-toggle");
+    app.config.editor.show_hidden_files = false;
+    fs::create_dir(root.join(".private")).unwrap();
+    fs::write(root.join(".private/inside"), "").unwrap();
+    fs::create_dir(root.join("visible")).unwrap();
+    fs::write(root.join("visible/.nested"), "").unwrap();
+    chord(&mut app, 'd');
+    // Toggle before publishing the first listing.
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    wait_tree(&mut app);
+    assert!(
+        app.directory_tree
+            .rows()
+            .iter()
+            .any(|row| row.path == root.join(".private"))
+    );
+    app.directory_tree.selected = root.join(".private");
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join(".private/inside"));
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root);
+    assert!(
+        !app.directory_tree
+            .rows()
+            .iter()
+            .any(|row| row.path.starts_with(root.join(".private")))
+    );
+    app.directory_tree.selected = root.join("visible");
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char('h'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('l'), Modifiers::NONE);
+    assert!(
+        app.directory_tree
+            .rows()
+            .iter()
+            .any(|row| row.path == root.join("visible/.nested"))
+    );
+    chord(&mut app, 't');
+    chord(&mut app, 'd');
+    assert!(
+        app.directory_tree
+            .rows()
+            .iter()
+            .any(|row| row.path == root.join("visible/.nested"))
+    );
+    assert!(!app.config.editor.show_hidden_files);
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    app.directory_tree
+        .reveal(&root.join("visible/.nested"), false)
+        .unwrap();
+    wait_tree(&mut app);
+    assert_eq!(app.directory_tree.selected, root.join("visible/.nested"));
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('.'), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("visible"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_search_wraps_visible_names_without_searching_or_editing_the_pane() {
+    let (mut app, root) = isolated("tree-search");
+    for name in ["Alpha.txt", "beta.txt", "λ-alpha.txt", ".alpha"] {
+        fs::write(root.join(name), "alpha in document").unwrap();
+    }
+    fs::create_dir(root.join("collapsed")).unwrap();
+    fs::write(root.join("collapsed/alpha.txt"), "").unwrap();
+    app.config.editor.show_hidden_files = false;
+    app.open_file(root.join("beta.txt")).unwrap();
+    let selection = app.active().selection.clone();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char('/'), Modifiers::NONE);
+    assert_eq!(app.prompt_kind, PromptKind::DirectoryTreeSearch);
+    app.handle_input(InputEvent::Text("alpha.*txt$".into()))
+        .unwrap();
+    let view = app.prepare_view(geometry(100, 30));
+    let snapshot = app.snapshot(&view);
+    let wire: crate::protocol::EditorSnapshot = snapshot.clone().into();
+    assert_eq!(
+        crate::snapshot::EditorSnapshot::try_from(wire).unwrap(),
+        snapshot
+    );
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("λ-alpha.txt"));
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
+    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    assert_eq!(app.directory_tree.selected, root.join("λ-alpha.txt"));
+    key(&mut app, KeyCode::Char('/'), Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
+    for pattern in ["[", "not-present"] {
+        tree_prompt(&mut app, '/', pattern);
+        assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
+        assert!(app.directory_tree.focused);
+    }
+    assert!(app.status.contains("no matching tree entry"));
+    key(&mut app, KeyCode::Char('/'), Modifiers::NONE);
+    app.handle_input(InputEvent::Text("beta".into())).unwrap();
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
+    assert_eq!(app.active().selection, selection);
+    assert_eq!(app.active_buffer().to_string(), "alpha in document");
+    assert!(app.search.pattern.is_empty());
+    key(&mut app, KeyCode::Char('n'), Modifiers::NONE);
+    assert_eq!(
+        app.prompt_kind,
+        PromptKind::DirectoryTreeAction(TreePromptAction::New)
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_empty_search_and_invalid_regex_preserve_the_last_query() {
+    let (mut app, root) = isolated("tree-search-errors");
+    fs::write(root.join("one"), "").unwrap();
+    fs::write(root.join("two"), "").unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    tree_prompt(&mut app, '/', "");
+    assert!(app.status.contains("tree search pattern is empty"));
+    tree_prompt(&mut app, '/', "one|two");
+    assert_eq!(app.directory_tree.selected, root.join("one"));
+    tree_prompt(&mut app, '/', "[");
+    assert!(app.status.contains("regex parse error"));
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.directory_tree.selected, root.join("two"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_close_commands_hide_only_the_focused_tree() {
+    for command in ["q", "quit", "q!", "wc", "window-close", "close", "close!"] {
+        for split in [false, true] {
+            let (mut app, root) = isolated("tree-close-commands");
+            let file = root.join("file.txt");
+            fs::write(&file, "original").unwrap();
+            app.open_file(file.clone()).unwrap();
+            if split {
+                app.execute(CommandInvocation::split_vertical(None))
+                    .unwrap();
+            }
+            key(&mut app, KeyCode::Char('i'), Modifiers::NONE);
+            app.handle_input(InputEvent::Text("unsaved".into()))
+                .unwrap();
+            let pane = app.active_pane;
+            let buffers = app.buffers.len();
+            let panes = app.panes.len();
+            let text = app.active_buffer().to_string();
+            app.handle_directory_tree_command(EditorCommand::FocusDirectoryTree)
+                .unwrap();
+            key(&mut app, KeyCode::Char(':'), Modifiers::NONE);
+            app.handle_input(InputEvent::Text(command.into())).unwrap();
+            key(&mut app, KeyCode::Enter, Modifiers::NONE);
+            assert!(!app.directory_tree.visible, "{command}");
+            assert!(!app.directory_tree.focused, "{command}");
+            assert!(!app.should_quit, "{command}");
+            assert_eq!(app.panes.len(), panes, "{command}");
+            assert_eq!(app.buffers.len(), buffers, "{command}");
+            assert_eq!(app.active_pane, pane);
+            assert_eq!(app.mode, Mode::Insert);
+            assert_eq!(app.active_buffer().to_string(), text);
+            assert_eq!(fs::read_to_string(file).unwrap(), "original");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+
+#[test]
+fn tree_close_preserves_the_backing_terminal_and_unfocused_close_targets_the_pane() {
+    let (mut app, root) = isolated("tree-close-terminal");
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    let terminal = app.active_terminal().unwrap();
+    for command in ["q", "wc", "close"] {
+        app.handle_directory_tree_command(EditorCommand::FocusDirectoryTree)
+            .unwrap();
+        app.execute_command(command).unwrap();
+        assert!(!app.directory_tree.visible);
+        assert_eq!(app.active_terminal(), Some(terminal));
+        assert_eq!(app.terminals.len(), 1);
+        assert_eq!(app.mode, Mode::Insert);
+        assert!(!app.should_quit);
+    }
+    app.mode = Mode::Normal;
+    app.split(Axis::Horizontal, None).unwrap();
+    chord(&mut app, 't');
+    assert!(!app.directory_tree.focused);
+    app.execute_command("wc").unwrap();
+    assert!(app.directory_tree.visible);
+    assert_eq!(app.panes.len(), 1);
+    assert_eq!(app.terminals.len(), 1);
+    drop(app);
     fs::remove_dir_all(root).unwrap();
 }

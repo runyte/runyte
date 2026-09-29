@@ -28,7 +28,9 @@ impl App {
     /// can interpret them. The ordinary pane remains the file destination.
     pub(super) fn handle_directory_tree_command(&mut self, command: EditorCommand) -> Result<bool> {
         use EditorCommand as Command;
-        let show_hidden = self.config.editor.show_hidden_files;
+        let show_hidden = self
+            .directory_tree
+            .show_hidden(self.config.editor.show_hidden_files);
         if matches!(
             command,
             Command::DirectoryTreeNew
@@ -42,8 +44,7 @@ impl App {
         match command {
             Command::ToggleDirectoryTree => {
                 if self.directory_tree.visible {
-                    self.directory_tree.visible = false;
-                    self.leave_directory_tree();
+                    self.hide_directory_tree();
                 } else {
                     self.directory_tree.show(show_hidden);
                 }
@@ -72,6 +73,7 @@ impl App {
                 }
             }
             Command::DirectoryTreeClose => self.leave_directory_tree(),
+            Command::CloseWindow if self.directory_tree.focused => self.hide_directory_tree(),
             Command::DirectoryTreeUp => self.directory_tree.select_relative(-1),
             Command::DirectoryTreeDown => self.directory_tree.select_relative(1),
             Command::DirectoryTreeLeft => self.directory_tree.collapse_or_parent(),
@@ -84,6 +86,38 @@ impl App {
             Command::DirectoryTreePageDown => self
                 .directory_tree
                 .select_relative(self.directory_tree.viewport_rows as isize),
+            Command::HalfPageUp if self.directory_tree.focused => self
+                .directory_tree
+                .select_relative(-((self.directory_tree.viewport_rows / 2).max(1) as isize)),
+            Command::HalfPageDown if self.directory_tree.focused => self
+                .directory_tree
+                .select_relative((self.directory_tree.viewport_rows / 2).max(1) as isize),
+            Command::GotoWindowTop | Command::GotoWindowCenter | Command::GotoWindowBottom
+                if self.directory_tree.focused =>
+            {
+                let offset = match command {
+                    Command::GotoWindowCenter => self.directory_tree.viewport_rows / 2,
+                    Command::GotoWindowBottom => {
+                        self.directory_tree.viewport_rows.saturating_sub(1)
+                    }
+                    _ => 0,
+                };
+                self.directory_tree
+                    .select_row(self.directory_tree.scroll.saturating_add(offset));
+            }
+            Command::ToggleHiddenFiles if self.directory_tree.focused => {
+                self.directory_tree
+                    .toggle_hidden(self.config.editor.show_hidden_files);
+            }
+            Command::SearchRegex if self.directory_tree.focused => {
+                self.open_prompt(PromptKind::DirectoryTreeSearch);
+            }
+            Command::SearchNext | Command::SearchPrevious if self.directory_tree.focused => {
+                let result = self
+                    .directory_tree
+                    .search_next(command == Command::SearchNext);
+                self.report_tree_search(result);
+            }
             Command::DirectoryTreeOpen
             | Command::DirectoryTreeVertical
             | Command::DirectoryTreeHorizontal => {
@@ -137,7 +171,7 @@ impl App {
                         .unwrap_or(&self.directory_tree.root)
                         .to_path_buf()
                 };
-                self.directory_tree.refresh(path, show_hidden);
+                self.directory_tree.refresh(path);
             }
             Command::DirectoryTreeNew => {
                 let selected = self.directory_tree.selected.clone();
@@ -210,6 +244,14 @@ impl App {
             _ => return Ok(false),
         }
         Ok(true)
+    }
+
+    pub(super) fn report_tree_search(&mut self, result: Result<bool>) {
+        match result {
+            Ok(true) => self.status("tree match"),
+            Ok(false) => self.action_failed("no matching tree entry"),
+            Err(error) => self.action_failed(error.to_string()),
+        }
     }
 
     fn tree_filesystem_ready(&mut self) -> bool {
@@ -409,6 +451,8 @@ impl App {
             (Command::DirectoryTreeVertical, "open in v-split"),
             (Command::DirectoryTreeHorizontal, "open in h-split"),
             (Command::DirectoryTreeLegend, "legend"),
+            (Command::ToggleHiddenFiles, "hidden files"),
+            (Command::SearchRegex, "search"),
         ];
         let bindings = self
             .keymap
@@ -462,6 +506,11 @@ impl App {
             .min(crate::snapshot::MAX_DIRECTORY_TREE_SNAPSHOT_ROWS)
     }
 
+    pub(super) fn hide_directory_tree(&mut self) {
+        self.directory_tree.visible = false;
+        self.leave_directory_tree();
+    }
+
     pub(super) fn leave_directory_tree(&mut self) {
         if self.directory_tree.focused {
             self.directory_tree.focused = false;
@@ -484,7 +533,9 @@ impl App {
             self.open_prompt_with_value(PromptKind::DirectoryTreeAction(action), value.to_owned());
             return;
         }
-        let show_hidden = self.config.editor.show_hidden_files;
+        let show_hidden = self
+            .directory_tree
+            .show_hidden(self.config.editor.show_hidden_files);
         let result = match action {
             TreePromptAction::New => {
                 self.directory_tree
@@ -510,7 +561,9 @@ impl App {
         report: &ApplyReport,
     ) {
         self.directory_tree.note_applied(root, report);
-        let show_hidden = self.config.editor.show_hidden_files;
+        let show_hidden = self
+            .directory_tree
+            .show_hidden(self.config.editor.show_hidden_files);
         let mut selected_destination = None;
         for operation in &report.applied {
             let source = match operation {
@@ -522,7 +575,7 @@ impl App {
             };
             if let Some(parent) = source.and_then(|path| path.parent()) {
                 self.directory_tree
-                    .refresh(super::resolved_operation_path(root, parent), show_hidden);
+                    .refresh(super::resolved_operation_path(root, parent));
             }
             if let Some(target) = match operation {
                 FsOperation::Create { path, .. } => Some(path),
@@ -534,7 +587,7 @@ impl App {
                 selected_destination = Some(super::resolved_operation_path(root, target));
                 if let Some(parent) = target.parent() {
                     self.directory_tree
-                        .refresh(super::resolved_operation_path(root, parent), show_hidden);
+                        .refresh(super::resolved_operation_path(root, parent));
                 }
             }
         }
@@ -544,8 +597,7 @@ impl App {
             // note_applied published its new entry. Read its siblings now
             // that reveal has expanded the parent.
             if let Some(parent) = destination.parent() {
-                self.directory_tree
-                    .refresh(parent.to_path_buf(), show_hidden);
+                self.directory_tree.refresh(parent.to_path_buf());
             }
         }
     }

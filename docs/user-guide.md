@@ -1351,8 +1351,11 @@ least 24 columns for the ordinary pane layout.
 `Ctrl-w h/l` moves focus across the tree boundary, as does `Ctrl-h/l` when
 `editor.fast_pane_keys` is enabled. Escape returns to the previous pane without
 hiding the tree. In the tree, `j/k` and the arrows move between rows. Home/End
-jump to the first/last row, and PageUp/PageDown move a page. `l` or Right expands
-a directory or selects its first child; `h` or Left collapses it or selects its
+jump to the first/last row, as do `gg` and `ge`/`G`. PageUp/PageDown or
+`Ctrl-b`/`Ctrl-f` move a page; `Ctrl-u`/`Ctrl-d` move half a page.
+`gt`/`gc`/`gb` or `H`/`M`/`L` select the top/middle/bottom visible row.
+Digits still choose destination panes rather than motion counts. `l` or Right
+expands a directory or selects its first child; `h` or Left collapses it or selects its
 parent. Enter on a directory toggles expansion. `Space r` refreshes the selected
 directory. Listings load in the background only as directories are expanded;
 directory symlinks are shown as links and are never recursively expanded.
@@ -1361,6 +1364,9 @@ The following keys work directly while the tree has focus:
 
 | Key | Action |
 | --- | --- |
+| `.` | Show or hide dotfiles in the tree. |
+| `/` | Search visible entry names with a regular expression. |
+| `Ctrl-n` / `Ctrl-p` | Select the next/previous tree search match, wrapping. |
 | `n` | Create a file; end its relative path with `/` to create a directory. |
 | `d` | Delete the selected entry after `Delete <path>? [y/N]` in the interaction line. |
 | `m` | Move to a typed path; Tab completes paths in this prompt. |
@@ -1373,7 +1379,24 @@ The following keys work directly while the tree has focus:
 
 The legend is visible by default and wraps to fit the tree width. Its labels
 are `n: new`, `d: delete`, `m: move`, `r: rename`, `v: open in v-split`,
-`s: open in h-split`, and `Tab: legend`; remapped keys use their live spellings.
+`s: open in h-split`, `Tab: legend`, `.: hidden files`, and `/: search`;
+remapped keys use their live spellings.
+
+The tree starts with `editor.show_hidden_files`. The `.` override is local to
+this workspace's tree and survives hiding it. Hiding a selected dotfile or a
+hidden ancestor selects the nearest visible ancestor. Explicit file reveal
+can still expose a hidden path; toggling visibility clears that exception.
+
+`/` opens `tree search (regex):`. Enter selects the next matching visible name;
+matching ignores case unless the pattern uses `(?-i)`. Collapsed directories
+are not searched recursively. An empty prompt repeats the previous tree
+search, and Escape cancels without moving. `Ctrl-n`/`Ctrl-p` repeat that search;
+`n` retains its create action. Tree searches do not alter buffer searches.
+
+While the tree is focused, `:q`, `:wc`, and `:close` hide it and return focus
+to the previous pane, preserving open buffers, panes, and terminal sessions.
+The long command names and `:q!`/`:close!` behave the same way. `:qa` retains
+its workspace-wide quit behavior.
 
 With one pane, Enter, `v`, and `s` act immediately. With multiple panes, they
 replace the pane titles with numbers starting at 1, ordered top to bottom and

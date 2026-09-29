@@ -774,7 +774,7 @@ editor_commands! {
     OpenDirectoryEntry => ("open-directory-entry", "Open the selected directory entry"),
     OpenParentDirectory => ("open-parent-directory", "Open the parent directory"),
     RefreshDirectory => ("refresh-directory", "Reload the directory from disk"),
-    ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles in the explorer"),
+    ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles"),
     ToggleDirectoryDetails => ("toggle-directory-details", "Show or hide file details in the explorer"),
     ChooseExplorerOrder => ("choose-explorer-order", "Choose the order the explorer lists entries in"),
     OpenExplorerSystem => ("open-explorer-system", "Open in system file manager"),

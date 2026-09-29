@@ -105,7 +105,9 @@ Use `Space d t` to toggle a narrow directory tree at the left of the editor,
 or `Space d d` to reveal the active file and focus the tree. Enter opens a
 selected file directly, or asks for a numbered destination when several panes
 are open. `n`, `d`, `m`, and `r` create, delete, move, and rename entries; only
-delete asks for confirmation. `Tab` toggles the bottom legend. Drag the right
+delete asks for confirmation. Use `gg`/`ge`/`G` to jump to the first/last row,
+`.` to toggle dotfiles, and `/` to search visible entry names. While the tree
+is focused, `:q`, `:wc`, and `:close` hide it. `Tab` toggles the bottom legend. Drag the right
 border to resize it, or set `editor.directory_tree_width` in `Space o o`.
 
 ## Terminals

@@ -166,6 +166,9 @@ impl HelpTopic {
             Self::DirectoryTree => &[
                 "The [dir tree] sidebar owns {binding:j}/{binding:k} navigation and {binding:h}/{binding:l} expansion. {binding:Enter} opens a file; with multiple panes, choose its numbered destination. {binding:v} opens in a vertical split and {binding:s} in a horizontal split, choosing which pane to split the same way. Direct keys {binding:1} through {binding:9} open in that pane.",
                 "{binding:n} creates a file or a directory with a trailing /. {binding:r} renames and {binding:m} moves; submitting the name applies the change. {binding:d} asks y/N in the interaction line before trashing. {binding:Tab} toggles the dimmed bottom legend.",
+                "{binding:g g} selects the root; {binding:g e} and {binding:G} select the last row. {binding:Ctrl-b}/{binding:Ctrl-f} move a page and {binding:Ctrl-u}/{binding:Ctrl-d} half a page. {binding:H}/{binding:M}/{binding:L} select the top/middle/bottom visible row.",
+                "{binding:.} toggles dotfiles for this tree. {binding:/} searches visible names by regular expression, ignoring case; Enter finds the next match and an empty prompt repeats the search. {binding:Ctrl-n}/{binding:Ctrl-p} repeat forward/backward. Collapsed directories remain unsearched.",
+                "While the tree is focused, :q, :wc, and :close hide it and return focus to the previous pane.",
                 "Pane motions cross the tree boundary. Drag its right border or use :resize-right while focused. Set editor.directory_tree_width in the config page; the default is 33 columns.",
                 "{binding:Space d t} toggles it. {binding:Space d d} reveals the active file and focuses it. {binding:Esc} returns focus to the pane.",
             ],
