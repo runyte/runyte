@@ -475,7 +475,10 @@ impl WorkspaceHost {
                 Detail::value("Agent", visible(identity)),
                 Detail::value(
                     "Terminal",
-                    format!("{} (#{})", label(&terminal.name()), p.terminal),
+                    match terminal.number() {
+                        Some(number) => format!("{} (#{number})", label(&terminal.name())),
+                        None => label(&terminal.name()),
+                    },
                 ),
                 Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
             ];

@@ -991,31 +991,58 @@ fn the_buffer_list_visits_a_buffer_where_a_pane_already_shows_it() {
 
 #[cfg(unix)]
 #[test]
-fn the_terminal_list_shows_an_exited_terminal_and_finds_terminals_by_id() {
+fn the_terminal_list_finds_running_terminals_by_number_and_exited_ones_by_name() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let exited = app.active_terminal().unwrap();
     app.leave_terminal();
-    // A second, running terminal the ID filter has to rule out.
+    // A second, running terminal that keeps its number.
     app.open_terminal(Some("/bin/cat".to_owned()));
+    let running = app.active_terminal().unwrap();
     app.leave_terminal();
+    assert_eq!(app.terminals.get(exited).unwrap().number(), Some(1));
+    assert_eq!(app.terminals.get(running).unwrap().number(), Some(2));
     let cleanup = terminal_cleanup(&app, exited);
     app.apply_terminal_output(TerminalOutput::Exited {
         id: exited,
         code: Some(0),
     });
     cleanup();
+    assert_eq!(app.terminals.get(exited).unwrap().number(), None);
 
-    // The ID left the rows but still filters; the pane title carries it.
+    // The number left the rows but still filters running terminals.
     app.open_terminal_list();
-    for character in format!("#{exited}").chars() {
+    for character in "#2".chars() {
         press(&mut app, character);
     }
-    assert_eq!(destinations(&app), [OpenDestination::Terminal(exited)]);
+    assert_eq!(destinations(&app), [OpenDestination::Terminal(running)]);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // The exited terminal's old number now names nothing.
+    app.open_terminal_list();
+    for character in "#1".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(destinations(&app), []);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // It is still reached from the list by what it ran, below the running one.
+    app.open_terminal_list();
+    for character in "cat".chars() {
+        press(&mut app, character);
+    }
+    assert_eq!(
+        destinations(&app),
+        [
+            OpenDestination::Terminal(running),
+            OpenDestination::Terminal(exited)
+        ]
+    );
+    key(&mut app, KeyCode::End, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.active_terminal(), Some(exited));
 
-    let view = app.prepare_view(FrameGeometry {
+    let geometry = FrameGeometry {
         screen: Rect {
             width: 80,
             height: 24,
@@ -1028,12 +1055,19 @@ fn the_terminal_list_shows_an_exited_terminal_and_finds_terminals_by_id() {
         },
         status: Rect::default(),
         message: Rect::default(),
-    });
+    };
+    let view = app.prepare_view(geometry);
     let title = app.snapshot(&view).panes[0].title.name.clone();
-    assert!(
-        title.starts_with(&format!("[terminal #{exited}] ")),
-        "{title}"
-    );
+    assert!(title.starts_with("[terminal] "), "{title}");
     assert!(title.ends_with("[exited]"), "{title}");
+
+    // A new terminal takes the number the exited one gave up, though its
+    // identity is the third one handed out.
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let recycled = app.active_terminal().unwrap();
+    assert!(recycled > running);
+    let view = app.prepare_view(geometry);
+    let title = app.snapshot(&view).panes[0].title.name.clone();
+    assert!(title.starts_with("[terminal #1] cat"), "{title}");
     close_test_terminals(&mut app);
 }

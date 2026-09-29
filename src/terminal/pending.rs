@@ -186,6 +186,7 @@ impl TerminalPreparation {
             cleanup: self.cleanup,
             session: Some(TerminalSession {
                 id,
+                number: None,
                 label: self.request.label,
                 user_name: None,
                 directory: self.request.directory.clone(),
@@ -358,6 +359,9 @@ impl TerminalSessions {
         }
         let mut session = pending.session.take().expect("pending session");
         session.emulator.set_default_colors(self.default_colors);
+        // Numbered on arrival rather than on preparation: a handoff that is
+        // cancelled never held a number another terminal had to skip.
+        session.number = Some(self.free_number());
         self.sessions.insert(cancellation.id, session);
         state.sessions.get_mut(&cancellation.id).unwrap().active = true;
         drop(state);

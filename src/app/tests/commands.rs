@@ -3726,14 +3726,19 @@ fn sending_buffer_text_chooses_one_terminal_and_names_why_it_cannot() {
     app.send_to_terminal_target(Some("no-such-terminal"));
     assert!(app.status_error && app.status.contains("no-such-terminal"));
 
+    let number = app.terminals.get(id).unwrap().number().unwrap();
     let cleanup = terminal_cleanup(&app, id);
 
     app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
 
     cleanup();
-    app.send_to_terminal_target(Some(&id.to_string()));
+    // The exited terminal gave its number up, so the number names nothing.
+    app.send_to_terminal_target(Some(&number.to_string()));
     assert!(
-        app.status_error && app.status.contains("program has exited"),
+        app.status_error
+            && app
+                .status
+                .contains(&format!("no running terminal is numbered {number}")),
         "{}",
         app.status
     );
@@ -4005,12 +4010,18 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
         "the list carries the name it was given: {:?}",
         list.items[0].label
     );
+    let number = app.terminals.get(shown).unwrap().number().unwrap();
     assert!(
-        !list.items[0].label.contains(&format!("#{shown}")),
-        "the ID lives in the pane title, not the row"
+        !list.items[0].label.contains(&format!("#{number}")),
+        "the number lives in the pane title, not the row"
     );
     let preview = list.items[0].preview().unwrap();
-    assert!(preview.contains(&format!("#{shown}")), "{preview}");
+    assert!(preview.contains(&format!("#{number} · ")), "{preview}");
+    assert!(
+        !list.items[1].preview().unwrap().starts_with('#'),
+        "an exited session holds no number: {:?}",
+        list.items[1].preview()
+    );
     assert!(preview.contains(&root.display().to_string()), "{preview}");
     assert_eq!(
         states[1], "exited unread",

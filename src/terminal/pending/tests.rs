@@ -59,6 +59,8 @@ fn pending_terminal_fast_output_is_gated_until_install_and_arguments_remain_lite
     assert!(output.try_recv().is_err());
     assert!(!sessions.events.0.state.lock().unwrap().sessions[&id].active);
     assert_eq!(sessions.install_prepared(pending).unwrap(), id);
+    // Numbered on arrival, like a terminal the editor opened itself.
+    assert_eq!(sessions.get(id).unwrap().number(), Some(1));
     // Owner stop after handoff must leave the native terminal and its output.
     cancellation.cancel();
     wait_until(|| {
@@ -67,6 +69,7 @@ fn pending_terminal_fast_output_is_gated_until_install_and_arguments_remain_lite
         }
         !sessions.get(id).unwrap().live()
     });
+    assert_eq!(sessions.get(id).unwrap().number(), None);
     let text = sessions.get(id).unwrap().plain_text();
     for value in ["<two words>", "<$(touch must-not-exist)>", "<猫>", "<>"] {
         assert!(text.contains(value), "{text:?}");

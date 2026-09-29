@@ -1635,6 +1635,56 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
     fs::remove_dir_all(root).unwrap();
 }
 
+/// The Finder shows a running terminal's number as `#N` and answers to it,
+/// while an exited terminal shows none and a new terminal takes the number
+/// it gave up.
+#[cfg(unix)]
+#[test]
+fn project_finder_matches_the_number_a_terminal_shows() {
+    let root = temporary("project-finder-terminal-number");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    let exited = app.active_terminal().unwrap();
+    app.leave_terminal();
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    app.leave_terminal();
+    let cleanup = terminal_cleanup(&app, exited);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: exited,
+        code: Some(0),
+    });
+    cleanup();
+    app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+    let recycled = app.active_terminal().unwrap();
+    app.leave_terminal();
+    assert_eq!(app.terminals.get(recycled).unwrap().number(), Some(1));
+
+    app.open_project_picker().unwrap();
+    type_text(&mut app, "#1");
+    let finder = app.finder.as_ref().unwrap();
+    assert_eq!(
+        finder.selected_target(app.picker.as_ref().unwrap()),
+        Some(FinderTarget::Resource(ResourceTarget::Terminal(recycled)))
+    );
+    let details = finder
+        .items
+        .iter()
+        .filter_map(|item| match item.target {
+            ResourceTarget::Terminal(id) => Some((id, item.detail.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let detail = |id| &details.iter().find(|(other, _)| *other == id).unwrap().1;
+    assert!(detail(recycled).starts_with("#1 · "), "{details:?}");
+    assert!(!detail(exited).starts_with('#'), "{details:?}");
+    close_test_terminals(&mut app);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn busy_terminal_updates_only_its_name_finder_item_and_selected_preview() {

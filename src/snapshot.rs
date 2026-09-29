@@ -2027,15 +2027,19 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// looking at history rather than at the live screen, and that the child has
 /// gone. Neither is a buffer property, so neither has a field of its own.
 ///
-/// The title exposes the ID accepted by `:terminal-send` without requiring
-/// the terminal list preview.
+/// The title exposes the number accepted by `:terminal-send` without
+/// requiring the terminal list preview. An exited terminal has none, so its
+/// title carries only the kind.
 ///
 /// Only `[insert]` is named. The marker answers one question — whether typing
 /// reaches the child — and NORMAL is where every other pane already lives, so
 /// spelling it out here would repeat the mode line on the title of the one
 /// pane that has other things to say.
 fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Option<Mode>) -> String {
-    let mut name = format!("[terminal #{}] {}", session.id(), session.name());
+    let mut name = match session.number() {
+        Some(number) => format!("[terminal #{number}] {}", session.name()),
+        None => format!("[terminal] {}", session.name()),
+    };
     if active_mode == Some(Mode::Insert) {
         name.push_str(" [insert]");
     }

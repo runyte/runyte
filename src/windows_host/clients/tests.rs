@@ -115,8 +115,15 @@ impl Fixture {
     }
 
     fn show_terminal(&mut self, terminal: runyte::terminal::TerminalId) {
+        let number = self
+            .host
+            .app()
+            .terminals
+            .get(terminal)
+            .and_then(runyte::terminal::TerminalSession::number)
+            .expect("a running terminal to show");
         let command =
-            runyte::command::parse_colon_command(&format!("terminal-show {terminal}")).unwrap();
+            runyte::command::parse_colon_command(&format!("terminal-show {number}")).unwrap();
         self.host.app_mut().execute(command).unwrap();
         assert_eq!(self.host.app().active_terminal(), Some(terminal));
     }

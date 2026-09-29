@@ -103,7 +103,9 @@ impl DefaultColors {
 ///
 /// Ids are never reused inside a session, so a pane holding one that has been
 /// closed learns that the terminal is gone rather than finding a different
-/// one.
+/// one. That also makes them grow without bound, so they are never shown to
+/// the person: titles, lists and typed commands use the terminal's number
+/// instead (see [`TerminalSession::number`]).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TerminalId(u64);
 
@@ -650,6 +652,9 @@ pub enum SentTextUndo {
 #[derive(Debug)]
 pub struct TerminalSession {
     id: TerminalId,
+    /// The small number a person reads and types, held only while the child
+    /// runs. See [`TerminalSession::number`].
+    number: Option<u32>,
     label: String,
     user_name: Option<String>,
     directory: PathBuf,
@@ -693,6 +698,17 @@ impl Drop for TerminalSession {
 impl TerminalSession {
     pub fn id(&self) -> TerminalId {
         self.id
+    }
+
+    /// The number a title shows and a command accepts, or `None` once the
+    /// child has exited.
+    ///
+    /// Numbers are the lowest not held by another running terminal, so they
+    /// stay small and come back after a terminal ends. That makes a number a
+    /// label for what is running now rather than an identity: anything that
+    /// must still mean the same terminal later holds its [`TerminalId`].
+    pub fn number(&self) -> Option<u32> {
+        self.number
     }
 
     /// The name a pane shows: whatever the child last called itself, or the
@@ -2607,6 +2623,7 @@ impl TerminalSessions {
         self.next += 1;
         let mut session = tests::session(columns, rows);
         session.id = id;
+        session.number = Some(self.free_number());
         self.sessions.insert(id, session);
         id
     }
@@ -2682,21 +2699,34 @@ impl TerminalSessions {
         self.sessions.keys().copied().collect()
     }
 
-    /// Resolves a stable decimal identity first, then an exact user/display
+    /// The lowest number no running terminal holds.
+    #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+    fn free_number(&self) -> u32 {
+        let held = self
+            .sessions
+            .values()
+            .filter_map(TerminalSession::number)
+            .collect::<std::collections::BTreeSet<_>>();
+        (1..)
+            .find(|number| !held.contains(number))
+            .expect("fewer terminals than numbers")
+    }
+
+    /// Resolves a running terminal's number first, then an exact user/display
     /// name. Duplicate names are rejected rather than made dependent on
     /// picker or creation order.
     pub fn resolve(&self, target: &str) -> Result<TerminalId, String> {
         let target = target.trim();
         if target.is_empty() {
-            return Err("terminal identity or name is empty".to_owned());
+            return Err("terminal number or name is empty".to_owned());
         }
-        if let Ok(raw) = target.parse::<u64>() {
-            let id = TerminalId(raw);
+        if let Ok(number) = target.parse::<u32>() {
             return self
                 .sessions
-                .contains_key(&id)
-                .then_some(id)
-                .ok_or_else(|| format!("terminal {raw} does not exist"));
+                .values()
+                .find(|session| session.number == Some(number))
+                .map(TerminalSession::id)
+                .ok_or_else(|| format!("no running terminal is numbered {number}"));
         }
         let matches = self
             .sessions
@@ -2708,7 +2738,7 @@ impl TerminalSessions {
             [id] => Ok(*id),
             [] => Err(format!("terminal {target:?} does not exist")),
             _ => Err(format!(
-                "terminal name {target:?} is ambiguous; use its stable numeric ID"
+                "terminal name {target:?} is ambiguous; use its number or the terminal list"
             )),
         }
     }
@@ -2821,10 +2851,12 @@ impl TerminalSessions {
         };
         let mut emulator = Emulator::new(columns, rows);
         emulator.set_default_colors(self.default_colors);
+        let number = Some(self.free_number());
         self.sessions.insert(
             id,
             TerminalSession {
                 id,
+                number,
                 label: request.label,
                 user_name: None,
                 directory: request.directory.clone(),
@@ -2884,6 +2916,7 @@ impl TerminalSessions {
                     };
                     session.cancel_queued_proposals();
                     session.exit = Some(code);
+                    session.number = None;
                     session.content_revision = session.content_revision.wrapping_add(1);
                     session.read_revision = session.read_revision.wrapping_add(1);
                     session.last_activity = SystemTime::now();
@@ -3083,6 +3116,7 @@ mod tests {
     pub(super) fn session(columns: usize, rows: usize) -> TerminalSession {
         TerminalSession {
             id: TerminalId(1),
+            number: None,
             label: "test".to_owned(),
             user_name: None,
             directory: PathBuf::from("/"),
@@ -3825,18 +3859,22 @@ mod tests {
     }
 
     #[test]
-    fn explicit_terminal_targets_prefer_ids_and_refuse_ambiguous_names() {
+    fn explicit_terminal_targets_prefer_numbers_and_refuse_ambiguous_names() {
         let mut sessions = TerminalSessions::new();
         let mut first = session(8, 2);
         first.id = TerminalId(7);
+        first.number = Some(1);
         first.rename(Some("agent".to_owned())).unwrap();
         let mut second = session(8, 2);
         second.id = TerminalId(9);
+        second.number = Some(2);
         second.rename(Some("agent".to_owned())).unwrap();
         sessions.sessions.insert(first.id(), first);
         sessions.sessions.insert(second.id(), second);
 
-        assert_eq!(sessions.resolve("7"), Ok(TerminalId(7)));
+        // A number names the running terminal holding it, never the id.
+        assert_eq!(sessions.resolve("2"), Ok(TerminalId(9)));
+        assert!(sessions.resolve("7").unwrap_err().contains("numbered 7"));
         assert!(sessions.resolve("agent").unwrap_err().contains("ambiguous"));
         sessions
             .get_mut(TerminalId(9))
@@ -3844,6 +3882,37 @@ mod tests {
             .rename(Some("tests".to_owned()))
             .unwrap();
         assert_eq!(sessions.resolve("tests"), Ok(TerminalId(9)));
+    }
+
+    /// Numbers stay small: a new terminal takes the lowest one no running
+    /// terminal holds, and an exited terminal holds none, while ids keep
+    /// counting so nothing that held an old id reaches a new terminal.
+    #[test]
+    fn terminal_numbers_are_recycled_and_released_on_exit() {
+        let mut sessions = TerminalSessions::new();
+        let first = sessions.insert_test_session(8, 2);
+        let second = sessions.insert_test_session(8, 2);
+        let third = sessions.insert_test_session(8, 2);
+        let number = |sessions: &TerminalSessions, id| sessions.get(id).unwrap().number();
+        assert_eq!(number(&sessions, first), Some(1));
+        assert_eq!(number(&sessions, second), Some(2));
+        assert_eq!(number(&sessions, third), Some(3));
+
+        sessions.apply(TerminalOutput::Exited {
+            id: second,
+            code: Some(0),
+        });
+        assert_eq!(number(&sessions, second), None);
+        assert!(sessions.resolve("2").is_err());
+
+        assert!(sessions.close(first));
+        let fourth = sessions.insert_test_session(8, 2);
+        assert_eq!(number(&sessions, fourth), Some(1));
+        assert!(fourth > third, "ids are never reused");
+        let fifth = sessions.insert_test_session(8, 2);
+        assert_eq!(number(&sessions, fifth), Some(2));
+        assert_eq!(sessions.resolve("2"), Ok(fifth));
+        assert!(sessions.get(second).is_some_and(|session| !session.live()));
     }
 
     #[test]
