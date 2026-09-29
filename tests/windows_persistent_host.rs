@@ -385,7 +385,18 @@ fn native_directory_tree_listing_wakes_an_idle_attached_client() {
             Some(HostResponse::Welcome { .. })
         ));
         let initial = buffered_frame(&mut attached, "tree initial frame").await;
-        buffered_invoke(&mut attached, &initial, "toggle-directory-tree").await;
+        // The tree toggle is a keymap action, not a colon command accepted by
+        // Invoke. Exercise the same native input path as an attached frontend.
+        for key in [' ', 'd', 't'] {
+            attached
+                .send(&ClientRequest::Input {
+                    event: InputEvent::Key(KeyStroke::char(key)).into(),
+                    repeated: false,
+                    presented_frame: Some(initial.id),
+                })
+                .await
+                .unwrap();
+        }
         timeout(BUDGET, async {
             loop {
                 match attached.recv().await.unwrap().expect("native host closed") {
