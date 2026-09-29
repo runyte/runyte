@@ -3643,6 +3643,10 @@ bounds with the block cursor on the last included character, matching ordinary
 Select mode; yank, delete, change, and indentation still act on exactly the
 highlighted syntax span.
 
+`o` and `O` preserve the current row's exact leading spaces and tabs, placing
+the new caret after that indentation. They do not continue list markers or
+add a syntax-driven indentation level. This also works with smart newline off.
+
 In Insert mode, Enter preserves the row's exact leading tabs/spaces and adds
 at most one level in `editor.indent` style when the syntax indentation query
 requests it; a grammar that requires a tab still gets a tab. With

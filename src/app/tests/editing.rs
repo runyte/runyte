@@ -2155,3 +2155,59 @@ fn extend_line_commands_cover_partial_reversed_and_empty_ranges() {
     press(&mut app, 'X');
     assert_eq!(app.active().selection.primary(), Range::point(0));
 }
+
+#[test]
+fn open_lines_preserve_exact_indentation_and_undo_the_insert_session() {
+    for (source, prefix) in [
+        ("  αβ", "  "),
+        ("\t  text", "\t  "),
+        (" \t", " \t"),
+        ("", ""),
+    ] {
+        for above in [false, true] {
+            let mut app = App::new(Config::default(), None).unwrap();
+            app.config.editor.smart_newline = false;
+            seed(&mut app, source);
+            press(&mut app, if above { 'O' } else { 'o' });
+            assert_eq!(
+                cursor(&app),
+                Position::new(usize::from(!above), prefix.chars().count())
+            );
+            press(&mut app, 'z');
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            let expected = if above {
+                format!("{prefix}z\n{source}")
+            } else {
+                format!("{source}\n{prefix}z")
+            };
+            assert_eq!(app.active_buffer().text().to_string(), expected);
+            press(&mut app, 'u');
+            assert_eq!(app.active_buffer().text().to_string(), source);
+            press(&mut app, 'U');
+            assert_eq!(app.active_buffer().text().to_string(), expected);
+        }
+    }
+}
+
+#[test]
+fn open_lines_preserve_crlf_and_deduplicate_selected_rows() {
+    for above in [false, true] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, "  αβ\r\n\tγ\r\n");
+        app.active_mut().replace_selection(Selection::new(
+            vec![Range::point(2), Range::point(3), Range::point(7)],
+            0,
+        ));
+        press(&mut app, if above { 'O' } else { 'o' });
+        assert_eq!(app.active().selection.ranges().len(), 2);
+        press(&mut app, 'z');
+        assert_eq!(
+            app.active_buffer().text().to_string(),
+            if above {
+                "  z\r\n  αβ\r\n\tz\r\n\tγ\r\n"
+            } else {
+                "  αβ\r\n  z\r\n\tγ\r\n\tz\r\n"
+            }
+        );
+    }
+}

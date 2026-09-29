@@ -108,7 +108,7 @@ is open. Help's scoped `q` is also globally unbound.
 | --- | --- | --- | --- | --- |
 | `i`, `a` | insert/append | insert before/after | Implemented | Uses the ordered single selection. |
 | `I`, `A` | insert at line start/end | matching insert commands | Implemented | `A` permits insertion after the last character. |
-| `o`, `O` | open below/above | matching open-line commands | Implemented | Enters Insert mode. |
+| `o`, `O` | open below/above | matching open-line commands | Implemented | Preserves the current row's exact leading spaces/tabs and enters Insert mode after them. |
 | `r` + character | `replace` | `replace-char` | Implemented | Replaces each selected character. The argument is consumed literally, so `r Space` inserts a space without opening command hints; a subsequent Space starts the application command tree (`r Space Space`). Runyte remains in Normal mode while it waits and marks the replacement heads red rather than labelling this one-character argument as Insert mode. |
 | `R` | `replace_with_yanked` | `enter-replace-mode` | Deviation | Uses Vim's sustained Replace mode instead of replacing from a register. Every range collapses to its active head; typed characters overwrite forward independently at every caret and append at line end. Backspace restores overwritten characters, Escape returns to Normal, and the complete session is one undo checkpoint. Lowercase `r` remains the one-character command above. |
 | `~` | `switch_case` | `toggle-case` | Implemented | Unicode case mappings are supported. |

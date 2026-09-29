@@ -1665,24 +1665,37 @@ impl App {
         let insertions = points
             .iter()
             .zip(&rows)
-            .map(|(point, row)| (*point, preferred_line_ending(buffer, *row)))
+            .map(|(point, row)| {
+                let indent: String = buffer
+                    .line_string(*row)
+                    .chars()
+                    .take_while(|character| matches!(character, ' ' | '\t'))
+                    .collect();
+                let terminator = preferred_line_ending(buffer, *row);
+                let text = if above {
+                    format!("{indent}{terminator}")
+                } else {
+                    format!("{terminator}{indent}")
+                };
+                let caret = indent.chars().count() + usize::from(!above) * terminator.len();
+                (*point, text, caret)
+            })
             .collect::<Vec<_>>();
-        // Earlier insertions shift every later caret by their complete line
-        // terminator. Opening below lands after its new terminator; opening
-        // above lands before it, on the empty row just created.
+        // Each caret lands after the inherited prefix, with preceding edits
+        // accounted for in character offsets (including both CRLF characters).
         let mut inserted = 0;
         let heads: Vec<Offset> = insertions
             .iter()
-            .map(|(point, terminator)| {
-                let head = point + inserted + usize::from(!above) * terminator.len();
-                inserted += terminator.len();
+            .map(|(point, text, caret)| {
+                let head = point + inserted + caret;
+                inserted += text.chars().count();
                 head
             })
             .collect();
 
         let changes = insertions
             .into_iter()
-            .map(|(point, terminator)| Change::new(point, point, terminator))
+            .map(|(point, text, _)| Change::new(point, point, text))
             .collect();
         if !self.edit(Transaction::new(changes)) {
             return;
