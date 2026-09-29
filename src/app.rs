@@ -2859,6 +2859,7 @@ pub struct App {
     directory_tree_prompt_target: Option<PathBuf>,
     directory_tree_delete: Option<FsPlan>,
     directory_tree_legend: std::cell::RefCell<Option<directory_tree::TreeLegendCache>>,
+    pub(crate) directory_tree_jump_paths: Vec<PathBuf>,
     pub(crate) directory_tree_destination: Option<directory_tree::TreeDestination>,
     /// Static native input feedback; rejected text never enters presentation.
     prompt_input_error: Option<&'static str>,
@@ -3518,6 +3519,7 @@ impl App {
             directory_tree_prompt_target: None,
             directory_tree_delete: None,
             directory_tree_legend: Default::default(),
+            directory_tree_jump_paths: Vec::new(),
             directory_tree_destination: None,
             prompt_input_error: None,
             picker: None,

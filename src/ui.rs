@@ -2026,6 +2026,11 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
             } else {
                 Style::default().fg(theme.foreground).bg(theme.background)
             };
+            let style = if tree.jump_active {
+                style.fg(theme.jump_text_muted)
+            } else {
+                style
+            };
             Line::from(Span::styled(label, style))
         })
         .collect::<Vec<_>>();
@@ -2033,6 +2038,38 @@ fn draw_directory_tree(frame: &mut Frame<'_>, theme: &TuiTheme, tree: &Directory
         Paragraph::new(lines).style(Style::default().bg(theme.background)),
         entries,
     );
+    for (index, row) in tree
+        .rows
+        .iter()
+        .take(usize::from(entries.height))
+        .enumerate()
+    {
+        for (cell, label) in row.jump_label.iter().enumerate() {
+            let Some((key, part)) = label else { continue };
+            let column = row.depth.saturating_mul(2).min(64) + cell;
+            if column >= usize::from(entries.width) {
+                continue;
+            }
+            let color = match part {
+                crate::jump_labels::LabelPart::Immediate => theme.jump_label_immediate,
+                crate::jump_labels::LabelPart::Prefix => theme.jump_label_primary,
+                crate::jump_labels::LabelPart::Suffix => theme.jump_label_secondary,
+            };
+            let mut style = Style::default().fg(color).bg(theme.background);
+            if *part != crate::jump_labels::LabelPart::Suffix {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            frame.render_widget(
+                Span::styled(key.to_string(), style),
+                TuiRect {
+                    x: entries.x + column as u16,
+                    y: entries.y + index as u16,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+    }
 }
 
 fn place_directory_tree_cursor(frame: &mut Frame<'_>, tree: &DirectoryTreeSnapshot) {
@@ -4931,6 +4968,7 @@ mod tests {
         let source = Config::default().resolve_theme("mocha").unwrap();
         let theme = TuiTheme::new(&source);
         let tree = DirectoryTreeSnapshot {
+            jump_active: false,
             area: Rect {
                 x: 0,
                 y: 0,
@@ -4954,6 +4992,60 @@ mod tests {
         assert_eq!(buffer[(1, 10)].symbol(), "T");
         assert!(buffer[(1, 9)].modifier.contains(Modifier::DIM));
         assert_eq!(buffer[(1, 9)].fg, theme.muted);
+    }
+
+    #[test]
+    fn directory_tree_jump_labels_paint_markers_and_dim_names() {
+        use crate::snapshot::DirectoryTreeRowSnapshot;
+        let source = Config::default().resolve_theme("mocha").unwrap();
+        let theme = TuiTheme::new(&source);
+        let mut tree = DirectoryTreeSnapshot {
+            jump_active: true,
+            area: Rect {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 6,
+            },
+            focused: true,
+            title: "[dir tree]".into(),
+            total_rows: 1,
+            selected: Some(0),
+            legend: Vec::new(),
+            rows: vec![DirectoryTreeRowSnapshot {
+                jump_label: [
+                    Some(('a', LabelPart::Prefix)),
+                    Some(('s', LabelPart::Suffix)),
+                ],
+                path: std::path::PathBuf::from("/project/目录"),
+                label: "目录".into(),
+                depth: 1,
+                kind: crate::fs_plan::EntryKind::Directory,
+                expanded: false,
+                loading: false,
+                error: None,
+                selected: true,
+            }],
+        };
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
+        terminal
+            .draw(|frame| draw_directory_tree(frame, &theme, &tree))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(3, 1)].symbol(), "a");
+        assert_eq!(buffer[(3, 1)].fg, theme.jump_label_primary);
+        assert_eq!(buffer[(4, 1)].symbol(), "s");
+        assert_eq!(buffer[(4, 1)].fg, theme.jump_label_secondary);
+        assert_eq!(buffer[(5, 1)].symbol(), "目");
+        assert_eq!(buffer[(5, 1)].fg, theme.jump_text_muted);
+        tree.rows[0].jump_label = [Some(('s', LabelPart::Immediate)), None];
+        terminal
+            .draw(|frame| draw_directory_tree(frame, &theme, &tree))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(3, 1)].symbol(), "s");
+        assert_eq!(buffer[(3, 1)].fg, theme.jump_label_immediate);
+        assert_eq!(buffer[(4, 1)].symbol(), " ");
     }
 
     #[test]

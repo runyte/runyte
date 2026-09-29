@@ -1366,6 +1366,7 @@ The following keys work directly while the tree has focus:
 | --- | --- |
 | `.` | Show or hide dotfiles in the tree. |
 | `/` | Search visible entry names with a regular expression. |
+| `gw` | Label onscreen entries; type a label to select its entry without opening it. |
 | `Ctrl-n` / `Ctrl-p` | Select the next/previous tree search match, wrapping. |
 | `n` | Create a file; end its relative path with `/` to create a directory. |
 | `d` | Delete the selected entry after `Delete <path>? [y/N]` in the interaction line. |
@@ -1376,6 +1377,10 @@ The following keys work directly while the tree has focus:
 | Enter | Open the selected file in an existing pane. |
 | `1`–`9` | Open the selected file directly in that numbered pane. |
 | Tab | Toggle the dimmed key legend below the horizontal rule. |
+
+Jump labels replace the markers before entry names, with nearby entries using
+one key and farther entries using two. Only rows visible above the legend receive
+labels. Escape or an unmatched key cancels the jump and keeps tree focus.
 
 The legend is visible by default and wraps to fit the tree width. Its labels
 are `n: new`, `d: delete`, `m: move`, `r: rename`, `v: open in v-split`,

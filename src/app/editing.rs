@@ -887,10 +887,25 @@ impl App {
         match labels.press(typed) {
             Press::Narrowed => {
                 self.jump = Some(labels);
-                self.status("jump to word: second label key");
+                self.status(if self.directory_tree.focused {
+                    "jump to tree entry: second label key"
+                } else {
+                    "jump to word: second label key"
+                });
             }
             Press::Jumped(offset) => {
-                if let Some(id) = self.active_terminal() {
+                if self.directory_tree.focused {
+                    if let Some(path) = self.directory_tree_jump_paths.get(offset / 2)
+                        && self
+                            .directory_tree
+                            .rows()
+                            .iter()
+                            .any(|row| row.path == *path)
+                    {
+                        self.directory_tree.selected = path.clone();
+                    }
+                    self.directory_tree_jump_paths.clear();
+                } else if let Some(id) = self.active_terminal() {
                     let (_, rows) = self.pane_cells(self.active_pane);
                     let scroll_offset = self.config.editor.scroll_offset;
                     if let Some(session) = self.terminals.get_mut(id) {

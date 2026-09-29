@@ -177,6 +177,7 @@ pub struct EditorSnapshot {
 /// A bounded viewport of the sidebar, with real paths kept apart from labels.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryTreeSnapshot {
+    pub jump_active: bool,
     pub area: Rect,
     pub focused: bool,
     pub title: String,
@@ -192,6 +193,7 @@ pub const MAX_DIRECTORY_TREE_ROW_TEXT_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryTreeRowSnapshot {
+    pub jump_label: [Option<(char, LabelPart)>; 2],
     pub path: PathBuf,
     pub label: String,
     pub depth: usize,
@@ -882,6 +884,7 @@ impl App {
                     .position(|row| row.path == self.directory_tree.selected);
                 let start = self.directory_tree.scroll.min(rows.len());
                 DirectoryTreeSnapshot {
+                    jump_active: self.directory_tree.focused && self.jump.is_some(),
                     legend: self.tree_legend(area),
                     area,
                     focused: self.directory_tree.focused,
@@ -895,7 +898,20 @@ impl App {
                         .map(|row| {
                             let label = row.path.file_name().unwrap_or_default().to_string_lossy();
                             let label = escape_tree_controls(&label);
+                            let jump_label = if self.directory_tree.focused && self.jump.is_some() {
+                                let jump_offset = self
+                                    .directory_tree_jump_paths
+                                    .iter()
+                                    .position(|path| *path == row.path)
+                                    .map(|index| index * 2);
+                                std::array::from_fn(|cell| {
+                                    self.jump.as_ref()?.label_at(jump_offset? + cell)
+                                })
+                            } else {
+                                [None; 2]
+                            };
                             DirectoryTreeRowSnapshot {
+                                jump_label,
                                 selected: row.path == self.directory_tree.selected,
                                 path: row.path,
                                 label,
@@ -1039,7 +1055,9 @@ impl App {
         if let Some(id) = prepared.terminal
             && let Some(session) = self.terminals.get(id)
         {
-            let jump_active = prepared.pane_id == self.active_pane && self.jump.is_some();
+            let jump_active = prepared.pane_id == self.active_pane
+                && !self.directory_tree.focused
+                && self.jump.is_some();
             return PaneSnapshot {
                 pane_id: prepared.pane_id,
                 area: prepared.area,
@@ -1100,7 +1118,9 @@ impl App {
                     )
                 })
         });
-        let jump_active = prepared.pane_id == self.active_pane && self.jump.is_some();
+        let jump_active = prepared.pane_id == self.active_pane
+            && !self.directory_tree.focused
+            && self.jump.is_some();
         let mut snapshot = PaneSnapshot {
             pane_id: prepared.pane_id,
             area: prepared.area,

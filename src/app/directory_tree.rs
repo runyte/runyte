@@ -74,6 +74,7 @@ impl App {
             }
             Command::DirectoryTreeClose => self.leave_directory_tree(),
             Command::CloseWindow if self.directory_tree.focused => self.hide_directory_tree(),
+            Command::GotoWord if self.directory_tree.focused => self.label_tree_entries(),
             Command::DirectoryTreeUp => self.directory_tree.select_relative(-1),
             Command::DirectoryTreeDown => self.directory_tree.select_relative(1),
             Command::DirectoryTreeLeft => self.directory_tree.collapse_or_parent(),
@@ -244,6 +245,45 @@ impl App {
             _ => return Ok(false),
         }
         Ok(true)
+    }
+
+    fn label_tree_entries(&mut self) {
+        self.directory_tree_jump_paths.clear();
+        let Some((area, _)) = self.directory_tree_geometry else {
+            self.action_failed("no tree entries on screen to jump to");
+            return;
+        };
+        let rows = self.directory_tree.rows();
+        let selected = rows
+            .iter()
+            .position(|row| row.path == self.directory_tree.selected)
+            .unwrap_or(0);
+        let mut candidates = Vec::new();
+        for (index, row) in rows
+            .iter()
+            .enumerate()
+            .skip(self.directory_tree.scroll)
+            .take(self.tree_body_height(area))
+        {
+            let indent = row.depth.saturating_mul(2).min(64);
+            // Labels occupy the two marker cells before the name. Requiring
+            // a visible name also excludes entries clipped by deep nesting.
+            if indent + 2 >= usize::from(area.width.saturating_sub(2)) {
+                continue;
+            }
+            let offset = self.directory_tree_jump_paths.len() * 2;
+            self.directory_tree_jump_paths.push(row.path.clone());
+            candidates.push((index.abs_diff(selected), index, offset));
+        }
+        candidates.sort_unstable();
+        self.jump = crate::jump_labels::JumpLabels::new(
+            candidates.into_iter().map(|(_, _, offset)| offset),
+        );
+        if let Some(labels) = &self.jump {
+            self.status(format!("jump to tree entry: {} labels", labels.len()));
+        } else {
+            self.action_failed("no tree entries on screen to jump to");
+        }
     }
 
     pub(super) fn report_tree_search(&mut self, result: Result<bool>) {
@@ -513,6 +553,8 @@ impl App {
 
     pub(super) fn leave_directory_tree(&mut self) {
         if self.directory_tree.focused {
+            self.jump = None;
+            self.directory_tree_jump_paths.clear();
             self.directory_tree.focused = false;
             if self.mode != Mode::Command {
                 self.mode = self.directory_tree_previous_mode;

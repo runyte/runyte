@@ -591,6 +591,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DirectoryTreeSnapshot {
+    pub jump_active: bool,
     pub area: Rect,
     pub focused: bool,
     pub title: String,
@@ -602,6 +603,7 @@ pub struct DirectoryTreeSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DirectoryTreeRowSnapshot {
+    pub jump_label: [Option<(char, LabelPart)>; 2],
     #[serde(deserialize_with = "super::deserialize_path")]
     pub path: Vec<u8>,
     pub label: String,
@@ -616,6 +618,7 @@ pub struct DirectoryTreeRowSnapshot {
 impl From<core::DirectoryTreeSnapshot> for DirectoryTreeSnapshot {
     fn from(value: core::DirectoryTreeSnapshot) -> Self {
         Self {
+            jump_active: value.jump_active,
             area: value.area.into(),
             focused: value.focused,
             title: value.title,
@@ -626,6 +629,9 @@ impl From<core::DirectoryTreeSnapshot> for DirectoryTreeSnapshot {
                 .rows
                 .into_iter()
                 .map(|row| DirectoryTreeRowSnapshot {
+                    jump_label: row
+                        .jump_label
+                        .map(|label| label.map(|(key, part)| (key, part.into()))),
                     path: encode_path(&row.path),
                     label: row.label,
                     depth: row.depth,
@@ -659,7 +665,12 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
             .into_iter()
             .map(|row| {
                 super::validate_path_bytes(&row.path)?;
-                if row.label.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES
+                if row
+                    .jump_label
+                    .iter()
+                    .flatten()
+                    .any(|(key, _)| !key.is_ascii_lowercase())
+                    || row.label.len() > core::MAX_DIRECTORY_TREE_ROW_TEXT_BYTES
                     || row.depth > 128
                     || row
                         .error
@@ -669,6 +680,9 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
                     return Err("directory tree row exceeds protocol limits".into());
                 }
                 Ok(core::DirectoryTreeRowSnapshot {
+                    jump_label: row
+                        .jump_label
+                        .map(|label| label.map(|(key, part)| (key, part.into()))),
                     path: decode_path(row.path).map_err(|error| error.to_string())?,
                     label: row.label,
                     depth: row.depth,
@@ -687,6 +701,7 @@ impl TryFrom<DirectoryTreeSnapshot> for core::DirectoryTreeSnapshot {
             total_rows: value.total_rows,
             legend: value.legend,
             selected: value.selected,
+            jump_active: value.jump_active,
             rows,
         })
     }
@@ -1251,6 +1266,7 @@ mod tests {
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         next = base.clone();
         next.editor.directory_tree = Some(DirectoryTreeSnapshot {
+            jump_active: false,
             area: crate::layout::Rect::default().into(),
             title: "Files".into(),
             rows: Vec::new(),
@@ -1269,6 +1285,7 @@ mod tests {
     #[test]
     fn tall_directory_tree_frames_round_trip_within_the_shared_row_bound() {
         let core = crate::snapshot::DirectoryTreeSnapshot {
+            jump_active: false,
             area: crate::layout::Rect {
                 x: 0,
                 y: 0,
@@ -1282,6 +1299,7 @@ mod tests {
             selected: Some(270),
             rows: (0..271)
                 .map(|index| crate::snapshot::DirectoryTreeRowSnapshot {
+                    jump_label: [None; 2],
                     path: std::path::PathBuf::from(format!("/project/file-{index}")),
                     label: format!("file-{index}"),
                     depth: 1,

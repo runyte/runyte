@@ -1120,3 +1120,147 @@ fn tree_close_preserves_the_backing_terminal_and_unfocused_close_targets_the_pan
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn goto_word_selects_tree_paths_without_touching_the_covered_buffer() {
+    let (mut app, root) = isolated("tree-jump");
+    for name in ["alpha", "beta", "目录"] {
+        fs::write(root.join(name), "unchanged").unwrap();
+    }
+    app.open_file(root.join("alpha")).unwrap();
+    let selection = app.active().selection.clone();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 20));
+    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+    let snapshot = app.snapshot(&view);
+    let tree = snapshot.directory_tree.as_ref().unwrap();
+    assert!(tree.jump_active);
+    assert!(snapshot.panes.iter().all(|pane| !pane.jump_active));
+    let label = tree
+        .rows
+        .iter()
+        .find(|row| row.path == root.join("目录"))
+        .unwrap()
+        .jump_label[0]
+        .unwrap()
+        .0;
+    let wire: crate::protocol::EditorSnapshot = snapshot.clone().into();
+    assert_eq!(
+        crate::snapshot::EditorSnapshot::try_from(wire).unwrap(),
+        snapshot
+    );
+    key(&mut app, KeyCode::Char(label), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("目录"));
+    assert!(app.directory_tree.focused);
+    assert!(app.jump.is_none());
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&root.join("alpha")));
+    assert_eq!(app.active().selection, selection);
+    assert!(!app.active_buffer().dirty);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_jump_narrows_two_keys_and_cancels_without_running_tree_actions() {
+    let (mut app, root) = isolated("tree-jump-many");
+    for index in 0..60 {
+        fs::write(root.join(format!("file-{index:02}")), "").unwrap();
+    }
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 50));
+    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.jump.as_ref().unwrap().len(), tree.rows.len());
+    assert!(tree.rows.len() < 61);
+    let target = tree
+        .rows
+        .iter()
+        .find(|row| row.jump_label[1].is_some())
+        .unwrap();
+    let path = target.path.clone();
+    let first = target.jump_label[0].unwrap().0;
+    let second = target.jump_label[1].unwrap().0;
+    key(&mut app, KeyCode::Char(first), Modifiers::NONE);
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    let target = tree.rows.iter().find(|row| row.path == path).unwrap();
+    assert_eq!(
+        target.jump_label,
+        [
+            Some((second, crate::jump_labels::LabelPart::Immediate)),
+            None
+        ]
+    );
+    key(&mut app, KeyCode::Char(second), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, path);
+    for cancel in [KeyCode::Escape, KeyCode::Char('!'), KeyCode::Enter] {
+        key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+        key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+        key(&mut app, cancel, Modifiers::NONE);
+        assert!(app.jump.is_none());
+        assert!(app.directory_tree.focused);
+        assert_eq!(app.directory_tree.selected, path);
+        assert!(app.directory_tree_destination.is_none());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_jump_tracks_paths_when_a_listing_inserts_rows() {
+    let (mut app, root) = isolated("tree-jump-refresh");
+    fs::write(root.join("beta"), "").unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let view = app.prepare_view(geometry(90, 20));
+    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    let label = tree
+        .rows
+        .iter()
+        .find(|row| row.path == root.join("beta"))
+        .unwrap()
+        .jump_label[0]
+        .unwrap()
+        .0;
+    fs::write(root.join("alpha"), "").unwrap();
+    app.directory_tree.refresh(root.clone());
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char(label), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("beta"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_jump_uses_scrolled_viewport_and_ignores_removed_targets() {
+    let (mut app, root) = isolated("tree-jump-scroll");
+    for index in 0..30 {
+        fs::write(root.join(format!("file-{index:02}")), "").unwrap();
+    }
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+    assert!(app.jump.is_none()); // No rendered geometry yet.
+    app.directory_tree.select_last();
+    let view = app.prepare_view(geometry(90, 15));
+    assert!(app.directory_tree.scroll > 0);
+    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('w'), Modifiers::NONE);
+    let tree = app.snapshot(&view).directory_tree.unwrap();
+    assert_eq!(app.jump.as_ref().unwrap().len(), tree.rows.len());
+    assert!(tree.rows.iter().all(|row| row.jump_label[0].is_some()));
+    assert!(!app.directory_tree_jump_paths.contains(&root));
+    let target = &tree.rows[0];
+    let label = target.jump_label[0].unwrap().0;
+    let selected = app.directory_tree.selected.clone();
+    fs::remove_file(&target.path).unwrap();
+    app.directory_tree.refresh(root.clone());
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Char(label), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, selected);
+    assert!(app.jump.is_none());
+    fs::remove_dir_all(root).unwrap();
+}

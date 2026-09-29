@@ -27,6 +27,8 @@ them, regardless of which extensibility direction is chosen.
   destination panes exist. Tree search uses `tree search (regex):` on the
   interaction line and selects matching visible entry names. Closing the focused
   tree with `:q`, `:wc`, or `:close` hides the sidebar and restores pane focus.
+  `gw` dims tree rows and replaces visible entry markers with jump labels;
+  completing a label selects its path without opening it.
 - **Pane border** — the frame delimiting a pane.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,

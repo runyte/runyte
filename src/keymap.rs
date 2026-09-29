@@ -2279,6 +2279,7 @@ fn built_in_bindings() -> Vec<Binding> {
             Command::DirectoryTreeFirst,
         ),
         directory_tree([Key::char('g'), Key::char('e')], Command::DirectoryTreeLast),
+        directory_tree([Key::char('g'), Key::char('w')], Command::GotoWord),
         directory_tree(Key::char('G'), Command::DirectoryTreeLast),
         directory_tree(Key::ctrl('b'), Command::DirectoryTreePageUp),
         directory_tree(Key::ctrl('f'), Command::DirectoryTreePageDown),

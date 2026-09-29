@@ -871,6 +871,9 @@ impl App {
             && event.row >= area.y
             && event.row < area.y.saturating_add(area.height)
         {
+            if self.jump.take().is_some() {
+                self.status("jump cancelled");
+            }
             match event.kind {
                 PointerEventKind::Down(PointerButton::Left) => {
                     if event.column == area.x.saturating_add(area.width).saturating_sub(1) {
