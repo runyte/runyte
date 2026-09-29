@@ -833,7 +833,7 @@ editor_commands! {
         "Run a terminal at another terminal's last safe directory"
     ),
     OpenTerminalList => ("open-terminal-list", "Show the running terminals"),
-    ShowTerminal => ("show-terminal", "Show a terminal by stable ID or name"),
+    ShowTerminal => ("show-terminal", "Show a terminal by number or name"),
     RenameTerminal => ("rename-terminal", "Name the active terminal session"),
     LeaveTerminal => ("leave-terminal", "Show this pane's buffer again"),
     CopyTerminalOutput => (
@@ -1811,7 +1811,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Editor::OpenTerminalSessionDirectory,
         "terminal-session-directory",
         [],
-        "terminal-session-directory <id|name>",
+        "terminal-session-directory <number|name>",
         Required(FreeText)
     ),
     editor_spec!(
@@ -1825,7 +1825,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Editor::ShowTerminal,
         "terminal-show",
         [],
-        "terminal-show <id|name>",
+        "terminal-show <number|name>",
         Required(FreeText)
     ),
     editor_spec!(
@@ -1846,7 +1846,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         Editor::SendToTerminal,
         "terminal-send",
         [],
-        "terminal-send [id|name]",
+        "terminal-send [number|name]",
         Optional(FreeText)
     ),
     editor_spec!(

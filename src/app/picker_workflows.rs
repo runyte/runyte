@@ -1906,7 +1906,11 @@ fn terminal_finder_item(
     project_root: &std::path::Path,
     home_directory: Option<&std::path::Path>,
 ) -> ResourceItem {
-    let mut detail = format!("#{} · {}", session.id(), session.directory().display());
+    let mut detail = match session.number() {
+        Some(number) => format!("#{number} · "),
+        None => String::new(),
+    };
+    detail.push_str(&session.directory().display().to_string());
     if shown {
         detail.push_str(" · shown");
     }
@@ -1920,11 +1924,11 @@ fn terminal_finder_item(
         "terminal".to_owned(),
         "terminals".to_owned(),
         "term".to_owned(),
-        session.id().to_string(),
         session.name(),
         session.display_name(),
         session.launch_label().to_owned(),
     ];
+    fields.extend(session.number().map(|number| number.to_string()));
     if let Some(name) = session.user_name() {
         fields.push(name.to_owned());
     }

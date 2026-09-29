@@ -1292,9 +1292,11 @@ impl App {
                 title: "Force kill terminal",
                 accept: "force kill",
                 message: format!(
-                    "Force kill {} (#{}) and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\nEnter confirms.\nEscape cancels.",
+                    "Force kill {}{} and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\nEnter confirms.\nEscape cancels.",
                     session.display_name(),
-                    menu.id
+                    session
+                        .number()
+                        .map_or_else(String::new, |number| format!(" (#{number})"))
                 ),
                 input: None,
             });

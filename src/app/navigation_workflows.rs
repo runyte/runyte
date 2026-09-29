@@ -288,23 +288,23 @@ impl App {
             flags.push(("bell", RowTint::Bell));
         }
         let directory = self.destination_path(terminal.directory());
-        // The ID is how a command names a terminal, so the filter still
+        // The number is how a command names a terminal, so the filter still
         // answers to it after the row stopped showing it.
         let mut fields = vec![
             terminal.name(),
             terminal.launch_label().to_owned(),
             terminal.directory().display().to_string(),
             directory.clone(),
-            terminal.id().to_string(),
-            format!("#{}", terminal.id()),
         ];
+        if let Some(number) = terminal.number() {
+            fields.extend([number.to_string(), format!("#{number}")]);
+        }
         fields.extend(terminal.child_title().map(str::to_owned));
-        let mut preview = format!(
-            "#{} · {} · {}\n\n",
-            terminal.id(),
-            terminal.launch_label(),
-            directory
-        );
+        let mut preview = match terminal.number() {
+            Some(number) => format!("#{number} · "),
+            None => String::new(),
+        };
+        preview.push_str(&format!("{} · {}\n\n", terminal.launch_label(), directory));
         preview.push_str(&super::terminal_preview(terminal));
         let destination = OpenDestination::Terminal(terminal.id());
         DestinationRow {

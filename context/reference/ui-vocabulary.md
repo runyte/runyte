@@ -556,8 +556,11 @@ cell coloured by kind from the `destination_*` theme keys, a NAME that is
 shortened in the middle when too long, and a pinned STATE run holding `[+]`,
 `[STALE]`, `[RO]`, `exited`, `unread` and `bell`; they carry a key legend and
 open with the preview shown. Rendered Markdown pages use `[rendered]` as TYPE
-and put the source name in NAME. A terminal's ID appears in its pane title as
-`[terminal #<id>]`.
+and put the source name in NAME. A running terminal's number appears in its
+pane title as `[terminal #<number>]`; an exited terminal holds no number and
+its title reads `[terminal] <name>`. The number is the lowest one no running
+terminal holds, so it is a label for what runs now, while panes, handoffs,
+plugins and approvals keep the terminal's never-reused `TerminalId`.
 
 Terminal previews in the Navigator, terminal list and name-mode Finder read
 the selected terminal's current styled screen at frame time, independently of

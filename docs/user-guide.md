@@ -873,13 +873,13 @@ name; a name too long for its row is shortened in the middle so its file name
 stays. STATE collects every flag that applies — `[+]`, `[STALE]` and `[RO]` for buffers,
 `exited`, `unread` and `bell` for terminals — so an edit that conflicts with a
 change on disk reads `[+] [STALE]`. A terminal's preview shows its live screen,
-and its ID appears in its pane title (`[terminal #3] …`).
+and a running terminal's number appears in its pane title (`[terminal #3] …`).
 
 The Navigator and buffer list include scratch and retained special buffers
 once per identity. Lists open in recent activation order; the terminal list
 keeps running terminals ahead of exited ones, which are dimmed.
 That order stays fixed while filtering. Names, paths, terminal titles, launch
-commands and terminal IDs (`3` or `#3`) match fuzzily; matched characters are
+commands and running terminals' numbers (`3` or `#3`) match fuzzily; matched characters are
 emphasized. The title names Enter (visit), Tab (resource actions) and Escape,
 and a dimmed key legend at the bottom names the rest: Ctrl-n/Ctrl-p to move,
 Ctrl-d/Ctrl-u to page, Home/End, Ctrl-t to toggle the bounded preview of buffer
@@ -1079,7 +1079,7 @@ Bare `:terminal` keeps using the editor working directory. The explicit
 variants are `:terminal-file-directory [command]`,
 `:terminal-directory-root [command]`, and
 `:terminal-selected-directory [command]`. `:terminal-session-directory
-<id|name>` starts a shell at another terminal's last safe directory. Shells
+<number|name>` starts a shell at another terminal's last safe directory. Shells
 may update that value with a bounded local OSC 7 `file:` URL; remote hosts,
 control characters, non-file schemes, and paths that are not existing absolute
 directories are rejected.
@@ -1158,7 +1158,7 @@ it. `Ctrl-o` or `Alt-o` returns to the terminal, and the corresponding
 
 Composing goes the other way. Write the text in an ordinary buffer with every
 editing command available — multiple cursors above all — and `Space t s`
-(`:terminal-send [id|name]`) sends the selection to a terminal as one bracketed paste,
+(`:terminal-send [number|name]`) sends the selection to a terminal as one bracketed paste,
 or the whole buffer when nothing is selected. This is the only way modal
 editing can reach a program that owns its own input area, and it is what makes
 long prompts for a coding agent worth writing in the editor.
@@ -1167,18 +1167,18 @@ A session outlives the pane showing it. `Space t q` shows the pane's buffer
 again and leaves the program running; so does opening a file in that pane or
 closing the split. `Space t t` (`:terminals`) lists running and exited
 sessions in the Navigator's columns, with `exited`, `unread` and `bell` in
-STATE and the program, ID and directory in the preview. Running sessions come
+STATE and the program, number and directory in the preview. Running sessions come
 first and the exited ones follow, dimmed, each group most recently activated
 first. Enter visits a session: a pane already showing it takes focus, and
 otherwise it is shown here. Visiting an exited session opens its retained
 output in Normal/review mode. **Bring into active pane** in its Tab menu moves
 a session shown elsewhere to this pane instead, and the old pane reveals its
 underlying buffer—one PTY is never resized by two visible panes. `Space t r` (`:terminal-rename <name>`) names the active
-session, `:terminal-show <id|name>` targets one deterministically,
+session, `:terminal-show <number|name>` targets one deterministically,
 and child termination stays explicit: type `exit` in the child, or choose Close
 from the terminal manager's Tab menu. An exited session remains listed and
 searchable until Close removes it and its retained output. Duplicate names are
-refused as ambiguous and numeric IDs never depend on picker order. Tab in the
+refused as ambiguous and numbers never depend on picker order. Tab in the
 manager offers Show, Rename, Close, Force kill, and Create; closing a hidden live process
 requires a second Enter. For a hung program, choose **Force kill**. It always
 opens a confirmation naming the terminal, even when it is visible: Enter
@@ -1190,8 +1190,16 @@ Rename asks for the new name and returns to the list, leaving every pane
 showing what it showed before. Neither `:close[!]` nor any `:quit…` command terminates
 a terminal.
 
-A terminal pane's title reads `[terminal #<id>] <name>`: the ID is the one
-`:terminal-send` and `:terminal-show` accept, and is also available in the list preview. Action menu titles use the `[terminal] <name>` prefix. The active
+A terminal pane's title reads `[terminal #<number>] <name>`: the number is the
+one `:terminal-send`, `:terminal-show` and `:terminal-session-directory`
+accept, and is also available in the list preview. Numbers belong to running
+terminals only. A new terminal takes the lowest number no running terminal
+holds, and a terminal gives its number up when its program exits or it is
+closed, so numbers stay small and come back. An exited terminal has none: its
+title reads `[terminal] <name>`, and it is reached from `:terminals` or the
+Finder by name. Because a number can pass to a new terminal once the old one
+exits, it identifies what is running now; do not record one in a macro or
+script expecting it to mean the same terminal later. Action menu titles use the `[terminal] <name>` prefix. The active
 pane adds `[insert]` while keys go to the child; NORMAL is
 unmarked, because the mode line already says it and the title's job here is to
 answer whether typing reaches the child. The name itself is user-assigned when
@@ -2814,7 +2822,7 @@ Enter-to-open surface.
 
 Name mode matches each space-separated query term against any indexed field.
 Files contribute their path spellings, buffers their structural name and path,
-and terminals their assigned name, child title, launch program, stable ID,
+and terminals their assigned name, child title, launch program, number,
 current reported directory, and initial directory. Paths are searchable as
 absolute, project-relative, `~/`-relative, or basename-only spellings. `file`,
 `terminal`, `term`, and `buffer` are soft type hints: they move that kind first
@@ -2963,7 +2971,7 @@ clipped, and a shorter preview keeps the child's visible cursor row in view.
 | `Space t r` | Rename this pane's terminal (`:terminal-rename <name>`) |
 | `Space t q` | Show this pane's buffer again, leaving the program running |
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
-| `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [id\|name]`) |
+| `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [number\|name]`) |
 | `Tab`, then Close in `Space t t` | Explicitly end and forget the selected terminal |
 | `Tab`, then Force kill in `Space t t` | Kill the selected terminal's process group and discard its output after confirmation; Enter confirms, Escape cancels |
 | `Ctrl-w h/j/k/l` or `Ctrl-w Ctrl-h/j/k/l` in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
@@ -3923,13 +3931,15 @@ inserts a newline.
                         run from the active explorer root
 :terminal-selected-directory [command]
                         run from the selected directory entry
-:terminal-session-directory <id|name>
+:terminal-session-directory <number|name>
                         run a shell from another terminal's safe directory
 :terminals              list the running terminals and show one here
-:terminal-show <id|name> show a terminal in this pane
+:terminal-show <number|name>
+                        show a terminal in this pane
 :terminal-rename <name> name this pane's terminal
 :terminal-output        copy this terminal's output into a read-only buffer
-:terminal-send [id|name] send the selection, or the whole buffer, to a terminal
+:terminal-send [number|name]
+                        send the selection, or the whole buffer, to a terminal
 :theme [name]           choose a theme in the settings menu, or switch
                         straight to the named one
 :vsplit [path]          create a side-by-side split

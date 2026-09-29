@@ -1524,9 +1524,10 @@ fn the_pane_is_named_by_the_title_the_child_sets() {
             .is_some_and(|session| session.name() == "agent")
     }));
     let id = session.app.active_terminal().unwrap();
+    let number = session.app.terminals.get(id).unwrap().number().unwrap();
     let insert = session.screen(60, 12);
     assert!(
-        insert.contains(&format!("[terminal #{id}] agent [insert]")),
+        insert.contains(&format!("[terminal #{number}] agent [insert]")),
         "{insert}"
     );
 
@@ -1536,7 +1537,7 @@ fn the_pane_is_named_by_the_title_the_child_sets() {
     session.leave_input();
     let normal = session.screen(60, 12);
     assert!(
-        normal.contains(&format!("[terminal #{id}] agent")),
+        normal.contains(&format!("[terminal #{number}] agent")),
         "{normal}"
     );
     assert!(!normal.contains("[insert]"), "{normal}");
@@ -1838,7 +1839,10 @@ fn force_kill_requires_confirmation_for_visible_and_hidden_stubborn_terminals() 
         assert_eq!(confirmation.title, "Force kill terminal");
         let message = confirmation.message.unwrap();
         assert!(
-            message.contains(&format!("[terminal] stuck (#{id})")),
+            message.contains(&format!(
+                "[terminal] stuck (#{})",
+                session.app.terminals.get(id).unwrap().number().unwrap()
+            )),
             "{message}"
         );
         assert!(message.contains("discard its retained output"));

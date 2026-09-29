@@ -307,7 +307,7 @@ impl App {
         let name = self
             .terminals
             .get(id)
-            .map_or_else(|| id.to_string(), TerminalSession::name);
+            .map_or_else(|| "terminal".to_owned(), TerminalSession::name);
         self.status(format!(
             "{name} is still running · {} lists it",
             self.binding_label(EditorCommand::OpenTerminalList)
@@ -383,8 +383,12 @@ impl App {
             self.action_failed("that terminal is gone");
             return;
         };
+        let number = session.number();
         match session.rename(Some(name.to_owned())) {
-            Ok(()) => self.status(format!("terminal {id} named {name}")),
+            Ok(()) => self.status(match number {
+                Some(number) => format!("terminal {number} named {name}"),
+                None => format!("terminal named {name}"),
+            }),
             Err(error) => self.action_failed(error),
         }
     }
@@ -419,7 +423,7 @@ impl App {
         let name = self
             .terminals
             .get(id)
-            .map_or_else(|| id.to_string(), TerminalSession::name);
+            .map_or_else(|| "terminal".to_owned(), TerminalSession::name);
         self.terminals.close(id);
         for pane in self.panes.values_mut() {
             if pane.terminal == Some(id) {
