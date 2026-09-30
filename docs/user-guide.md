@@ -814,7 +814,7 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 | `o` / `O` | Open line below / above |
 | `r` / `R` / `~` | Replace once / enter Replace mode / toggle case |
 | `v` | Enter Select mode |
-| `x` / `X` | Select whole lines and walk down / extend whole lines above |
+| `x` / `X` | Grow whole lines below / above, never shrinking |
 | `%` | Select the entire buffer |
 | `C` / `Alt-C` | Add a cursor on the nearest line below / above holding a character at the cursor's column, skipping the ones too short |
 | `V` / `Alt-V` | Add a cursor on the next / previous line, padding short or empty lines with spaces to the same display column |
@@ -856,9 +856,9 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 
 | Key | Command | Effect |
 | --- | --- | --- |
-| `x` | `select-line` | Select the current line, then walk down |
+| `x` | `select-line` | Snap to whole lines, then grow downward without dropping lines already selected |
 | `X` | `extend-line-above` | Expand a partial selection to whole lines, then grow upward without dropping lines already selected |
-| — | `extend-line-below` | Grow the lower edge |
+| — | `extend-line-below` | Same behavior as `select-line`, for custom bindings |
 | — | `select-line-up` | The former upward edge-walking behavior, for custom bindings |
 
 For example, `x x X` adds the line above the two selected lines. All four
@@ -2695,7 +2695,7 @@ it.
 | `i` / `a` in a terminal | Type again, returning to the live screen first |
 | `h` / `j` / `k` / `l`, word, line, paragraph, and character-find motions | Move the terminal review caret; after `v`, extend an inclusive character selection in either direction |
 | `%` in terminal review | Select all retained review text |
-| `x` / `X` in terminal review | Select the current line, then extend the moving edge down / up on repeated presses |
+| `x` / `X` in terminal review | Select the current line, then grow the lower / upper edge on repeated presses without ever shrinking |
 | `C` / `Alt-C` in terminal review | Add carets below / above at the same occupied terminal-cell column, skipping short rows |
 | `Ctrl-u` / `Ctrl-d`, `Ctrl-b` / `Ctrl-f` | Move the review caret by half / full pages, keeping it visible |
 | `gg` / `ge` in a terminal | Move to the oldest / newest rows in the captured review snapshot |

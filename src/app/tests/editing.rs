@@ -243,26 +243,131 @@ fn selected_rows(app: &App) -> (usize, usize) {
 }
 
 #[test]
-fn line_selection_walks_one_edge_in_both_directions() {
+fn x_and_x_upper_only_ever_grow_the_selection_in_their_own_direction() {
     let mut app = App::new(Config::default(), None).unwrap();
-    seed(&mut app, "alpha\nbravo\ncharlie\ndelta");
-    set_cursor(&mut app, 1, 3);
+    seed(&mut app, "alpha\nbravo\ncharlie\ndelta\necho");
+    set_cursor(&mut app, 2, 3);
 
     press(&mut app, 'x');
-    assert_eq!(selected_rows(&app), (1, 1));
+    assert_eq!(selected_rows(&app), (2, 2));
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (1, 2));
+    // `x` after `X` adds below rather than trimming the row `X` added.
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (1, 3));
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (0, 3));
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (0, 4));
+    // At the buffer edges nothing shrinks either.
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (0, 4));
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (0, 4));
+}
+
+#[test]
+fn starting_with_x_upper_then_x_extends_down_instead_of_dropping_the_top() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "alpha\nbravo\ncharlie\ndelta\necho");
+    set_cursor(&mut app, 2, 3);
+
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (2, 2));
+    press(&mut app, 'X');
+    assert_eq!(selected_rows(&app), (1, 2));
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (1, 3));
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (1, 4));
+}
+
+#[test]
+fn x_and_x_upper_grow_every_selection_and_selection_undo_redo_steps_through_them() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "a\nb\nc\nd\ne\nf\ng");
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::point(2), Range::point(10)], 0));
+    press(&mut app, 'x');
+    press(&mut app, 'X');
+    press(&mut app, 'x');
+    let rows = |app: &App| -> Vec<(usize, usize)> {
+        let buffer = app.active_buffer();
+        app.active()
+            .selection
+            .ranges()
+            .iter()
+            .map(|r| (buffer.offset_to_row(r.from()), buffer.offset_to_row(r.to())))
+            .collect()
+    };
+    assert_eq!(rows(&app), vec![(0, 2), (4, 6)]);
+
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(rows(&app), vec![(0, 1), (4, 5)]);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(rows(&app), vec![(1, 1), (5, 5)]);
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    assert_eq!(rows(&app), vec![(0, 1), (4, 5)]);
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    assert_eq!(rows(&app), vec![(0, 2), (4, 6)]);
+}
+
+#[test]
+fn counted_x_and_x_upper_grow_by_that_many_rows_without_shrinking() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "a\nb\nc\nd\ne\nf\ng");
+    set_cursor(&mut app, 3, 0);
+    type_keys(&mut app, "x");
+    type_keys(&mut app, "2X");
+    assert_eq!(selected_rows(&app), (1, 3));
+    type_keys(&mut app, "2x");
+    assert_eq!(selected_rows(&app), (1, 5));
+}
+
+#[test]
+fn x_after_x_upper_handles_crlf_and_the_last_row() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "one\r\ntwo\r\nthree");
+    set_cursor(&mut app, 1, 1);
+    press(&mut app, 'X');
+    press(&mut app, 'X');
+    press(&mut app, 'x');
+    press(&mut app, 'x');
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (0, 2));
+    press(&mut app, 'd');
+    assert_eq!(text(&app), "");
+}
+
+#[test]
+fn x_on_a_selection_already_covering_whole_lines_grows_on_the_first_press() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "aa\nbb\ncc\ndd");
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(3, 4)));
+    app.mode = Mode::Select;
     press(&mut app, 'x');
     assert_eq!(selected_rows(&app), (1, 2));
+}
 
-    // `X` retraces the edge `x` walked before it starts consuming rows
-    // above the line the walk began on.
-    app.execute_editor_command(EditorCommand::SelectLineUp)
-        .unwrap();
-    assert_eq!(selected_rows(&app), (1, 1));
-    app.execute_editor_command(EditorCommand::SelectLineUp)
-        .unwrap();
-    assert_eq!(selected_rows(&app), (0, 1));
+#[test]
+fn selection_undo_after_x_and_x_upper_restores_mode_and_keeps_growing() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "a\nb\nc\nd\ne");
+    set_cursor(&mut app, 2, 0);
     press(&mut app, 'x');
-    assert_eq!(selected_rows(&app), (1, 1));
+    press(&mut app, 'X');
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (1, 3));
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(app.mode, Mode::Normal);
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    key(&mut app, KeyCode::Char('U'), Modifiers::ALT);
+    assert_eq!(selected_rows(&app), (1, 2));
+    press(&mut app, 'x');
+    assert_eq!(selected_rows(&app), (1, 3));
 }
 
 #[test]
@@ -276,28 +381,6 @@ fn line_selection_down_up_down_preserves_exact_direction() {
         ('x', Range::new(3, 10)),
         ('X', Range::new(3, 5)),
         ('x', Range::new(3, 10)),
-    ] {
-        if key == 'X' {
-            app.execute_editor_command(EditorCommand::SelectLineUp)
-                .unwrap();
-        } else {
-            press(&mut app, key);
-        }
-        assert_eq!(app.active().selection.primary(), expected, "after {key}");
-    }
-}
-
-#[test]
-fn line_selection_up_down_up_preserves_exact_direction() {
-    let mut app = App::new(Config::default(), None).unwrap();
-    seed(&mut app, "aa\nbbb\ncccc\ndd");
-    set_cursor(&mut app, 1, 1);
-
-    for (key, expected) in [
-        ('X', Range::new(3, 5)),
-        ('X', Range::new(5, 0)),
-        ('x', Range::new(3, 5)),
-        ('X', Range::new(5, 0)),
     ] {
         if key == 'X' {
             app.execute_editor_command(EditorCommand::SelectLineUp)

@@ -4415,8 +4415,8 @@ impl App {
             }
             Command::ChangeSelection => self.delete_selection_or_char(true, false),
             Command::EnterSelectMode => self.toggle_select_mode(),
-            Command::SelectLine => self.select_line(true),
-            Command::SelectLineUp => self.select_line(false),
+            Command::SelectLine => self.extend_line(true),
+            Command::SelectLineUp => self.select_line_up(),
             Command::ExtendLineAbove => self.extend_line(false),
             Command::ExtendLineBelow => self.extend_line(true),
             Command::SelectAll => self.select_all(),

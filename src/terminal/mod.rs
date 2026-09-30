@@ -1345,9 +1345,10 @@ impl TerminalSession {
             .collect()
     }
 
-    /// Selects complete terminal-review lines. The first `x`/`X` snaps each
-    /// range to its current line; repeated presses walk the moving edge down
-    /// or up just like ordinary buffer line selection.
+    /// Selects complete terminal-review lines for `select-line-up`. The first
+    /// press snaps each range to its current line; repeated presses walk the
+    /// moving edge, like the buffer command of the same name. `x` and `X` use
+    /// `extend_review_line` instead.
     pub fn select_review_line(&mut self, down: bool, extend: bool) {
         let viewport_rows = self.emulator.grid().rows();
         let review = self.ensure_review();

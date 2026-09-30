@@ -758,16 +758,13 @@ impl App {
             | Command::SelectLineUp
             | Command::ExtendLineAbove
             | Command::ExtendLineBelow => {
-                if matches!(command, Command::ExtendLineAbove | Command::ExtendLineBelow) {
+                if command != Command::SelectLineUp {
                     session.extend_review_line(
-                        command == Command::ExtendLineBelow,
+                        matches!(command, Command::SelectLine | Command::ExtendLineBelow),
                         self.line_select.is_some(),
                     );
                 } else {
-                    session.select_review_line(
-                        command == Command::SelectLine,
-                        self.line_select.is_some(),
-                    );
+                    session.select_review_line(false, self.line_select.is_some());
                 }
                 session.focus_review_selection(page, scroll_offset);
                 if self.line_select.is_none() {
