@@ -86,6 +86,11 @@ pub enum ColonCommand {
     GitDiscard,
     GitIndex,
     GitLog,
+    GitNetwork,
+    GitNetworkHead,
+    GitNetworkAll,
+    GitNetworkRef,
+    GitNetworkChooseRef,
     GitSearchCommits,
     GitRefresh,
     GitStage,
@@ -257,6 +262,11 @@ impl ColonCommand {
         Self::GitDiscard,
         Self::GitIndex,
         Self::GitLog,
+        Self::GitNetwork,
+        Self::GitNetworkHead,
+        Self::GitNetworkAll,
+        Self::GitNetworkRef,
+        Self::GitNetworkChooseRef,
         Self::GitSearchCommits,
         Self::GitRefresh,
         Self::GitStage,
@@ -341,6 +351,11 @@ impl ColonCommand {
             | Self::GitDiffSideBySide
             | Self::GitDiscard
             | Self::GitIndex
+            | Self::GitNetwork
+            | Self::GitNetworkHead
+            | Self::GitNetworkAll
+            | Self::GitNetworkChooseRef
+            | Self::GitNetworkRef
             | Self::GitLog
             | Self::GitSearchCommits
             | Self::GitRefresh
@@ -798,9 +813,12 @@ editor_commands! {
         "Create a new branch and worktree from this checkout; attach in persistent mode"
     ),
     RemoveWorktree => ("remove-worktree", "Remove the worktree on this row, leaving its branch"),
+    NextGitNetworkPage => ("next-git-network-page", "Show the next commit network page"),
+    PreviousGitNetworkPage => ("previous-git-network-page", "Show the previous commit network page"),
+    ToggleGitNetworkAscii => ("toggle-git-network-ascii", "Toggle ASCII commit network glyphs"),
     NextGitLogPage => ("next-git-log-page", "Show the next page of the Git log"),
     PreviousGitLogPage => ("previous-git-log-page", "Show the previous page of the Git log"),
-    OpenGitCommit => ("open-git-commit", "Open the commit on this log or blame row"),
+    OpenGitCommit => ("open-git-commit", "Open the commit on this log, network or blame row"),
     OpenWorkspaceSearchResult => (
         "open-workspace-search-result",
         "Open the workspace-search result on this line"
@@ -1340,9 +1358,12 @@ impl EditorCommand {
             | Self::CreateWorktree
             | Self::CreateNewWorktree
             | Self::RemoveWorktree => CommandCategory::Git,
-            Self::NextGitLogPage | Self::PreviousGitLogPage | Self::OpenGitCommit => {
-                CommandCategory::Git
-            }
+            Self::NextGitNetworkPage
+            | Self::PreviousGitNetworkPage
+            | Self::ToggleGitNetworkAscii
+            | Self::NextGitLogPage
+            | Self::PreviousGitLogPage
+            | Self::OpenGitCommit => CommandCategory::Git,
             Self::ActivateSetting | Self::OpenSettings | Self::OpenThemeSettings => {
                 CommandCategory::Configuration
             }
@@ -2058,6 +2079,67 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "git-branches",
         "Open the local and remote branch list",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetwork),
+        "git-network",
+        [],
+        "git-network",
+        "Open or refresh the cached commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkHead),
+        "git-network-head",
+        [],
+        "git-network-head",
+        "Restrict the commit network to current HEAD",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkAll),
+        "git-network-all",
+        [],
+        "git-network-all",
+        "Show all cached refs and HEAD in the commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkChooseRef),
+        "git-network-choose-ref",
+        [],
+        "git-network-choose-ref",
+        "Choose a captured full ref for the commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkRef),
+        "git-network-ref",
+        [],
+        "git-network-ref <full-ref>",
+        "Restrict the commit network to an exact full ref",
+        Required(FreeText)
+    ),
+    editor_spec!(
+        Editor::NextGitNetworkPage,
+        "next-git-network-page",
+        [],
+        "next-git-network-page",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousGitNetworkPage,
+        "previous-git-network-page",
+        [],
+        "previous-git-network-page",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ToggleGitNetworkAscii,
+        "toggle-git-network-ascii",
+        [],
+        "toggle-git-network-ascii",
         NoArguments
     ),
     spec!(
@@ -2798,6 +2880,10 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::GitDiffSideBySide
             | Colon::GitDiscard
             | Colon::GitIndex
+            | Colon::GitNetwork
+            | Colon::GitNetworkHead
+            | Colon::GitNetworkChooseRef
+            | Colon::GitNetworkAll
             | Colon::GitLog
             | Colon::GitSearchCommits
             | Colon::GitRefresh
@@ -2856,6 +2942,9 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         ) => crate::plugin::valid_name(value),
         (Colon::LspRestart | Colon::ContextAccess, InvocationParameters::OptionalText(value)) => {
             value.as_ref().is_none_or(|value| !value.is_empty())
+        }
+        (Colon::GitNetworkRef, InvocationParameters::OptionalText(Some(value))) => {
+            value.starts_with("refs/") && !value.contains(['\0', '\n'])
         }
         (Colon::Pipe, InvocationParameters::OptionalText(Some(value))) => !value.trim().is_empty(),
         (Colon::Grammar, InvocationParameters::Grammar(_)) => true,
@@ -3032,6 +3121,9 @@ fn invocation_from_parts(
         CommandId::Plugin(_) => Err(invalid()),
         CommandId::Editor(command) => match (command, argument) {
             (EditorCommand::FetchBranch, ParsedArgument::None)
+            | (EditorCommand::NextGitNetworkPage, ParsedArgument::None)
+            | (EditorCommand::PreviousGitNetworkPage, ParsedArgument::None)
+            | (EditorCommand::ToggleGitNetworkAscii, ParsedArgument::None)
             | (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)
@@ -3187,6 +3279,10 @@ fn invocation_from_parts(
                 | ColonCommand::GitDiffSideBySide
                 | ColonCommand::GitDiscard
                 | ColonCommand::GitIndex
+                | ColonCommand::GitNetwork
+                | ColonCommand::GitNetworkHead
+                | ColonCommand::GitNetworkChooseRef
+                | ColonCommand::GitNetworkAll
                 | ColonCommand::GitLog
                 | ColonCommand::GitSearchCommits
                 | ColonCommand::GitRefresh
@@ -3259,6 +3355,9 @@ fn invocation_from_parts(
                 id,
                 InvocationParameters::OptionalText(Some(value)),
             )),
+            (ColonCommand::GitNetworkRef, ParsedArgument::Text(Some(value))) => Ok(
+                CommandInvocation::new(id, InvocationParameters::OptionalText(Some(value))),
+            ),
             (ColonCommand::Pipe, ParsedArgument::Text(Some(value))) => Ok(CommandInvocation::new(
                 id,
                 InvocationParameters::OptionalText(Some(value)),

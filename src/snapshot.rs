@@ -656,6 +656,12 @@ pub enum TextRunKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextRole {
     Plain,
+    GitHash,
+    GitHead,
+    GitLane0,
+    GitLane1,
+    GitLane2,
+    GitLane3,
     Selected,
     PrimarySelected,
     PrimaryCaret,
@@ -1516,15 +1522,18 @@ impl App {
         )
         .with_lone_range_shown(self.config.editor.selecting_motions);
         let mut role_at = |offset: Offset| {
-            if !active {
-                return TextRole::Plain;
+            let role = if !active {
+                TextRole::Plain
+            } else if let Some(preview) = preview {
+                preview.role_at(offset)
+            } else {
+                selection_roles.role_at(offset)
+            };
+            if role == TextRole::Plain {
+                self.network_role_at(pane.buffer, offset).unwrap_or(role)
+            } else {
+                role
             }
-            // An open search prompt draws what Enter would select in place of
-            // the selection it would replace.
-            if let Some(preview) = preview {
-                return preview.role_at(offset);
-            }
-            selection_roles.role_at(offset)
         };
         let label_at = |offset: Offset| {
             active

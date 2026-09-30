@@ -123,6 +123,12 @@ unit_enum!(
     core::TextRole,
     [
         Plain,
+        GitHash,
+        GitHead,
+        GitLane0,
+        GitLane1,
+        GitLane2,
+        GitLane3,
         Selected,
         PrimarySelected,
         PrimaryCaret,

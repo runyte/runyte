@@ -4900,3 +4900,460 @@ fn fetching_a_deleted_server_branch_fails_and_preserves_cached_and_local_tips() 
     );
     assert_eq!(git_output_from(clone.path(), &["rev-parse", "HEAD"]), head);
 }
+
+fn network_fixture(name: &str) -> TempRepository {
+    let fixture = TempRepository::new(name);
+    fs::create_dir_all(fixture.path().join(".git/runyte-network-hooks")).unwrap();
+    fixture.git(&["config", "core.hooksPath", ".git/runyte-network-hooks"]);
+    fixture.git(&["config", "core.fsmonitor", "false"]);
+    fixture
+}
+
+#[test]
+fn network_roots_cover_tags_cached_remotes_disconnected_history_and_merge_parents() {
+    use runyte::git::{NetworkRequest, NetworkScope};
+    let fixture = network_fixture("network-topology");
+    fixture.write("main", "root\n");
+    fixture.commit("根 commit");
+    let root = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    fixture.git(&["branch", "side"]);
+    fixture.write("main", "main\n");
+    fixture.commit("main child");
+    fixture.git(&["checkout", "-q", "side"]);
+    fixture.write("side", "side\n");
+    fixture.commit("side child");
+    let side = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    fixture.git(&["checkout", "-q", "main"]);
+    fixture.git(&["merge", "--no-ff", "-qm", "merge", "side"]);
+    fixture.git(&["tag", "-a", "v1", "-m", "annotated"]);
+    fixture.git(&["update-ref", "refs/remotes/cache/side", &side]);
+    fixture.git(&["checkout", "--orphan", "island"]);
+    fixture.git(&["rm", "-rf", "."]);
+    fixture.write("island", "disconnected");
+    fixture.commit("island");
+    fixture.git(&["checkout", "-q", "main"]);
+    let provider = GitCliProvider::new("git");
+    let page = provider
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    assert_eq!(page.rows.len(), 5);
+    let order = page
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| (row.commit.oid.clone(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut lanes = runyte::git::network::GraphLanes::default();
+    for row in &page.rows {
+        let actual = git_output(&fixture, &["show", "-s", "--format=%P", &row.commit.oid]);
+        assert_eq!(
+            row.commit.parents,
+            actual.split_whitespace().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            row.edges
+                .iter()
+                .map(|(oid, _)| oid.clone())
+                .collect::<Vec<_>>(),
+            row.commit.parents
+        );
+        assert_eq!(lanes.row(row.commit.clone(), false), *row);
+        for parent in &row.commit.parents {
+            assert!(order[parent] > order[&row.commit.oid]);
+        }
+    }
+    assert!(page.rows.iter().any(|row| row.commit.oid == root));
+    assert!(
+        page.rows
+            .iter()
+            .any(|row| row.commit.decorations.contains(&"v1".to_owned()))
+    );
+    assert!(
+        page.rows
+            .iter()
+            .any(|row| row.commit.decorations.contains(&"cache/side".to_owned()))
+    );
+    let request = NetworkRequest {
+        scope: NetworkScope::Ref("refs/heads/main".into()),
+        cursor: None,
+    };
+    let selected = provider
+        .network_page(&fixture.repository(), &request)
+        .unwrap();
+    assert_eq!(selected.rows.len(), 4);
+    assert!(
+        selected.rows[0]
+            .commit
+            .decorations
+            .iter()
+            .any(|label| label.starts_with("HEAD"))
+    );
+    assert_eq!(selected.roots[0].references, ["refs/heads/main"]);
+}
+
+#[test]
+fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
+    use runyte::git::{NetworkRequest, network::NETWORK_PAGE_SIZE};
+    let fixture = network_fixture("network-paging");
+    fixture.write("file", "initial");
+    fixture.commit("initial");
+    for index in 0..NETWORK_PAGE_SIZE + 7 {
+        fixture.git(&["commit", "--allow-empty", "-qm", &format!("commit {index}")]);
+    }
+    let provider = GitCliProvider::new("git");
+    let first = provider
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    let expected = git_output(&fixture, &["rev-list", "--topo-order", "HEAD"])
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let continuation = NetworkRequest {
+        cursor: first.next.clone(),
+        ..NetworkRequest::default()
+    };
+    fixture.git(&["commit", "--allow-empty", "-qm", "new generation"]);
+    let second = provider
+        .network_page(&fixture.repository(), &continuation)
+        .unwrap();
+    assert!(second.stale);
+    assert_eq!(first.roots, second.roots);
+    let actual = first
+        .rows
+        .iter()
+        .chain(&second.rows)
+        .map(|row| row.commit.oid.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    let mut lanes = continuation.cursor.unwrap().lanes;
+    for row in &second.rows {
+        assert_eq!(lanes.row(row.commit.clone(), row.shallow), *row);
+    }
+    assert_eq!(
+        first.rows,
+        provider
+            .network_page(
+                &fixture.repository(),
+                &NetworkRequest {
+                    cursor: Some(runyte::git::NetworkCursor {
+                        roots: first.roots.clone(),
+                        offset: 0,
+                        lanes: Default::default(),
+                        roots_limited: false,
+                        shallow_fingerprint: runyte::hash::sha256_hex(b""),
+                    }),
+                    ..NetworkRequest::default()
+                }
+            )
+            .unwrap()
+            .rows
+    );
+    assert!(second.next.is_none());
+}
+
+#[test]
+fn network_unborn_detached_shallow_root_limits_and_invalid_cursors_are_explicit() {
+    use runyte::git::{
+        NetworkCursor, NetworkRequest, NetworkScope,
+        network::{MAX_NETWORK_COMMITS, MAX_NETWORK_ROOTS},
+    };
+    let fixture = network_fixture("network-limits");
+    let provider = GitCliProvider::new("git");
+    assert!(
+        provider
+            .network_page(&fixture.repository(), &NetworkRequest::default())
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    fixture.write("file", "root");
+    fixture.commit("root");
+    let root = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    for index in 0..MAX_NETWORK_ROOTS + 2 {
+        fixture.git(&[
+            "update-ref",
+            &format!("refs/heads/branch-{index:04}"),
+            &root,
+        ]);
+    }
+    let limited = provider
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    assert!(limited.limited);
+    fixture.git(&["checkout", "--detach", "-q"]);
+    let head = provider
+        .network_page(
+            &fixture.repository(),
+            &NetworkRequest {
+                scope: NetworkScope::Head,
+                cursor: None,
+            },
+        )
+        .unwrap();
+    assert!(
+        head.rows[0]
+            .commit
+            .decorations
+            .contains(&"HEAD (detached)".to_owned())
+    );
+    fs::write(fixture.path().join(".git/shallow"), format!("{root}\n")).unwrap();
+    assert!(
+        provider
+            .network_page(
+                &fixture.repository(),
+                &NetworkRequest {
+                    scope: NetworkScope::Head,
+                    cursor: None
+                }
+            )
+            .unwrap()
+            .rows[0]
+            .shallow
+    );
+    for offset in [1, MAX_NETWORK_COMMITS] {
+        assert!(
+            provider
+                .network_page(
+                    &fixture.repository(),
+                    &NetworkRequest {
+                        cursor: Some(NetworkCursor {
+                            roots: head.roots.clone(),
+                            offset,
+                            lanes: Default::default(),
+                            roots_limited: false,
+                            shallow_fingerprint: runyte::hash::sha256_hex(b""),
+                        }),
+                        ..NetworkRequest::default()
+                    }
+                )
+                .is_err()
+        );
+    }
+    assert!(
+        provider
+            .network_page(
+                &fixture.repository(),
+                &NetworkRequest {
+                    scope: NetworkScope::Ref("--all".into()),
+                    cursor: None
+                }
+            )
+            .is_err()
+    );
+    assert!(
+        provider
+            .network_page(
+                &fixture.repository(),
+                &NetworkRequest {
+                    scope: NetworkScope::Ref("refs/heads/missing".into()),
+                    cursor: None
+                }
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn network_selected_ref_continues_captured_pages_after_ref_deletion() {
+    use runyte::git::{NetworkRequest, NetworkScope, network::NETWORK_PAGE_SIZE};
+    let fixture = network_fixture("network-deleted-ref");
+    fixture.write("file", "root");
+    fixture.commit("root");
+    for index in 0..NETWORK_PAGE_SIZE + 2 {
+        fixture.git(&["commit", "--allow-empty", "-qm", &format!("commit {index}")]);
+    }
+    fixture.git(&["branch", "captured"]);
+    let provider = provider();
+    let request = NetworkRequest {
+        scope: NetworkScope::Ref("refs/heads/captured".into()),
+        cursor: None,
+    };
+    let first = provider
+        .network_page(&fixture.repository(), &request)
+        .unwrap();
+    fixture.git(&["update-ref", "-d", "refs/heads/captured"]);
+    let second = provider
+        .network_page(
+            &fixture.repository(),
+            &NetworkRequest {
+                cursor: first.next.clone(),
+                ..request.clone()
+            },
+        )
+        .unwrap();
+    assert!(second.stale);
+    assert!(!second.rows.is_empty());
+    assert_eq!(second.roots, first.roots);
+    assert!(
+        provider
+            .network_page(&fixture.repository(), &request)
+            .is_err()
+    );
+    assert!(
+        provider
+            .network_roots(&fixture.repository(), &request.scope)
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    let boundary = first.rows[0].commit.oid.clone();
+    fs::write(fixture.path().join(".git/shallow"), format!("{boundary}\n")).unwrap();
+    let error = provider
+        .network_page(
+            &fixture.repository(),
+            &NetworkRequest {
+                cursor: first.next,
+                ..request
+            },
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("shallow boundaries changed"));
+}
+
+#[test]
+fn network_octopus_and_criss_cross_ancestry_match_full_parent_graph() {
+    use runyte::git::NetworkRequest;
+    let fixture = network_fixture("network-octopus-criss-cross");
+    fixture.write("file", "root");
+    fixture.commit("root");
+    for name in ["one", "two"] {
+        fixture.git(&["checkout", "-qb", name, "main"]);
+        fixture.git(&["commit", "--allow-empty", "-qm", name]);
+    }
+    fixture.git(&["checkout", "-q", "main"]);
+    fixture.git(&["commit", "--allow-empty", "-qm", "main child"]);
+    fixture.git(&["merge", "--no-ff", "-qm", "octopus", "one", "two"]);
+    let tree = git_output(&fixture, &["rev-parse", "HEAD^{tree}"])
+        .trim()
+        .to_owned();
+    let one = git_output(&fixture, &["rev-parse", "one"])
+        .trim()
+        .to_owned();
+    let two = git_output(&fixture, &["rev-parse", "two"])
+        .trim()
+        .to_owned();
+    for (name, left, right) in [("left", &one, &two), ("right", &two, &one)] {
+        let oid = git_output(
+            &fixture,
+            &["commit-tree", &tree, "-p", left, "-p", right, "-m", name],
+        )
+        .trim()
+        .to_owned();
+        fixture.git(&["update-ref", &format!("refs/heads/{name}"), &oid]);
+    }
+    let page = provider()
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    assert!(page.rows.iter().any(|row| row.commit.parents.len() == 3));
+    let mut lanes = runyte::git::network::GraphLanes::default();
+    for row in &page.rows {
+        assert_eq!(lanes.row(row.commit.clone(), false), *row);
+        let actual = git_output(&fixture, &["show", "-s", "--format=%P", &row.commit.oid]);
+        assert_eq!(
+            row.edges
+                .iter()
+                .map(|(oid, _)| oid.as_str())
+                .collect::<Vec<_>>(),
+            actual.split_whitespace().collect::<Vec<_>>()
+        );
+    }
+    assert!(lanes.pending.iter().all(Option::is_none));
+}
+
+#[test]
+fn network_total_traversal_limit_has_no_invented_continuation() {
+    use runyte::git::{
+        NetworkRequest,
+        network::{MAX_NETWORK_COMMITS, MAX_NETWORK_PAGES},
+    };
+    use std::io::Write;
+    let fixture = network_fixture("network-total-limit");
+    let mut input = String::new();
+    for index in 1..=MAX_NETWORK_COMMITS + 1 {
+        let message = format!("commit {index}");
+        input.push_str(&format!("commit refs/heads/main\nmark :{index}\ncommitter Graph Author <graph@example.invalid> {} +0000\ndata {}\n{}\n", 1_700_000_000 + index, message.len(), message));
+        if index > 1 {
+            input.push_str(&format!("from :{}\n", index - 1));
+        }
+        input.push('\n');
+    }
+    let mut child = Command::new("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(fixture.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let provider = provider();
+    let started = Instant::now();
+    let mut request = NetworkRequest::default();
+    let mut count = 0;
+    let mut pages = 0;
+    loop {
+        let page = provider
+            .network_page(&fixture.repository(), &request)
+            .unwrap();
+        count += page.rows.len();
+        pages += 1;
+        if let Some(cursor) = page.next {
+            request.cursor = Some(cursor);
+        } else {
+            assert!(page.limited);
+            break;
+        }
+    }
+    assert_eq!(count, MAX_NETWORK_COMMITS);
+    assert_eq!(pages, MAX_NETWORK_PAGES);
+    eprintln!("10,001-commit graph traversal: {:?}", started.elapsed());
+}
+
+#[test]
+fn network_sha256_object_ids_and_long_unicode_subjects_remain_explicit() {
+    use runyte::git::NetworkRequest;
+    let fixture = network_fixture("network-sha256");
+    fs::remove_dir_all(fixture.path().join(".git")).unwrap();
+    fixture.git(&["init", "-q", "--object-format=sha256", "-b", "main"]);
+    fixture.git(&["config", "user.name", "李 小龍"]);
+    fixture.git(&["config", "user.email", "graph@example.invalid"]);
+    fixture.git(&["config", "commit.gpgsign", "false"]);
+    fs::create_dir_all(fixture.path().join(".git/runyte-network-hooks")).unwrap();
+    fixture.git(&["config", "core.hooksPath", ".git/runyte-network-hooks"]);
+    fixture.write("file", "content");
+    fixture.commit(&"界".repeat(4_200));
+    let page = provider()
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    assert_eq!(page.rows[0].commit.oid.len(), 64);
+    assert!(page.rows[0].commit.subject.ends_with("[subject truncated]"));
+    assert_eq!(
+        runyte::git::network::author_initials(&page.rows[0].commit.author),
+        "李小"
+    );
+    assert_eq!(
+        page.rows[0]
+            .text(false)
+            .chars()
+            .take(12)
+            .collect::<String>(),
+        page.rows[0].commit.oid[..12]
+    );
+}

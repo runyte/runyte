@@ -27,6 +27,7 @@ pub mod conflict_regions;
 pub mod diff;
 pub mod history;
 pub mod merge;
+pub mod network;
 pub mod patch;
 pub(crate) mod repository_lock;
 pub mod service;
@@ -53,6 +54,7 @@ pub use merge::{
     MergeCompletionPlan, MergeConflictMessage, MergePlan, MergePreviewOutcome, RepositoryOperation,
     ResolutionChoice, ResolutionPlan,
 };
+pub use network::{NetworkCursor, NetworkPage, NetworkRequest, NetworkRoot, NetworkScope};
 pub use patch::{
     BufferRevisionGuard, MAX_PATCH_BYTES, PartialStageRequest, PartialStageSelection, PatchHunk,
     RepositoryFingerprint, parse_hunks, select_lines,
@@ -950,6 +952,28 @@ pub trait GitProvider {
             return Err(typed_deletion_required("worktree"));
         }
         self.remove_worktree(repository, &plan.path)
+    }
+
+    /// Recheck only roots, without traversing history or performing network IO.
+    fn network_roots(
+        &self,
+        _repository: &Repository,
+        _scope: &NetworkScope,
+    ) -> Result<(Vec<NetworkRoot>, bool)> {
+        Err(GitError::Unavailable {
+            detail: "this Git provider does not expose network roots".into(),
+        })
+    }
+
+    /// A bounded graph page traversing a captured set of commit roots.
+    fn network_page(
+        &self,
+        _repository: &Repository,
+        _request: &NetworkRequest,
+    ) -> Result<NetworkPage> {
+        Err(GitError::Unavailable {
+            detail: "this Git provider does not expose a commit network".to_owned(),
+        })
     }
 
     /// One bounded topological history page, continued by object identity.
