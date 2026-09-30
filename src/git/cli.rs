@@ -3828,21 +3828,15 @@ impl GitProvider for GitCliProvider {
     }
 
     fn commit(&self, repository: &Repository, message: &str) -> Result<String> {
-        // The message is one argument vector element, so nothing in it can be
-        // read as an option or as syntax however it is written.
-        //
-        // `--cleanup=whitespace` because the comment lines have already been
-        // removed here, the way Git removes them after an editor session; a
-        // stricter mode would then go on to strip content nobody asked it to.
-        self.run_text(
-            repository.workdir(),
-            &[
-                OsStr::new("commit"),
-                OsStr::new("--cleanup=whitespace"),
-                OsStr::new("-m"),
-                OsStr::new(message),
-            ],
-        )
+        if matches!(
+            self.inspect_operation(repository)?,
+            super::RepositoryOperation::Merge { .. }
+        ) {
+            return Err(merge::refusal(
+                "an active merge requires a fresh merge completion review before committing",
+            ));
+        }
+        self.commit_captured_message(repository, message)
     }
 
     fn unstage(&self, repository: &Repository, path: &Path) -> Result<()> {
