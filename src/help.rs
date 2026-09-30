@@ -33,6 +33,9 @@ pub enum HelpTopic {
     Notifications,
     GitStatus,
     GitBranches,
+    GitConflicts,
+    GitConflictFile,
+    GitMergeReview,
     GitWorktrees,
     GitComparison,
     GitRevisionDiff,
@@ -55,6 +58,9 @@ impl HelpTopic {
         Self::Notifications,
         Self::GitStatus,
         Self::GitBranches,
+        Self::GitConflicts,
+        Self::GitConflictFile,
+        Self::GitMergeReview,
         Self::GitWorktrees,
         Self::GitComparison,
         Self::GitRevisionDiff,
@@ -81,6 +87,13 @@ impl HelpTopic {
             BindingScope::Settings => Self::Config,
             BindingScope::GitStatus => Self::GitStatus,
             BindingScope::GitBranches => Self::GitBranches,
+            BindingScope::GitConflicts => Self::GitConflicts,
+            BindingScope::GitConflictFile | BindingScope::GitConflictMarkdown => {
+                Self::GitConflictFile
+            }
+            BindingScope::GitMergeReview
+            | BindingScope::GitMergeDetail
+            | BindingScope::GitMergeInput => Self::GitMergeReview,
             BindingScope::GitWorktrees => Self::GitWorktrees,
             BindingScope::GitComparison => Self::GitComparison,
             BindingScope::GitRevisionDiff => Self::GitRevisionDiff,
@@ -124,6 +137,9 @@ impl HelpTopic {
             Self::Notifications => "NOTIFICATIONS",
             Self::GitStatus => "GIT STATUS",
             Self::GitBranches => "GIT BRANCHES",
+            Self::GitConflicts => "GIT CONFLICTS",
+            Self::GitConflictFile => "CONFLICT FILE",
+            Self::GitMergeReview => "GIT MERGE REVIEW",
             Self::GitWorktrees => "GIT WORKTREES",
             Self::GitComparison => "COMMITTED COMPARISON",
             Self::GitRevisionDiff => "COMMITTED DIFF",
@@ -187,6 +203,9 @@ impl HelpTopic {
             ],
             Self::GitStatus => GIT_STATUS_OVERVIEW,
             Self::GitBranches => GIT_BRANCHES_OVERVIEW,
+            Self::GitConflicts => GIT_CONFLICTS_OVERVIEW,
+            Self::GitConflictFile => GIT_CONFLICT_FILE_OVERVIEW,
+            Self::GitMergeReview => GIT_MERGE_REVIEW_OVERVIEW,
             Self::GitWorktrees => GIT_WORKTREES_OVERVIEW,
             Self::GitComparison => GIT_COMPARISON_OVERVIEW,
             Self::GitRevisionDiff => &[
@@ -273,7 +292,7 @@ const DIFF_OVERVIEW: &[&str] = &[
 const GIT_STASH_OVERVIEW: &[&str] = &[
     "Stashes are listed by stable object identity. Applying keeps the stash; dropping is a separate confirmed action.",
     "Every stash action is a colon command first, and this view's Tab menu offers the ones that take a row. `:git-stashes` opens or refreshes the list, and `:git-stash-apply` and `:git-stash-drop` act on the stash under the cursor — invoked from any other buffer they are refused, because there is no row to mean.",
-    "Creating a stash has no key at all: the three commands below are the only way. Each takes a required name, asks for confirmation, and is refused while a file buffer in this repository has unsaved changes. An apply that conflicts keeps the stash and leaves the resolution to an external Git tool.",
+    "Creating a stash has no key at all: the three commands below are the only way. Each takes a required name, asks for confirmation, and is refused while a file buffer in this repository has unsaved changes. An apply that conflicts keeps the stash. {binding:Space g c} opens its unmerged index stages for supported file resolutions; unsupported cases can use an external Git tool.",
 ];
 
 /// The three creation commands differ along two axes at once — what goes into
@@ -1035,11 +1054,29 @@ const GIT_STATUS_OVERVIEW: &[&str] = &[
     "`Tab s` stages the selected rows; `Tab S` stages every unstaged or untracked row. Staging records files as written on disk and moves the base that the gutter marks are measured against.",
     "Committing takes the index — exactly what the Staged section shows. Write the message buffer to commit, or close it with `:c` / `:c!` to abandon it.",
     "Discarding is the one action here that cannot be undone: the thrown-away content was never a commit, so nothing in Git will produce it again.",
-    "`Tab p` and `Tab P` pull and push the branch this working tree is on. Both reach the network and hold the editor until the remote answers or two minutes pass; the push never forces.",
+    "`Tab p` and `Tab P` pull and push the branch this working tree is on. Both run in the background until the remote answers or two minutes pass; the push never forces.",
     "`Tab p` fast-forwards silently. When the branch and its upstream have both moved on there is no fast-forward, so it says how far apart they are and offers to replay your commits on top; Enter does it, Escape leaves the branch alone. A replay that hits a conflict undoes itself and changes nothing, and neither the pull nor the replay stashes uncommitted changes: a dirty worktree is refused up front.",
 ];
 
+const GIT_CONFLICTS_OVERVIEW: &[&str] = &[
+    "The unresolved list comes from Git's index stages, including merges started with the CLI. Its header names the active operation and captured sides. Empty state distinguishes no conflicts from a merge awaiting its explicit commit.",
+    "Enter opens the ordinary working file at its first recognized region. `Tab d` inspects captured sides, including absent or binary files. Structural conflicts show every related path; edit and save each path or deletion, then review it with `Tab r`.",
+    "`Tab c` reviews Continue; all unmerged index entries must be resolved first. Approval opens the merge-message buffer, whose explicit save creates the merge commit. `Tab A` separately reviews Abort with Cancel selected. Other Git operations require external continue/abort.",
+];
+const GIT_CONFLICT_FILE_OVERVIEW: &[&str] = &[
+    "This is an ordinary editable file with its usual undo, redo, save, search, splits and language tools. Only the contextual Tab actions change while the index still lists this path as unresolved.",
+    "`Tab n` / `Tab p` visit recognized regions and then unresolved files. `Tab o` / `Tab t` replace one region transactionally with captured Current / Other marker contents; saving preserves manual edits but does not stage the resolution.",
+    "`Tab d` inspects index sides. `Tab O` / `Tab T` review replacing the whole file or deleting it when that side is absent. Structural groups and submodules refuse unsafe whole-side choices.",
+    "`Tab r` reviews staging the entire saved file or deletion. Remaining markers are refused; `Tab R` is an explicit reviewed override for intentional literal marker text. `Tab l` returns to the conflict list. Undo after staging changes the working file without undoing the staged resolution.",
+];
+const GIT_MERGE_REVIEW_OVERVIEW: &[&str] = &[
+    "The review names Other into Current and predicts already contained, fast-forward, clean pending merge, or conflict resolution. Cancel is selected initially; arrows move, Enter inspects a file or activates the selected footer action, and the footer stays visible while the body scrolls.",
+    "Approve and Cancel shortcuts belong only to the root. Details show a patch or labelled Base, Current, Other and provisional Result where available, with Back preserving root focus and scroll. No approval shortcut applies inside details.",
+    "Live terminal sessions require the exact destination branch acknowledgment. While its input has focus, letters are text. Any relevant file edit, stale repository observation, abandoned origin or attachment invalidates the captured mutation authority.",
+];
+
 const GIT_BRANCHES_OVERVIEW: &[&str] = &[
+    "`Tab m` reviews merging this local or cached remote branch into the current branch. Cancel is selected initially; approval only applies the merge, and creating a merge commit requires a separate reviewed Continue and explicit message save. No remote access occurs.",
     "`Tab d` compares the current committed tip with this local or cached remote branch. The comparison opens a file list with patch and split diff actions.",
     "The Local section comes first and marks the current branch with an asterisk. A `[worktree: /local/path]` note identifies every registered checkout. The Remote section lists locally cached remote-tracking refs; opening or refreshing this view does not fetch.",
     "A local branch that tracks a remote one carries its drift in brackets: `[↑2 ↓1]` is two commits it has that the upstream does not and one the upstream has that it does not, `[=]` is in step, and `[gone]` is an upstream that no longer exists. Each remote row names every local branch configured to track it, or says `[not tracked locally]`.",

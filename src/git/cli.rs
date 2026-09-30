@@ -4136,7 +4136,7 @@ fn stash_apply_error(error: GitError) -> GitError {
             code,
             signal,
             stderr: format!(
-                "{stderr}{}the stash was retained; resolve conflicts with an external Git tool",
+                "{stderr}{}the stash was retained; unresolved index stages require resolution",
                 if stderr.is_empty() { "" } else { "; " }
             ),
         },

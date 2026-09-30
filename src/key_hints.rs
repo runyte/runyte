@@ -229,7 +229,13 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
                 crate::command::CommandCapability::GitProject
                 | crate::command::CommandCapability::GitRefresh,
             ) => " no Git",
-            Some(crate::command::CommandCapability::GitFetchBranch) => " unavailable",
+            Some(
+                crate::command::CommandCapability::GitFetchBranch
+                | crate::command::CommandCapability::GitMergeContinue
+                | crate::command::CommandCapability::GitMergeActive
+                | crate::command::CommandCapability::GitConflict
+                | crate::command::CommandCapability::GitConflictWhole,
+            ) => " unavailable",
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
             Some(crate::command::CommandCapability::SessionControls) => " session controls",
             None => " unavailable",
@@ -831,6 +837,10 @@ mod tests {
             ),
             git_refresh: CommandAvailability::Available,
             git_fetch_branch: CommandAvailability::Available,
+            git_merge_active: CommandAvailability::Available,
+            git_merge_continue: CommandAvailability::Available,
+            git_conflict: CommandAvailability::Available,
+            git_conflict_whole: CommandAvailability::Available,
             persistent_session: CommandAvailability::Unavailable(
                 "needs workspace.mode: persistent".to_owned(),
             ),
@@ -1003,6 +1013,10 @@ mod tests {
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_fetch_branch: CommandAvailability::Unavailable("not a Git repository".to_owned()),
+            git_merge_active: CommandAvailability::Available,
+            git_merge_continue: CommandAvailability::Available,
+            git_conflict: CommandAvailability::Available,
+            git_conflict_whole: CommandAvailability::Available,
             persistent_session: CommandAvailability::Available,
             session_controls: CommandAvailability::Available,
         };
@@ -1054,6 +1068,10 @@ mod tests {
             git_project: CommandAvailability::Available,
             git_refresh: CommandAvailability::Available,
             git_fetch_branch: CommandAvailability::Available,
+            git_merge_active: CommandAvailability::Available,
+            git_merge_continue: CommandAvailability::Available,
+            git_conflict: CommandAvailability::Available,
+            git_conflict_whole: CommandAvailability::Available,
             session_controls: persistent_session.clone(),
             persistent_session,
         };

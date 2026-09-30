@@ -319,6 +319,7 @@ pub enum OverlayInput {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayout {
+    GitMergeReview,
     Standard,
     Preview,
     /// A single typed setting value.
@@ -347,6 +348,7 @@ impl OverlayAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayKind {
+    GitMergeReview,
     FilesystemConfirmation,
     FilePicker,
     ResultList,
@@ -372,6 +374,7 @@ impl OverlayKind {
     /// Exhaustive producer inventory used by contract tests. Adding an
     /// overlay kind therefore requires classifying it deliberately.
     pub const ALL: &'static [Self] = &[
+        Self::GitMergeReview,
         Self::FilesystemConfirmation,
         Self::FilePicker,
         Self::ResultList,
@@ -2450,7 +2453,7 @@ mod tests {
 
     #[test]
     fn overlay_kind_inventory_is_exhaustive_and_semantically_typed() {
-        assert_eq!(OverlayKind::ALL.len(), 16);
+        assert_eq!(OverlayKind::ALL.len(), 17);
         let mut app = App::new(Config::default(), None).unwrap();
         app.execute(crate::command::CommandInvocation::service_health())
             .unwrap();

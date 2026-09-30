@@ -1004,6 +1004,7 @@ impl App {
         transaction: &Transaction,
     ) -> bool {
         self.invalidate_partial_guards(buffer_id);
+        self.invalidate_merge_file_guards(buffer_id);
         if !self.buffers[buffer_id].is_read_only() {
             self.word_index_notify_update(buffer_id);
         }

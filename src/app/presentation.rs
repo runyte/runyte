@@ -405,6 +405,8 @@ impl App {
             .retain(visible_git, self.diffs.iter().map(DiffSession::id));
         self.refresh_search_preview();
         self.directory_tree.poll();
+        self.merge_ui.editor_area = Some(geometry.editor);
+        self.reflow_merge_review();
         self.areas.clear();
         let tree_area = if self.directory_tree.visible
             && self.maximized.is_none()
@@ -918,6 +920,9 @@ impl App {
     }
 
     pub fn key_binding_scope(&self) -> BindingScope {
+        if let Some(scope) = self.merge_scope() {
+            return scope;
+        }
         if self.directory_tree.focused {
             return BindingScope::DirectoryTree;
         }
@@ -1243,6 +1248,7 @@ impl App {
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()
+            || self.merge_ui.review.is_some()
             || self.git_branch_switch.is_some()
             || self.git_branch_deletion.is_some()
             || self.git_pull_rebase.is_some()
@@ -1419,6 +1425,12 @@ impl App {
                 .take(ROW_LIMIT)
                 .collect::<Vec<_>>();
             let (purpose, input, layout, actions) = match kind {
+                OverlayKind::GitMergeReview => (
+                    OverlayPurpose::Confirmation,
+                    OverlayInput::None,
+                    OverlayLayout::GitMergeReview,
+                    vec![],
+                ),
                 OverlayKind::FilesystemConfirmation => (
                     OverlayPurpose::Confirmation,
                     OverlayInput::None,
@@ -1640,6 +1652,9 @@ impl App {
         }
 
         let mut overlays = Vec::new();
+        if let Some(review) = self.merge_review_snapshot() {
+            overlays.push(review);
+        }
         if let Some(overlay) = self.context_overlay() {
             return vec![overlay];
         }

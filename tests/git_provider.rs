@@ -3680,7 +3680,10 @@ fn stash_apply_conflict_retains_the_recovery_object() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("stash was retained"), "{error}");
-    assert!(error.contains("external Git tool"), "{error}");
+    assert!(
+        error.contains("unresolved index stages require resolution"),
+        "{error}"
+    );
     assert_eq!(
         provider.stashes(&repository.repository()).unwrap()[0].oid,
         stash.oid

@@ -795,6 +795,7 @@ impl App {
             self.action_failed(":detach is available only in persistent mode");
             return;
         }
+        self.invalidate_unsubmitted_merge_review();
         self.tutorial_requested_detach();
         self.quit_directory = None;
         self.persistent_exit_request = Some(super::PersistentExitRequest::Detach);
@@ -810,6 +811,11 @@ impl App {
     /// workflow rather than a document that makes sense hidden: leaving its
     /// view cancels it, with force required when authored text would be lost.
     pub(super) fn request_view_quit(&mut self, force: bool) {
+        if self.active_terminal().is_none()
+            && self.refuse_running_merge_message(self.active().buffer)
+        {
+            return;
+        }
         if self.complete_parent_wait(force) {
             return;
         }

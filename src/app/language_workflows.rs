@@ -3368,6 +3368,7 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
             | BufferKind::GitNetwork
             | BufferKind::GitLog
@@ -3475,6 +3476,7 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
             | BufferKind::GitNetwork
             | BufferKind::GitLog
@@ -3566,6 +3568,9 @@ impl App {
 
     /// Retires a buffer and completes the commit-message cancellation detour.
     pub(super) fn close_buffer_returning_from_commit(&mut self, buffer: usize) {
+        if self.refuse_running_merge_message(buffer) {
+            return;
+        }
         let commit_message = self.buffers[buffer].is_commit_message();
         self.close_buffer(buffer);
         if commit_message {
@@ -3596,6 +3601,7 @@ impl App {
             return;
         }
         self.invalidate_partial_guards(buffer);
+        self.close_merge_origin(buffer);
 
         let name = self.buffers[buffer].display_name();
         let git_path = (self.buffers[buffer].kind == BufferKind::File)

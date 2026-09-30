@@ -3046,8 +3046,8 @@ modified new line in one hunk.
 - Refused: dirty buffers, deletion-only choices, multiple or partial hunks,
   binary files, conflicts, renames, and untracked files.
 - A refused partial action never becomes whole-file staging.
-- Use Lazygit for finer patch surgery, conflict resolution, or advanced
-  history work.
+- Use Lazygit for finer patch surgery or advanced history work. Native merge
+  review and conflict resolution are described below.
 
 #### Committing
 
@@ -3134,6 +3134,7 @@ Remote
 | `Tab d` | Compare committed tips with this branch |
 | `Tab D` | Delete this local branch, with its worktree and session, after a confirmation |
 | `Tab f` | Fetch this cached remote branch or this local branch's upstream |
+| `Tab m` | Review merging this selected branch into the current branch |
 | `Tab p` | Fast-forward the current local branch onto what it tracks |
 | `Tab P` | Publish this local branch to what it tracks |
 
@@ -3469,8 +3470,85 @@ Creating a stash uses a command that names its scope:
 - Every create, apply, and drop asks for confirmation.
 - Create and apply are refused while the repository has unsaved editor
   buffers.
-- An apply conflict keeps the stash and reports that resolving it belongs in
-  an external Git tool.
+- An apply conflict keeps the stash. Open `Space g c` to inspect unmerged
+  stages and review supported saved-file resolutions; unsupported structural
+  or submodule cases can still use an external Git tool. Resolving does not
+  remove the retained stash.
+
+### Reviewed merges and conflicts
+
+In the branch list (`Space g b`), `Tab m` reviews merging the selected local
+or cached remote branch **into the current branch**. Cached remote tips reflect
+the last fetch; merge review does not contact the remote. The native overlay
+names both branches and captured commit IDs, lists proposed file changes, and
+predicts already up to date, fast-forward, clean pending merge, or conflicts.
+Already-contained requests still open the review with approval disabled.
+
+Cancel is selected initially. Up/Down visit file rows and footer actions;
+Left/Right choose a footer action. Enter inspects a file or activates the
+selected action. `a`/`A` approves and `c`/`C` cancels at the root. Escape,
+`Ctrl-c`, and the configured leader cancel. The footer remains visible in
+narrow terminals. Details contain the proposed patch or labelled Base,
+Current, Other, and provisional Result where available. Back returns to the
+same root selection and scroll; approval shortcuts are inactive in details.
+Long details and overviews remain scrollable with explicit continuation.
+
+Live terminal sessions require typing the exact destination branch before
+approval. While that input has focus, letters are text. Unsaved repository
+files, concurrent file/index/ref changes, stale previews, unsupported custom
+merge drivers or filters, unrelated histories, and unsupported Git versions
+are refused. A stale review must be opened again.
+
+Approval applies the reviewed merge with no autostash and no automatic merge
+commit. A fast-forward has no pending merge to continue or abort. A successful
+non-fast-forward merge remains pending even if clean or textually unchanged;
+creating its commit always requires a separate reviewed Continue and explicit
+message save. Actual index conflicts replace the simulated conflict inventory.
+
+`Space g c` / `:git-conflicts` opens `[git conflicts]`, a read-only list from
+unmerged index stages. It supports merges started in Runyte or with the CLI.
+The header identifies the active operation and sides; empty state distinguishes
+“No conflicts” from “Merge ready to commit.” Enter opens the ordinary working
+file at its first recognized region. Editing, language tools, undo/redo, save,
+search, copying, and splits keep their ordinary meanings.
+
+| Conflict action | Default key |
+| --- | --- |
+| Next / previous unresolved region, then file | `Tab n` / `Tab p` |
+| Keep Current / take Other for one region | `Tab o` / `Tab t` |
+| Inspect index sides | `Tab d` |
+| Review staging the saved complete file or deletion | `Tab r` |
+| Explicit review allowing intentional literal marker text | `Tab R` |
+| Return to the conflict list | `Tab l` |
+| Review the complete Current / Other side, including deletion | `Tab O` / `Tab T` |
+
+The conflict list also offers sides, staging, and complete-side actions, so
+absent working paths remain manageable. Region choices are one undoable text
+transaction and preserve edits outside the region. Standard, diff3, and
+zdiff3 markers use the path's configured marker width; malformed marker blocks
+are refused. Saving changes the working file without resolving its index
+stages. `Tab r` reviews and stages that exact saved file or deletion; remaining
+markers require the explicit `Tab R` override. Undo after staging makes the
+working file dirty without undoing the staged resolution.
+
+Binary content is labelled. Related paths for structural conflicts are shown
+with an explanation; review each manually saved file or deletion. Unsafe whole
+side choices for structural groups and submodules are disabled. In a rebase,
+cherry-pick, or other non-merge operation, inspection uses stage identities;
+Runyte stages supported file resolutions but continuation/abort use Git.
+
+In the conflict list, `Tab c` continues and `Tab A` aborts. Git status offers
+`Tab C` and `Tab A`; ordinary Commit routes an active merge through its reviewed
+Continue workflow too. Continue refreshes operation state and the index and
+requires all index conflicts resolved. Its approval opens the seeded merge
+message; only saving that exact buffer creates the commit. A rejected hook
+retains the message and review authority for retry while its captured state
+remains valid. Cancelling message editing leaves the merge pending.
+
+Abort is a separate review with Cancel selected. It explains that resolution
+work and post-merge edits can be discarded; unsaved repository buffers must be
+saved first. Closing a conflict file or list never aborts a merge. Git versions
+without the required simulated-merge capability refuse preview safely.
 
 ### Fetch, pull, and push
 
@@ -5036,6 +5114,10 @@ The working directory starts where Runyte was launched.
 | `:git-commit` | Write a message and commit what is staged |
 | `:git-branches` | Open the local and cached remote branch list |
 | `:git-fetch-branch` | Fetch the selected cached remote branch or local upstream |
+| `:git-merge-branch` | Review merging the selected branch into Current |
+| `:git-conflicts` | Open unresolved index stages |
+| `:git-merge-continue` | Review the resolved index and open a separately owned merge message |
+| `:git-merge-abort` | Review aborting the active merge |
 | `:git-worktrees` | Open the repository worktree list |
 | `:git-compare` | Compare committed tips with the selected branch or worktree |
 | `:git-log` | Open the Git log, or refresh it from its first page |
@@ -6143,7 +6225,7 @@ keys:
   window: Ctrl-a
   rebind:
     Space g: Leader G # the whole Git menu moves
-    Space g l: Leader G c # ...but Git log goes here instead
+    Space g l: Leader G q # ...but Git log goes here instead
     Ctrl-w x: Window e
     Space e: Space
     ",": F12
@@ -6160,7 +6242,7 @@ keys:
 
 - All rules apply at once. File order does not matter.
 - The longest matching left side wins. Above, `Space g d` becomes
-  `Ctrl-x G d`, while `Space g l` becomes `Ctrl-x G c`.
+  `Ctrl-x G d`, while `Space g l` becomes `Ctrl-x G q`.
 - A narrower rule may deliberately move a key out of the namespace a broader
   rule chose.
 
@@ -6587,6 +6669,7 @@ This is the list `:help key-actions` shows, grouped by topic.
 | `toggle-directory-tree` | N S | last | Show or hide the directory tree |
 | `focus-directory-tree` | N S | last | Reveal the active file in the directory tree |
 | `open-working-directory-explorer` | N S | last | Open file explorer in the working directory |
+| `git-conflicts` | N S | last | Open unresolved Git conflicts |
 | `open-file-picker` | N S | last | Open the finder over the project's files, buffers, and terminals |
 | `open-all-files-picker` | N S | last | Open the finder over the project, including files Git ignores |
 | `open-path-file-picker` | N S | last | Open the finder in a chosen path, including files Git ignores |
@@ -6703,7 +6786,6 @@ with `{ command: name, argument: text }`.
 | `close!` | `close!` | Close the active buffer and discard its unsaved text |
 | `git-compare` | `git-compare` | Compare with this branch or worktree |
 | `git-branches` | `git-branches` | Open the local and remote branch list |
-| `git-fetch-branch` | `git-fetch-branch` | Fetch this remote branch or local branch upstream |
 | `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
 | `git-network` | `git-network` | Open or refresh the cached commit network |
 | `git-network-head` | `git-network-head` | Restrict the commit network to HEAD |

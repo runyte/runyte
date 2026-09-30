@@ -100,8 +100,8 @@ them, regardless of which extensibility direction is chosen.
   discarded. The editable
   explorer and commit-message buffer are special;
   pathless scratch text is not. The complete scoped set is `Directory`,
-  `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitComparison`,
-  `GitRevisionDiff`, `GitLog`, `GitBlame`,
+  `Settings`, `GitStatus`, `GitBranches`, `GitConflicts`, `GitWorktrees`, `GitComparison`,
+  `GitRevisionDiff`, `GitNetwork`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
   `BindingScope`. `BindingScope::Markdown` is deliberately not in that set: it
   covers every Markdown document as well as the page rendered from one, so an
@@ -710,3 +710,13 @@ Private bundled-client protocol version 70 adds the text-role values `GitHash`,
 `GitHead`, `GitLane0`, `GitLane1`, `GitLane2` and `GitLane3`. These carry muted
 hashes, emphasized HEAD labels and the four repeating lane theme roles; graph
 geometry remains ordinary text. The public plugin contract is unchanged.
+
+
+Native Git merge reviews are management overlays rather than buffers. Their
+semantic `GitMergeReview` layout has a scrollable body, optional exact-branch
+acknowledgment input, and a pinned Approve/Cancel or Back/Cancel footer. Initial
+focus is Cancel; details retain the root selection and scroll and have no
+approval authority. Small terminals stack the footer actions when needed.
+`GitConflictFile` and `GitConflictMarkdown` are ordinary document contexts,
+with only contextual Tab actions added; the latter retains Markdown commands.
+The private bundled-client protocol version 71 adds this overlay kind/layout.

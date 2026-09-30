@@ -1129,6 +1129,10 @@ fn draw_snapshot_overlay(
     if editor_area.width < 3 || editor_area.height < 3 {
         return;
     }
+    if overlay.layout == OverlayLayout::GitMergeReview {
+        draw_merge_review(frame, theme, overlay, editor_area);
+        return;
+    }
     if overlay.kind == OverlayKind::KeyHints {
         draw_snapshot_key_hints(frame, theme, overlay, editor_area);
         return;
@@ -1564,6 +1568,198 @@ fn draw_snapshot_overlay(
             .min(inner.right().saturating_sub(1));
         frame.set_cursor_position(ScreenPosition::new(x, inner.y));
     }
+}
+
+/// A review's body scrolls independently of its summary, acknowledgment and
+/// action row. In particular the default Cancel focus must never pull a long
+/// file list down to its tail or push either action out of view.
+fn draw_merge_review(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    overlay: &OverlaySnapshot,
+    editor_area: Rect,
+) {
+    let view = crate::merge_review_layout::merge_review_layout(
+        editor_area,
+        overlay.message.as_deref().unwrap_or_default(),
+        overlay.input == crate::snapshot::OverlayInput::Text,
+    );
+    let body_count = overlay.rows.len().saturating_sub(2);
+    let capacity = usize::from(view.body.height);
+    let offset = overlay
+        .selected
+        .filter(|&selected| selected < body_count)
+        .map_or(0, |selected| {
+            selected.saturating_sub(capacity.saturating_sub(1))
+        })
+        .min(body_count.saturating_sub(capacity));
+    let visible = body_count.saturating_sub(offset).min(capacity);
+    let total = overlay.total_rows.saturating_sub(2);
+    let range = if total > visible && visible > 0 {
+        format!(
+            " · {}–{}/{total}",
+            overlay.row_offset + offset + 1,
+            (overlay.row_offset + offset + visible).min(total)
+        )
+    } else {
+        String::new()
+    };
+    let clipped_lines = overlay
+        .rows
+        .iter()
+        .take(body_count)
+        .any(|row| row.label.width() + SELECTION_GUTTER.width() > usize::from(view.body.width));
+    let clipping_hint = if clipped_lines {
+        "… clips long lines · "
+    } else {
+        ""
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent))
+        .title(format!(" {}{range} ", overlay.title))
+        .title_bottom(format!(
+            " {}{} ",
+            clipping_hint,
+            overlay_action_hints(overlay)
+        ))
+        .style(
+            Style::default()
+                .fg(theme.foreground)
+                .bg(theme.overlay_background),
+        );
+    let area = to_tui_rect(view.area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    if view.message.height > 0 {
+        frame.render_widget(
+            Paragraph::new(overlay.message.as_deref().unwrap_or_default())
+                .style(Style::default().fg(theme.foreground))
+                .wrap(Wrap { trim: false }),
+            to_tui_rect(view.message),
+        );
+    }
+    if view.query.height > 0 {
+        let (query, cursor) = prompt_query_window(
+            &overlay.query,
+            overlay
+                .query_cursor
+                .unwrap_or(overlay.query.chars().count()),
+            view.query.width.saturating_sub(2),
+        );
+        frame.render_widget(
+            Paragraph::new(query_line(&query, &overlay.query_placeholder, theme)),
+            to_tui_rect(view.query),
+        );
+        if overlay.query_cursor.is_some() && view.query.width > 0 {
+            let x = view
+                .query
+                .x
+                .saturating_add(2)
+                .saturating_add(cursor as u16)
+                .min(view.query.x + view.query.width.saturating_sub(1));
+            frame.set_cursor_position(ScreenPosition::new(x, view.query.y));
+        }
+    }
+    let lines = overlay
+        .rows
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(visible)
+        .map(|(index, row)| {
+            merge_review_row_line(
+                row,
+                overlay.selected == Some(index),
+                usize::from(view.body.width),
+                theme,
+            )
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines), to_tui_rect(view.body));
+    let first_width = if view.stacked_footer {
+        view.footer.width
+    } else {
+        view.footer.width / 2
+    };
+    for (action, x, y, width) in [
+        (0, view.footer.x, view.footer.y, first_width),
+        (
+            1,
+            view.footer.x + if view.stacked_footer { 0 } else { first_width },
+            view.footer.y + u16::from(view.stacked_footer),
+            if view.stacked_footer {
+                view.footer.width
+            } else {
+                view.footer.width - first_width
+            },
+        ),
+    ] {
+        if let Some(row) = overlay.rows.get(body_count + action) {
+            let line = merge_review_row_line(
+                row,
+                overlay.selected == Some(body_count + action),
+                usize::from(width),
+                theme,
+            );
+            frame.render_widget(
+                Paragraph::new(line),
+                TuiRect::new(x, y, width, u16::from(view.footer.height > 0)),
+            );
+        }
+    }
+}
+
+fn merge_review_row_line(
+    row: &crate::snapshot::OverlayRow,
+    selected: bool,
+    width: usize,
+    theme: &TuiTheme,
+) -> Line<'static> {
+    let ground = if selected {
+        selection_style(theme)
+    } else {
+        Style::default()
+    };
+    let style = if row.available {
+        ground.fg(theme.foreground)
+    } else {
+        ground.fg(theme.muted).add_modifier(Modifier::DIM)
+    };
+    let gutter = if selected {
+        SELECTION_MARKER
+    } else {
+        SELECTION_GUTTER
+    };
+    let mut spans = vec![Span::styled(gutter, ground.fg(theme.accent))];
+    spans.push(Span::styled(
+        merge_review_label(&row.label, width.saturating_sub(gutter.width())),
+        style,
+    ));
+    fit_row_with_trailing_spans(spans, Vec::new(), width, selected.then_some(ground))
+}
+
+fn merge_review_label(label: &str, width: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    let label = label.replace(['\n', '\r'], " ");
+    if label.width() <= width {
+        return label;
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut cells = 0;
+    for grapheme in label.graphemes(true) {
+        let next = grapheme.width();
+        if cells + next > width - 1 {
+            break;
+        }
+        result.push_str(grapheme);
+        cells += next;
+    }
+    result.push('…');
+    result
 }
 
 /// Choice previews explain a decision in prose. Keep their heading and body
@@ -4955,6 +5151,10 @@ fn from_tui_rect(rect: TuiRect) -> Rect {
         height: rect.height,
     }
 }
+
+#[cfg(test)]
+#[path = "ui/merge_review_tests.rs"]
+mod merge_review_tests;
 
 #[cfg(test)]
 mod tests {

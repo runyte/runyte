@@ -1003,6 +1003,7 @@ impl App {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return false;
         }
+        self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             target: WorkspaceSwitchTarget::UserSelector(path),
             working_directory: self.working_directory.clone(),
@@ -1023,6 +1024,7 @@ impl App {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return false;
         }
+        self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             target: WorkspaceSwitchTarget::Selected(selection),
             working_directory: self.working_directory.clone(),
@@ -1063,6 +1065,7 @@ impl App {
             return;
         }
         let running_only = row.running;
+        self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             target: WorkspaceSwitchTarget::Selected(selection),
             working_directory: self.working_directory.clone(),
@@ -2023,6 +2026,7 @@ impl App {
             self.action_failed("attaching sessions needs workspace.mode: persistent");
             return;
         }
+        self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
             target: WorkspaceSwitchTarget::Previous,
             working_directory: self.working_directory.clone(),
@@ -2079,6 +2083,7 @@ impl App {
 
     #[cfg(unix)]
     pub(super) fn refresh_sessions_on_attachment(&mut self) {
+        self.invalidate_unsubmitted_merge_review();
         self.session_navigation.next_observation = None;
         self.session_navigation.observation_invalidated =
             self.session_navigation.observation_pending;
@@ -2102,6 +2107,7 @@ impl App {
 
     #[cfg(windows)]
     pub fn refresh_sessions_on_attachment(&mut self) {
+        self.invalidate_unsubmitted_merge_review();
         self.session_navigation.next_observation = None;
         self.session_navigation.observation_invalidated =
             self.session_navigation.observation_pending;
