@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use runyte::git::{
-    BufferRevisionGuard, GitCliProvider, GitError, GitProvider, MergeApplied, MergePreviewOutcome,
-    Repository, RepositoryOperation, ResolutionChoice, conflict_regions::parse_conflict_regions,
+    BaseContent, BufferRevisionGuard, GitCliProvider, GitError, GitProvider, MergeApplied,
+    MergePreviewOutcome, Repository, RepositoryOperation, ResolutionChoice,
+    conflict_regions::parse_conflict_regions,
 };
 use std::{
     fs,
@@ -316,6 +317,10 @@ fn resolution_review_pins_disk_and_index_and_can_explicitly_accept_literal_marke
             BufferRevisionGuard::new(),
         )
         .unwrap();
+    assert_eq!(
+        review.reviewed_content,
+        BaseContent::Text("<<<<<<< intentional\n".into())
+    );
     assert!(
         p.resolve_conflict(&f.repo(), &review)
             .unwrap()
@@ -338,6 +343,7 @@ fn whole_regular_side_and_modify_delete_choices_stage_only_reviewed_path() {
             BufferRevisionGuard::new(),
         )
         .unwrap();
+    assert_eq!(review.reviewed_content, BaseContent::Text("other\n".into()));
     p.resolve_conflict(&f.repo(), &review).unwrap();
     assert_eq!(fs::read_to_string(f.0.join("file")).unwrap(), "other\n");
     let f = Fixture::new();
@@ -358,8 +364,60 @@ fn whole_regular_side_and_modify_delete_choices_stage_only_reviewed_path() {
             BufferRevisionGuard::new(),
         )
         .unwrap();
+    assert_eq!(review.reviewed_content, BaseContent::Absent);
     p.resolve_conflict(&f.repo(), &review).unwrap();
     assert!(!f.0.join("file").exists());
+}
+
+#[test]
+fn saved_resolution_preview_classifies_exact_disk_content_and_is_sealed() {
+    let f = Fixture::new();
+    f.divergent(true);
+    let p = GitCliProvider::new("git");
+    p.apply_merge(&f.repo(), &f.plan()).unwrap();
+    let path = f.0.join("file");
+    for (bytes, expected) in [
+        (
+            b"saved result\n".as_slice(),
+            BaseContent::Text("saved result\n".into()),
+        ),
+        (b"binary\0result".as_slice(), BaseContent::Binary),
+    ] {
+        fs::write(&path, bytes).unwrap();
+        let mut review = p
+            .prepare_resolution(
+                &f.repo(),
+                &path,
+                ResolutionChoice::SavedFile {
+                    allow_literal_markers: false,
+                },
+                BufferRevisionGuard::new(),
+            )
+            .unwrap();
+        assert_eq!(review.reviewed_content, expected);
+        review.reviewed_content = BaseContent::Text("substituted preview".into());
+        assert!(p.resolve_conflict(&f.repo(), &review).is_err());
+        assert_eq!(p.conflicts(&f.repo()).unwrap().entries.len(), 1);
+    }
+    fs::remove_file(&path).unwrap();
+    let review = p
+        .prepare_resolution(
+            &f.repo(),
+            &path,
+            ResolutionChoice::SavedFile {
+                allow_literal_markers: false,
+            },
+            BufferRevisionGuard::new(),
+        )
+        .unwrap();
+    assert_eq!(review.reviewed_content, BaseContent::Absent);
+    assert!(
+        p.resolve_conflict(&f.repo(), &review)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert!(f.git(&["ls-files", "--stage", "file"]).is_empty());
 }
 
 #[test]
@@ -652,6 +710,20 @@ fn whole_symlink_side_changes_link_without_following_target() {
     f.commit("current link");
     let p = GitCliProvider::new("git");
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
+    let saved = p
+        .prepare_resolution(
+            &f.repo(),
+            &f.0.join("file"),
+            ResolutionChoice::SavedFile {
+                allow_literal_markers: false,
+            },
+            BufferRevisionGuard::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        saved.reviewed_content,
+        BaseContent::Text("current-target".into())
+    );
     let review = p
         .prepare_resolution(
             &f.repo(),
@@ -660,6 +732,10 @@ fn whole_symlink_side_changes_link_without_following_target() {
             BufferRevisionGuard::new(),
         )
         .unwrap();
+    assert_eq!(
+        review.reviewed_content,
+        BaseContent::Text(external.to_str().unwrap().into())
+    );
     p.resolve_conflict(&f.repo(), &review).unwrap();
     assert_eq!(fs::read_link(f.0.join("file")).unwrap(), external);
     assert_eq!(fs::read_to_string(&external).unwrap(), "protected\n");
@@ -748,6 +824,79 @@ fn attribute_changes_after_review_invalidate_even_without_config_change() {
     f.write(".git/info/attributes", "* binary\n");
     assert!(p.apply_merge(&f.repo(), &plan).is_err());
     assert!(!f.0.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn whole_side_resolution_preserves_reviewed_executable_mode_when_filemode_is_disabled() {
+    let f = Fixture::new();
+    f.git(&["config", "core.filemode", "false"]);
+    f.git(&["checkout", "-qb", "feature"]);
+    f.write("file", "other\n");
+    f.git(&["add", "file"]);
+    f.git(&["update-index", "--chmod=+x", "file"]);
+    f.commit("executable other");
+    f.git(&["checkout", "-q", "main"]);
+    f.write("file", "current\n");
+    f.commit("current");
+    let p = GitCliProvider::new("git");
+    let applied = p.apply_merge(&f.repo(), &f.plan()).unwrap();
+    let selected = applied.inventory.entries[0].other.as_ref().unwrap();
+    assert_eq!(selected.mode, "100755");
+    let review = p
+        .prepare_resolution(
+            &f.repo(),
+            &f.0.join("file"),
+            ResolutionChoice::Other,
+            BufferRevisionGuard::new(),
+        )
+        .unwrap();
+    assert!(
+        p.resolve_conflict(&f.repo(), &review)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    assert_eq!(
+        f.git(&["ls-files", "--stage", "file"]),
+        format!("{} {} 0\tfile", selected.mode, selected.oid)
+    );
+    assert_eq!(fs::read_to_string(f.0.join("file")).unwrap(), "other\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn whole_side_checkout_failure_preserves_unmerged_index() {
+    let f = Fixture::new();
+    f.divergent(true);
+    let p = GitCliProvider::new("git");
+    p.apply_merge(&f.repo(), &f.plan()).unwrap();
+    let wrapper = f.0.join("failing-git");
+    std::os::unix::fs::symlink(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+        &wrapper,
+    )
+    .unwrap();
+    fs::write(
+        wrapper.with_extension("behavior"),
+        "for argument do if [ \"$argument\" = checkout ]; then exit 1; fi; done\nexec git \"$@\"\n",
+    )
+    .unwrap();
+    f.write(".git/info/exclude", "failing-git\nfailing-git.behavior\n");
+    let p = GitCliProvider::new(wrapper);
+    let review = p
+        .prepare_resolution(
+            &f.repo(),
+            &f.0.join("file"),
+            ResolutionChoice::Other,
+            BufferRevisionGuard::new(),
+        )
+        .unwrap();
+    let index = fs::read(f.0.join(".git/index")).unwrap();
+    let disk = fs::read(f.0.join("file")).unwrap();
+    assert!(p.resolve_conflict(&f.repo(), &review).is_err());
+    assert_eq!(fs::read(f.0.join(".git/index")).unwrap(), index);
+    assert_eq!(fs::read(f.0.join("file")).unwrap(), disk);
+    assert_eq!(p.conflicts(&f.repo()).unwrap().entries.len(), 1);
 }
 
 #[test]
