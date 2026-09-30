@@ -4,7 +4,7 @@
 //! identify the sides. Plans are intentionally opaque: only their provider can
 //! construct a mutation authority from a repository observation.
 
-use super::{BufferRevisionGuard, Repository, RepositoryFingerprint};
+use super::{BaseContent, BufferRevisionGuard, Repository, RepositoryFingerprint};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -197,6 +197,9 @@ pub struct ResolutionPlan {
     pub path: PathBuf,
     pub choice: ResolutionChoice,
     pub entry: ConflictEntry,
+    /// Exact reviewed disk content or chosen index side; absence means deletion.
+    /// For a symlink this is the link target, never the target file's contents.
+    pub reviewed_content: BaseContent,
     pub(crate) inventory: ConflictInventory,
     pub(crate) disk_identity: String,
     pub(crate) guard: BufferRevisionGuard,
@@ -206,7 +209,13 @@ impl ResolutionPlan {
         crate::hash::sha256_hex(
             format!(
                 "{:?}",
-                (&self.path, &self.choice, &self.entry, &self.inventory)
+                (
+                    &self.path,
+                    &self.choice,
+                    &self.entry,
+                    &self.inventory,
+                    &self.reviewed_content
+                )
             )
             .as_bytes(),
         )
