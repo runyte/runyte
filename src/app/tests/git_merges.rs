@@ -253,9 +253,10 @@ fn merge_ui_late_request_never_consumes_newer_pending_review() {
 fn merge_ui_navigation_detach_and_buffer_revisions_invalidate_authority() {
     let fixture = MergeFixture::new(true, false);
     let (mut app, operations) = fixture.app();
+    let branches = app.active().buffer;
     app.open_file(fixture.0.join("file")).unwrap();
     let file = app.active().buffer;
-    app.execute_command("git-branches").unwrap();
+    app.active_mut().retarget(branches);
     let row = app
         .git_state
         .branch_rows()
@@ -521,4 +522,147 @@ fn merge_ui_backward_cross_file_navigation_selects_last_region() {
         crate::git::conflict_regions::parse_conflict_regions(&app.active_buffer().to_string(), 7)
             .unwrap();
     assert_eq!(app.active().head(), regions.last().unwrap().range.start);
+}
+
+#[test]
+fn merge_ui_geometry_pages_tall_and_small_reviews_without_losing_back_focus() {
+    let fixture = MergeFixture::new(true, false);
+    let (mut app, operations) = fixture.app();
+    fixture.review(&mut app, &operations);
+    let review = app.merge_ui.review.as_mut().unwrap();
+    review.rows = (0..600).map(|i| format!("file {i}")).collect();
+    review.focus = 599;
+    app.merge_ui.editor_area = Some(crate::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 800,
+    });
+    app.reflow_merge_review();
+    let snapshot = app.merge_review_snapshot().unwrap();
+    assert!(snapshot.row_offset >= 90);
+    assert_eq!(snapshot.rows[snapshot.selected.unwrap()].label, "file 599");
+    let root_scroll = app.merge_ui.review.as_ref().unwrap().root_scroll;
+    let review = app.merge_ui.review.as_mut().unwrap();
+    review.detail = Some((0..800).map(|i| format!("detail {i}")).collect());
+    review.detail_scroll = 799;
+    let detail = app.merge_review_snapshot().unwrap();
+    assert_eq!(detail.rows[0].label, "detail 799");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(
+        app.merge_ui.review.as_ref().unwrap().root_scroll,
+        root_scroll
+    );
+    assert_eq!(app.merge_ui.review.as_ref().unwrap().focus, 599);
+    app.merge_ui.editor_area = Some(crate::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 28,
+        height: 8,
+    });
+    app.reflow_merge_review();
+    let snapshot = app.merge_review_snapshot().unwrap();
+    assert_eq!(snapshot.rows[snapshot.selected.unwrap()].label, "file 599");
+    assert_eq!(snapshot.rows.last().unwrap().identity, "cancel".into());
+    assert_eq!(
+        snapshot.rows[snapshot.rows.len() - 2].identity,
+        "approve".into()
+    );
+}
+
+#[test]
+fn merge_ui_continue_is_disabled_until_all_index_stages_are_resolved() {
+    let fixture = MergeFixture::new(true, true);
+    let (mut app, _operations) = fixture.app();
+    fixture.enter_conflicted_merge(&mut app);
+    assert!(app.command_capabilities().git_merge_active.is_available());
+    let reason = app
+        .command_capabilities()
+        .git_merge_continue
+        .reason()
+        .unwrap()
+        .to_owned();
+    assert!(reason.contains("unmerged index entries"));
+    app.open_context_actions();
+    let snapshots = app.overlay_snapshots();
+    let continuation = snapshots
+        .iter()
+        .flat_map(|s| &s.rows)
+        .find(|r| r.label == "c")
+        .unwrap();
+    assert!(!continuation.available);
+    assert_eq!(continuation.trailing_detail, reason);
+    let abort = snapshots
+        .iter()
+        .flat_map(|s| &s.rows)
+        .find(|r| r.label == "A")
+        .unwrap();
+    assert!(abort.available);
+}
+
+#[test]
+fn merge_ui_conflicted_preview_details_include_the_simulated_result() {
+    let fixture = MergeFixture::new(true, true);
+    let (mut app, operations) = fixture.app();
+    fixture.review(&mut app, &operations);
+    let review = app.merge_ui.review.as_mut().unwrap();
+    let ReviewPlan::Merge(plan) = &review.plan else {
+        panic!()
+    };
+    review.focus = plan.comparison.files.len().max(1);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    let id = app.merge_ui.details_request.unwrap();
+    let GitOperation::ConflictSides { repository, entry } = &operation else {
+        panic!()
+    };
+    let sides = fixture
+        .provider()
+        .conflict_sides(repository, entry)
+        .unwrap();
+    let entry = *entry.clone();
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id,
+        operation,
+        result: Box::new(Ok(GitResponse::ConflictSides { entry, sides })),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    let id = app.merge_ui.details_request.unwrap();
+    let GitOperation::RevisionFile {
+        repository,
+        comparison,
+        file,
+        split,
+    } = &operation
+    else {
+        panic!()
+    };
+    assert!(*split);
+    let result = fixture
+        .provider()
+        .revision_file(repository, comparison, file, *split)
+        .unwrap();
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id,
+        operation,
+        result: Box::new(Ok(GitResponse::RevisionFile(result))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+    let detail = app
+        .merge_ui
+        .review
+        .as_ref()
+        .unwrap()
+        .detail
+        .as_ref()
+        .unwrap()
+        .join("\n");
+    for label in ["Base", "Current", "Other", "Provisional Result"] {
+        assert!(detail.contains(label), "{detail}");
+    }
+    assert!(detail.contains("<<<<<<<"));
+    assert!(operations.try_recv().is_err());
 }

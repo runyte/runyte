@@ -354,7 +354,7 @@ impl App {
         let capacity = usize::from(
             crate::merge_review_layout::merge_review_layout(
                 area,
-                &review.message,
+                &review.display_message(),
                 review.requires_ack && review.detail.is_none(),
             )
             .body

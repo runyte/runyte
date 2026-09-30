@@ -1170,7 +1170,11 @@ impl Keymap {
         let Some(entry) = self
             .lookup_index
             .get(&(mode, scope))
-            .or_else(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+            .or_else(|| {
+                (!scope.is_merge_review())
+                    .then(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+                    .flatten()
+            })
             .and_then(|sequences| sequences.get(sequence))
         else {
             return Lookup::NoMatch;
