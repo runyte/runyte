@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from test_bridge import MCPClient, PACKAGE, REPO
 from workspace_readiness import wait_for_workspaces
@@ -247,12 +247,37 @@ class NativeEditor:
             self.process.wait(timeout=5)
             self.reaped = True
 
+    def wait_terminal_exit(self):
+        # Quit (even qa!) refuses live terminals. Wait for the host to reap
+        # every child, including hidden ones. Rendered exit messages can be
+        # hidden by retained command feedback, so inspect semantic liveness.
+        # Claude is the fixture identity whose grant is never revoked.
+        deadline = time.monotonic() + 15
+        client = RealMCPClient(self.binary, self.project.parent, self.env, 'claude')
+        try:
+            inventory = wait_for_workspaces(
+                lambda seconds: client.data('list_workspaces', response_seconds=min(10, seconds)),
+                [self.project], seconds=max(0, deadline - time.monotonic()))
+            workspace = next(row['workspace'] for row in inventory['workspaces']
+                             if Path(row['root']) == self.project)
+            while time.monotonic() < deadline:
+                terminals = client.data('list_terminals', workspace=workspace,
+                                        response_seconds=deadline - time.monotonic())['terminals']
+                if all(not row['live'] for row in terminals):
+                    return
+                time.sleep(.02)
+            raise AssertionError('Fixture terminal exit exceeded deadline')
+        finally:
+            client.close()
+
     def close(self):
-        for stop in self.stop_files:
-            stop.touch()
-        time.sleep(.15)
         failure = None
         try:
+            for stop in self.stop_files:
+                stop.touch()
+            if self.stop_files and not self.persistent and not self.reaped:
+                self.wait_terminal_exit()
+                self.terminal_input = False
             if self.persistent:
                 stopped = subprocess.run([str(self.binary), '--session-stop', '--force',
                     str(self.project), '--config', str(self.config)], env=self.env,
@@ -485,6 +510,21 @@ class RealRunyteTests(unittest.TestCase):
         self.assertEqual(len(rows), len(projects))
         self.assertTrue(all(row['readable'] for row in rows))
         return {Path(row['root']).name: row['workspace'] for row in rows}
+
+    def test_cleanup_waits_for_a_slow_terminal_exit_before_quitting(self):
+        editor = self.editor(0)
+        original_command = terminal_command
+
+        def slow_command(marker, stop):
+            # The child acknowledges the stop file, then remains live beyond
+            # the old 150 ms cleanup delay. This reproduces a slow reaping
+            # schedule without relying on machine load or platform timing.
+            return original_command(marker, stop).replace(
+                'done', 'done; /bin/sleep 0.5')
+
+        with patch(__name__ + '.terminal_command', side_effect=slow_command):
+            editor.terminal('SlowExit', 'SLOW_CHILD_MARKER')
+        # close is registered as cleanup: its ordinary exit must succeed.
 
     def test_queued_command_keys_keep_escape_separate_from_colon(self):
         editor = self.editor(0)
