@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::app::git_merges::{ReviewIntent, ReviewPlan};
+use crate::app::git_merges::ReviewPlan;
 use crate::git::{
     BufferRevisionGuard, GitCliProvider, GitProvider, MergePreviewOutcome, ResolutionChoice,
 };
@@ -147,8 +147,8 @@ fn merge_ui_preview_predictions_cancel_and_duplicate_approval() {
         let snapshot = app.merge_review_snapshot().unwrap();
         assert!(snapshot.message.unwrap().contains(prediction));
         assert_eq!(
-            snapshot.rows[snapshot.selected.unwrap()].identity.as_str(),
-            "cancel"
+            snapshot.rows[snapshot.selected.unwrap()].identity,
+            "cancel".into()
         );
         key(&mut app, KeyCode::Enter, Modifiers::NONE);
         assert!(app.merge_ui.review.is_none());
@@ -288,9 +288,8 @@ fn merge_ui_details_have_back_without_approval_and_drop_late_results() {
             .rev()
             .nth(1)
             .unwrap()
-            .identity
-            .as_str(),
-        "back"
+            .identity,
+        "back".into()
     );
     press(&mut app, 'a');
     assert!(operations.try_recv().is_err());
@@ -330,7 +329,7 @@ fn merge_ui_acknowledgment_treats_letters_as_text_and_registry_supports_chords()
         [crate::keymap::Key::char('q'), crate::keymap::Key::char('q')],
         EditorCommand::MergeReviewApprove,
     ));
-    app.keymap = crate::keymap::Keymap::new(bindings).unwrap();
+    app.keymap = crate::keymap::Keymap::new(bindings).unwrap().into();
     press(&mut app, 'q');
     assert!(operations.try_recv().is_err());
     press(&mut app, 'q');
