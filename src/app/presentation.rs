@@ -2019,7 +2019,7 @@ impl App {
                 OverlayKind::BufferActions,
                 format!("Actions · {}", self.active_buffer().display_name()),
                 "",
-                context_action_rows(&menu.actions),
+                context_action_rows(&menu.actions, &self.command_capabilities()),
                 Some(menu.selected),
                 None,
             );
@@ -2701,7 +2701,10 @@ fn file_overlay_preview(
 /// a column the reader never sees vary. The mnemonic stays the row label,
 /// which is what carries the accent, and the remaining three columns are the
 /// detail.
-fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::OverlayRow> {
+fn context_action_rows(
+    actions: &[ContextAction],
+    capabilities: &crate::service_health::AppCapabilitySnapshot,
+) -> Vec<crate::snapshot::OverlayRow> {
     use crate::snapshot::OverlayRow;
 
     fn context_label(action: &ContextAction) -> &'static str {
@@ -2726,6 +2729,14 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
         .map(|action| {
             let name = action.name;
             let context = context_label(action);
+            let availability = action
+                .target
+                .id()
+                .capability()
+                .map(|capability| capabilities.capability_availability(capability));
+            let reason = availability
+                .as_ref()
+                .and_then(|availability| availability.reason());
             OverlayRow {
                 heading: false,
                 identity: action.mnemonic.label().into(),
@@ -2734,9 +2745,9 @@ fn context_action_rows(actions: &[ContextAction]) -> Vec<crate::snapshot::Overla
                     "{name:name_width$}  {context:context_width$}  {}",
                     action.description
                 ),
-                trailing_detail: String::new(),
-                available: true,
-                dimmed: false,
+                trailing_detail: reason.unwrap_or_default().to_owned(),
+                available: reason.is_none(),
+                dimmed: reason.is_some(),
                 muted: Vec::new(),
                 emphasis: Vec::new(),
                 detail_emphasis: Vec::new(),
