@@ -38,6 +38,10 @@ impl BufferRevisionGuard {
         Arc::downgrade(&self.valid)
     }
 
+    pub(crate) fn has_other_owners(&self) -> bool {
+        Arc::strong_count(&self.valid) > 1
+    }
+
     pub fn invalidate(&self) {
         self.valid.store(false, Ordering::Release);
     }

@@ -19,9 +19,11 @@ pub(super) struct MergeUi {
     pub conflict_buffer: Option<usize>,
     pub file: Option<PathBuf>,
     pub commit: Option<Box<MergeCompletionPlan>>,
+    pub commit_buffer: Option<usize>,
     pub guards: Vec<BufferRevisionGuard>,
     pub details_request: Option<GitRequestId>,
     pub details_origin: Option<ReviewOrigin>,
+    pub detail_append_result: bool,
     pub conflict_read: Option<(GitRequestId, ReviewOrigin, bool)>,
     pub mutation_origin: Option<ReviewOrigin>,
 }
@@ -84,6 +86,71 @@ impl ReviewPlan {
 }
 
 impl App {
+    pub(super) fn invalidate_unsubmitted_merge_review(&mut self) {
+        if let Some(pending) = self.merge_ui.pending.take() {
+            pending.guard.invalidate();
+        }
+        if let Some(review) = self.merge_ui.review.take() {
+            review.plan.invalidate();
+        }
+        self.merge_ui.details_request = None;
+        self.merge_ui.details_origin = None;
+        self.merge_ui.conflict_read = None;
+        self.merge_ui.keys.clear();
+        if let Some(plan) = self.merge_ui.commit.take() {
+            plan.invalidate();
+        }
+        self.merge_ui.commit_buffer = None;
+    }
+    pub(super) fn close_merge_origin(&mut self, buffer: usize) {
+        let owns = self
+            .merge_ui
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.origin.buffer == buffer)
+            || self
+                .merge_ui
+                .review
+                .as_ref()
+                .and_then(|r| r.origin.as_ref())
+                .is_some_and(|o| o.buffer == buffer);
+        if owns {
+            self.invalidate_unsubmitted_merge_review();
+        }
+        self.invalidate_merge_file_guards(buffer);
+    }
+    pub(super) fn refresh_conflict_inventory(&mut self) {
+        if self.merge_ui.inventory.is_none() {
+            return;
+        }
+        if let Some(repository) = self.git.repository().cloned() {
+            if let Some(id) = self.request_git(GitOperation::Conflicts { repository }) {
+                self.merge_ui.conflict_read = Some((id, self.review_origin(), false));
+            }
+        }
+    }
+    pub(super) fn receive_conflict_inventory(
+        &mut self,
+        request: Option<GitRequestId>,
+        inventory: ConflictInventory,
+    ) {
+        if self
+            .merge_ui
+            .conflict_read
+            .as_ref()
+            .is_none_or(|(id, _, _)| Some(*id) != request)
+        {
+            return;
+        }
+        let (_, origin, activate) = self.merge_ui.conflict_read.take().unwrap();
+        if !origin.matches(self) {
+            return;
+        }
+        self.show_git_conflicts(inventory, activate);
+    }
+}
+
+impl App {
     pub(super) fn review_origin(&self) -> ReviewOrigin {
         ReviewOrigin {
             buffer: self.active().buffer,
@@ -110,7 +177,11 @@ impl App {
             return Some(Scope::GitConflicts);
         }
         if self.selected_conflict().is_some() {
-            return Some(Scope::GitConflictFile);
+            return Some(if self.is_markdown_document(self.active().buffer) {
+                Scope::GitConflictMarkdown
+            } else {
+                Scope::GitConflictFile
+            });
         }
         None
     }
@@ -132,7 +203,9 @@ impl App {
     }
 
     fn merge_guard(&mut self, repository: &Repository) -> BufferRevisionGuard {
-        self.merge_ui.guards.retain(BufferRevisionGuard::is_valid);
+        self.merge_ui
+            .guards
+            .retain(|guard| guard.is_valid() && guard.has_other_owners());
         let guard = BufferRevisionGuard::new();
         for (i, buffer) in self.buffers.iter_mut().enumerate() {
             if !self.closed_buffers.contains(&i)
@@ -168,6 +241,8 @@ impl App {
             review.plan.invalidate();
         }
         self.merge_ui.details_request = None;
+        self.merge_ui.details_origin = None;
+        self.merge_ui.keys.clear();
         self.status("Git review cancelled; no reviewed mutation was submitted");
     }
 
@@ -259,10 +334,12 @@ impl App {
             }
         }
         self.mode = Mode::Normal;
-        self.merge_ui.review = Some(super::git_merge_review::MergeReview::new(
+        let mut review = super::git_merge_review::MergeReview::new(
             plan,
             self.terminals.iter().any(|t| t.live()),
-        ));
+        );
+        review.origin = Some(pending.origin);
+        self.merge_ui.review = Some(review);
     }
 
     pub(super) fn open_git_conflicts(&mut self) {
@@ -302,6 +379,18 @@ impl App {
                 entry.kind()
             ));
             rows.push(Some(entry.path.clone()));
+            let related = inventory.related_paths(&entry.path);
+            if related.len() > 1 {
+                lines.push(format!(
+                    "   Related paths: {} · resolve each saved file/deletion",
+                    related
+                        .iter()
+                        .map(|p| git::display_path(p))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                rows.push(None);
+            }
         }
         let text = lines.join("\n");
         let existing = self
@@ -344,7 +433,7 @@ impl App {
         }
     }
 
-    fn selected_conflict(&self) -> Option<ConflictEntry> {
+    pub(super) fn selected_conflict(&self) -> Option<ConflictEntry> {
         let inventory = self.merge_ui.inventory.as_ref()?;
         if self.active_buffer().is_git_conflicts() {
             let row = self.active_buffer().offset_to_row(self.active().head());
@@ -381,7 +470,7 @@ impl App {
             self.action_failed(error.to_string());
             return;
         }
-        self.focus_conflict_region(false, false);
+        self.focus_conflict_region(true, false);
     }
 
     pub(super) fn focus_conflict_region(&mut self, forward: bool, advance: bool) {
@@ -401,7 +490,11 @@ impl App {
         };
         let head = self.active().head();
         let region = if !advance {
-            regions.first()
+            if forward {
+                regions.first()
+            } else {
+                regions.last()
+            }
         } else if forward {
             regions.iter().find(|r| r.range.start > head)
         } else {
@@ -431,7 +524,7 @@ impl App {
             let path = self.git.repository().unwrap().workdir().join(&entry.path);
             self.merge_ui.file = Some(path.clone());
             if self.open_file(path).is_ok() {
-                self.focus_conflict_region(false, false);
+                self.focus_conflict_region(forward, false);
             }
         } else {
             self.status("no further unresolved regions or files");
@@ -479,6 +572,18 @@ impl App {
         if self.merge_unsaved(&repository) {
             self.action_failed("save repository file buffers before reviewing resolution; this stages the whole file");
             return;
+        }
+        if !matches!(choice, ResolutionChoice::SavedFile { .. }) {
+            let related = self
+                .merge_ui
+                .inventory
+                .as_ref()
+                .map(|i| i.related_paths(&entry.path))
+                .unwrap_or_default();
+            if related.len() > 1 {
+                self.action_failed(format!("structural conflict spans {}; edit and save each path, then review its saved file or deletion", related.iter().map(|p| git::display_path(p)).collect::<Vec<_>>().join(", ")));
+                return;
+            }
         }
         self.cancel_merge_review();
         let guard = self.merge_guard(&repository);
@@ -534,6 +639,15 @@ impl App {
         let Some(review) = self.merge_ui.review.as_ref() else {
             return;
         };
+        if review
+            .origin
+            .as_ref()
+            .is_none_or(|origin| !origin.matches(self))
+        {
+            self.cancel_merge_review();
+            self.action_failed("the originating view changed; review again");
+            return;
+        }
         if review.detail.is_some() || !review.approval_available() {
             self.action_failed("the reviewed operation cannot be approved in its current state");
             return;
@@ -550,6 +664,7 @@ impl App {
                 self.buffers.push(Buffer::commit_message(&text));
                 self.syntax.push(None);
                 let buffer = self.buffers.len() - 1;
+                self.merge_ui.commit_buffer = Some(buffer);
                 self.active_mut().retarget(buffer);
                 self.mode = Mode::Insert;
             }
@@ -571,7 +686,10 @@ impl App {
         }
     }
 
-    pub(super) fn commit_reviewed_merge(&mut self, message: String) -> bool {
+    pub(super) fn commit_reviewed_merge(&mut self, buffer: usize, message: String) -> bool {
+        if self.merge_ui.commit_buffer != Some(buffer) {
+            return false;
+        }
         let Some(plan) = self.merge_ui.commit.as_ref() else {
             return false;
         };
@@ -607,6 +725,11 @@ impl App {
             KeepConflictCurrent => self.choose_conflict_region(false),
             TakeConflictOther => self.choose_conflict_region(true),
             InspectConflictSides => self.inspect_conflict_sides(),
+            ResolveConflictLiteralMarkers => {
+                self.request_conflict_resolution(ResolutionChoice::SavedFile {
+                    allow_literal_markers: true,
+                })
+            }
             ResolveConflict => self.request_conflict_resolution(ResolutionChoice::SavedFile {
                 allow_literal_markers: false,
             }),
