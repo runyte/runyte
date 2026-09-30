@@ -23,8 +23,10 @@ pub mod blame;
 pub mod branch_view;
 pub mod cli;
 pub mod comparison;
+pub mod conflict_regions;
 pub mod diff;
 pub mod history;
+pub mod merge;
 pub mod patch;
 pub(crate) mod repository_lock;
 pub mod service;
@@ -45,6 +47,11 @@ pub use history::{
     CommitDetail, CommitSearchEntry, CommitSearchResult, CommitSummary, DEFAULT_LOG_PAGE_SIZE,
     LogCursor, LogPage, LogRequest, MAX_COMMIT_SEARCH_RESULTS, MAX_LOG_PAGE_SIZE,
     parse_commit_search, parse_log,
+};
+pub use merge::{
+    ConflictEntry, ConflictInventory, ConflictStage, MergeApplied, MergeApplyResult,
+    MergeCompletionPlan, MergeConflictMessage, MergePlan, MergePreviewOutcome, RepositoryOperation,
+    ResolutionChoice, ResolutionPlan,
 };
 pub use patch::{
     BufferRevisionGuard, MAX_PATCH_BYTES, PartialStageRequest, PartialStageSelection, PatchHunk,
@@ -223,6 +230,13 @@ impl fmt::Display for GitError {
 }
 
 impl std::error::Error for GitError {}
+
+fn merge_unsupported() -> GitError {
+    GitError::Malformed {
+        command: "reviewed merge".into(),
+        detail: "provider does not support reviewed merges".into(),
+    }
+}
 
 fn stale_deletion(target: &str) -> GitError {
     GitError::Failed {
@@ -699,6 +713,65 @@ pub enum DiffScope {
 /// for today, which is what keeps a fake implementation honest and a real one
 /// small.
 pub trait GitProvider {
+    fn conflict_sides(
+        &self,
+        _repository: &Repository,
+        _entry: &ConflictEntry,
+    ) -> Result<[BaseContent; 3]> {
+        Err(merge_unsupported())
+    }
+    fn operation_state(&self, _repository: &Repository) -> Result<RepositoryOperation> {
+        Err(merge_unsupported())
+    }
+    fn prepare_merge(
+        &self,
+        _repository: &Repository,
+        _source: &str,
+        _guard: BufferRevisionGuard,
+    ) -> Result<MergePlan> {
+        Err(merge_unsupported())
+    }
+    fn apply_merge(&self, _repository: &Repository, _plan: &MergePlan) -> Result<MergeApplyResult> {
+        Err(merge_unsupported())
+    }
+    fn conflicts(&self, _repository: &Repository) -> Result<ConflictInventory> {
+        Err(merge_unsupported())
+    }
+    fn prepare_resolution(
+        &self,
+        _repository: &Repository,
+        _path: &Path,
+        _choice: ResolutionChoice,
+        _guard: BufferRevisionGuard,
+    ) -> Result<ResolutionPlan> {
+        Err(merge_unsupported())
+    }
+    fn resolve_conflict(
+        &self,
+        _repository: &Repository,
+        _plan: &ResolutionPlan,
+    ) -> Result<ConflictInventory> {
+        Err(merge_unsupported())
+    }
+    fn prepare_merge_completion(
+        &self,
+        _repository: &Repository,
+        _guard: BufferRevisionGuard,
+    ) -> Result<MergeCompletionPlan> {
+        Err(merge_unsupported())
+    }
+    fn commit_merge(
+        &self,
+        _repository: &Repository,
+        _plan: &MergeCompletionPlan,
+        _message: &str,
+    ) -> Result<String> {
+        Err(merge_unsupported())
+    }
+    fn abort_merge(&self, _repository: &Repository, _plan: &MergeCompletionPlan) -> Result<String> {
+        Err(merge_unsupported())
+    }
+
     /// Capture committed tips and list their differences without reading local edits.
     fn compare_revisions(
         &self,

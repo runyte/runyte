@@ -987,6 +987,14 @@ impl App {
         #[cfg(not(any(unix, windows)))]
         let _ = request;
         match response {
+            GitResponse::Merged { .. }
+            | GitResponse::ConflictSides { .. }
+            | GitResponse::PreparedMerge(_)
+            | GitResponse::Conflicts(_)
+            | GitResponse::PreparedResolution(_)
+            | GitResponse::PreparedMergeCompletion(_) => {
+                self.action_failed("Merge review UI is unavailable");
+            }
             GitResponse::RevisionComparison(comparison) => {
                 if let GitOperation::CompareRevisions { repository, .. } = operation {
                     self.show_revision_comparison(repository, comparison);
@@ -1437,6 +1445,10 @@ impl App {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| match mutation {
+                GitMutation::Merge(_)
+                | GitMutation::ResolveConflict(_)
+                | GitMutation::CommitMerge { .. }
+                | GitMutation::AbortMerge(_) => "Merge operation complete".into(),
                 GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
                 GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
                 GitMutation::Discard(_) => {

@@ -139,6 +139,13 @@ pub struct BlameSource {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum GitMutation {
+    Merge(Box<super::MergePlan>),
+    ResolveConflict(Box<super::ResolutionPlan>),
+    CommitMerge {
+        plan: Box<super::MergeCompletionPlan>,
+        message: String,
+    },
+    AbortMerge(Box<super::MergeCompletionPlan>),
     Stage(Vec<PathBuf>),
     Unstage(Vec<PathBuf>),
     Discard(Vec<PathBuf>),
@@ -221,7 +228,11 @@ impl GitMutation {
             // Repeating an exact partial request after the first succeeds must
             // run and fail its fingerprint check, not be mistaken for a
             // harmless duplicate while queued behind it.
-            Self::PartialStage(_) => return None,
+            Self::PartialStage(_)
+            | Self::Merge(_)
+            | Self::ResolveConflict(_)
+            | Self::CommitMerge { .. }
+            | Self::AbortMerge(_) => return None,
         })
     }
 }
@@ -229,6 +240,10 @@ impl GitMutation {
 impl GitMutation {
     fn label(&self) -> &'static str {
         match self {
+            Self::Merge(_) => "apply reviewed merge",
+            Self::ResolveConflict(_) => "resolve reviewed conflict",
+            Self::CommitMerge { .. } => "commit reviewed merge",
+            Self::AbortMerge(_) => "abort reviewed merge",
             Self::Stage(_) => "stage",
             Self::Unstage(_) => "unstage",
             Self::Discard(_) => "discard",
@@ -253,6 +268,28 @@ impl GitMutation {
 
 #[derive(Clone, Debug)]
 pub enum GitOperation {
+    ConflictSides {
+        repository: Repository,
+        entry: super::ConflictEntry,
+    },
+    PrepareMerge {
+        repository: Repository,
+        source: String,
+        guard: super::BufferRevisionGuard,
+    },
+    Conflicts {
+        repository: Repository,
+    },
+    PrepareResolution {
+        repository: Repository,
+        path: PathBuf,
+        choice: super::ResolutionChoice,
+        guard: super::BufferRevisionGuard,
+    },
+    PrepareMergeCompletion {
+        repository: Repository,
+        guard: super::BufferRevisionGuard,
+    },
     CompareRevisions {
         repository: Repository,
         target: super::ComparisonTarget,
@@ -346,7 +383,12 @@ impl GitOperation {
     fn repository_key(&self) -> PathBuf {
         match self {
             Self::Discover { start } => start.clone(),
-            Self::Status { repository }
+            Self::ConflictSides { repository, .. }
+            | Self::PrepareMerge { repository, .. }
+            | Self::Conflicts { repository }
+            | Self::PrepareResolution { repository, .. }
+            | Self::PrepareMergeCompletion { repository, .. }
+            | Self::Status { repository }
             | Self::StagedContent { repository, .. }
             | Self::Diff { repository, .. }
             | Self::CompareRevisions { repository, .. }
@@ -385,7 +427,12 @@ impl GitOperation {
     pub fn refreshes_ambient_snapshot(&self) -> bool {
         !matches!(
             self,
-            Self::CommitDetail { .. }
+            Self::ConflictSides { .. }
+                | Self::PrepareMerge { .. }
+                | Self::Conflicts { .. }
+                | Self::PrepareResolution { .. }
+                | Self::PrepareMergeCompletion { .. }
+                | Self::CommitDetail { .. }
                 | Self::Blame { .. }
                 | Self::CompareRevisions { .. }
                 | Self::RevisionFile { .. }
@@ -407,6 +454,11 @@ impl GitOperation {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
+            Self::ConflictSides { .. } => "read conflict sides",
+            Self::PrepareMerge { .. } => "review merge",
+            Self::Conflicts { .. } => "read conflicts",
+            Self::PrepareResolution { .. } => "review conflict resolution",
+            Self::PrepareMergeCompletion { .. } => "review merge completion",
             Self::Discover { .. } => "discover repository",
             Self::Status { .. } => "refresh status",
             Self::StagedContent { .. } => "read staged base",
@@ -432,7 +484,13 @@ impl GitOperation {
 
     fn read_key(&self) -> Option<ReadKey> {
         match self {
-            Self::CompareRevisions { .. } | Self::RevisionFile { .. } => None,
+            Self::ConflictSides { .. } => None,
+            Self::PrepareMerge { .. }
+            | Self::Conflicts { .. }
+            | Self::PrepareResolution { .. }
+            | Self::PrepareMergeCompletion { .. }
+            | Self::CompareRevisions { .. }
+            | Self::RevisionFile { .. } => None,
             Self::Discover { start } => Some(ReadKey::Discover(start.clone())),
             Self::Status { repository } => {
                 Some(ReadKey::Status(repository.workdir().to_path_buf()))
@@ -530,6 +588,18 @@ pub struct RepositorySnapshot {
 
 #[derive(Clone, Debug)]
 pub enum GitResponse {
+    Merged {
+        applied: super::MergeApplyResult,
+        response: Box<GitResponse>,
+    },
+    ConflictSides {
+        entry: super::ConflictEntry,
+        sides: [BaseContent; 3],
+    },
+    PreparedMerge(Box<super::MergePlan>),
+    Conflicts(super::ConflictInventory),
+    PreparedResolution(Box<super::ResolutionPlan>),
+    PreparedMergeCompletion(Box<super::MergeCompletionPlan>),
     RevisionComparison(super::RevisionComparison),
     RevisionFile(super::RevisionFileView),
     Discovered(Option<Repository>),
@@ -1290,6 +1360,36 @@ fn execute(
         }
     }
     match operation {
+        GitOperation::ConflictSides { repository, entry } => provider
+            .conflict_sides(repository, entry)
+            .map(|sides| GitResponse::ConflictSides {
+                entry: entry.clone(),
+                sides,
+            }),
+        GitOperation::PrepareMerge {
+            repository,
+            source,
+            guard,
+        } => provider
+            .prepare_merge(repository, source, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedMerge),
+        GitOperation::Conflicts { repository } => {
+            provider.conflicts(repository).map(GitResponse::Conflicts)
+        }
+        GitOperation::PrepareResolution {
+            repository,
+            path,
+            choice,
+            guard,
+        } => provider
+            .prepare_resolution(repository, path, *choice, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedResolution),
+        GitOperation::PrepareMergeCompletion { repository, guard } => provider
+            .prepare_merge_completion(repository, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedMergeCompletion),
         GitOperation::CompareRevisions { repository, target } => provider
             .compare_revisions(repository, target)
             .map(GitResponse::RevisionComparison),
@@ -1398,6 +1498,45 @@ fn execute(
         } => {
             let mut applied_paths = Vec::new();
             let outcome: Result<Option<String>> = match mutation {
+                GitMutation::Merge(plan) => match provider.apply_merge(repository, plan) {
+                    Ok(applied) => {
+                        let summary = Some(
+                            match applied.outcome {
+                                super::MergeApplied::AlreadyContained => "Already up to date",
+                                super::MergeApplied::FastForward => "Fast-forward complete",
+                                super::MergeApplied::PendingCommit => "Merge ready to commit",
+                                super::MergeApplied::Conflicted => {
+                                    "Merge needs conflict resolution"
+                                }
+                            }
+                            .into(),
+                        );
+                        let response = mutation_response(
+                            provider,
+                            repository,
+                            mutation,
+                            spec,
+                            generation,
+                            MutationResultParts {
+                                applied_paths,
+                                summary,
+                                failure: None,
+                            },
+                        );
+                        return Ok(GitResponse::Merged {
+                            applied,
+                            response: Box::new(response),
+                        });
+                    }
+                    Err(error) => Err(error),
+                },
+                GitMutation::ResolveConflict(plan) => {
+                    provider.resolve_conflict(repository, plan).map(|_| None)
+                }
+                GitMutation::CommitMerge { plan, message } => {
+                    provider.commit_merge(repository, plan, message).map(Some)
+                }
+                GitMutation::AbortMerge(plan) => provider.abort_merge(repository, plan).map(Some),
                 GitMutation::Stage(paths) => {
                     mutate_paths(provider, repository, paths, true, &mut applied_paths)
                 }
