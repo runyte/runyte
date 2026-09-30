@@ -34,6 +34,10 @@ impl BufferRevisionGuard {
             valid: Arc::new(AtomicBool::new(true)),
         }
     }
+    pub(crate) fn revision_observer(&self) -> std::sync::Weak<AtomicBool> {
+        Arc::downgrade(&self.valid)
+    }
+
     pub fn invalidate(&self) {
         self.valid.store(false, Ordering::Release);
     }

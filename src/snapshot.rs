@@ -319,6 +319,7 @@ pub enum OverlayInput {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayout {
+    GitMergeReview,
     Standard,
     Preview,
     /// A single typed setting value.
@@ -347,6 +348,7 @@ impl OverlayAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayKind {
+    GitMergeReview,
     FilesystemConfirmation,
     FilePicker,
     ResultList,
@@ -372,6 +374,7 @@ impl OverlayKind {
     /// Exhaustive producer inventory used by contract tests. Adding an
     /// overlay kind therefore requires classifying it deliberately.
     pub const ALL: &'static [Self] = &[
+        Self::GitMergeReview,
         Self::FilesystemConfirmation,
         Self::FilePicker,
         Self::ResultList,

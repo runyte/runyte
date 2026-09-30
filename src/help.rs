@@ -79,6 +79,11 @@ impl HelpTopic {
             BindingScope::Settings => Self::Config,
             BindingScope::GitStatus => Self::GitStatus,
             BindingScope::GitBranches => Self::GitBranches,
+            BindingScope::GitConflicts
+            | BindingScope::GitConflictFile
+            | BindingScope::GitMergeReview
+            | BindingScope::GitMergeDetail
+            | BindingScope::GitMergeInput => Self::GitStatus,
             BindingScope::GitWorktrees => Self::GitWorktrees,
             BindingScope::GitComparison => Self::GitComparison,
             BindingScope::GitRevisionDiff => Self::GitRevisionDiff,

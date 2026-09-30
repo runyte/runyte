@@ -1639,6 +1639,9 @@ impl App {
         {
             key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
         }
+        if self.merge_ui.review.is_some() {
+            return self.handle_merge_review_key(key);
+        }
         if self.directory_tree_delete.is_some() {
             self.handle_tree_delete_key(key);
             return Ok(());
@@ -1770,6 +1773,9 @@ impl App {
         if self.exact_confirmation_accepts_space() {
             return false;
         }
+        if self.merge_ui.review.is_some() {
+            return true;
+        }
         // A nested action menu is the topmost overlay even when the picker
         // beneath it already has a query.
         if self.context_action_menu.is_some()
@@ -1798,7 +1804,11 @@ impl App {
     }
 
     fn exact_confirmation_accepts_space(&self) -> bool {
-        self.git_branch_switch.is_some()
+        self.merge_ui
+            .review
+            .as_ref()
+            .is_some_and(super::git_merge_review::MergeReview::input_focused)
+            || self.git_branch_switch.is_some()
             || self
                 .git_branch_deletion
                 .as_ref()
@@ -1823,6 +1833,14 @@ impl App {
             || self.plugins.provider_overwrite.is_some()
         {
             return false;
+        }
+        if self
+            .merge_ui
+            .review
+            .as_ref()
+            .is_some_and(super::git_merge_review::MergeReview::input_focused)
+        {
+            return true;
         }
         if self.git_branch_switch.is_some() {
             return true;
@@ -1876,6 +1894,12 @@ impl App {
             return Ok(());
         }
         if text.is_empty() {
+            return Ok(());
+        }
+        if let Some(review) = self.merge_ui.review.as_mut() {
+            if review.input_focused() {
+                insert_confirmation_text(&mut review.acknowledgment, &mut review.cursor, text);
+            }
             return Ok(());
         }
         if let Some(confirmation) = self.git_branch_switch.as_mut() {
@@ -4148,6 +4172,9 @@ impl App {
 
     fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
+        if self.handle_merge_command(command) {
+            return Ok(());
+        }
         if self.handle_directory_tree_command(command)? {
             return Ok(());
         }
@@ -4526,6 +4553,28 @@ impl App {
             Command::CheckoutBranch => self.checkout_selected_branch(),
             Command::CreateBranch => self.create_branch_prompt(),
             Command::DeleteBranch => self.delete_selected_branch(),
+            Command::MergeBranch
+            | Command::OpenGitConflicts
+            | Command::OpenGitConflict
+            | Command::ContinueMerge
+            | Command::AbortMerge
+            | Command::NextConflict
+            | Command::PreviousConflict
+            | Command::KeepConflictCurrent
+            | Command::TakeConflictOther
+            | Command::InspectConflictSides
+            | Command::ResolveConflict
+            | Command::ReturnToGitConflicts
+            | Command::KeepConflictFileCurrent
+            | Command::TakeConflictFileOther
+            | Command::MergeReviewApprove
+            | Command::MergeReviewCancel
+            | Command::MergeReviewBack
+            | Command::MergeReviewNext
+            | Command::MergeReviewPrevious
+            | Command::MergeReviewLeft
+            | Command::MergeReviewRight
+            | Command::MergeReviewEnter => unreachable!("handled merge commands"),
             Command::FetchBranch => self.fetch_selected_branch(),
             Command::PullBranch => self.pull_current_branch(),
             Command::PushBranch => self.push_selected_branch(),

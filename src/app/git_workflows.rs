@@ -775,7 +775,8 @@ impl App {
                 if matches!(
                     operation,
                     GitOperation::CompareRevisions { .. } | GitOperation::RevisionFile { .. }
-                ) && !self.accept_revision_response(id)
+                ) && self.merge_ui.details_request != Some(id)
+                    && !self.accept_revision_response(id)
                 {
                     return;
                 }
@@ -987,13 +988,56 @@ impl App {
         #[cfg(not(any(unix, windows)))]
         let _ = request;
         match response {
-            GitResponse::Merged { .. }
-            | GitResponse::ConflictSides { .. }
-            | GitResponse::PreparedMerge(_)
-            | GitResponse::Conflicts(_)
-            | GitResponse::PreparedResolution(_)
-            | GitResponse::PreparedMergeCompletion(_) => {
-                self.action_failed("Merge review UI is unavailable");
+            GitResponse::Merged { applied, response } => {
+                let activate = self
+                    .merge_ui
+                    .mutation_origin
+                    .take()
+                    .is_some_and(|origin| origin.matches(self))
+                    && applied.outcome == crate::git::MergeApplied::Conflicted;
+                self.apply_git_response(
+                    operation,
+                    *response,
+                    completion,
+                    requested_views,
+                    log_view_request,
+                    action,
+                );
+                self.show_git_conflicts(applied.inventory, activate);
+                if let Some(diagnostic) = applied.diagnostic {
+                    self.error_from("Git", "Merge needs recovery", diagnostic.to_string());
+                }
+            }
+            GitResponse::PreparedMerge(plan) => {
+                self.receive_merge_plan(request, super::git_merges::ReviewPlan::Merge(plan))
+            }
+            GitResponse::PreparedResolution(plan) => {
+                self.receive_merge_plan(request, super::git_merges::ReviewPlan::Resolution(plan))
+            }
+            GitResponse::PreparedMergeCompletion(plan) => {
+                let intent = self
+                    .merge_ui
+                    .pending
+                    .as_ref()
+                    .map(|p| p.intent)
+                    .unwrap_or(super::git_merges::ReviewIntent::Continue);
+                self.receive_merge_plan(
+                    request,
+                    super::git_merges::ReviewPlan::Completion(plan, intent),
+                );
+            }
+            GitResponse::Conflicts(inventory) => {
+                let activate =
+                    self.merge_ui
+                        .conflict_read
+                        .take()
+                        .is_some_and(|(id, origin, activate)| {
+                            Some(id) == request && origin.matches(self) && activate
+                        });
+                self.show_git_conflicts(inventory, activate);
+            }
+            GitResponse::ConflictSides { entry, sides } => {
+                self.receive_conflict_sides(request, entry, sides)
             }
             GitResponse::RevisionComparison(comparison) => {
                 if let GitOperation::CompareRevisions { repository, .. } = operation {
@@ -1001,6 +1045,9 @@ impl App {
                 }
             }
             GitResponse::RevisionFile(view) => {
+                if self.receive_merge_detail(request, view.clone()) {
+                    return;
+                }
                 if let GitOperation::RevisionFile {
                     repository,
                     comparison,
@@ -1304,6 +1351,9 @@ impl App {
                 | GitMutation::CreateTrackingBranch { .. }
                 | GitMutation::Pull
                 | GitMutation::RebaseOntoUpstream
+                | GitMutation::Merge(_)
+                | GitMutation::ResolveConflict(_)
+                | GitMutation::AbortMerge(_)
         ) {
             self.reload_clean_repository_buffers();
         }
@@ -1316,13 +1366,16 @@ impl App {
         if matches!(mutation, GitMutation::Discard(_)) {
             self.reload_git_paths(&applied_paths);
         }
-        if matches!(mutation, GitMutation::Commit { .. })
-            && failure.is_none()
+        if matches!(
+            mutation,
+            GitMutation::Commit { .. } | GitMutation::CommitMerge { .. }
+        ) && failure.is_none()
             && let Some(buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
                 (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
                     .then_some(index)
             })
         {
+            self.merge_ui.commit = None;
             let _ = self.buffers[buffer].discard_changes_to("");
             self.close_buffer(buffer);
             self.return_from_commit();
@@ -6124,6 +6177,9 @@ impl App {
             return;
         };
         let message = commit_message_body(&self.buffers[buffer_id].to_string());
+        if self.commit_reviewed_merge(message.clone()) {
+            return;
+        }
         if message.is_empty() {
             self.action_failed("a commit needs a message; write one above the comments");
             return;
@@ -6178,6 +6234,9 @@ impl App {
     /// Nothing about the index changes: what was staged stays staged, which is
     /// what makes this safe to reach for. Only the text is lost.
     pub(super) fn abandon_commit_message(&mut self, buffer_id: usize) {
+        if let Some(plan) = self.merge_ui.commit.take() {
+            plan.invalidate();
+        }
         let _ = self.buffers[buffer_id].discard_changes_to("");
         self.close_buffer(buffer_id);
         self.return_from_commit();

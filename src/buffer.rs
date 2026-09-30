@@ -22,8 +22,8 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::Arc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{Arc, Weak},
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -172,6 +172,7 @@ pub enum BufferKind {
     GitStatus,
     /// Local branches, one per line, with the current branch marked.
     GitBranches,
+    GitConflicts,
     /// Registered checkouts for the repository's common Git directory.
     GitWorktrees,
     /// Bounded commit summaries, one stable object identity per row.
@@ -333,6 +334,7 @@ pub struct Buffer {
     /// They are kept newest-last while the action is live, then reversed into
     /// the order in which undo must apply them when the checkpoint is closed.
     undo_group: Option<Vec<Transaction>>,
+    revision_guards: Vec<Weak<AtomicBool>>,
     /// What the file looked like when this buffer last agreed with it.
     ///
     /// `None` for a buffer with no file behind it, and for one whose file
@@ -1828,6 +1830,32 @@ impl DocumentSave {
 }
 
 impl Buffer {
+    pub(crate) fn observe_revision(&mut self, guard: Weak<AtomicBool>) {
+        self.revision_guards
+            .retain(|guard| guard.strong_count() > 0);
+        self.revision_guards.push(guard);
+    }
+
+    fn invalidate_revision_guards(&mut self) {
+        for guard in self
+            .revision_guards
+            .drain(..)
+            .filter_map(|guard| guard.upgrade())
+        {
+            guard.store(false, Ordering::Release);
+        }
+    }
+
+    pub fn git_conflicts(text: &str) -> Self {
+        let mut buffer = Self::git_branches(text);
+        buffer.kind = BufferKind::GitConflicts;
+        buffer
+    }
+
+    pub fn is_git_conflicts(&self) -> bool {
+        self.kind == BufferKind::GitConflicts
+    }
+
     pub fn scratch() -> Self {
         Self {
             text: Text::new(),
@@ -1842,6 +1870,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -1877,6 +1906,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: Some(disk_state),
             disk_generation: 1,
             write_uncertain: false,
@@ -2032,6 +2062,7 @@ impl Buffer {
             bail!("the current disk version is not editable text");
         };
         self.disk_state = Some(state.clone());
+        self.invalidate_revision_guards();
         self.text = Text::from_str(text);
         self.undo.clear();
         self.redo.clear();
@@ -2089,6 +2120,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2139,6 +2171,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2174,6 +2207,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2256,6 +2290,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2282,6 +2317,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2308,6 +2344,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2334,6 +2371,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2359,6 +2397,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2384,6 +2423,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2409,6 +2449,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2443,6 +2484,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2469,6 +2511,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2494,6 +2537,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2521,6 +2565,7 @@ impl Buffer {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_group: None,
+            revision_guards: Vec::new(),
             disk_state: None,
             disk_generation: 0,
             write_uncertain: false,
@@ -2548,6 +2593,7 @@ impl Buffer {
             BufferKind::Notifications { .. } => Some("notifications are read-only"),
             BufferKind::GitStatus => Some("the changed-file list is read-only"),
             BufferKind::GitBranches => Some("the branch list is read-only"),
+            BufferKind::GitConflicts => Some("the conflict list is read-only"),
             BufferKind::GitWorktrees => Some("the worktree list is read-only"),
             BufferKind::GitLog => Some("the Git log is read-only"),
             BufferKind::GitBlame => Some("the Git blame view is read-only"),
@@ -2705,6 +2751,7 @@ impl Buffer {
         if !self.is_workspace_search() {
             return false;
         }
+        self.invalidate_revision_guards();
         self.text = Text::from_str(text);
         debug_assert_eq!(rows.len(), self.text.len_lines());
         self.kind = BufferKind::WorkspaceSearch {
@@ -2741,6 +2788,7 @@ impl Buffer {
             BufferKind::Scratch => "[scratch]".to_owned(),
             BufferKind::GitStatus => GIT_STATUS_NAME.to_owned(),
             BufferKind::GitBranches => GIT_BRANCHES_NAME.to_owned(),
+            BufferKind::GitConflicts => "[git conflicts]".to_owned(),
             BufferKind::GitWorktrees => GIT_WORKTREES_NAME.to_owned(),
             BufferKind::GitLog => GIT_LOG_NAME.to_owned(),
             BufferKind::GitBlame => GIT_BLAME_NAME.to_owned(),
@@ -2815,6 +2863,7 @@ impl Buffer {
             !self.is_directory(),
             "directory buffers are managed separately"
         );
+        self.invalidate_revision_guards();
         self.text = Text::from_str(text);
         self.undo.clear();
         self.redo.clear();
@@ -2937,6 +2986,7 @@ impl Buffer {
             return false;
         }
         let directory_before = self.is_directory().then(|| self.text.to_string());
+        self.invalidate_revision_guards();
         let revert = self.text.apply(transaction);
         if let (Some(before), Some(directory)) = (directory_before, self.directory.as_mut()) {
             directory.reconcile(&before, &self.text.to_string());
@@ -3013,6 +3063,7 @@ impl Buffer {
         let mut redo = Vec::with_capacity(group.len());
         for transaction in &group {
             let directory_before = self.is_directory().then(|| self.text.to_string());
+            self.invalidate_revision_guards();
             let revert = self.text.apply(transaction);
             if let (Some(before), Some(directory)) = (directory_before, self.directory.as_mut()) {
                 directory.reconcile(&before, &self.text.to_string());
@@ -3039,6 +3090,7 @@ impl Buffer {
         let mut undo = Vec::with_capacity(group.len());
         for transaction in &group {
             let directory_before = self.is_directory().then(|| self.text.to_string());
+            self.invalidate_revision_guards();
             let revert = self.text.apply(transaction);
             if let (Some(before), Some(directory)) = (directory_before, self.directory.as_mut()) {
                 directory.reconcile(&before, &self.text.to_string());
@@ -3072,6 +3124,7 @@ impl Buffer {
         {
             return false;
         }
+        self.invalidate_revision_guards();
         self.text = prepared.text;
         self.layout = prepared.layout;
         self.longest_line = prepared.longest_line;
@@ -3090,6 +3143,7 @@ impl Buffer {
         if !self.is_read_only() {
             return false;
         }
+        self.invalidate_revision_guards();
         self.text = Text::from_str(text);
         // Alignment survives a reprojection, but the width it centres does
         // not: new text is a new block.
@@ -3345,6 +3399,7 @@ impl Buffer {
         let path = self.path.as_ref().context("buffer has no path")?;
         let (contents, disk_state) = read_text_and_state(path, "reload")?;
         self.disk_state = Some(disk_state);
+        self.invalidate_revision_guards();
         self.text = Text::from_str(&contents);
         self.undo.clear();
         self.redo.clear();
@@ -3477,6 +3532,7 @@ impl Buffer {
             .as_mut()
             .context("buffer is not a directory")?
             .reload(view)?;
+        self.invalidate_revision_guards();
         self.text = Text::from_str(&text);
         self.undo.clear();
         self.redo.clear();
@@ -3495,6 +3551,7 @@ impl Buffer {
             .as_mut()
             .context("buffer is not a directory")?
             .refresh_baseline_preserving_order(&text, show_hidden)?;
+        self.invalidate_revision_guards();
         self.text = Text::from_str(&text);
         self.undo.clear();
         self.redo.clear();
@@ -3554,6 +3611,7 @@ impl Buffer {
         let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), view)?;
         self.directory = Some(directory);
         self.path = Some(path.to_path_buf());
+        self.invalidate_revision_guards();
         self.text = Text::from_str(&contents);
         self.undo.clear();
         self.redo.clear();
@@ -3583,6 +3641,7 @@ impl Buffer {
 
     #[cfg(test)]
     pub fn set_text(&mut self, value: &str) {
+        self.invalidate_revision_guards();
         self.text = Text::from_str(value);
         self.undo.clear();
         self.redo.clear();

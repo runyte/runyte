@@ -269,6 +269,8 @@ pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
 mod git_comparison;
 mod git_fetch;
+mod git_merge_review;
+mod git_merges;
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -3035,6 +3037,7 @@ pub struct App {
     /// A checkout or branch creation that needs exact-name authorization
     /// because a terminal child remains live in this workspace.
     git_branch_switch: Option<BranchSwitchConfirmation>,
+    merge_ui: git_merges::MergeUi,
     /// The drift a refused pull reported, held while the reader decides
     /// whether to replay their commits on top of it.
     git_pull_rebase: Option<PullRebaseConfirmation>,
@@ -3592,6 +3595,7 @@ impl App {
             git_state: GitWorkflowState::default(),
             git_branch_deletion: None,
             git_branch_switch: None,
+            merge_ui: git_merges::MergeUi::default(),
             git_pull_rebase: None,
             git_branch_start: None,
             git_worktree_removal: None,

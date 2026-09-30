@@ -238,6 +238,11 @@ pub enum BindingScope {
     Settings,
     GitStatus,
     GitBranches,
+    GitConflicts,
+    GitConflictFile,
+    GitMergeReview,
+    GitMergeDetail,
+    GitMergeInput,
     GitWorktrees,
     GitComparison,
     GitRevisionDiff,
@@ -276,6 +281,11 @@ impl BindingScope {
         Self::Settings,
         Self::GitStatus,
         Self::GitBranches,
+        Self::GitConflicts,
+        Self::GitConflictFile,
+        Self::GitMergeReview,
+        Self::GitMergeDetail,
+        Self::GitMergeInput,
         Self::Terminal,
         Self::GitWorktrees,
         Self::GitComparison,
@@ -305,6 +315,10 @@ impl BindingScope {
                 | Self::Markdown
                 | Self::SessionManager
                 | Self::DirectoryTree
+                | Self::GitConflictFile
+                | Self::GitMergeReview
+                | Self::GitMergeDetail
+                | Self::GitMergeInput
         )
     }
 }
@@ -2069,6 +2083,167 @@ fn built_in_bindings() -> Vec<Binding> {
             Key::plain(KeyCode::Enter),
             ColonCommand::GitDiff,
         ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('a'),
+            Command::MergeReviewApprove,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('A'),
+            Command::MergeReviewApprove,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('C'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewBack,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitConflicts,
+            Key::plain(KeyCode::Enter),
+            Command::OpenGitConflict,
+        ),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('g'), Key::char('c')],
+            Command::OpenGitConflicts,
+        ),
         git_branches(Key::plain(KeyCode::Enter), Command::CheckoutBranch),
         git_worktrees(Key::plain(KeyCode::Enter), Command::OpenWorktree),
         git_log(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
@@ -2514,6 +2689,36 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
     let actions = vec![
         ContextAction::row(
             BindingScope::GitBranches,
+            Key::char('m'),
+            "merge",
+            EditorCommand::MergeBranch,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflicts,
+            Key::char('c'),
+            "continue",
+            EditorCommand::ContinueMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflicts,
+            Key::char('A'),
+            "abort",
+            EditorCommand::AbortMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitStatus,
+            Key::char('C'),
+            "continue",
+            EditorCommand::ContinueMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitStatus,
+            Key::char('A'),
+            "abort",
+            EditorCommand::AbortMerge,
+        ),
+        ContextAction::row(
+            BindingScope::GitBranches,
             Key::char('f'),
             "fetch",
             EditorCommand::FetchBranch,
@@ -2525,6 +2730,60 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             ColonCommand::GitCompare,
         )
         .with_description("Compare committed tips with this branch"),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('n'),
+            "next",
+            EditorCommand::NextConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('p'),
+            "previous",
+            EditorCommand::PreviousConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('o'),
+            "current",
+            EditorCommand::KeepConflictCurrent,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('t'),
+            "other",
+            EditorCommand::TakeConflictOther,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('d'),
+            "sides",
+            EditorCommand::InspectConflictSides,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('r'),
+            "resolve",
+            EditorCommand::ResolveConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('l'),
+            "list",
+            EditorCommand::ReturnToGitConflicts,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('O'),
+            "file-current",
+            EditorCommand::KeepConflictFileCurrent,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('T'),
+            "file-other",
+            EditorCommand::TakeConflictFileOther,
+        ),
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('d'),

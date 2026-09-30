@@ -3368,6 +3368,7 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
             | BufferKind::GitLog
             | BufferKind::GitBlame
@@ -3474,6 +3475,7 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
             | BufferKind::GitLog
             | BufferKind::GitBlame
