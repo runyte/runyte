@@ -12,6 +12,7 @@ use crate::snapshot::{
 
 pub(super) struct MergeReview {
     pub plan: ReviewPlan,
+    pub origin: Option<super::git_merges::ReviewOrigin>,
     pub focus: usize,
     pub root_scroll: usize,
     pub detail: Option<Vec<String>>,
@@ -74,10 +75,11 @@ impl MergeReview {
                         } else {
                             "M"
                         };
-                        let stats = f.stats.map_or_else(
+                        let provisional = matches!(&p.outcome, MergePreviewOutcome::Merge { conflicts, .. } if conflicts.iter().any(|c| f.left.as_ref() == Some(&c.path) || f.right.as_ref() == Some(&c.path)));
+                        let stats = if provisional { "provisional result; counts omitted".into() } else { f.stats.map_or_else(
                             || "binary or unavailable counts".into(),
                             |s| format!("+{} -{}", s.added, s.removed),
-                        );
+                        ) };
                         format!("{status}  {path}  {stats}")
                     })
                     .collect::<Vec<_>>();
@@ -132,21 +134,63 @@ impl MergeReview {
             }
             ReviewPlan::Resolution(p) => {
                 let side = match p.choice {
-                    crate::git::ResolutionChoice::SavedFile { .. } => {
-                        "Stage the entire saved file or deletion, including manual edits"
+                    crate::git::ResolutionChoice::SavedFile {
+                        allow_literal_markers,
+                    } => {
+                        if allow_literal_markers {
+                            "Stage the entire saved file or reviewed deletion, preserving literal conflict-marker text".into()
+                        } else {
+                            "Stage the entire saved file or reviewed deletion, including manual edits".into()
+                        }
                     }
                     crate::git::ResolutionChoice::Current => {
-                        "Replace or delete the whole file with Current, then stage it"
+                        if p.entry.current.is_none() {
+                            format!(
+                                "Delete the whole path as Current ({}) has no file, then stage the deletion",
+                                p.inventory.current_identity
+                            )
+                        } else {
+                            format!(
+                                "Replace the entire file with Current ({}), then stage it",
+                                p.inventory.current_identity
+                            )
+                        }
                     }
                     crate::git::ResolutionChoice::Other => {
-                        "Replace or delete the whole file with Other, then stage it"
+                        if p.entry.other.is_none() {
+                            format!(
+                                "Delete the whole path as Other ({}) has no file, then stage the deletion",
+                                p.inventory.other_identity
+                            )
+                        } else {
+                            format!(
+                                "Replace the entire file with Other ({}), then stage it",
+                                p.inventory.other_identity
+                            )
+                        }
                     }
                 };
-                (
-                    "Review conflict resolution".into(),
-                    side.into(),
-                    vec![crate::git::display_path(&p.path)],
-                )
+                let mut rows = vec![format!(
+                    "{} · {}",
+                    crate::git::display_path(&p.path),
+                    if matches!(p.reviewed_content, BaseContent::Absent) {
+                        "reviewed deletion"
+                    } else {
+                        "reviewed complete file"
+                    }
+                )];
+                let related = p.inventory.related_paths(&p.entry.path);
+                if related.len() > 1 {
+                    rows.push(format!(
+                        "Related structural paths: {} · each saved path/deletion must be reviewed",
+                        related
+                            .iter()
+                            .map(|p| crate::git::display_path(p))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                ("Review conflict resolution".into(), side, rows)
             }
             ReviewPlan::Completion(p, intent) => {
                 let abort = *intent == ReviewIntent::Abort;
@@ -160,6 +204,7 @@ impl MergeReview {
         let focus = rows.len() + usize::from(requires_ack) + 1;
         Self {
             plan,
+            origin: None,
             focus,
             root_scroll: 0,
             detail: None,
@@ -329,6 +374,18 @@ impl App {
         let Some(review) = self.merge_ui.review.as_mut() else {
             return;
         };
+        if let ReviewPlan::Resolution(plan) = &review.plan {
+            let entry = plan.entry.clone();
+            review.detail = Some(vec!["Loading captured index sides…".into()]);
+            review.detail_scroll = 0;
+            self.merge_ui.details_origin = Some(self.review_origin());
+            self.merge_ui.detail_append_result = false;
+            self.merge_ui.details_request = self.request_git(GitOperation::ConflictSides {
+                repository,
+                entry: Box::new(entry),
+            });
+            return;
+        }
         let ReviewPlan::Merge(plan) = &review.plan else {
             return;
         };
@@ -371,12 +428,40 @@ impl App {
             return false;
         }
         self.merge_ui.details_request = None;
+        if self
+            .merge_ui
+            .details_origin
+            .as_ref()
+            .is_none_or(|origin| !origin.matches(self))
+        {
+            return true;
+        }
         if let Some(review) = self.merge_ui.review.as_mut().filter(|r| r.detail.is_some()) {
-            let text = match view {
-                RevisionFileView::Patch(text) => text,
-                RevisionFileView::Split(_) => return true,
+            let lines = match view {
+                RevisionFileView::Patch(text) => {
+                    text.lines().map(str::to_owned).collect::<Vec<_>>()
+                }
+                RevisionFileView::Split(comparison) => {
+                    let mut lines = vec![
+                        "── Provisional Result (simulated merge; still requires resolution) ──"
+                            .into(),
+                    ];
+                    match comparison.current {
+                        BaseContent::Absent => lines.push("Absent in simulated result".into()),
+                        BaseContent::Binary => {
+                            lines.push("Binary simulated result; text unavailable".into())
+                        }
+                        BaseContent::Text(text) => lines.extend(text.lines().map(str::to_owned)),
+                    }
+                    lines
+                }
             };
-            review.detail = Some(text.lines().map(str::to_owned).collect());
+            if self.merge_ui.detail_append_result {
+                review.detail.as_mut().unwrap().extend(lines);
+                self.merge_ui.detail_append_result = false;
+            } else {
+                review.detail = Some(lines);
+            }
             review.detail_scroll = 0;
         }
         true
@@ -400,7 +485,29 @@ impl App {
         }
         self.merge_ui.details_request = None;
         let mut lines = vec![crate::git::display_path(&entry.path)];
-        for (name, content) in ["Base", "Current (stage 2)", "Other (stage 3)"]
+        let (current, other) = self
+            .merge_ui
+            .inventory
+            .as_ref()
+            .map(|inventory| {
+                if matches!(
+                    inventory.operation,
+                    crate::git::RepositoryOperation::Idle
+                        | crate::git::RepositoryOperation::Merge { .. }
+                ) {
+                    (
+                        format!("Current (stage 2): {}", inventory.current_identity),
+                        format!("Other (stage 3): {}", inventory.other_identity),
+                    )
+                } else {
+                    (
+                        format!("Stage 2: {}", inventory.current_identity),
+                        format!("Stage 3: {}", inventory.other_identity),
+                    )
+                }
+            })
+            .unwrap_or_else(|| ("Current (stage 2)".into(), "Other (stage 3)".into()));
+        for (name, content) in ["Base (stage 1)".to_owned(), current, other]
             .into_iter()
             .zip(sides)
         {
@@ -413,16 +520,49 @@ impl App {
             }
         }
         if let Some(review) = self.merge_ui.review.as_mut() {
+            if let ReviewPlan::Resolution(plan) = &review.plan {
+                lines.push("── Reviewed Result (whole saved file or chosen side) ──".into());
+                match &plan.reviewed_content {
+                    BaseContent::Absent => {
+                        lines.push("Delete this path; reviewed result is absent".into())
+                    }
+                    BaseContent::Binary => lines.push("Binary result; text unavailable".into()),
+                    BaseContent::Text(text) => lines.extend(text.lines().map(str::to_owned)),
+                }
+            }
             review.detail = Some(lines);
             review.detail_scroll = 0;
-        } else if let Some(inventory) = self.merge_ui.inventory.clone() {
-            let _ = inventory;
+        } else if self.merge_ui.inventory.is_some() {
             let mut review = MergeReview::new(ReviewPlan::Sides, false);
             review.title = "Inspect conflict sides".into();
             review.message.clear();
             review.detail = Some(lines);
             review.standalone_details = true;
+            review.origin = self.merge_ui.details_origin.clone();
             self.merge_ui.review = Some(review);
+        }
+        let result_operation = self.merge_ui.review.as_ref().and_then(|review| {
+            if let ReviewPlan::Merge(plan) = &review.plan {
+                plan.comparison
+                    .files
+                    .iter()
+                    .find(|f| {
+                        f.left.as_ref() == Some(&entry.path)
+                            || f.right.as_ref() == Some(&entry.path)
+                    })
+                    .map(|file| GitOperation::RevisionFile {
+                        repository: plan.repository.clone(),
+                        comparison: Box::new(plan.comparison.endpoints()),
+                        file: Box::new(file.clone()),
+                        split: true,
+                    })
+            } else {
+                None
+            }
+        });
+        if let Some(operation) = result_operation {
+            self.merge_ui.detail_append_result = true;
+            self.merge_ui.details_request = self.request_git(operation);
         }
     }
 
@@ -445,10 +585,28 @@ impl App {
         let displayed_body = rows.len();
         rows.push(review_row(
             if detail.is_some() { "back" } else { "approve" },
-            if detail.is_some() { "Back" } else { "Approve" },
+            if detail.is_some() {
+                format!(
+                    "[{}] Back",
+                    self.review_key_hint(EditorCommand::MergeReviewBack)
+                )
+            } else {
+                let key = self.review_key_hint(EditorCommand::MergeReviewApprove);
+                if key.eq_ignore_ascii_case("a") {
+                    "[A]pprove merge".into()
+                } else {
+                    format!("[{key}] Approve merge")
+                }
+            },
             detail.is_some() || review.approval_available(),
         ));
-        rows.push(review_row("cancel", "Cancel", true));
+        let cancel_key = self.review_key_hint(EditorCommand::MergeReviewCancel);
+        let cancel_label = if cancel_key.eq_ignore_ascii_case("c") {
+            "[C]ancel merge".into()
+        } else {
+            format!("[{cancel_key}] Cancel merge")
+        };
+        rows.push(review_row("cancel", cancel_label, true));
         let selected = if detail.is_some() {
             Some(displayed_body)
         } else if review.input_focused() {

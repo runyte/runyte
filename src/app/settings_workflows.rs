@@ -795,6 +795,7 @@ impl App {
             self.action_failed(":detach is available only in persistent mode");
             return;
         }
+        self.invalidate_unsubmitted_merge_review();
         self.tutorial_requested_detach();
         self.quit_directory = None;
         self.persistent_exit_request = Some(super::PersistentExitRequest::Detach);

@@ -50,6 +50,9 @@ pub enum CommandCapability {
     LspManager,
     GitProject,
     GitFetchBranch,
+    GitMergeActive,
+    GitConflict,
+    GitConflictWhole,
     /// Refresh a discovered repository or retry a failed discovery.
     GitRefresh,
     /// A persistent session host this editor can reach: the platform supports
@@ -810,6 +813,7 @@ editor_commands! {
     KeepConflictCurrent => ("git-conflict-keep-current", "Keep Current in this region as an undoable edit"),
     TakeConflictOther => ("git-conflict-take-other", "Take Other in this region as an undoable edit"),
     InspectConflictSides => ("git-conflict-sides", "Inspect Base, Current and Other index stages"),
+    ResolveConflictLiteralMarkers => ("git-conflict-resolve-literal-markers", "Review staging literal marker text as resolved"),
     ResolveConflict => ("git-conflict-resolve", "Review staging this saved file or deletion as resolved"),
     ReturnToGitConflicts => ("git-conflict-list", "Return to the unresolved conflict list"),
     KeepConflictFileCurrent => ("git-conflict-file-current", "Review replacing the whole file with Current"),
@@ -1087,6 +1091,18 @@ impl EditorCommand {
             | Self::RenameSymbol
             | Self::CodeAction => Some(CommandCapability::LspDocument),
             Self::FetchBranch => Some(CommandCapability::GitFetchBranch),
+            Self::ContinueMerge | Self::AbortMerge => Some(CommandCapability::GitMergeActive),
+            Self::KeepConflictFileCurrent | Self::TakeConflictFileOther => {
+                Some(CommandCapability::GitConflictWhole)
+            }
+            Self::OpenGitConflict
+            | Self::NextConflict
+            | Self::PreviousConflict
+            | Self::KeepConflictCurrent
+            | Self::TakeConflictOther
+            | Self::InspectConflictSides
+            | Self::ResolveConflict
+            | Self::ResolveConflictLiteralMarkers => Some(CommandCapability::GitConflict),
             _ if matches!(self.category(), CommandCategory::Git) => {
                 Some(CommandCapability::GitProject)
             }
@@ -1384,6 +1400,7 @@ impl EditorCommand {
             | Self::TakeConflictOther
             | Self::InspectConflictSides
             | Self::ResolveConflict
+            | Self::ResolveConflictLiteralMarkers
             | Self::ReturnToGitConflicts
             | Self::KeepConflictFileCurrent
             | Self::TakeConflictFileOther
@@ -2171,6 +2188,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         "git-conflict-sides",
         [],
         "git-conflict-sides",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ResolveConflictLiteralMarkers,
+        "git-conflict-resolve-literal-markers",
+        [],
+        "git-conflict-resolve-literal-markers",
         NoArguments
     ),
     editor_spec!(
@@ -3264,6 +3288,7 @@ fn invocation_from_parts(
             | (EditorCommand::KeepConflictCurrent, ParsedArgument::None)
             | (EditorCommand::TakeConflictOther, ParsedArgument::None)
             | (EditorCommand::InspectConflictSides, ParsedArgument::None)
+            | (EditorCommand::ResolveConflictLiteralMarkers, ParsedArgument::None)
             | (EditorCommand::ResolveConflict, ParsedArgument::None)
             | (EditorCommand::ReturnToGitConflicts, ParsedArgument::None)
             | (EditorCommand::KeepConflictFileCurrent, ParsedArgument::None)

@@ -240,6 +240,7 @@ pub enum BindingScope {
     GitBranches,
     GitConflicts,
     GitConflictFile,
+    GitConflictMarkdown,
     GitMergeReview,
     GitMergeDetail,
     GitMergeInput,
@@ -284,6 +285,7 @@ impl BindingScope {
         Self::GitBranches,
         Self::GitConflicts,
         Self::GitConflictFile,
+        Self::GitConflictMarkdown,
         Self::GitMergeReview,
         Self::GitMergeDetail,
         Self::GitMergeInput,
@@ -318,6 +320,7 @@ impl BindingScope {
                 | Self::SessionManager
                 | Self::DirectoryTree
                 | Self::GitConflictFile
+                | Self::GitConflictMarkdown
                 | Self::GitMergeReview
                 | Self::GitMergeDetail
                 | Self::GitMergeInput
@@ -962,7 +965,7 @@ impl Keymap {
     pub fn context_actions(&self, scope: BindingScope) -> impl Iterator<Item = &ContextAction> {
         self.context_actions
             .iter()
-            .filter(move |action| action.scope == scope)
+            .filter(move |action| scope_includes(scope, action.scope))
     }
 
     pub fn all_context_actions(&self) -> &[ContextAction] {
@@ -2636,6 +2639,11 @@ fn with_fast_pane_keys(mut bindings: Vec<Binding>) -> Vec<Binding> {
 
 fn scope_includes(active: BindingScope, binding: BindingScope) -> bool {
     active == binding
+        || (active == BindingScope::GitConflictMarkdown
+            && matches!(
+                binding,
+                BindingScope::Markdown | BindingScope::GitConflictFile
+            ))
 }
 
 fn build_keymap(bindings: Vec<Binding>) -> Keymap {
@@ -2743,6 +2751,42 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             ColonCommand::GitCompare,
         )
         .with_description("Compare committed tips with this branch"),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('d'),
+            "sides",
+            EditorCommand::InspectConflictSides,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('r'),
+            "resolve",
+            EditorCommand::ResolveConflict,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('R'),
+            "literal-markers",
+            EditorCommand::ResolveConflictLiteralMarkers,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('O'),
+            "file-current",
+            EditorCommand::KeepConflictFileCurrent,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('T'),
+            "file-other",
+            EditorCommand::TakeConflictFileOther,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('R'),
+            "literal-markers",
+            EditorCommand::ResolveConflictLiteralMarkers,
+        ),
         ContextAction::buffer(
             BindingScope::GitConflictFile,
             Key::char('n'),

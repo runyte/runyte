@@ -2453,7 +2453,7 @@ mod tests {
 
     #[test]
     fn overlay_kind_inventory_is_exhaustive_and_semantically_typed() {
-        assert_eq!(OverlayKind::ALL.len(), 16);
+        assert_eq!(OverlayKind::ALL.len(), 17);
         let mut app = App::new(Config::default(), None).unwrap();
         app.execute(crate::command::CommandInvocation::service_health())
             .unwrap();

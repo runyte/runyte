@@ -286,6 +286,52 @@ impl App {
         } else {
             git_project.clone()
         };
+        let unavailable = |reason: &str| CommandAvailability::Unavailable(reason.into());
+        let git_merge_active = if !git_project.is_available() {
+            git_project.clone()
+        } else {
+            match self.merge_ui.inventory.as_ref().map(|i| &i.operation) {
+                Some(crate::git::RepositoryOperation::Merge { .. }) => {
+                    CommandAvailability::Available
+                }
+                Some(crate::git::RepositoryOperation::Idle) => unavailable(
+                    "there is no active merge; fast-forwards do not need continue or abort",
+                ),
+                Some(_) => unavailable(
+                    "this is a non-merge Git operation; resolve its files, then continue or abort with Git",
+                ),
+                None => CommandAvailability::Available,
+            }
+        };
+        let selected_conflict = self.selected_conflict();
+        let git_conflict = if !git_project.is_available() {
+            git_project.clone()
+        } else if selected_conflict.is_some() {
+            CommandAvailability::Available
+        } else {
+            unavailable("select an unresolved conflict file or row")
+        };
+        let git_conflict_whole = if let (Some(entry), Some(inventory)) =
+            (selected_conflict, &self.merge_ui.inventory)
+        {
+            if inventory.related_paths(&entry.path).len() > 1 {
+                unavailable(
+                    "structural conflict spans related paths; review saved files or deletions individually",
+                )
+            } else if entry
+                .base
+                .iter()
+                .chain(entry.current.iter())
+                .chain(entry.other.iter())
+                .any(|s| s.mode == "160000")
+            {
+                unavailable("submodule conflict needs external resolution")
+            } else {
+                git_conflict.clone()
+            }
+        } else {
+            git_conflict.clone()
+        };
         AppCapabilitySnapshot {
             syntax,
             lsp_manager,
@@ -293,6 +339,9 @@ impl App {
             git_project,
             git_refresh,
             git_fetch_branch,
+            git_merge_active,
+            git_conflict,
+            git_conflict_whole,
             persistent_session: persistent_session_availability(
                 cfg!(any(unix, windows)),
                 self.persistent_session,
@@ -4564,6 +4613,7 @@ impl App {
             | Command::TakeConflictOther
             | Command::InspectConflictSides
             | Command::ResolveConflict
+            | Command::ResolveConflictLiteralMarkers
             | Command::ReturnToGitConflicts
             | Command::KeepConflictFileCurrent
             | Command::TakeConflictFileOther

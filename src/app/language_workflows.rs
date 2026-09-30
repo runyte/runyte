@@ -3598,6 +3598,7 @@ impl App {
             return;
         }
         self.invalidate_partial_guards(buffer);
+        self.close_merge_origin(buffer);
 
         let name = self.buffers[buffer].display_name();
         let git_path = (self.buffers[buffer].kind == BufferKind::File)

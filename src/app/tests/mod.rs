@@ -191,6 +191,7 @@ mod external_dispatch;
 mod git;
 mod git_comparison;
 mod git_discovery;
+mod git_merges;
 mod language;
 mod markdown_list_continuation;
 mod markdown_positions;

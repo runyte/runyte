@@ -837,6 +837,7 @@ impl App {
                     }
                     Err(error) => {
                         self.network_request_failed(id);
+                        self.merge_request_failed(id);
                         // The one boundary that has the operation, the request
                         // identity, and the error. Everything below returned a
                         // typed result rather than reporting it.
@@ -1015,9 +1016,20 @@ impl App {
                     log_view_request,
                     action,
                 );
+                let has_index_conflicts = !applied.inventory.entries.is_empty();
                 self.show_git_conflicts(applied.inventory, activate);
                 if let Some(diagnostic) = applied.diagnostic {
-                    self.error_from("Git", "Merge needs recovery", diagnostic.to_string());
+                    if applied.outcome == crate::git::MergeApplied::Conflicted
+                        && has_index_conflicts
+                    {
+                        self.info_from(
+                            "Git",
+                            "Merge needs conflict resolution",
+                            diagnostic.to_string(),
+                        );
+                    } else {
+                        self.error_from("Git", "Merge needs recovery", diagnostic.to_string());
+                    }
                 }
             }
             GitResponse::PreparedMerge(plan) => {
@@ -1039,14 +1051,7 @@ impl App {
                 );
             }
             GitResponse::Conflicts(inventory) => {
-                let activate =
-                    self.merge_ui
-                        .conflict_read
-                        .take()
-                        .is_some_and(|(id, origin, activate)| {
-                            Some(id) == request && origin.matches(self) && activate
-                        });
-                self.show_git_conflicts(inventory, activate);
+                self.receive_conflict_inventory(request, inventory)
             }
             GitResponse::ConflictSides { entry, sides } => {
                 self.receive_conflict_sides(request, entry, sides)
@@ -1311,6 +1316,7 @@ impl App {
         {
             self.open_git_stashes_result(stashes, false);
         }
+        self.refresh_conflict_inventory();
     }
 
     #[cfg(test)]
@@ -1375,10 +1381,32 @@ impl App {
                 | GitMutation::Pull
                 | GitMutation::RebaseOntoUpstream
                 | GitMutation::Merge(_)
-                | GitMutation::ResolveConflict(_)
                 | GitMutation::AbortMerge(_)
         ) {
             self.reload_clean_repository_buffers();
+        }
+        if matches!(&mutation, GitMutation::ResolveConflict(plan) if !matches!(plan.choice, crate::git::ResolutionChoice::SavedFile { .. }))
+        {
+            self.reload_clean_repository_buffers();
+        }
+        if matches!(
+            mutation,
+            GitMutation::ResolveConflict(_)
+                | GitMutation::AbortMerge(_)
+                | GitMutation::CommitMerge { .. }
+        ) {
+            self.refresh_conflict_inventory();
+        }
+        let completed_guard = match &mutation {
+            GitMutation::Merge(p) => Some(p.guard.id()),
+            GitMutation::ResolveConflict(p) => Some(p.guard.id()),
+            GitMutation::AbortMerge(p) | GitMutation::CommitMerge { plan: p, .. } => {
+                Some(p.guard.id())
+            }
+            _ => None,
+        };
+        if let Some(id) = completed_guard {
+            self.merge_ui.guards.retain(|g| g.id() != id);
         }
         if matches!(
             mutation,
@@ -1393,12 +1421,17 @@ impl App {
             mutation,
             GitMutation::Commit { .. } | GitMutation::CommitMerge { .. }
         ) && failure.is_none()
-            && let Some(buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
-                    .then_some(index)
-            })
+            && let Some(buffer) = if matches!(mutation, GitMutation::CommitMerge { .. }) {
+                self.merge_ui.commit_buffer
+            } else {
+                self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+                    (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
+                        .then_some(index)
+                })
+            }
         {
             self.merge_ui.commit = None;
+            self.merge_ui.commit_buffer = None;
             let _ = self.buffers[buffer].discard_changes_to("");
             self.close_buffer(buffer);
             self.return_from_commit();
@@ -1521,10 +1554,14 @@ impl App {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| match mutation {
-                GitMutation::Merge(_)
-                | GitMutation::ResolveConflict(_)
-                | GitMutation::CommitMerge { .. }
-                | GitMutation::AbortMerge(_) => "Merge operation complete".into(),
+                GitMutation::Merge(plan) => match plan.outcome {
+                    crate::git::MergePreviewOutcome::AlreadyContained => "already up to date".into(),
+                    crate::git::MergePreviewOutcome::FastForward => "fast-forward completed; no merge commit was created".into(),
+                    _ => "merge applied; resolve conflicts if present, then explicitly continue and commit".into(),
+                },
+                GitMutation::ResolveConflict(plan) => format!("staged reviewed resolution of {}", crate::git::display_path(&plan.path)),
+                GitMutation::CommitMerge { .. } => "merge committed".into(),
+                GitMutation::AbortMerge(_) => "active merge aborted".into(),
                 GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
                 GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
                 GitMutation::Discard(_) => {
@@ -6120,15 +6157,24 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         }
+        if self
+            .merge_ui
+            .inventory
+            .as_ref()
+            .is_some_and(|i| matches!(i.operation, crate::git::RepositoryOperation::Merge { .. }))
+        {
+            self.request_merge_completion(super::git_merges::ReviewIntent::Continue);
+            return;
+        }
         if self.ports.git_service.is_some() {
-            let _ = self.request_commit_open_refresh();
+            self.request_commit_operation_preflight();
             return;
         }
         self.refresh_git_status();
         self.open_commit_message_from_current_status();
     }
 
-    fn request_commit_open_refresh(&mut self) -> bool {
+    pub(super) fn request_commit_open_refresh(&mut self) -> bool {
         let Some(repository) = self.git.repository().cloned() else {
             return false;
         };
@@ -6219,12 +6265,26 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         };
-        let message = commit_message_body(&self.buffers[buffer_id].to_string());
-        if self.commit_reviewed_merge(message.clone()) {
+        if self
+            .merge_ui
+            .commit_buffer
+            .is_some_and(|buffer| buffer != buffer_id)
+            || (self.merge_ui.commit_buffer != Some(buffer_id)
+                && self.merge_ui.inventory.as_ref().is_some_and(|i| {
+                    matches!(i.operation, crate::git::RepositoryOperation::Merge { .. })
+                }))
+        {
+            self.action_failed(
+                "an active merge must be committed from its own reviewed merge-message buffer",
+            );
             return;
         }
+        let message = commit_message_body(&self.buffers[buffer_id].to_string());
         if message.is_empty() {
             self.action_failed("a commit needs a message; write one above the comments");
+            return;
+        }
+        if self.commit_reviewed_merge(buffer_id, message.clone()) {
             return;
         }
         if self.ports.git_service.is_some() {
@@ -6277,8 +6337,11 @@ impl App {
     /// Nothing about the index changes: what was staged stays staged, which is
     /// what makes this safe to reach for. Only the text is lost.
     pub(super) fn abandon_commit_message(&mut self, buffer_id: usize) {
-        if let Some(plan) = self.merge_ui.commit.take() {
-            plan.invalidate();
+        if self.merge_ui.commit_buffer == Some(buffer_id) {
+            if let Some(plan) = self.merge_ui.commit.take() {
+                plan.invalidate();
+            }
+            self.merge_ui.commit_buffer = None;
         }
         let _ = self.buffers[buffer_id].discard_changes_to("");
         self.close_buffer(buffer_id);
