@@ -198,6 +198,9 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         || row.description.to_string(),
         |target| match target {
             BindingTarget::Editor(EditorCommand::OpenFilePicker) => "open finder".to_owned(),
+            BindingTarget::Editor(EditorCommand::ResolveConflictLiteralMarkers) => {
+                "resolve literal markers".to_owned()
+            }
             BindingTarget::Plugin(_) => row
                 .description
                 .split(" — ")
@@ -874,7 +877,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 374, "the command inventory changed");
+        assert_eq!(targets.len(), 406, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
