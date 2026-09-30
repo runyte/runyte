@@ -196,7 +196,8 @@ use crate::workspace::{
 // Version 67 removes obsolete directory tree staging from frames and health.
 // Version 68 adds the directory tree search prompt.
 // Version 69 carries directory tree jump labels.
-pub const VERSION: u32 = 69;
+// Version 70 adds semantic commit-network hash, HEAD and lane roles.
+pub const VERSION: u32 = 70;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;

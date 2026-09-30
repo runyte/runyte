@@ -49,6 +49,7 @@ pub(super) enum ReloadDispatch {
     GitBranches,
     GitWorktrees,
     GitLog,
+    GitNetwork,
     GitStash,
     File,
 }
@@ -69,6 +70,7 @@ pub(super) fn reload_dispatch(kind: &BufferKind) -> ReloadDispatch {
         BufferKind::GitStatus => ReloadDispatch::GitStatus,
         BufferKind::GitBranches => ReloadDispatch::GitBranches,
         BufferKind::GitWorktrees => ReloadDispatch::GitWorktrees,
+        BufferKind::GitNetwork => ReloadDispatch::GitNetwork,
         BufferKind::GitLog => ReloadDispatch::GitLog,
         BufferKind::GitStash => ReloadDispatch::GitStash,
         _ => ReloadDispatch::File,
@@ -2001,6 +2003,10 @@ impl App {
             }
             ReloadDispatch::GitWorktrees => {
                 self.open_git_worktrees();
+                Ok(())
+            }
+            ReloadDispatch::GitNetwork => {
+                self.open_git_network(self.network.scope.clone());
                 Ok(())
             }
             ReloadDispatch::GitLog => {

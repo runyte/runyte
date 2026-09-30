@@ -269,6 +269,7 @@ pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
 mod git_comparison;
 mod git_fetch;
+mod git_network;
 mod git_workflows;
 mod input;
 mod language_workflows;
@@ -3029,6 +3030,7 @@ pub struct App {
     diff_worker: diff_work::Worker,
     /// Git-service bookkeeping and the typed rows behind generated Git views.
     git_state: GitWorkflowState,
+    network: git_network::NetworkState,
     /// The branch a confirmed `D` would delete, and whether deleting it needs
     /// to be forced because its commits are not reachable from `HEAD`.
     git_branch_deletion: Option<BranchDeletionConfirmation>,
@@ -3590,6 +3592,7 @@ impl App {
             git: GitTracker::new(),
             diff_worker: diff_work::Worker::new(),
             git_state: GitWorkflowState::default(),
+            network: git_network::NetworkState::default(),
             git_branch_deletion: None,
             git_branch_switch: None,
             git_pull_rebase: None,
@@ -3832,6 +3835,7 @@ enum ListAction {
     },
     Macro(char),
     GitCommit(String),
+    GitNetworkRef(String),
     CheckoutGitBranch(String),
     WorktreeGitBranch(String),
     TutorialMotionHints(MotionHints),
