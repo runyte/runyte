@@ -91,7 +91,19 @@ impl MergeFixture {
         app.git.attach(Some(self.repository()));
         (app, operations)
     }
+    pub(super) fn drain_background(operations: &Receiver<GitOperation>) {
+        while let Ok(operation) = operations.try_recv() {
+            assert!(
+                matches!(
+                    operation,
+                    GitOperation::StagedContent { .. } | GitOperation::Branches { .. }
+                ),
+                "unexpected foreground operation: {operation:?}"
+            );
+        }
+    }
     pub(super) fn review(&self, app: &mut App, operations: &Receiver<GitOperation>) {
+        Self::drain_background(operations);
         app.execute_command("git-merge-branch").unwrap();
         let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
         let GitOperation::PrepareMerge {
@@ -193,6 +205,7 @@ fn merge_ui_noop_and_dirty_repository_disable_mutation() {
         .unwrap();
     let offset = app.active_buffer().line_to_offset(row);
     app.active_mut().replace_selection(Selection::point(offset));
+    MergeFixture::drain_background(&operations);
     context_action(&mut app, 'm');
     assert!(operations.try_recv().is_err());
     assert!(app.status.contains("save repository file buffers"));
@@ -388,6 +401,7 @@ fn merge_ui_region_resolution_staging_preserves_undo_and_drops_resolved_row() {
     app.choose_conflict_region(false);
     assert_eq!(app.active_buffer().to_string(), "current\n");
     app.buffers[file].save(false).unwrap();
+    MergeFixture::drain_background(&operations);
     app.request_conflict_resolution(ResolutionChoice::SavedFile {
         allow_literal_markers: false,
     });

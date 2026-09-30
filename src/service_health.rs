@@ -79,6 +79,7 @@ pub struct AppCapabilitySnapshot {
     pub git_refresh: CommandAvailability,
     pub git_fetch_branch: CommandAvailability,
     pub git_merge_active: CommandAvailability,
+    pub git_merge_continue: CommandAvailability,
     pub git_conflict: CommandAvailability,
     pub git_conflict_whole: CommandAvailability,
     pub persistent_session: CommandAvailability,
@@ -105,6 +106,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::GitRefresh => self.git_refresh.clone(),
             CommandCapability::GitFetchBranch => self.git_fetch_branch.clone(),
             CommandCapability::GitMergeActive => self.git_merge_active.clone(),
+            CommandCapability::GitMergeContinue => self.git_merge_continue.clone(),
             CommandCapability::GitConflict => self.git_conflict.clone(),
             CommandCapability::GitConflictWhole => self.git_conflict_whole.clone(),
             CommandCapability::PersistentSession => self.persistent_session.clone(),
@@ -309,6 +311,7 @@ mod tests {
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_fetch_branch: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_merge_active: CommandAvailability::Available,
+            git_merge_continue: CommandAvailability::Available,
             git_conflict: CommandAvailability::Available,
             git_conflict_whole: CommandAvailability::Available,
             persistent_session: CommandAvailability::Unavailable(

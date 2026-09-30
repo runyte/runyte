@@ -303,6 +303,17 @@ impl App {
                 None => CommandAvailability::Available,
             }
         };
+        let git_merge_continue = if git_merge_active.is_available()
+            && self
+                .merge_ui
+                .inventory
+                .as_ref()
+                .is_some_and(|i| !i.entries.is_empty())
+        {
+            unavailable("resolve all unmerged index entries before continuing the merge")
+        } else {
+            git_merge_active.clone()
+        };
         let selected_conflict = self.selected_conflict();
         let git_conflict = if !git_project.is_available() {
             git_project.clone()
@@ -340,6 +351,7 @@ impl App {
             git_refresh,
             git_fetch_branch,
             git_merge_active,
+            git_merge_continue,
             git_conflict,
             git_conflict_whole,
             persistent_session: persistent_session_availability(

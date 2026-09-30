@@ -221,6 +221,23 @@ impl MergeReview {
     pub fn input_focused(&self) -> bool {
         self.requires_ack && self.detail.is_none() && self.focus == self.rows.len()
     }
+    fn display_message(&self) -> String {
+        let body = self.detail.as_ref().unwrap_or(&self.rows);
+        let offset = if self.detail.is_some() {
+            self.detail_scroll
+        } else {
+            self.root_scroll
+        };
+        if body.len() > offset.saturating_add(510) {
+            format!(
+                "{}\n{} more rows remain; scroll to review them.",
+                self.message,
+                body.len() - offset - 510
+            )
+        } else {
+            self.message.clone()
+        }
+    }
     pub fn approval_available(&self) -> bool {
         self.plan.valid()
             && !self.standalone_details
@@ -237,9 +254,21 @@ impl App {
             .unwrap_or(crate::keymap::BindingScope::GitMergeReview);
         self.keymap
             .bindings_for_scope(super::Mode::Normal, scope)
-            .find(|binding| {
+            .filter(|binding| {
                 binding.scope == scope
                     && binding.target == crate::keymap::BindingTarget::Editor(command)
+            })
+            .min_by_key(|binding| {
+                (
+                    usize::from(
+                        binding
+                            .sequence
+                            .as_slice()
+                            .iter()
+                            .any(|key| !matches!(key.code, KeyCode::Char(_))),
+                    ),
+                    binding.sequence.len(),
+                )
             })
             .map(|binding| binding.sequence.to_string())
             .unwrap_or_default()
@@ -669,15 +698,7 @@ impl App {
             selected,
             scroll_anchor: None,
             row_offset: offset,
-            message: Some(if body.len() > offset + displayed_body {
-                format!(
-                    "{}\n{} more rows remain; scroll to review them.",
-                    review.message,
-                    body.len() - offset - displayed_body
-                )
-            } else {
-                review.message.clone()
-            }),
+            message: Some(review.display_message()),
             omitted_rows: body.len().saturating_sub(offset + 510),
             total_rows: body.len() + 2,
             query_cursor: review.input_focused().then_some(review.cursor),

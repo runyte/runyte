@@ -51,6 +51,7 @@ pub enum CommandCapability {
     GitProject,
     GitFetchBranch,
     GitMergeActive,
+    GitMergeContinue,
     GitConflict,
     GitConflictWhole,
     /// Refresh a discovered repository or retry a failed discovery.
@@ -1091,7 +1092,8 @@ impl EditorCommand {
             | Self::RenameSymbol
             | Self::CodeAction => Some(CommandCapability::LspDocument),
             Self::FetchBranch => Some(CommandCapability::GitFetchBranch),
-            Self::ContinueMerge | Self::AbortMerge => Some(CommandCapability::GitMergeActive),
+            Self::ContinueMerge => Some(CommandCapability::GitMergeContinue),
+            Self::AbortMerge => Some(CommandCapability::GitMergeActive),
             Self::KeepConflictFileCurrent | Self::TakeConflictFileOther => {
                 Some(CommandCapability::GitConflictWhole)
             }
