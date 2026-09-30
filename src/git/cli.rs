@@ -16,6 +16,7 @@ mod comparison;
 mod conflicts;
 mod fetch;
 mod merge;
+mod network;
 
 use std::{
     ffi::{OsStr, OsString},
@@ -2720,6 +2721,22 @@ impl GitProvider for GitCliProvider {
             });
         }
         self.remove_worktree(repository, &plan.path)
+    }
+
+    fn network_roots(
+        &self,
+        repository: &Repository,
+        scope: &super::NetworkScope,
+    ) -> Result<(Vec<super::NetworkRoot>, bool)> {
+        self.read_network_roots(repository, scope)
+    }
+
+    fn network_page(
+        &self,
+        repository: &Repository,
+        request: &super::NetworkRequest,
+    ) -> Result<super::NetworkPage> {
+        self.read_network_page(repository, request)
     }
 
     fn log_page(&self, repository: &Repository, request: &LogRequest) -> Result<LogPage> {

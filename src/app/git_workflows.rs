@@ -812,6 +812,17 @@ impl App {
                     self.git_state.snapshot_stale = true;
                     let _ = self.request_git_refresh();
                 }
+                if state == GitServiceState::Cancelled
+                    && matches!(
+                        operation,
+                        GitOperation::Network { .. }
+                            | GitOperation::NetworkRoots { .. }
+                            | GitOperation::CommitDetail { .. }
+                    )
+                {
+                    self.network_request_failed(id);
+                    return;
+                }
                 match *result {
                     Ok(response) => {
                         self.apply_git_response(
@@ -824,6 +835,7 @@ impl App {
                         );
                     }
                     Err(error) => {
+                        self.network_request_failed(id);
                         // The one boundary that has the operation, the request
                         // identity, and the error. Everything below returned a
                         // typed result rather than reporting it.
@@ -1065,6 +1077,12 @@ impl App {
                     None => self.open_worktree_removal_confirmation(plan),
                 }
             }
+            GitResponse::NetworkRoots {
+                scope,
+                roots,
+                limited,
+            } => self.apply_network_roots(request, scope, roots, limited),
+            GitResponse::Network { page, .. } => self.apply_network_response(request, page),
             GitResponse::Log { request, page } => {
                 if request.cursor.is_some()
                     && log_view_request
@@ -1129,7 +1147,11 @@ impl App {
                     self.forget_partial_guard(buffer, guard, true);
                 }
             }
-            GitResponse::CommitDetail(detail) => self.open_git_commit_detail_result(detail),
+            GitResponse::CommitDetail(detail) => {
+                if self.accept_network_detail_response(request) {
+                    self.open_git_commit_detail_result(detail);
+                }
+            }
             GitResponse::Blame { source, lines } => self.open_git_blame_result(source, lines),
             GitResponse::Snapshot(snapshot) => {
                 self.apply_repository_snapshot(*snapshot, true, requested_views.index);
@@ -1198,6 +1220,7 @@ impl App {
             self.reload_clean_repository_buffers();
         }
         self.refresh_git_status_buffer();
+        self.check_network_roots();
         if let Some(branches) = snapshot.branches {
             self.refresh_git_branches_from(branches, "");
         }
@@ -4471,6 +4494,8 @@ impl App {
             Self::git_log_line_to_row(row)
                 .and_then(|row| self.git_state.log_rows.get(row))
                 .map(|commit| commit.oid.clone())
+        } else if self.active_buffer().is_git_network() {
+            self.selected_network_oid()
         } else if self.active_buffer().is_git_blame() {
             self.git_state
                 .blame_rows
@@ -4482,14 +4507,26 @@ impl App {
     }
 
     pub(super) fn open_selected_git_commit(&mut self) {
-        if !self.active_buffer().is_git_log() && !self.active_buffer().is_git_blame() {
-            self.action_failed("commit navigation is only available in log and blame views");
+        if !self.active_buffer().is_git_log()
+            && !self.active_buffer().is_git_blame()
+            && !self.active_buffer().is_git_network()
+        {
+            self.action_failed(
+                "commit navigation is only available in log, network and blame views",
+            );
             return;
         }
         let Some(oid) = self.selected_git_commit_oid() else {
             self.action_failed("this row is uncommitted");
             return;
         };
+        if self.active_buffer().is_git_network() {
+            let buffer = self.active().buffer;
+            let position = super::view_position::ViewPosition::capture(self.active());
+            self.active_mut()
+                .saved_view_positions
+                .insert(buffer, position);
+        }
         self.open_git_commit_oid(oid);
     }
 
@@ -4499,7 +4536,9 @@ impl App {
             return;
         };
         if self.ports.git_service.is_some() {
-            let _ = self.request_git(GitOperation::CommitDetail { repository, oid });
+            if let Some(id) = self.request_git(GitOperation::CommitDetail { repository, oid }) {
+                self.note_network_detail_request(id);
+            }
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.commit_detail(&repository, &oid) {
                 Ok(detail) => self.open_git_commit_detail_result(detail),
@@ -4509,6 +4548,7 @@ impl App {
     }
 
     pub(super) fn open_git_commit_detail_result(&mut self, detail: CommitDetail) {
+        let network_origin = self.network_return_origin();
         let oid = detail.summary.oid.clone();
         let name = format!("[git commit {}]", detail.summary.abbreviated);
         let parents = if detail.summary.parents.is_empty() {
@@ -4547,6 +4587,9 @@ impl App {
         }
         self.active_mut().preserve_scroll = false;
         self.mode = Mode::Normal;
+        if let Some(origin) = network_origin {
+            self.remember_network_return(buffer, origin);
+        }
     }
 
     pub(super) fn request_git_blame(&mut self, full_file: bool) {
@@ -6356,6 +6399,9 @@ impl App {
     /// switching branches outside the editor moves the text every mark is
     /// measured against, and no buffer changes when it happens.
     pub(super) fn refresh_git(&mut self) {
+        if self.active_buffer().is_git_network() {
+            self.open_git_network(self.network.scope.clone());
+        }
         if self.refresh_revision_comparison() {
             return;
         }

@@ -242,6 +242,7 @@ pub enum BindingScope {
     GitComparison,
     GitRevisionDiff,
     GitLog,
+    GitNetwork,
     GitBlame,
     GitStash,
     WorkspaceSearch,
@@ -281,6 +282,7 @@ impl BindingScope {
         Self::GitComparison,
         Self::GitRevisionDiff,
         Self::GitLog,
+        Self::GitNetwork,
         Self::GitBlame,
         Self::GitStash,
         Self::WorkspaceSearch,
@@ -1204,6 +1206,10 @@ fn git_worktrees(sequence: impl Into<KeySequence>, target: impl Into<BindingTarg
     Binding::implemented_in(MODAL, BindingScope::GitWorktrees, sequence, target)
 }
 
+fn git_network(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
+    Binding::implemented_in(MODAL, BindingScope::GitNetwork, sequence, target)
+}
+
 fn git_log(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
     Binding::implemented_in(MODAL, BindingScope::GitLog, sequence, target)
 }
@@ -1692,6 +1698,10 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('g'), Key::char('l')],
             ColonCommand::GitLog,
         ),
+        primary_modal(
+            [Key::char(' '), Key::char('g'), Key::char('n')],
+            ColonCommand::GitNetwork,
+        ),
         // `f` reads as the finder wherever it appears, and this is a finder
         // over commits rather than the buffer search `/` now spells. Commits
         // are the only Git corpus large enough to need one; branches and
@@ -2071,6 +2081,9 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         git_branches(Key::plain(KeyCode::Enter), Command::CheckoutBranch),
         git_worktrees(Key::plain(KeyCode::Enter), Command::OpenWorktree),
+        git_network(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
+        git_network(Key::ctrl('n'), Command::NextGitNetworkPage),
+        git_network(Key::ctrl('p'), Command::PreviousGitNetworkPage),
         git_log(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
         // Paging lives on Ctrl chords so the Git log keeps every motion key.
         git_log(Key::ctrl('n'), Command::NextGitLogPage),
@@ -2532,6 +2545,30 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             ColonCommand::GitCompare,
         )
         .with_description("Compare committed tips with this worktree"),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('a'),
+            "all",
+            ColonCommand::GitNetworkAll,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('h'),
+            "head",
+            ColonCommand::GitNetworkHead,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('r'),
+            "ref",
+            ColonCommand::GitNetworkChooseRef,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('g'),
+            "glyphs",
+            EditorCommand::ToggleGitNetworkAscii,
+        ),
         ContextAction::row(
             BindingScope::GitComparison,
             Key::char('d'),
@@ -3236,7 +3273,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 14,
+            special, 15,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }
@@ -3291,6 +3328,7 @@ mod tests {
             BindingScope::GitBranches,
             BindingScope::GitWorktrees,
             BindingScope::GitStash,
+            BindingScope::GitNetwork,
             BindingScope::Diff,
             BindingScope::Directory,
         ] {
@@ -3317,12 +3355,22 @@ mod tests {
         assert_eq!(
             named(BindingScope::GitBranches),
             vec![
+                ("f".to_owned(), "fetch"),
                 ("d".to_owned(), "compare"),
                 ("n".to_owned(), "create"),
                 ("w".to_owned(), "worktree"),
                 ("D".to_owned(), "delete"),
                 ("p".to_owned(), "pull"),
                 ("P".to_owned(), "push"),
+            ]
+        );
+        assert_eq!(
+            named(BindingScope::GitNetwork),
+            vec![
+                ("a".to_owned(), "all"),
+                ("h".to_owned(), "head"),
+                ("r".to_owned(), "ref"),
+                ("g".to_owned(), "glyphs"),
             ]
         );
         assert_eq!(

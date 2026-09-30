@@ -342,6 +342,14 @@ pub enum GitOperation {
         repository: Repository,
         path: PathBuf,
     },
+    NetworkRoots {
+        repository: Repository,
+        scope: super::NetworkScope,
+    },
+    Network {
+        repository: Repository,
+        request: super::NetworkRequest,
+    },
     Log {
         repository: Repository,
         request: LogRequest,
@@ -402,6 +410,8 @@ impl GitOperation {
             | Self::Worktrees { repository }
             | Self::PrepareBranchDeletion { repository, .. }
             | Self::PrepareWorktreeRemoval { repository, .. }
+            | Self::NetworkRoots { repository, .. }
+            | Self::Network { repository, .. }
             | Self::Log { repository, .. }
             | Self::SearchCommits { repository }
             | Self::Stashes { repository }
@@ -437,6 +447,8 @@ impl GitOperation {
                 | Self::PrepareResolution { .. }
                 | Self::PrepareMergeCompletion { .. }
                 | Self::CommitDetail { .. }
+                | Self::NetworkRoots { .. }
+                | Self::Network { .. }
                 | Self::Blame { .. }
                 | Self::CompareRevisions { .. }
                 | Self::RevisionFile { .. }
@@ -474,6 +486,8 @@ impl GitOperation {
             Self::Worktrees { .. } => "list worktrees",
             Self::PrepareBranchDeletion { .. } => "review branch deletion",
             Self::PrepareWorktreeRemoval { .. } => "review worktree removal",
+            Self::NetworkRoots { .. } => "check commit network roots",
+            Self::Network { .. } => "read commit network",
             Self::Log { .. } => "read log",
             Self::SearchCommits { .. } => "search commits",
             Self::Stashes { .. } => "list stashes",
@@ -528,6 +542,17 @@ impl GitOperation {
                 Some(ReadKey::Worktrees(repository.workdir().to_path_buf()))
             }
             Self::PrepareBranchDeletion { .. } | Self::PrepareWorktreeRemoval { .. } => None,
+            Self::NetworkRoots { repository, scope } => Some(ReadKey::NetworkRoots(
+                repository.workdir().to_path_buf(),
+                scope.clone(),
+            )),
+            Self::Network {
+                repository,
+                request,
+            } => Some(ReadKey::Network(
+                repository.workdir().to_path_buf(),
+                request.clone(),
+            )),
             Self::Log {
                 repository,
                 request,
@@ -626,6 +651,15 @@ pub enum GitResponse {
     Worktrees(Vec<Worktree>),
     PreparedBranchDeletion(BranchDeletionPlan),
     PreparedWorktreeRemoval(WorktreeRemovalPlan),
+    NetworkRoots {
+        scope: super::NetworkScope,
+        roots: Vec<super::NetworkRoot>,
+        limited: bool,
+    },
+    Network {
+        request: super::NetworkRequest,
+        page: super::NetworkPage,
+    },
     Log {
         request: LogRequest,
         page: LogPage,
@@ -930,6 +964,8 @@ enum ReadKey {
     FileComparison(PathBuf, DiffScope, PathBuf),
     Branches(PathBuf),
     Worktrees(PathBuf),
+    NetworkRoots(PathBuf, super::NetworkScope),
+    Network(PathBuf, super::NetworkRequest),
     Log(PathBuf, LogRequest),
     SearchCommits(PathBuf),
     Stashes(PathBuf),
@@ -1467,6 +1503,22 @@ fn execute(
         GitOperation::PrepareWorktreeRemoval { repository, path } => provider
             .prepare_worktree_removal(repository, path)
             .map(GitResponse::PreparedWorktreeRemoval),
+        GitOperation::NetworkRoots { repository, scope } => provider
+            .network_roots(repository, scope)
+            .map(|(roots, limited)| GitResponse::NetworkRoots {
+                scope: scope.clone(),
+                roots,
+                limited,
+            }),
+        GitOperation::Network {
+            repository,
+            request,
+        } => provider
+            .network_page(repository, request)
+            .map(|page| GitResponse::Network {
+                request: request.clone(),
+                page,
+            }),
         GitOperation::Log {
             repository,
             request,
