@@ -274,7 +274,7 @@ impl GitMutation {
 pub enum GitOperation {
     ConflictSides {
         repository: Repository,
-        entry: super::ConflictEntry,
+        entry: Box<super::ConflictEntry>,
     },
     PrepareMerge {
         repository: Repository,
@@ -646,6 +646,15 @@ pub enum GitResponse {
         failure: Option<GitError>,
         snapshot: Box<Result<RepositorySnapshot>>,
     },
+}
+
+impl GitResponse {
+    pub fn underlying_response(&self) -> &Self {
+        match self {
+            Self::Merged { response, .. } => response.underlying_response(),
+            response => response,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1024,7 +1033,10 @@ fn schedule<W: GitServiceWorker>(
                     GitServiceState::Cancelled
                 } else if completion.result.is_err()
                     || matches!(
-                        &completion.result,
+                        completion
+                            .result
+                            .as_ref()
+                            .map(GitResponse::underlying_response),
                         Ok(GitResponse::Mutation {
                             failure: Some(_),
                             ..
@@ -1367,7 +1379,7 @@ fn execute(
         GitOperation::ConflictSides { repository, entry } => provider
             .conflict_sides(repository, entry)
             .map(|sides| GitResponse::ConflictSides {
-                entry: entry.clone(),
+                entry: entry.as_ref().clone(),
                 sides,
             }),
         GitOperation::PrepareMerge {

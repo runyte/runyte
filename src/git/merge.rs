@@ -72,6 +72,38 @@ pub struct ConflictInventory {
     pub other_identity: String,
 }
 
+impl ConflictInventory {
+    /// Conservative structural groups: shared base/stage identities or a
+    /// file/directory path prefix. Ambiguous groups require manual management.
+    pub fn related_paths(&self, path: &std::path::Path) -> Vec<PathBuf> {
+        let Some(entry) = self.entries.iter().find(|e| e.path == path) else {
+            return Vec::new();
+        };
+        self.entries
+            .iter()
+            .filter(|other| {
+                other.path == entry.path
+                    || other.path.starts_with(&entry.path)
+                    || entry.path.starts_with(&other.path)
+                    || (entry.current.is_none()
+                        || entry.other.is_none()
+                        || other.current.is_none()
+                        || other.other.is_none())
+                        && [&entry.base, &entry.current, &entry.other]
+                            .into_iter()
+                            .flatten()
+                            .any(|a| {
+                                [&other.base, &other.current, &other.other]
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|b| a.oid == b.oid)
+                            })
+            })
+            .map(|e| e.path.clone())
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MergeConflictMessage {
     pub paths: Vec<PathBuf>,
@@ -93,7 +125,9 @@ pub enum MergePreviewOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MergePlan {
+    pub(crate) review_identity: String,
     pub(crate) repository: Repository,
+    pub(crate) repository_identity: String,
     pub destination_reference: String,
     pub destination_oid: String,
     pub source_reference: String,
@@ -103,10 +137,28 @@ pub struct MergePlan {
     pub(crate) fingerprint: RepositoryFingerprint,
     pub(crate) disk_identity: String,
     pub(crate) settings_identity: String,
+    pub(crate) attributes_identity: String,
     pub(crate) guard: BufferRevisionGuard,
 }
 
 impl MergePlan {
+    pub(crate) fn current_review_identity(&self) -> String {
+        crate::hash::sha256_hex(
+            format!(
+                "{:?}",
+                (
+                    &self.destination_reference,
+                    &self.destination_oid,
+                    &self.source_reference,
+                    &self.source_oid,
+                    &self.outcome,
+                    &self.comparison
+                )
+            )
+            .as_bytes(),
+        )
+    }
+
     pub fn invalidate(&self) {
         self.guard.invalidate();
     }
@@ -139,7 +191,9 @@ pub enum ResolutionChoice {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionPlan {
+    pub(crate) review_identity: String,
     pub(crate) repository: Repository,
+    pub(crate) repository_identity: String,
     pub path: PathBuf,
     pub choice: ResolutionChoice,
     pub entry: ConflictEntry,
@@ -148,6 +202,16 @@ pub struct ResolutionPlan {
     pub(crate) guard: BufferRevisionGuard,
 }
 impl ResolutionPlan {
+    pub(crate) fn current_review_identity(&self) -> String {
+        crate::hash::sha256_hex(
+            format!(
+                "{:?}",
+                (&self.path, &self.choice, &self.entry, &self.inventory)
+            )
+            .as_bytes(),
+        )
+    }
+
     pub fn invalidate(&self) {
         self.guard.invalidate();
     }
@@ -155,7 +219,9 @@ impl ResolutionPlan {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MergeCompletionPlan {
+    pub(crate) review_identity: String,
     pub(crate) repository: Repository,
+    pub(crate) repository_identity: String,
     pub inventory: ConflictInventory,
     pub message: String,
     pub staged_diff: String,
@@ -165,6 +231,12 @@ pub struct MergeCompletionPlan {
     pub(crate) guard: BufferRevisionGuard,
 }
 impl MergeCompletionPlan {
+    pub(crate) fn current_review_identity(&self) -> String {
+        crate::hash::sha256_hex(
+            format!("{:?}", (&self.inventory, &self.message, &self.staged_diff)).as_bytes(),
+        )
+    }
+
     pub fn invalidate(&self) {
         self.guard.invalidate();
     }

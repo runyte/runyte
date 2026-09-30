@@ -13,6 +13,7 @@
 //! [`GitError::TooLarge`].
 
 mod comparison;
+mod conflicts;
 mod fetch;
 mod merge;
 
