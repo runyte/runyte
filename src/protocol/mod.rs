@@ -197,7 +197,7 @@ use crate::workspace::{
 // Version 68 adds the directory tree search prompt.
 // Version 69 carries directory tree jump labels.
 // Version 70 adds semantic commit-network hash, HEAD and lane roles.
-// Version 71 adds native Git merge review overlays.
+// Version 71 adds the native merge review overlay kind and layout.
 pub const VERSION: u32 = 71;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;

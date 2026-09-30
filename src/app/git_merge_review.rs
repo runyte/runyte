@@ -312,6 +312,35 @@ impl App {
         Ok(())
     }
 
+    pub(super) fn reflow_merge_review(&mut self) {
+        let Some(review) = self.merge_ui.review.as_mut() else {
+            return;
+        };
+        let area = self.merge_ui.editor_area.unwrap_or(crate::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        let capacity = usize::from(
+            crate::merge_review_layout::merge_review_layout(
+                area,
+                &review.message,
+                review.requires_ack && review.detail.is_none(),
+            )
+            .body
+            .height,
+        )
+        .max(1);
+        if review.detail.is_none() && review.focus < review.rows.len() {
+            if review.focus < review.root_scroll {
+                review.root_scroll = review.focus;
+            } else if review.focus >= review.root_scroll.saturating_add(capacity) {
+                review.root_scroll = review.focus + 1 - capacity;
+            }
+        }
+    }
+
     pub(super) fn review_motion(&mut self, command: EditorCommand) {
         use EditorCommand::*;
         let Some(review) = self.merge_ui.review.as_mut() else {
@@ -360,11 +389,7 @@ impl App {
             MergeReviewBack => self.cancel_merge_review(),
             _ => {}
         }
-        if let Some(review) = self.merge_ui.review.as_mut() {
-            if review.focus < review.rows.len() {
-                review.root_scroll = review.focus.saturating_sub(12);
-            }
-        }
+        self.reflow_merge_review();
     }
 
     fn inspect_merge_change(&mut self) {
@@ -644,7 +669,15 @@ impl App {
             selected,
             scroll_anchor: None,
             row_offset: offset,
-            message: Some(review.message.clone()),
+            message: Some(if body.len() > offset + displayed_body {
+                format!(
+                    "{}\n{} more rows remain; scroll to review them.",
+                    review.message,
+                    body.len() - offset - displayed_body
+                )
+            } else {
+                review.message.clone()
+            }),
             omitted_rows: body.len().saturating_sub(offset + 510),
             total_rows: body.len() + 2,
             query_cursor: review.input_focused().then_some(review.cursor),

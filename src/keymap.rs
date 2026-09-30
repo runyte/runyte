@@ -2766,25 +2766,25 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ContextAction::row(
             BindingScope::GitConflicts,
             Key::char('R'),
-            "literal-markers",
+            "literal",
             EditorCommand::ResolveConflictLiteralMarkers,
         ),
         ContextAction::row(
             BindingScope::GitConflicts,
             Key::char('O'),
-            "file-current",
+            "keepfile",
             EditorCommand::KeepConflictFileCurrent,
         ),
         ContextAction::row(
             BindingScope::GitConflicts,
             Key::char('T'),
-            "file-other",
+            "takefile",
             EditorCommand::TakeConflictFileOther,
         ),
         ContextAction::buffer(
             BindingScope::GitConflictFile,
             Key::char('R'),
-            "literal-markers",
+            "literal",
             EditorCommand::ResolveConflictLiteralMarkers,
         ),
         ContextAction::buffer(
@@ -2832,13 +2832,13 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ContextAction::buffer(
             BindingScope::GitConflictFile,
             Key::char('O'),
-            "file-current",
+            "keepfile",
             EditorCommand::KeepConflictFileCurrent,
         ),
         ContextAction::buffer(
             BindingScope::GitConflictFile,
             Key::char('T'),
-            "file-other",
+            "takefile",
             EditorCommand::TakeConflictFileOther,
         ),
         ContextAction::row(
@@ -3576,7 +3576,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 15,
+            special, 16,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }
@@ -3596,6 +3596,8 @@ mod tests {
         assert_eq!(
             actions,
             vec![
+                ("C".to_owned(), "git-merge-continue", ActionContext::Buffer),
+                ("A".to_owned(), "git-merge-abort", ActionContext::Buffer),
                 ("d".to_owned(), "git-diff-side-by-side", ActionContext::Row),
                 ("s".to_owned(), "git-stage", ActionContext::Row),
                 ("u".to_owned(), "git-unstage", ActionContext::Row),
@@ -3629,6 +3631,9 @@ mod tests {
         for scope in [
             BindingScope::GitStatus,
             BindingScope::GitBranches,
+            BindingScope::GitConflicts,
+            BindingScope::GitConflictFile,
+            BindingScope::GitConflictMarkdown,
             BindingScope::GitWorktrees,
             BindingScope::GitStash,
             BindingScope::GitNetwork,
@@ -3658,6 +3663,7 @@ mod tests {
         assert_eq!(
             named(BindingScope::GitBranches),
             vec![
+                ("m".to_owned(), "merge"),
                 ("f".to_owned(), "fetch"),
                 ("d".to_owned(), "compare"),
                 ("n".to_owned(), "create"),

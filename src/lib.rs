@@ -44,6 +44,7 @@ pub mod lsp;
 pub mod lsp_trust;
 pub mod manual;
 pub mod markdown;
+pub(crate) mod merge_review_layout;
 #[cfg(any(unix, windows))]
 mod native_path;
 mod navigation_target;
