@@ -24,6 +24,8 @@ pub fn parse_conflict_regions(
     }
     let mut regions = Vec::new();
     let mut offset = 0;
+    let mut byte_offset = 0;
+    let mut byte_start = 0;
     let mut start = None;
     let mut current_start = 0;
     let mut current_end = None;
@@ -40,6 +42,7 @@ pub fn parse_conflict_regions(
         match marker {
             Some('<') if start.is_none() => {
                 start = Some(offset);
+                byte_start = byte_offset;
                 current_start = next;
                 current_end = None;
                 base = None;
@@ -59,7 +62,7 @@ pub fn parse_conflict_regions(
             }
             Some('>') if start.is_some() && other_start.is_some() => {
                 let range = start.take().unwrap()..next;
-                let content: String = text.chars().skip(range.start).take(range.len()).collect();
+                let content = &text[byte_start..byte_offset + line.len()];
                 regions.push(ConflictRegion {
                     identity: crate::hash::sha256_hex(
                         format!("{}:{content}", range.start).as_bytes(),
@@ -74,6 +77,7 @@ pub fn parse_conflict_regions(
             None => (),
         }
         offset = next;
+        byte_offset += line.len();
     }
     if start.is_some() {
         return Err("unterminated conflict region");
