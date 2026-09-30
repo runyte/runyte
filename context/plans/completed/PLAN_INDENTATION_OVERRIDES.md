@@ -38,3 +38,12 @@ This change does not add EditorConfig, indentation autodetection, separate soft
 tab widths, or language-dependent built-in defaults. Override matching remains
 in memory and performs no file scans. Native macOS/Windows checks remain CI-owned
 when only Linux execution is available.
+
+## Completion
+
+Implemented in `a95da12` and reviewed by Astra High with no remaining findings.
+The subsequent merge from `exp` was also reviewed without findings. The merged
+branch passed `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test`, and `cargo llvm-cov --locked --workspace` on Linux. Canonical line
+coverage was 91.81% (143,000 of 155,762 lines), above the unchanged 89% floor.
+Native macOS/Windows acceptance and macOS coverage remain part of dev CI.

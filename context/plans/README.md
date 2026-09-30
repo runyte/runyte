@@ -18,6 +18,10 @@ current sources take precedence.
 
 The retained completed records cover:
 
+- [Aligned indentation and document overrides](completed/PLAN_INDENTATION_OVERRIDES.md):
+  shared per-buffer indentation, aligned Backspace, and configurable language
+  and ordered file-pattern overrides through the settings page;
+
 - [Git merges, conflicts, and network view](completed/PLAN_GIT_MERGES_CONFLICTS_AND_NETWORK.md):
   reviewed branch merges with separate commit approval, single-branch fetching,
   transactional conflict resolution, and a bounded navigable commit graph;
