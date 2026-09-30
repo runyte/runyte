@@ -965,7 +965,7 @@ impl Keymap {
     pub fn context_actions(&self, scope: BindingScope) -> impl Iterator<Item = &ContextAction> {
         self.context_actions
             .iter()
-            .filter(move |action| action.scope == scope)
+            .filter(move |action| scope_includes(scope, action.scope))
     }
 
     pub fn all_context_actions(&self) -> &[ContextAction] {

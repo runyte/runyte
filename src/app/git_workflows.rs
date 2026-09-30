@@ -6167,14 +6167,14 @@ impl App {
             return;
         }
         if self.ports.git_service.is_some() {
-            let _ = self.request_commit_open_refresh();
+            self.request_commit_operation_preflight();
             return;
         }
         self.refresh_git_status();
         self.open_commit_message_from_current_status();
     }
 
-    fn request_commit_open_refresh(&mut self) -> bool {
+    pub(super) fn request_commit_open_refresh(&mut self) -> bool {
         let Some(repository) = self.git.repository().cloned() else {
             return false;
         };

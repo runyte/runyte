@@ -170,7 +170,15 @@ impl MergeReview {
                         }
                     }
                 };
-                let mut rows = vec![crate::git::display_path(&p.path)];
+                let mut rows = vec![format!(
+                    "{} · {}",
+                    crate::git::display_path(&p.path),
+                    if matches!(p.reviewed_content, BaseContent::Absent) {
+                        "reviewed deletion"
+                    } else {
+                        "reviewed complete file"
+                    }
+                )];
                 let related = p.inventory.related_paths(&p.entry.path);
                 if related.len() > 1 {
                     rows.push(format!(
@@ -512,6 +520,16 @@ impl App {
             }
         }
         if let Some(review) = self.merge_ui.review.as_mut() {
+            if let ReviewPlan::Resolution(plan) = &review.plan {
+                lines.push("── Reviewed Result (whole saved file or chosen side) ──".into());
+                match &plan.reviewed_content {
+                    BaseContent::Absent => {
+                        lines.push("Delete this path; reviewed result is absent".into())
+                    }
+                    BaseContent::Binary => lines.push("Binary result; text unavailable".into()),
+                    BaseContent::Text(text) => lines.extend(text.lines().map(str::to_owned)),
+                }
+            }
             review.detail = Some(lines);
             review.detail_scroll = 0;
         } else if self.merge_ui.inventory.is_some() {

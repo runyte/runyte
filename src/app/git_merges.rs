@@ -26,6 +26,7 @@ pub(super) struct MergeUi {
     pub detail_append_result: bool,
     pub conflict_read: Option<(GitRequestId, ReviewOrigin, bool)>,
     pub mutation_origin: Option<ReviewOrigin>,
+    pub commit_preflight: Option<(GitRequestId, ReviewOrigin)>,
 }
 
 #[derive(Clone)]
@@ -96,6 +97,7 @@ impl App {
         self.merge_ui.details_request = None;
         self.merge_ui.details_origin = None;
         self.merge_ui.conflict_read = None;
+        self.merge_ui.commit_preflight = None;
         self.merge_ui.keys.clear();
         if let Some(plan) = self.merge_ui.commit.take() {
             plan.invalidate();
@@ -128,6 +130,14 @@ impl App {
     pub(super) fn merge_request_failed(&mut self, id: GitRequestId) {
         if self
             .merge_ui
+            .commit_preflight
+            .as_ref()
+            .is_some_and(|(request, _)| *request == id)
+        {
+            self.merge_ui.commit_preflight = None;
+        }
+        if self
+            .merge_ui
             .pending
             .as_ref()
             .is_some_and(|pending| pending.id == id)
@@ -151,6 +161,14 @@ impl App {
             self.merge_ui.conflict_read = None;
         }
     }
+    pub(super) fn request_commit_operation_preflight(&mut self) {
+        if let Some(repository) = self.git.repository().cloned() {
+            if let Some(id) = self.request_git(GitOperation::Conflicts { repository }) {
+                self.merge_ui.commit_preflight = Some((id, self.review_origin()));
+                self.status("checking the repository operation before commit…");
+            }
+        }
+    }
     pub(super) fn refresh_conflict_inventory(&mut self) {
         if self.merge_ui.inventory.is_none() {
             return;
@@ -166,6 +184,32 @@ impl App {
         request: Option<GitRequestId>,
         inventory: ConflictInventory,
     ) {
+        if self
+            .merge_ui
+            .commit_preflight
+            .as_ref()
+            .is_some_and(|(id, _)| Some(*id) == request)
+        {
+            let (_, origin) = self.merge_ui.commit_preflight.take().unwrap();
+            if !origin.matches(self) {
+                return;
+            }
+            let active_merge =
+                matches!(inventory.operation, git::RepositoryOperation::Merge { .. });
+            let ordinary_commit = matches!(inventory.operation, git::RepositoryOperation::Idle);
+            self.merge_ui.inventory = Some(inventory);
+            if active_merge {
+                self.request_merge_completion(ReviewIntent::Continue);
+            } else if ordinary_commit {
+                self.request_commit_open_refresh();
+            } else {
+                self.action_failed(
+                    "this non-merge Git operation must be continued or aborted with Git",
+                );
+            }
+            return;
+        }
+
         if self
             .merge_ui
             .conflict_read
