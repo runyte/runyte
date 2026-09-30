@@ -11,6 +11,12 @@ Plans are grouped by their relationship to the current editor:
 
 Empty lifecycle directories are omitted and created only when needed.
 
+Active work:
+
+- [Git merges, conflicts, and network view](active/PLAN_GIT_MERGES_CONFLICTS_AND_NETWORK.md):
+  reviewed branch merges, single-branch fetching, conflict resolution, and
+  a navigable commit graph.
+
 Completed plans are decision records, not a second user guide. Current behavior
 belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
