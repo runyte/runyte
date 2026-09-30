@@ -21,9 +21,11 @@ pub(super) struct MergeUi {
     pub file: Option<PathBuf>,
     pub commit: Option<Box<MergeCompletionPlan>>,
     pub commit_buffer: Option<usize>,
+    pub commit_request: Option<GitRequestId>,
     pub guards: Vec<BufferRevisionGuard>,
     pub details_request: Option<GitRequestId>,
     pub details_origin: Option<ReviewOrigin>,
+    pub details_inventory: Option<ConflictInventory>,
     pub detail_append_result: bool,
     pub conflict_read: Option<(GitRequestId, ReviewOrigin, bool)>,
     pub mutation_origin: Option<ReviewOrigin>,
@@ -97,16 +99,31 @@ impl App {
         }
         self.merge_ui.details_request = None;
         self.merge_ui.details_origin = None;
+        self.merge_ui.details_inventory = None;
         self.merge_ui.conflict_read = None;
         self.merge_ui.commit_preflight = None;
         self.merge_ui.keys.clear();
-        if let Some(plan) = self.merge_ui.commit.take() {
-            plan.invalidate();
+        if self.merge_ui.commit_request.is_none() {
+            if let Some(plan) = self.merge_ui.commit.take() {
+                plan.invalidate();
+            }
+            self.merge_ui.commit_buffer = None;
         }
-        self.merge_ui.commit_buffer = None;
+    }
+    pub(super) fn merge_commit_running(&self, buffer: usize) -> bool {
+        self.merge_ui.commit_buffer == Some(buffer) && self.merge_ui.commit_request.is_some()
+    }
+    pub(super) fn refuse_running_merge_message(&mut self, buffer: usize) -> bool {
+        if !self.merge_commit_running(buffer) {
+            return false;
+        }
+        self.action_failed(
+            "the reviewed merge commit is running; wait for its result before closing the message",
+        );
+        true
     }
     pub(super) fn close_merge_origin(&mut self, buffer: usize) {
-        if self.merge_ui.commit_buffer == Some(buffer) {
+        if self.merge_ui.commit_buffer == Some(buffer) && self.merge_ui.commit_request.is_none() {
             if let Some(plan) = self.merge_ui.commit.take() {
                 plan.invalidate();
             }
@@ -126,9 +143,11 @@ impl App {
         if owns {
             self.invalidate_unsubmitted_merge_review();
         }
-        self.invalidate_merge_file_guards(buffer);
     }
     pub(super) fn merge_request_failed(&mut self, id: GitRequestId) {
+        if self.merge_ui.commit_request == Some(id) {
+            self.merge_ui.commit_request = None;
+        }
         if self
             .merge_ui
             .commit_preflight
@@ -322,6 +341,7 @@ impl App {
         }
         self.merge_ui.details_request = None;
         self.merge_ui.details_origin = None;
+        self.merge_ui.details_inventory = None;
         self.merge_ui.keys.clear();
         self.status("Git review cancelled; no reviewed mutation was submitted");
     }
@@ -432,10 +452,14 @@ impl App {
     }
 
     pub(super) fn show_git_conflicts(&mut self, inventory: ConflictInventory, activate: bool) {
-        let selected = self.merge_ui.file.clone().or_else(|| {
-            self.selected_conflict()
-                .map(|e| self.git.repository().unwrap().workdir().join(e.path))
-        });
+        let selected = self
+            .selected_conflict()
+            .and_then(|e| {
+                self.git
+                    .repository()
+                    .map(|repo| repo.workdir().join(e.path))
+            })
+            .or_else(|| self.merge_ui.file.clone());
         let header = format!(
             "# {:?} · Current: {} · Other: {}",
             inventory.operation, inventory.current_identity, inventory.other_identity
@@ -690,6 +714,7 @@ impl App {
         };
         if let Some(repository) = self.merge_repository() {
             self.merge_ui.details_origin = Some(self.review_origin());
+            self.merge_ui.details_inventory = self.merge_ui.inventory.clone();
             self.merge_ui.details_request = self.request_git(GitOperation::ConflictSides {
                 repository,
                 entry: Box::new(entry),
@@ -771,6 +796,10 @@ impl App {
         if self.merge_ui.commit_buffer != Some(buffer) {
             return false;
         }
+        if self.merge_ui.commit_request.is_some() {
+            self.status("the reviewed merge commit is already running");
+            return true;
+        }
         let Some(plan) = self.merge_ui.commit.as_ref() else {
             return false;
         };
@@ -782,7 +811,7 @@ impl App {
             return true;
         }
         let refresh = self.git_refresh_spec(&repository);
-        let _ = self.request_git(GitOperation::Mutate {
+        self.merge_ui.commit_request = self.request_git(GitOperation::Mutate {
             repository,
             mutation: GitMutation::CommitMerge {
                 plan: plan.clone(),

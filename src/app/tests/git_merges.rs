@@ -162,6 +162,14 @@ fn merge_ui_preview_predictions_cancel_and_duplicate_approval() {
             snapshot.rows[snapshot.selected.unwrap()].identity,
             "cancel".into()
         );
+        assert_eq!(
+            snapshot.rows[snapshot.selected.unwrap()].label,
+            "[C]ancel merge"
+        );
+        assert_eq!(
+            snapshot.rows[snapshot.rows.len() - 2].label,
+            "[A]pprove merge"
+        );
         key(&mut app, KeyCode::Enter, Modifiers::NONE);
         assert!(app.merge_ui.review.is_none());
         assert_eq!(fixture.git(&["rev-parse", "HEAD"]), original);
@@ -604,6 +612,7 @@ fn merge_ui_continue_is_disabled_until_all_index_stages_are_resolved() {
 fn merge_ui_conflicted_preview_details_include_the_simulated_result() {
     let fixture = MergeFixture::new(true, true);
     let (mut app, operations) = fixture.app();
+    app.merge_ui.inventory = Some(fixture.provider().conflicts(&fixture.repository()).unwrap());
     fixture.review(&mut app, &operations);
     let review = app.merge_ui.review.as_mut().unwrap();
     let ReviewPlan::Merge(plan) = &review.plan else {
@@ -664,5 +673,101 @@ fn merge_ui_conflicted_preview_details_include_the_simulated_result() {
         assert!(detail.contains(label), "{detail}");
     }
     assert!(detail.contains("<<<<<<<"));
+    assert!(detail.contains("Other (stage 3): refs/heads/feature"));
     assert!(operations.try_recv().is_err());
+}
+
+#[test]
+fn merge_ui_submitted_commit_survives_close_attempts_and_detach_until_result() {
+    let fixture = MergeFixture::new(true, false);
+    fixture.git(&["merge", "--no-ff", "--no-commit", "feature"]);
+    let (mut app, operations) = fixture.app();
+    app.request_merge_completion(crate::app::git_merges::ReviewIntent::Continue);
+    let GitOperation::PrepareMergeCompletion { repository, guard } =
+        operations.recv_timeout(Duration::from_secs(1)).unwrap()
+    else {
+        panic!()
+    };
+    let plan = fixture
+        .provider()
+        .prepare_merge_completion(&repository, guard)
+        .unwrap();
+    let guard = plan.guard.clone();
+    let id = app.merge_ui.pending.as_ref().unwrap().id;
+    app.receive_merge_plan(
+        Some(id),
+        ReviewPlan::Completion(
+            Box::new(plan),
+            crate::app::git_merges::ReviewIntent::Continue,
+        ),
+    );
+    app.approve_merge_review();
+    let message = app.merge_ui.commit_buffer.unwrap();
+    app.commit_staged(message);
+    let GitOperation::Mutate { mutation, .. } =
+        operations.recv_timeout(Duration::from_secs(1)).unwrap()
+    else {
+        panic!()
+    };
+    assert!(app.merge_ui.commit_request.is_some());
+    app.commit_staged(message);
+    assert!(operations.try_recv().is_err());
+    app.close_buffer(message);
+    app.close_buffer_discarding(message);
+    app.close_buffer_returning_from_commit(message);
+    app.request_view_quit(true);
+    assert!(!app.closed_buffers.contains(&message));
+    assert!(!app.should_quit);
+    assert!(guard.is_valid());
+    app.persistent_session = true;
+    app.request_detach();
+    assert!(guard.is_valid());
+    let GitMutation::CommitMerge {
+        plan,
+        message: text,
+    } = &mutation
+    else {
+        panic!()
+    };
+    fixture
+        .provider()
+        .commit_merge(&repository, plan, text)
+        .unwrap();
+    app.apply_git_mutation_result(
+        mutation,
+        vec![],
+        Some("committed".into()),
+        None,
+        GitServiceState::Completed,
+        None,
+    );
+    assert!(app.closed_buffers.contains(&message));
+    assert!(app.merge_ui.commit_request.is_none());
+    assert!(app.merge_ui.commit.is_none());
+}
+
+#[test]
+fn merge_ui_conflict_refresh_preserves_selected_row_over_the_last_opened_file() {
+    let fixture = MergeFixture::new(true, true);
+    let (mut app, _operations) = fixture.app();
+    fixture.enter_conflicted_merge(&mut app);
+    let mut inventory = app.merge_ui.inventory.clone().unwrap();
+    let mut next = inventory.entries[0].clone();
+    next.path = "second".into();
+    inventory.entries.push(next);
+    app.show_git_conflicts(inventory.clone(), false);
+    app.merge_ui.file = Some(fixture.0.join("file"));
+    let row = app
+        .merge_ui
+        .rows
+        .iter()
+        .position(|p| p.as_deref() == Some(Path::new("second")))
+        .unwrap();
+    let offset = app.active_buffer().line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+    app.show_git_conflicts(inventory, false);
+    assert_eq!(
+        app.selected_conflict().unwrap().path,
+        PathBuf::from("second")
+    );
 }

@@ -15,7 +15,8 @@ Runyte can do **quite a lot**:
 - multipane text editing
 - terminal multiplexing
 - file browsing and management
-- Git, including branch/worktree management and a cached commit network
+- Git, including reviewed merges, conflict resolution, branch/worktree
+  management, and a cached commit network
 - fuzzy finding across all files, terminals, and buffers
 - plugins written in any language
 - LSP support (code analysis, formatting, jumping between functions and variables)

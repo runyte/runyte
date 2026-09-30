@@ -3470,8 +3470,10 @@ Creating a stash uses a command that names its scope:
 - Every create, apply, and drop asks for confirmation.
 - Create and apply are refused while the repository has unsaved editor
   buffers.
-- An apply conflict keeps the stash and reports that resolving it belongs in
-  an external Git tool.
+- An apply conflict keeps the stash. Open `Space g c` to inspect unmerged
+  stages and review supported saved-file resolutions; unsupported structural
+  or submodule cases can still use an external Git tool. Resolving does not
+  remove the retained stash.
 
 ### Reviewed merges and conflicts
 
@@ -5112,6 +5114,10 @@ The working directory starts where Runyte was launched.
 | `:git-commit` | Write a message and commit what is staged |
 | `:git-branches` | Open the local and cached remote branch list |
 | `:git-fetch-branch` | Fetch the selected cached remote branch or local upstream |
+| `:git-merge-branch` | Review merging the selected branch into Current |
+| `:git-conflicts` | Open unresolved index stages |
+| `:git-merge-continue` | Review the resolved index and open a separately owned merge message |
+| `:git-merge-abort` | Review aborting the active merge |
 | `:git-worktrees` | Open the repository worktree list |
 | `:git-compare` | Compare committed tips with the selected branch or worktree |
 | `:git-log` | Open the Git log, or refresh it from its first page |
@@ -6219,7 +6225,7 @@ keys:
   window: Ctrl-a
   rebind:
     Space g: Leader G # the whole Git menu moves
-    Space g l: Leader G c # ...but Git log goes here instead
+    Space g l: Leader G q # ...but Git log goes here instead
     Ctrl-w x: Window e
     Space e: Space
     ",": F12
@@ -6236,7 +6242,7 @@ keys:
 
 - All rules apply at once. File order does not matter.
 - The longest matching left side wins. Above, `Space g d` becomes
-  `Ctrl-x G d`, while `Space g l` becomes `Ctrl-x G c`.
+  `Ctrl-x G d`, while `Space g l` becomes `Ctrl-x G q`.
 - A narrower rule may deliberately move a key out of the namespace a broader
   rule chose.
 
@@ -6663,6 +6669,7 @@ This is the list `:help key-actions` shows, grouped by topic.
 | `toggle-directory-tree` | N S | last | Show or hide the directory tree |
 | `focus-directory-tree` | N S | last | Reveal the active file in the directory tree |
 | `open-working-directory-explorer` | N S | last | Open file explorer in the working directory |
+| `git-conflicts` | N S | last | Open unresolved Git conflicts |
 | `open-file-picker` | N S | last | Open the finder over the project's files, buffers, and terminals |
 | `open-all-files-picker` | N S | last | Open the finder over the project, including files Git ignores |
 | `open-path-file-picker` | N S | last | Open the finder in a chosen path, including files Git ignores |
@@ -6779,7 +6786,6 @@ with `{ command: name, argument: text }`.
 | `close!` | `close!` | Close the active buffer and discard its unsaved text |
 | `git-compare` | `git-compare` | Compare with this branch or worktree |
 | `git-branches` | `git-branches` | Open the local and remote branch list |
-| `git-fetch-branch` | `git-fetch-branch` | Fetch this remote branch or local branch upstream |
 | `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
 | `git-network` | `git-network` | Open or refresh the cached commit network |
 | `git-network-head` | `git-network-head` | Restrict the commit network to HEAD |

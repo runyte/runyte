@@ -1397,6 +1397,9 @@ impl App {
         ) {
             self.refresh_conflict_inventory();
         }
+        if matches!(mutation, GitMutation::CommitMerge { .. }) {
+            self.merge_ui.commit_request = None;
+        }
         let completed_guard = match &mutation {
             GitMutation::Merge(p) => Some(p.guard.id()),
             GitMutation::ResolveConflict(p) => Some(p.guard.id()),
@@ -6340,6 +6343,10 @@ impl App {
     /// what makes this safe to reach for. Only the text is lost.
     pub(super) fn abandon_commit_message(&mut self, buffer_id: usize) {
         if self.merge_ui.commit_buffer == Some(buffer_id) {
+            if self.merge_ui.commit_request.is_some() {
+                self.action_failed("the reviewed merge commit is running; wait for its result before abandoning the message");
+                return;
+            }
             if let Some(plan) = self.merge_ui.commit.take() {
                 plan.invalidate();
             }

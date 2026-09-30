@@ -260,13 +260,10 @@ impl App {
             })
             .min_by_key(|binding| {
                 (
-                    usize::from(
-                        binding
-                            .sequence
-                            .as_slice()
-                            .iter()
-                            .any(|key| !matches!(key.code, KeyCode::Char(_))),
-                    ),
+                    usize::from(binding.sequence.as_slice().iter().any(|key| {
+                        !matches!(key.code, KeyCode::Char(_))
+                            || (!key.modifiers.is_empty() && key.modifiers != Modifiers::SHIFT)
+                    })),
                     binding.sequence.len(),
                 )
             })
@@ -539,28 +536,51 @@ impl App {
         }
         self.merge_ui.details_request = None;
         let mut lines = vec![crate::git::display_path(&entry.path)];
-        let (current, other) = self
+        let captured_inventory = self
             .merge_ui
-            .inventory
+            .review
             .as_ref()
-            .map(|inventory| {
-                if matches!(
-                    inventory.operation,
-                    crate::git::RepositoryOperation::Idle
-                        | crate::git::RepositoryOperation::Merge { .. }
-                ) {
-                    (
-                        format!("Current (stage 2): {}", inventory.current_identity),
-                        format!("Other (stage 3): {}", inventory.other_identity),
-                    )
-                } else {
-                    (
-                        format!("Stage 2: {}", inventory.current_identity),
-                        format!("Stage 3: {}", inventory.other_identity),
-                    )
-                }
+            .and_then(|review| match &review.plan {
+                ReviewPlan::Resolution(plan) => Some(&plan.inventory),
+                ReviewPlan::Completion(plan, _) => Some(&plan.inventory),
+                _ => None,
             })
-            .unwrap_or_else(|| ("Current (stage 2)".into(), "Other (stage 3)".into()));
+            .or(self.merge_ui.details_inventory.as_ref());
+        let labels = captured_inventory.map(|inventory| {
+            if matches!(
+                inventory.operation,
+                crate::git::RepositoryOperation::Idle
+                    | crate::git::RepositoryOperation::Merge { .. }
+            ) {
+                (
+                    format!("Current (stage 2): {}", inventory.current_identity),
+                    format!("Other (stage 3): {}", inventory.other_identity),
+                )
+            } else {
+                (
+                    format!("Stage 2: {}", inventory.current_identity),
+                    format!("Stage 3: {}", inventory.other_identity),
+                )
+            }
+        });
+        let (current, other) = if let Some(ReviewPlan::Merge(plan)) =
+            self.merge_ui.review.as_ref().map(|review| &review.plan)
+        {
+            (
+                format!(
+                    "Current (stage 2): {} {}",
+                    plan.destination_reference,
+                    &plan.destination_oid[..8]
+                ),
+                format!(
+                    "Other (stage 3): {} {}",
+                    plan.source_reference,
+                    &plan.source_oid[..8]
+                ),
+            )
+        } else {
+            labels.unwrap_or_else(|| ("Current (stage 2)".into(), "Other (stage 3)".into()))
+        };
         for (name, content) in ["Base (stage 1)".to_owned(), current, other]
             .into_iter()
             .zip(sides)

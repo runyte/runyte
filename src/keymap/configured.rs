@@ -607,13 +607,13 @@ mod tests {
     #[test]
     fn longest_rebind_wins_and_named_prefixes_expand() {
         let value: Value = serde_yaml::from_str(
-            "leader: Ctrl-x\nrebind:\n  Space g: Leader G\n  Space g l: Leader G c\n",
+            "leader: Ctrl-x\nrebind:\n  Space g: Leader G\n  Space g l: Leader G q\n",
         )
         .unwrap();
         let compiled = compile(&value, default_keymap());
         assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
         assert!(matches!(
-            compiled.keymap.lookup(Mode::Normal, &KeySequence::parse("Ctrl-x G c").unwrap()),
+            compiled.keymap.lookup(Mode::Normal, &KeySequence::parse("Ctrl-x G q").unwrap()),
             Lookup::Exact(binding) if binding.target == BindingTarget::Colon(ColonCommand::GitLog)
         ));
     }

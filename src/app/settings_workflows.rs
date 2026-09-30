@@ -811,6 +811,11 @@ impl App {
     /// workflow rather than a document that makes sense hidden: leaving its
     /// view cancels it, with force required when authored text would be lost.
     pub(super) fn request_view_quit(&mut self, force: bool) {
+        if self.active_terminal().is_none()
+            && self.refuse_running_merge_message(self.active().buffer)
+        {
+            return;
+        }
         if self.complete_parent_wait(force) {
             return;
         }

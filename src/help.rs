@@ -292,7 +292,7 @@ const DIFF_OVERVIEW: &[&str] = &[
 const GIT_STASH_OVERVIEW: &[&str] = &[
     "Stashes are listed by stable object identity. Applying keeps the stash; dropping is a separate confirmed action.",
     "Every stash action is a colon command first, and this view's Tab menu offers the ones that take a row. `:git-stashes` opens or refreshes the list, and `:git-stash-apply` and `:git-stash-drop` act on the stash under the cursor — invoked from any other buffer they are refused, because there is no row to mean.",
-    "Creating a stash has no key at all: the three commands below are the only way. Each takes a required name, asks for confirmation, and is refused while a file buffer in this repository has unsaved changes. An apply that conflicts keeps the stash and leaves the resolution to an external Git tool.",
+    "Creating a stash has no key at all: the three commands below are the only way. Each takes a required name, asks for confirmation, and is refused while a file buffer in this repository has unsaved changes. An apply that conflicts keeps the stash. {binding:Space g c} opens its unmerged index stages for supported file resolutions; unsupported cases can use an external Git tool.",
 ];
 
 /// The three creation commands differ along two axes at once — what goes into
