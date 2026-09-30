@@ -1805,28 +1805,20 @@ impl App {
         self.mode = Mode::Insert;
     }
 
-    /// Selects whole lines, then walks the moving edge one line at a time.
+    /// Walks the moving edge of a line selection up one row per press, for
+    /// `select-line-up`.
     ///
-    /// The first press only snaps each range to the lines it already touches,
-    /// which is what makes `x` on an empty line look like a no-op: there is no
-    /// character to highlight yet. Every press after that moves the head row by
-    /// one, down for `x` and up for `X`, so the two keys walk the same edge in
-    /// opposite directions and `x x X` leaves exactly the line the walk began
-    /// on. Row arithmetic drives this rather than the range's emptiness, so an
-    /// empty line extends like any other.
-    pub(super) fn select_line(&mut self, down: bool) {
+    /// The first press only snaps each range to the lines it already touches.
+    /// Every press after that moves the head row up by one. `x` and `X` do not
+    /// use this: they grow the outer edges through `extend_line`.
+    pub(super) fn select_line_up(&mut self) {
         let buffer = self.active_buffer();
-        let last_row = buffer.last_row();
         let live = self.line_select.is_some();
         let selection = self.active().selection.transform(|range| {
             let anchor_row = buffer.offset_to_row(range.anchor);
             let mut head_row = buffer.offset_to_row(range.head);
             if live {
-                head_row = if down {
-                    (head_row + 1).min(last_row)
-                } else {
-                    head_row.saturating_sub(1)
-                };
+                head_row = head_row.saturating_sub(1);
             }
             // The anchor sits at the outer edge of its own row, so the span
             // always covers both rows in full whichever way it points.

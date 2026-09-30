@@ -1458,6 +1458,29 @@ fn terminal_review_line_and_multi_selection_commands_copy_together() {
 }
 
 #[test]
+fn terminal_review_x_after_x_upper_grows_down_instead_of_dropping_the_top() {
+    let mut session = Session::start(r#"/bin/sh -c 'printf "alpha\r\nbeta\r\ngamma"; sleep 30'"#);
+    assert!(session.settle(|app| terminal_text(app).contains("gamma")));
+    session.leave_input();
+    let id = session.app.active_terminal().unwrap();
+    session.press(KeyCode::Home);
+    session.type_text("k");
+
+    session.press(KeyCode::Char('X'));
+    session.press(KeyCode::Char('X'));
+    session.press(KeyCode::Char('x'));
+    assert_eq!(
+        session
+            .app
+            .terminals
+            .get_mut(id)
+            .unwrap()
+            .review_selection_text(),
+        "alpha\nbeta\ngamma"
+    );
+}
+
+#[test]
 fn terminal_review_comma_and_semicolon_manage_copied_selections() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "alpha\r\nbeta\r\ngamma"; sleep 30'"#);
     assert!(session.settle(|app| terminal_text(app).contains("gamma")));
