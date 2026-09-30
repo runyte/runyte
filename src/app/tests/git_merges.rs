@@ -181,10 +181,21 @@ fn merge_ui_noop_and_dirty_repository_disable_mutation() {
     app.approve_merge_review();
     assert!(operations.try_recv().is_err());
     app.cancel_merge_review();
+    let branches = app.active().buffer;
     app.open_file(fixture.0.join("file")).unwrap();
     app.edit(Transaction::insert(0, "dirty\n"));
-    app.prepare_branch_merge();
+    app.active_mut().retarget(branches);
+    let row = app
+        .git_state
+        .branch_rows()
+        .iter()
+        .position(|r| r.branch.as_ref().is_some_and(|b| b.name == "feature"))
+        .unwrap();
+    let offset = app.active_buffer().line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+    context_action(&mut app, 'm');
     assert!(operations.try_recv().is_err());
+    assert!(app.status.contains("save repository file buffers"));
 }
 
 #[test]
@@ -426,4 +437,74 @@ fn merge_ui_region_resolution_staging_preserves_undo_and_drops_resolved_row() {
     assert!(app.buffers[file].dirty);
     assert_eq!(fixture.git(&["show", ":file"]), "current");
     assert!(fixture.git(&["ls-files", "-u"]).is_empty());
+}
+
+#[test]
+fn merge_ui_physical_branch_and_conflict_namespaces_use_registry() {
+    let fixture = MergeFixture::new(true, true);
+    let (mut app, operations) = fixture.app();
+    let service = app.ports.git_service.take();
+    press(&mut app, ' ');
+    press(&mut app, 'g');
+    press(&mut app, 'b');
+    assert!(app.active_buffer().is_git_branches());
+    app.ports.git_service = service;
+    let row = app
+        .git_state
+        .branch_rows()
+        .iter()
+        .position(|r| r.branch.as_ref().is_some_and(|b| b.name == "feature"))
+        .unwrap();
+    let offset = app.active_buffer().line_to_offset(row);
+    app.active_mut().replace_selection(Selection::point(offset));
+    context_action(&mut app, 'm');
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::PrepareMerge { .. }
+    ));
+    app.cancel_merge_review();
+    press(&mut app, ' ');
+    press(&mut app, 'g');
+    press(&mut app, 'c');
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(operation, GitOperation::Conflicts { .. }));
+    let id = app.merge_ui.conflict_read.as_ref().unwrap().0;
+    app.receive_conflict_inventory(
+        Some(id),
+        fixture.provider().conflicts(&fixture.repository()).unwrap(),
+    );
+    assert!(app.active_buffer().is_git_conflicts());
+    assert!(!app.command_capabilities().git_merge_active.is_available());
+}
+
+#[test]
+fn merge_ui_backward_cross_file_navigation_selects_last_region() {
+    let fixture = MergeFixture::new(true, true);
+    let (mut app, _operations) = fixture.app();
+    fixture.enter_conflicted_merge(&mut app);
+    let marker = "<<<<<<< Current\ncurrent\n=======\nother\n>>>>>>> Other\n";
+    fs::write(
+        fixture.0.join("first"),
+        format!("{marker}between\n{marker}"),
+    )
+    .unwrap();
+    fs::write(fixture.0.join("last"), marker).unwrap();
+    let mut inventory = app.merge_ui.inventory.clone().unwrap();
+    let mut first = inventory.entries[0].clone();
+    first.path = "first".into();
+    let mut last = first.clone();
+    last.path = "last".into();
+    inventory.entries = vec![first, last];
+    app.show_git_conflicts(inventory, false);
+    app.open_file(fixture.0.join("last")).unwrap();
+    app.active_mut().replace_selection(Selection::point(0));
+    app.focus_conflict_region(false, true);
+    assert_eq!(
+        app.active_buffer().path.as_deref(),
+        Some(fixture.0.join("first").as_path())
+    );
+    let regions =
+        crate::git::conflict_regions::parse_conflict_regions(&app.active_buffer().to_string(), 7)
+            .unwrap();
+    assert_eq!(app.active().head(), regions.last().unwrap().range.start);
 }

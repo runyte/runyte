@@ -360,10 +360,10 @@ impl App {
             MergeReviewBack => self.cancel_merge_review(),
             _ => {}
         }
-        if let Some(review) = self.merge_ui.review.as_mut() {
-            if review.focus < review.rows.len() {
-                review.root_scroll = review.focus.saturating_sub(12);
-            }
+        if let Some(review) = self.merge_ui.review.as_mut()
+            && review.focus < review.rows.len()
+        {
+            review.root_scroll = review.focus.saturating_sub(12);
         }
     }
 

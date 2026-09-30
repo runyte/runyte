@@ -162,21 +162,21 @@ impl App {
         }
     }
     pub(super) fn request_commit_operation_preflight(&mut self) {
-        if let Some(repository) = self.git.repository().cloned() {
-            if let Some(id) = self.request_git(GitOperation::Conflicts { repository }) {
-                self.merge_ui.commit_preflight = Some((id, self.review_origin()));
-                self.status("checking the repository operation before commit…");
-            }
+        if let Some(repository) = self.git.repository().cloned()
+            && let Some(id) = self.request_git(GitOperation::Conflicts { repository })
+        {
+            self.merge_ui.commit_preflight = Some((id, self.review_origin()));
+            self.status("checking the repository operation before commit…");
         }
     }
     pub(super) fn refresh_conflict_inventory(&mut self) {
         if self.merge_ui.inventory.is_none() {
             return;
         }
-        if let Some(repository) = self.git.repository().cloned() {
-            if let Some(id) = self.request_git(GitOperation::Conflicts { repository }) {
-                self.merge_ui.conflict_read = Some((id, self.review_origin(), false));
-            }
+        if let Some(repository) = self.git.repository().cloned()
+            && let Some(id) = self.request_git(GitOperation::Conflicts { repository })
+        {
+            self.merge_ui.conflict_read = Some((id, self.review_origin(), false));
         }
     }
     pub(super) fn receive_conflict_inventory(
@@ -402,12 +402,13 @@ impl App {
             pending.guard.invalidate();
             return;
         }
-        if let ReviewPlan::Completion(p, _) = &plan {
-            if pending.intent == ReviewIntent::Continue && !p.inventory.entries.is_empty() {
-                plan.invalidate();
-                self.action_failed("resolve all index conflicts before continuing the merge");
-                return;
-            }
+        if let ReviewPlan::Completion(p, _) = &plan
+            && pending.intent == ReviewIntent::Continue
+            && !p.inventory.entries.is_empty()
+        {
+            plan.invalidate();
+            self.action_failed("resolve all index conflicts before continuing the merge");
+            return;
         }
         self.mode = Mode::Normal;
         let mut review = super::git_merge_review::MergeReview::new(
@@ -419,10 +420,10 @@ impl App {
     }
 
     pub(super) fn open_git_conflicts(&mut self) {
-        if let Some(repository) = self.merge_repository() {
-            if let Some(id) = self.request_git(GitOperation::Conflicts { repository }) {
-                self.merge_ui.conflict_read = Some((id, self.review_origin(), true));
-            }
+        if let Some(repository) = self.merge_repository()
+            && let Some(id) = self.request_git(GitOperation::Conflicts { repository })
+        {
+            self.merge_ui.conflict_read = Some((id, self.review_origin(), true));
         }
     }
 

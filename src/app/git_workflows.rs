@@ -1405,7 +1405,9 @@ impl App {
             }
             _ => None,
         };
-        if let Some(id) = completed_guard {
+        if let Some(id) = completed_guard
+            && !(failure.is_some() && matches!(mutation, GitMutation::CommitMerge { .. }))
+        {
             self.merge_ui.guards.retain(|g| g.id() != id);
         }
         if matches!(
