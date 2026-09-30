@@ -14,6 +14,7 @@
 
 mod comparison;
 mod conflicts;
+mod fetch;
 mod merge;
 
 use std::{
@@ -3618,6 +3619,14 @@ impl GitProvider for GitCliProvider {
             ],
         )
         .map(|_| ())
+    }
+
+    fn fetch_branch(
+        &self,
+        repository: &Repository,
+        target: &super::FetchBranchTarget,
+    ) -> Result<String> {
+        self.fetch_selected_branch(repository, target)
     }
 
     fn pull(&self, repository: &Repository) -> Result<String> {

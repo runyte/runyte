@@ -421,6 +421,13 @@ impl RemoteBranch {
     }
 }
 
+/// The selected branch identity, resolved from configuration immediately before fetching.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FetchBranchTarget {
+    LocalBranch(String),
+    RemoteTrackingRef(String),
+}
+
 /// The complete branch view, read as one service result so its inverse
 /// tracking annotations describe the same repository observation.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1178,6 +1185,18 @@ pub trait GitProvider {
     /// again. Callers are expected to have asked first.
     fn discard(&self, repository: &Repository, path: &Path) -> Result<()>;
 
+    /// Fetches only the selected remote-tracking ref or local branch's upstream.
+    /// Never changes local branch tips, the index, or working files.
+    fn fetch_branch(
+        &self,
+        _repository: &Repository,
+        _target: &FetchBranchTarget,
+    ) -> Result<String> {
+        Err(GitError::Unavailable {
+            detail: "single-branch fetching is unavailable in this Git provider".to_owned(),
+        })
+    }
+
     /// Fetches the current branch's upstream and fast-forwards onto it.
     ///
     /// Fast-forward only. A pull that had to merge could leave the working tree
@@ -1268,6 +1287,7 @@ pub struct MemoryGitProvider {
     pulled: std::cell::Cell<usize>,
     rebased: std::cell::Cell<usize>,
     pushed: std::cell::RefCell<Vec<String>>,
+    fetched: std::cell::RefCell<Vec<FetchBranchTarget>>,
     /// Refuses only network operations, so a test can reach one with
     /// everything around it working.
     refuse_network: bool,
@@ -1305,6 +1325,7 @@ impl MemoryGitProvider {
             pulled: std::cell::Cell::new(0),
             rebased: std::cell::Cell::new(0),
             pushed: std::cell::RefCell::new(Vec::new()),
+            fetched: std::cell::RefCell::new(Vec::new()),
             refuse_network: false,
             status: std::cell::RefCell::new(RepositoryStatus {
                 head: Head::Branch("main".to_owned()),
@@ -1373,6 +1394,11 @@ impl MemoryGitProvider {
     pub fn refusing_stats(mut self) -> Self {
         self.refuse_stats = true;
         self
+    }
+
+    #[must_use]
+    pub fn fetches(&self) -> Vec<FetchBranchTarget> {
+        self.fetched.borrow().clone()
     }
 
     #[must_use]
@@ -1873,6 +1899,14 @@ impl GitProvider for MemoryGitProvider {
         Ok(())
     }
 
+    fn fetch_branch(&self, _repository: &Repository, target: &FetchBranchTarget) -> Result<String> {
+        if self.failing || self.refuse_network {
+            return self.refuse();
+        }
+        self.fetched.borrow_mut().push(target.clone());
+        Ok("Fetched selected branch".to_owned())
+    }
+
     fn pull(&self, _repository: &Repository) -> Result<String> {
         if self.failing || self.refuse_network {
             return self.refuse();
@@ -2093,6 +2127,10 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
 
     fn commit(&self, repository: &Repository, message: &str) -> Result<String> {
         self.as_ref().commit(repository, message)
+    }
+
+    fn fetch_branch(&self, repository: &Repository, target: &FetchBranchTarget) -> Result<String> {
+        self.as_ref().fetch_branch(repository, target)
     }
 
     fn pull(&self, repository: &Repository) -> Result<String> {

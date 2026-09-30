@@ -2514,6 +2514,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
     let actions = vec![
         ContextAction::row(
             BindingScope::GitBranches,
+            Key::char('f'),
+            "fetch",
+            EditorCommand::FetchBranch,
+        ),
+        ContextAction::row(
+            BindingScope::GitBranches,
             Key::char('d'),
             "compare",
             ColonCommand::GitCompare,

@@ -15,11 +15,11 @@ use std::{
 };
 
 use runyte::git::{
-    BaseContent, BlameRequest, DeletionAuthorization, DiffScope, Divergence, FileComparison,
-    FileState, GitCliProvider, GitError, GitMutation, GitOperation, GitProvider, GitResponse,
-    GitService, GitServiceEvent, GitServiceHandle, Head, LineStats, LogCursor, LogRequest,
-    MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_LOG_PAGE_SIZE, PartialStageSelection, RefreshSpec,
-    Repository, StashMutation, StashScope, WorktreeCreate,
+    BaseContent, BlameRequest, DeletionAuthorization, DiffScope, Divergence, FetchBranchTarget,
+    FileComparison, FileState, GitCliProvider, GitError, GitMutation, GitOperation, GitProvider,
+    GitResponse, GitService, GitServiceEvent, GitServiceHandle, Head, LineStats, LogCursor,
+    LogRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_LOG_PAGE_SIZE, PartialStageSelection,
+    RefreshSpec, Repository, StashMutation, StashScope, WorktreeCreate,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -4668,4 +4668,235 @@ fn committed_comparison_submodule_patch_normalizes_configured_log_format() {
         contents.previous,
         BaseContent::Text(format!("Subproject commit {second}\n"))
     );
+}
+
+#[test]
+fn fetching_one_branch_preserves_other_refs_tags_head_index_and_dirty_files() {
+    let clone = TempClone::new("fetch-one");
+    let provider = GitCliProvider::new("git");
+    clone.in_peer(&["branch", "other"]);
+    clone.in_peer(&["push", "-q", "origin", "other"]);
+    clone.git(&["fetch", "-q", "origin"]);
+    let head = git_output_from(clone.path(), &["rev-parse", "HEAD"]);
+    let other = git_output_from(clone.path(), &["rev-parse", "refs/remotes/origin/other"]);
+    let index = fs::read(clone.path().join(".git/index")).unwrap();
+    clone.write("source.rs", "dirty local contents\n");
+    clone.commit_upstream("remote change\n");
+    clone.in_peer(&["branch", "-f", "other", "main"]);
+    clone.in_peer(&["tag", "remote-tag"]);
+    clone.in_peer(&["push", "-q", "origin", "other", "--tags"]);
+    clone.git(&["config", "fetch.prune", "true"]);
+    clone.git(&["config", "fetch.pruneTags", "true"]);
+    clone.git(&["config", "remote.origin.tagOpt", "--tags"]);
+    provider
+        .fetch_branch(
+            &clone.repository(),
+            &FetchBranchTarget::RemoteTrackingRef("refs/remotes/origin/main".into()),
+        )
+        .unwrap();
+    assert_eq!(git_output_from(clone.path(), &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git_output_from(clone.path(), &["rev-parse", "refs/remotes/origin/other"]),
+        other
+    );
+    assert_ne!(
+        git_output_from(clone.path(), &["rev-parse", "refs/remotes/origin/main"]),
+        head
+    );
+    assert!(git_output_from(clone.path(), &["tag", "--list"]).is_empty());
+    assert_eq!(fs::read(clone.path().join(".git/index")).unwrap(), index);
+    assert_eq!(
+        fs::read_to_string(clone.path().join("source.rs")).unwrap(),
+        "dirty local contents\n"
+    );
+}
+
+#[test]
+fn fetching_a_local_branch_uses_its_differently_named_gone_upstream_and_slash_remote() {
+    let clone = TempClone::new("fetch-upstream");
+    let provider = GitCliProvider::new("git");
+    clone.git(&["remote", "rename", "origin", "fork/team"]);
+    clone.git(&["branch", "topic"]);
+    clone.git(&["config", "branch.topic.remote", "fork/team"]);
+    clone.git(&["config", "branch.topic.merge", "refs/heads/main"]);
+    clone.git(&["update-ref", "-d", "refs/remotes/fork/team/main"]);
+    clone.commit_upstream("new upstream\n");
+    let tip = git_output_from(clone.path(), &["rev-parse", "refs/heads/topic"]);
+    provider
+        .fetch_branch(
+            &clone.repository(),
+            &FetchBranchTarget::LocalBranch("topic".into()),
+        )
+        .unwrap();
+    assert_ne!(
+        git_output_from(clone.path(), &["rev-parse", "refs/remotes/fork/team/main"]),
+        tip
+    );
+    assert_eq!(
+        git_output_from(clone.path(), &["rev-parse", "refs/heads/topic"]),
+        tip
+    );
+}
+
+#[test]
+fn fetching_remote_ref_resolves_unusual_mapping_and_reports_force_update() {
+    let clone = TempClone::new("fetch-force");
+    let provider = GitCliProvider::new("git");
+    clone.git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/cache/prefix-*",
+    ]);
+    clone.git(&["fetch", "-q", "origin"]);
+    let old = git_output_from(
+        clone.path(),
+        &["rev-parse", "refs/remotes/cache/prefix-main"],
+    );
+    clone.commit_upstream("remote moved\n");
+    provider
+        .fetch_branch(
+            &clone.repository(),
+            &FetchBranchTarget::RemoteTrackingRef("refs/remotes/cache/prefix-main".into()),
+        )
+        .unwrap();
+    clone.in_peer(&["reset", "--hard", old.trim()]);
+    clone.in_peer(&["push", "-q", "--force", "origin", "main"]);
+    let report = provider
+        .fetch_branch(
+            &clone.repository(),
+            &FetchBranchTarget::RemoteTrackingRef("refs/remotes/cache/prefix-main".into()),
+        )
+        .unwrap();
+    assert!(report.contains("forced update"), "{report}");
+    assert_eq!(
+        git_output_from(
+            clone.path(),
+            &["rev-parse", "refs/remotes/cache/prefix-main"]
+        ),
+        old
+    );
+}
+
+#[test]
+fn fetching_refuses_excluded_ambiguous_local_and_symbolic_destinations() {
+    let clone = TempClone::new("fetch-unsafe");
+    let provider = GitCliProvider::new("git");
+    let remote = FetchBranchTarget::RemoteTrackingRef("refs/remotes/origin/main".into());
+    let local = FetchBranchTarget::LocalBranch("main".into());
+    let head = git_output_from(clone.path(), &["rev-parse", "HEAD"]);
+    clone.git(&["config", "--add", "remote.origin.fetch", "^refs/heads/main"]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &remote)
+            .unwrap_err()
+            .to_string()
+            .contains("excludes")
+    );
+    clone.git(&["config", "--add", "remote.origin.fetch", "^refs/heads/ma*"]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &remote)
+            .unwrap_err()
+            .to_string()
+            .contains("excludes")
+    );
+    clone.git(&["config", "--unset-all", "remote.origin.fetch"]);
+    clone.git(&[
+        "config",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/heads/main",
+    ]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &local)
+            .unwrap_err()
+            .to_string()
+            .contains("refs/remotes/")
+    );
+    clone.git(&[
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    clone.git(&[
+        "config",
+        "--add",
+        "remote.origin.fetch",
+        "+refs/heads/other:refs/remotes/origin/main",
+    ]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &remote)
+            .unwrap_err()
+            .to_string()
+            .contains("ambiguous")
+    );
+    clone.git(&[
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/heads/*:refs/remotes/origin/*",
+    ]);
+    clone.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/main",
+        "refs/heads/main",
+    ]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &remote)
+            .unwrap_err()
+            .to_string()
+            .contains("symbolic")
+    );
+    clone.git(&["config", "branch.main.remote", "."]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &local)
+            .unwrap_err()
+            .to_string()
+            .contains("not a network")
+    );
+    clone.git(&["config", "branch.main.remote", "--upload-pack=unwanted"]);
+    assert!(
+        provider
+            .fetch_branch(&clone.repository(), &local)
+            .unwrap_err()
+            .to_string()
+            .contains("safe fetch")
+    );
+    assert_eq!(git_output_from(clone.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn fetching_a_deleted_server_branch_fails_and_preserves_cached_and_local_tips() {
+    let clone = TempClone::new("fetch-deleted");
+    let provider = GitCliProvider::new("git");
+    clone.in_peer(&["branch", "gone"]);
+    clone.in_peer(&["push", "-q", "origin", "gone"]);
+    clone.git(&["fetch", "-q", "origin"]);
+    clone.git(&["branch", "--track", "topic", "origin/gone"]);
+    let cached = git_output_from(clone.path(), &["rev-parse", "refs/remotes/origin/gone"]);
+    let head = git_output_from(clone.path(), &["rev-parse", "HEAD"]);
+    clone.in_peer(&["push", "-q", "origin", "--delete", "gone"]);
+    let error = provider
+        .fetch_branch(
+            &clone.repository(),
+            &FetchBranchTarget::LocalBranch("topic".into()),
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("couldn't find remote ref"),
+        "{error}"
+    );
+    assert_eq!(
+        git_output_from(clone.path(), &["rev-parse", "refs/remotes/origin/gone"]),
+        cached
+    );
+    assert_eq!(
+        git_output_from(clone.path(), &["rev-parse", "refs/heads/topic"]),
+        cached
+    );
+    assert_eq!(git_output_from(clone.path(), &["rev-parse", "HEAD"]), head);
 }
