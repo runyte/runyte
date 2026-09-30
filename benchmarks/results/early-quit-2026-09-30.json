@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-30",
+  "runyte_version": "0.3.5",
+  "source_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "harness_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "runyte_sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e",
+  "samples": [
+    {
+      "build": "stock",
+      "round": 1,
+      "quit_ms": 3.8670329959131777,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 2,
+      "quit_ms": 5.185655027162284,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 3,
+      "quit_ms": 5.775183963123709,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 4,
+      "quit_ms": 5.354647990316153,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 5,
+      "quit_ms": 5.150025011971593,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 6,
+      "quit_ms": 2.8492119745351374,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 7,
+      "quit_ms": 3.781644976697862,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 8,
+      "quit_ms": 4.657568002585322,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 9,
+      "quit_ms": 7.604842016007751,
+      "syntax_completed": null
+    },
+    {
+      "build": "stock",
+      "round": 10,
+      "quit_ms": 3.789609996601939,
+      "syntax_completed": null
+    }
+  ]
+}

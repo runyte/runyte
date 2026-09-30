@@ -1,0 +1,126 @@
+{
+  "binary": "target/release/runyte",
+  "results": {
+    "one": [
+      {
+        "cold_start_ms": 35.37062997929752,
+        "attachment_ms": 7.070826017297804,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.00014005898265
+      },
+      {
+        "cold_start_ms": 32.82026498345658,
+        "attachment_ms": 6.119118013884872,
+        "cpu_percent": 0.12499794043225125,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.000263629015535
+      },
+      {
+        "cold_start_ms": 34.23097397899255,
+        "attachment_ms": 6.002679991070181,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 2,
+        "window_seconds": 16.000115428993013
+      }
+    ],
+    "several": [
+      {
+        "cold_start_ms": 33.80079998169094,
+        "attachment_ms": 7.078700989950448,
+        "cpu_percent": 0.0,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000086702988483
+      },
+      {
+        "cold_start_ms": 33.13403099309653,
+        "attachment_ms": 6.7986309877596796,
+        "cpu_percent": 0.12499605408535137,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000505093019456
+      },
+      {
+        "cold_start_ms": 33.25968800345436,
+        "attachment_ms": 6.371073017362505,
+        "cpu_percent": 0.18749896281411413,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000088507018518
+      }
+    ],
+    "hidden": [
+      {
+        "cold_start_ms": 33.197274955455214,
+        "attachment_ms": 6.569421966560185,
+        "cpu_percent": 0.18749895448209833,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000089218025096
+      },
+      {
+        "cold_start_ms": 34.044608008116484,
+        "attachment_ms": 6.272479018662125,
+        "cpu_percent": 0.1249975935074335,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000308036978822
+      },
+      {
+        "cold_start_ms": 34.472758998163044,
+        "attachment_ms": 6.259513960685581,
+        "cpu_percent": 0.12499901374990799,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.00012624100782
+      }
+    ],
+    "remote-noisy": [
+      {
+        "cold_start_ms": 33.625937008764595,
+        "attachment_ms": 6.701381003949791,
+        "cpu_percent": 0.37499818046190486,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000077634002082
+      },
+      {
+        "cold_start_ms": 33.426696027163416,
+        "attachment_ms": 6.8184309639036655,
+        "cpu_percent": 0.24999865935106283,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.0000858019921
+      },
+      {
+        "cold_start_ms": 33.149802999105304,
+        "attachment_ms": 6.080331979319453,
+        "cpu_percent": 0.24999813165445853,
+        "screen_writes": 0,
+        "screen_bytes": 0,
+        "observed_processes": 4,
+        "window_seconds": 16.000119575008284
+      }
+    ]
+  },
+  "date": "2026-09-30",
+  "runyte_version": "0.3.5",
+  "source_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "harness_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "runyte_sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e"
+}

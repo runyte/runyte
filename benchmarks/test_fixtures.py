@@ -19,14 +19,19 @@ class MatrixTests(unittest.TestCase):
                 "short.txt",
                 "medium.txt",
                 "long.txt",
+                "huge.txt",
                 "short.lua",
                 "medium.lua",
                 "long.lua",
+                "huge.lua",
             ),
         )
 
     def test_sizes_are_the_documented_line_counts(self) -> None:
-        self.assertEqual(fixtures.SIZES, {"short": 500, "medium": 5_000, "long": 50_000})
+        self.assertEqual(
+            fixtures.SIZES,
+            {"short": 500, "medium": 5_000, "long": 50_000, "huge": 500_000},
+        )
 
     def test_split_rejects_a_name_outside_the_matrix(self) -> None:
         for name in ("large.rs", "small.txt", "long.md", "long"):
