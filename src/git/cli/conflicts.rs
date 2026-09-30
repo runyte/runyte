@@ -7,6 +7,23 @@ use crate::git::merge::*;
 use std::collections::BTreeMap;
 
 impl GitCliProvider {
+    pub(super) fn commit_captured_message(
+        &self,
+        repo: &Repository,
+        message: &str,
+    ) -> Result<String> {
+        // The message is a literal argument, after Runyte removes template
+        // comments. Whitespace cleanup preserves the user's remaining content.
+        self.run_text(
+            repo.workdir(),
+            &[
+                OsStr::new("commit"),
+                OsStr::new("--cleanup=whitespace"),
+                OsStr::new("-m"),
+                OsStr::new(message),
+            ],
+        )
+    }
     pub(super) fn inspect_operation(&self, repo: &Repository) -> Result<RepositoryOperation> {
         // Markers belong to git_dir, not the directory shared by linked worktrees.
         for (marker, state) in [
@@ -381,7 +398,7 @@ impl GitCliProvider {
         if !plan.guard.is_valid() {
             return Err(stale());
         }
-        self.commit(repo, message)
+        self.commit_captured_message(repo, message)
     }
     pub(super) fn cancel_merge(
         &self,
