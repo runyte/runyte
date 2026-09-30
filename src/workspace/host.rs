@@ -1540,7 +1540,7 @@ impl WorkspaceHost {
             return None;
         };
         let response = result.as_ref().as_ref().ok()?;
-        let (snapshot, mutation) = match response {
+        let (snapshot, mutation) = match response.underlying_response() {
             GitResponse::Snapshot(snapshot) => (snapshot.as_ref(), false),
             GitResponse::Mutation { snapshot, .. } => (snapshot.as_ref().as_ref().ok()?, true),
             _ => return None,
