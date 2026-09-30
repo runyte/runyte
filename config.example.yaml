@@ -57,7 +57,7 @@ notifications:
 
 # Remap built-in prefixes, descendants, and advertised aliases. Left sides
 # always use default spellings; Leader and Window on right sides expand to the
-# configured one-key prefixes. See "Key remapping" in docs/user-guide.md.
+# configured one-key prefixes. See "Custom key bindings" in docs/user-guide.md.
 # keys:
 #   leader: Ctrl-x
 #   window: Ctrl-a

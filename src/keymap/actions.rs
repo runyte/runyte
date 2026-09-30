@@ -549,3 +549,43 @@ pub fn reference() -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::reference;
+    use std::collections::BTreeSet;
+
+    /// Collects the backquoted first cell of every table row in `text`.
+    fn first_cells(text: &str) -> BTreeSet<String> {
+        text.lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split_once('`'))
+            .map(|(name, _)| name.to_owned())
+            .collect()
+    }
+
+    /// The user guide groups the `:help key-actions` inventory by topic, so it
+    /// cannot be generated verbatim. It must still name exactly the actions and
+    /// colon commands the registry offers, no more and no fewer.
+    #[test]
+    fn user_guide_action_reference_matches_the_registry() {
+        let guide =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/user-guide.md"))
+                .expect("read the user guide");
+        let section = guide
+            .split_once("### Bindable action reference")
+            .expect("user guide has a bindable action reference")
+            .1
+            .split_once("\n## ")
+            .expect("the action reference ends at the next top-level section")
+            .0;
+        let documented = first_cells(section);
+        let registered = first_cells(&reference());
+        let missing = registered.difference(&documented).collect::<Vec<_>>();
+        let stale = documented.difference(&registered).collect::<Vec<_>>();
+        assert!(
+            missing.is_empty() && stale.is_empty(),
+            "docs/user-guide.md action reference is missing {missing:?} and lists unknown {stale:?}"
+        );
+    }
+}

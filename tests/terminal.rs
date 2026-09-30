@@ -2138,8 +2138,8 @@ fn terminal_review_search_keys_keep_their_literal_and_regex_flavours() {
         session.app.status
     );
 
-    // `(?-i)` is the whole of what a case-sensitive flavour would have
-    // offered, and it reaches the same retained snapshot the literal did.
+    // `/` already matches case; an explicit `(?-i)` is accepted too, and the
+    // search reaches the same retained snapshot the literal did.
     session.press(KeyCode::Char('/'));
     session.type_text("(?-i)AXB|axb");
     session.press(KeyCode::Enter);

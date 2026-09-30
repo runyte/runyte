@@ -530,9 +530,13 @@ pub struct ThemeDefinition {
     /// `foreground` outside the mode label; see `status_background`.
     pub status_foreground: String,
     pub error: String,
-    /// Warning notifications. Older themes fall back to `change_modified`.
+    /// Warning notifications. An omitted value takes the fixed default from
+    /// `ThemeDefinition::default`; an explicit null falls back to
+    /// `change_modified`, then terminal yellow.
     pub warning: Option<String>,
-    /// Informational notifications. Older themes fall back to `change_added`.
+    /// Informational notifications. An omitted value takes the fixed default
+    /// from `ThemeDefinition::default`; an explicit null falls back to
+    /// `change_added`, then terminal green.
     pub info: Option<String>,
     /// A one-key `goto-word` label, or the remaining key after narrowing. An
     /// omitted value uses `error`, preserving themes written before mixed
@@ -545,9 +549,12 @@ pub struct ThemeDefinition {
     /// reads as one token pointing at one place rather than as two loose
     /// letters. Its brightness direction depends on the theme background.
     pub jump_label_secondary: String,
-    /// Gutter mark for a line this working tree added. An omitted value uses
-    /// the terminal's own green, which is legible on any palette; the bundled
-    /// themes name a colour that belongs to theirs.
+    /// Gutter mark for a line this working tree added. An omitted value takes
+    /// the fixed dark-ground default from `ThemeDefinition::default`. An
+    /// explicit null uses the terminal's own green, which is legible on any
+    /// palette; the bundled themes name a colour that belongs to theirs.
+    /// `change_modified` and `change_removed` follow the same rule with
+    /// magenta and red.
     pub change_added: Option<String>,
     /// Gutter mark for a line whose content differs from the staged one.
     pub change_modified: Option<String>,
@@ -558,8 +565,10 @@ pub struct ThemeDefinition {
     /// has. Distinct from `change_added`, which is a gutter mark against
     /// Git's staged text: these three fill a whole line, so they must be
     /// tints of the background rather than the strong colours a mark uses. An
-    /// omitted value leaves the line unfilled and lets the gutter bar carry
-    /// the difference on its own.
+    /// omitted value takes the fixed dark-ground default from
+    /// `ThemeDefinition::default`. An explicit null leaves the line unfilled
+    /// and lets the gutter bar carry the difference on its own;
+    /// `diff_removed` and `diff_changed` follow the same rule.
     pub diff_added: Option<String>,
     /// Line background for a line only the left side of a diff has.
     pub diff_removed: Option<String>,
