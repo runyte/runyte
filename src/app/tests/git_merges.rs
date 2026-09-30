@@ -59,7 +59,8 @@ impl MergeFixture {
         self.git(&["commit", "-qm", message]);
     }
     pub(super) fn provider(&self) -> GitCliProvider {
-        GitCliProvider::new("git")
+        GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+            .expect("these tests need a native Git executable on PATH")
     }
     pub(super) fn repository(&self) -> Repository {
         self.provider().discover(&self.0).unwrap().unwrap()

@@ -732,6 +732,8 @@ pub struct GitServiceHandle {
     next_id: Arc<AtomicU64>,
     cancellations: Arc<Mutex<HashMap<GitRequestId, Arc<AtomicBool>>>>,
     ordered_with_worktrees: bool,
+    #[cfg(test)]
+    recorded: Option<std::sync::mpsc::Sender<GitOperation>>,
 }
 
 #[cfg(test)]
@@ -752,21 +754,17 @@ impl PausedGitService {
 impl GitServiceHandle {
     #[cfg(test)]
     pub(crate) fn recording_for_test() -> (Self, Receiver<GitOperation>) {
-        let (requests, receiver) = sync_channel::<Request>(REQUEST_CAPACITY);
+        let (requests, _) = sync_channel::<Request>(REQUEST_CAPACITY);
         let (operations, recorded) = channel();
-        std::thread::spawn(move || {
-            while let Ok(request) = receiver.recv() {
-                if operations.send(request.operation).is_err() {
-                    break;
-                }
-            }
-        });
+        // Record at submission: forwarding through a worker makes try_recv
+        // race accepted requests and lets stale background reads appear later.
         (
             Self {
                 requests,
                 next_id: Arc::new(AtomicU64::new(1)),
                 cancellations: Arc::new(Mutex::new(HashMap::new())),
                 ordered_with_worktrees: false,
+                recorded: Some(operations),
             },
             recorded,
         )
@@ -780,6 +778,7 @@ impl GitServiceHandle {
             next_id: Arc::new(AtomicU64::new(1)),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
             ordered_with_worktrees: false,
+            recorded: None,
         };
         for index in 0..REQUEST_CAPACITY {
             handle
@@ -852,6 +851,18 @@ impl GitServiceHandle {
                 detail: "Git service cancellation table is poisoned".to_owned(),
             })?
             .insert(id, Arc::clone(&cancelled));
+        #[cfg(test)]
+        if let Some(recorded) = &self.recorded {
+            if recorded.send(operation).is_err() {
+                if let Ok(mut cancellations) = self.cancellations.lock() {
+                    cancellations.remove(&id);
+                }
+                return Err(GitError::Unavailable {
+                    detail: "Git service has stopped".to_owned(),
+                });
+            }
+            return Ok(id);
+        }
         let reservation = (self.ordered_with_worktrees
             && !matches!(operation, GitOperation::Discover { .. }))
         .then(|| super::repository_lock::reserve(&operation.repository_key()));
@@ -913,6 +924,8 @@ impl GitService {
             next_id: Arc::new(AtomicU64::new(1)),
             cancellations: Arc::clone(&cancellations),
             ordered_with_worktrees: worker.uses_repository_process_lock(),
+            #[cfg(test)]
+            recorded: None,
         };
         std::thread::spawn(move || schedule(worker, request_rx, event_tx, cancellations));
         (handle, event_rx)
@@ -2097,6 +2110,33 @@ mod tests {
     }
 
     #[test]
+    fn recording_fixture_publishes_requests_before_submission_returns() {
+        let (handle, recorded) = GitServiceHandle::recording_for_test();
+        for index in 0..128 {
+            let start = PathBuf::from(format!("/recorded/{index}"));
+            let id = handle
+                .try_submit(GitOperation::Discover {
+                    start: start.clone(),
+                })
+                .unwrap();
+            assert_eq!(id.get(), index + 1);
+            assert!(
+                matches!(recorded.try_recv().unwrap(), GitOperation::Discover { start: actual } if actual == start)
+            );
+            assert!(recorded.try_recv().is_err());
+        }
+        drop(recorded);
+        assert!(
+            handle
+                .try_submit(GitOperation::Discover {
+                    start: "/closed".into()
+                })
+                .is_err()
+        );
+        assert_eq!(handle.cancellations.lock().unwrap().len(), 128);
+    }
+
+    #[test]
     fn request_identities_are_monotonic_and_queue_is_bounded() {
         let (requests, _receiver) = sync_channel(1);
         let handle = GitServiceHandle {
@@ -2104,6 +2144,7 @@ mod tests {
             next_id: Arc::new(AtomicU64::new(1)),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
             ordered_with_worktrees: false,
+            recorded: None,
         };
         let first = handle
             .try_submit(GitOperation::Discover {

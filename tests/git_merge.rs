@@ -12,6 +12,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+fn provider() -> GitCliProvider {
+    GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+        .expect("these tests need a native Git executable on PATH")
+}
+
 static NEXT: AtomicU64 = AtomicU64::new(1);
 struct Fixture(PathBuf);
 impl Fixture {
@@ -46,10 +51,7 @@ impl Fixture {
         f
     }
     fn repo(&self) -> Repository {
-        GitCliProvider::new("git")
-            .discover(&self.0)
-            .unwrap()
-            .unwrap()
+        provider().discover(&self.0).unwrap().unwrap()
     }
     fn command(&self, args: &[&str]) -> std::process::Output {
         Command::new("git")
@@ -85,7 +87,7 @@ impl Fixture {
         self.commit("current");
     }
     fn plan(&self) -> runyte::git::MergePlan {
-        GitCliProvider::new("git")
+        provider()
             .prepare_merge(
                 &self.repo(),
                 "refs/heads/feature",
@@ -104,7 +106,7 @@ impl Drop for Fixture {
 fn preview_preserves_index_and_disk_and_clean_application_matches_tree() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let index = fs::read(f.0.join(".git/index")).unwrap();
     let disk = fs::read(f.0.join("file")).unwrap();
     let head = f.git(&["rev-parse", "HEAD"]);
@@ -153,7 +155,7 @@ fn fast_forward_and_contained_are_explicit_and_do_not_create_merge_commit() {
     f.commit("feature");
     let tip = f.git(&["rev-parse", "HEAD"]);
     f.git(&["checkout", "-q", "main"]);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     assert_eq!(plan.outcome, MergePreviewOutcome::FastForward);
     assert_eq!(
@@ -178,7 +180,7 @@ fn fast_forward_and_contained_are_explicit_and_do_not_create_merge_commit() {
 fn actual_conflicts_and_stage_blobs_are_authoritative() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     let MergePreviewOutcome::Merge {
         has_conflicts,
@@ -254,7 +256,7 @@ fn stale_merge_refs_index_disk_settings_and_editor_guard_refuse_mutation() {
     ] {
         let f = Fixture::new();
         f.divergent(false);
-        let p = GitCliProvider::new("git");
+        let p = provider();
         let plan = f.plan();
         let before = f.git(&["rev-parse", "HEAD"]);
         match changed {
@@ -290,7 +292,7 @@ fn stale_merge_refs_index_disk_settings_and_editor_guard_refuse_mutation() {
 fn resolution_review_pins_disk_and_index_and_can_explicitly_accept_literal_markers() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let path = f.0.join("file");
     let review = p
@@ -333,7 +335,7 @@ fn resolution_review_pins_disk_and_index_and_can_explicitly_accept_literal_marke
 fn whole_regular_side_and_modify_delete_choices_stage_only_reviewed_path() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let review = p
         .prepare_resolution(
@@ -373,7 +375,7 @@ fn whole_regular_side_and_modify_delete_choices_stage_only_reviewed_path() {
 fn saved_resolution_preview_classifies_exact_disk_content_and_is_sealed() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let path = f.0.join("file");
     for (bytes, expected) in [
@@ -425,7 +427,7 @@ fn completion_guards_orig_head_disk_merge_identity_and_allows_unchanged_tree_mer
     for changed in ["orig_head", "disk", "merge_head", "guard"] {
         let f = Fixture::new();
         f.divergent(false);
-        let p = GitCliProvider::new("git");
+        let p = provider();
         p.apply_merge(&f.repo(), &f.plan()).unwrap();
         let completion = p
             .prepare_merge_completion(&f.repo(), BufferRevisionGuard::new())
@@ -451,7 +453,7 @@ fn completion_guards_orig_head_disk_merge_identity_and_allows_unchanged_tree_mer
     f.git(&["commit", "--allow-empty", "-qm", "empty feature"]);
     f.git(&["checkout", "-q", "main"]);
     f.git(&["commit", "--allow-empty", "-qm", "empty main"]);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     assert!(plan.comparison.files.is_empty());
     p.apply_merge(&f.repo(), &plan).unwrap();
@@ -474,7 +476,7 @@ fn abort_uses_git_flow_for_clean_and_conflicted_pending_merges() {
     for conflict in [false, true] {
         let f = Fixture::new();
         f.divergent(conflict);
-        let p = GitCliProvider::new("git");
+        let p = provider();
         let head = f.git(&["rev-parse", "HEAD"]);
         p.apply_merge(&f.repo(), &f.plan()).unwrap();
         let review = p
@@ -500,7 +502,7 @@ fn normal_attributes_and_rename_preview_match_actual_tree_custom_driver_is_refus
     f.git(&["checkout", "-q", "main"]);
     f.write("other", "current\n");
     f.commit("current");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     let MergePreviewOutcome::Merge { tree_oid, .. } = &plan.outcome else {
         panic!()
@@ -525,7 +527,7 @@ fn configured_short_markers_are_detected_for_staging_and_region_parser() {
     f.write(".gitattributes", "file conflict-marker-size=3\n");
     f.commit("markers");
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let inventory = p.conflicts(&f.repo()).unwrap();
     assert_eq!(inventory.entries[0].marker_width, 3);
@@ -547,7 +549,7 @@ fn configured_short_markers_are_detected_for_staging_and_region_parser() {
 #[test]
 fn non_merge_operation_state_is_worktree_local_and_disables_merge_completion() {
     let f = Fixture::new();
-    let p = GitCliProvider::new("git");
+    let p = provider();
     for (name, state) in [
         ("rebase-merge", RepositoryOperation::Rebase),
         ("CHERRY_PICK_HEAD", RepositoryOperation::CherryPick),
@@ -569,7 +571,7 @@ fn non_merge_operation_state_is_worktree_local_and_disables_merge_completion() {
 fn unsupported_refs_dirty_state_and_output_limits_refuse_preview() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     assert!(
         p.prepare_merge(&f.repo(), "--help", BufferRevisionGuard::new())
             .is_err()
@@ -581,9 +583,11 @@ fn unsupported_refs_dirty_state_and_output_limits_refuse_preview() {
     ));
     fs::remove_file(f.0.join("untracked")).unwrap();
     assert!(matches!(
-        GitCliProvider::new("git")
-            .with_max_output_bytes(1)
-            .prepare_merge(&f.repo(), "refs/heads/feature", BufferRevisionGuard::new()),
+        provider().with_max_output_bytes(1).prepare_merge(
+            &f.repo(),
+            "refs/heads/feature",
+            BufferRevisionGuard::new()
+        ),
         Err(GitError::TooLarge { .. })
     ));
 }
@@ -622,7 +626,7 @@ fn pure_regions_preserve_unicode_and_diff3_base_and_refuse_ambiguity() {
 fn failed_commit_hook_keeps_merge_and_message_available() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let hook = f.0.join(".git/hooks/pre-commit");
     std::os::unix::fs::symlink(
@@ -661,7 +665,7 @@ fn cached_rerere_resolution_cannot_automatically_resolve_or_stage_reviewed_merge
     f.write("file", "cached resolution\n");
     f.git(&["rerere"]);
     f.git(&["merge", "--abort"]);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let applied = p.apply_merge(&f.repo(), &f.plan()).unwrap();
     assert_eq!(applied.outcome, MergeApplied::Conflicted);
     assert_eq!(applied.inventory.entries.len(), 1);
@@ -708,7 +712,7 @@ fn whole_symlink_side_changes_link_without_following_target() {
     fs::remove_file(f.0.join("file")).unwrap();
     std::os::unix::fs::symlink("current-target", f.0.join("file")).unwrap();
     f.commit("current link");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let saved = p
         .prepare_resolution(
@@ -750,7 +754,7 @@ fn structural_rename_conflicts_expose_related_paths_and_refuse_partial_side_choi
     f.git(&["checkout", "-q", "main"]);
     f.git(&["mv", "file", "current-name"]);
     f.commit("current rename");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     let MergePreviewOutcome::Merge {
         has_conflicts,
@@ -794,7 +798,7 @@ fn independent_modify_delete_conflicts_allow_independent_reviewed_deletions() {
     f.write("file", "file current\n");
     f.write("second", "second current\n");
     f.commit("modify both");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let review = p
         .prepare_resolution(
@@ -818,7 +822,7 @@ fn independent_modify_delete_conflicts_allow_independent_reviewed_deletions() {
 fn attribute_changes_after_review_invalidate_even_without_config_change() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     fs::create_dir_all(f.0.join(".git/info")).unwrap();
     f.write(".git/info/attributes", "* binary\n");
@@ -838,7 +842,7 @@ fn whole_side_resolution_preserves_reviewed_executable_mode_when_filemode_is_dis
     f.git(&["checkout", "-q", "main"]);
     f.write("file", "current\n");
     f.commit("current");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let applied = p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let selected = applied.inventory.entries[0].other.as_ref().unwrap();
     assert_eq!(selected.mode, "100755");
@@ -868,7 +872,7 @@ fn whole_side_resolution_preserves_reviewed_executable_mode_when_filemode_is_dis
 fn whole_side_checkout_failure_preserves_unmerged_index() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let wrapper = f.0.join("failing-git");
     std::os::unix::fs::symlink(
@@ -911,7 +915,7 @@ fn literal_path_side_resolution_does_not_match_other_index_paths() {
     f.git(&["checkout", "-q", "main"]);
     f.write("[file]", "current\n");
     f.commit("current");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     p.apply_merge(&f.repo(), &f.plan()).unwrap();
     let review = p
         .prepare_resolution(
@@ -952,7 +956,7 @@ fn multiple_merge_bases_use_recursive_ancestor_consolidation_and_match_applicati
             .count(),
         2
     );
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     let MergePreviewOutcome::Merge {
         tree_oid,
@@ -971,7 +975,7 @@ fn multiple_merge_bases_use_recursive_ancestor_consolidation_and_match_applicati
 fn sha256_commit_and_tree_identities_are_kept_in_full() {
     let f = Fixture::with_format("sha256");
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     assert_eq!(plan.destination_oid.len(), 64);
     assert_eq!(plan.source_oid.len(), 64);
@@ -991,7 +995,7 @@ fn no_common_ancestor_has_an_actionable_refusal_and_never_changes_repository() {
     f.write("unrelated", "unrelated\n");
     f.commit("unrelated");
     f.git(&["checkout", "-q", "main"]);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let head = f.git(&["rev-parse", "HEAD"]);
     let error = p
         .prepare_merge(&f.repo(), "refs/heads/feature", BufferRevisionGuard::new())
@@ -1014,7 +1018,7 @@ fn equal_blob_content_conflicts_are_independent_for_whole_side_resolution() {
     f.write("file", "current\n");
     f.write("second", "current\n");
     f.commit("same current");
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let applied = p.apply_merge(&f.repo(), &f.plan()).unwrap();
     assert_eq!(
         applied
@@ -1040,7 +1044,7 @@ fn equal_blob_content_conflicts_are_independent_for_whole_side_resolution() {
 fn public_plan_fields_cannot_substitute_an_unreviewed_action() {
     let f = Fixture::new();
     f.divergent(true);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let mut plan = f.plan();
     plan.outcome = MergePreviewOutcome::FastForward;
     assert!(p.apply_merge(&f.repo(), &plan).is_err());
@@ -1067,7 +1071,7 @@ fn public_plan_fields_cannot_substitute_an_unreviewed_action() {
 fn index_lock_failure_keeps_head_and_reports_actual_idle_repository() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     let plan = f.plan();
     let head = f.git(&["rev-parse", "HEAD"]);
     f.write(".git/index.lock", "fixture lock\n");
@@ -1110,7 +1114,7 @@ fn missing_merge_tree_capability_refuses_without_touching_index_or_disk() {
 fn ordinary_commit_cannot_complete_a_merge_started_after_message_capture() {
     let f = Fixture::new();
     f.divergent(false);
-    let p = GitCliProvider::new("git");
+    let p = provider();
     assert_eq!(
         p.operation_state(&f.repo()).unwrap(),
         RepositoryOperation::Idle
@@ -1151,7 +1155,7 @@ fn ordinary_commit_cannot_complete_a_merge_started_after_message_capture() {
 fn unborn_checkout_conflict_inventory_is_empty_without_inventing_a_head() {
     let f = Fixture::new();
     f.git(&["symbolic-ref", "HEAD", "refs/heads/unborn"]);
-    let inventory = GitCliProvider::new("git").conflicts(&f.repo()).unwrap();
+    let inventory = provider().conflicts(&f.repo()).unwrap();
     assert_eq!(inventory.operation, RepositoryOperation::Idle);
     assert!(inventory.entries.is_empty());
     assert_eq!(inventory.head_oid, None);

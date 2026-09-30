@@ -4676,7 +4676,7 @@ fn committed_comparison_submodule_patch_normalizes_configured_log_format() {
 #[test]
 fn fetching_one_branch_preserves_other_refs_tags_head_index_and_dirty_files() {
     let clone = TempClone::new("fetch-one");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     clone.in_peer(&["branch", "other"]);
     clone.in_peer(&["push", "-q", "origin", "other"]);
     clone.git(&["fetch", "-q", "origin"]);
@@ -4717,7 +4717,7 @@ fn fetching_one_branch_preserves_other_refs_tags_head_index_and_dirty_files() {
 #[test]
 fn fetching_a_local_branch_uses_its_differently_named_gone_upstream_and_slash_remote() {
     let clone = TempClone::new("fetch-upstream");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     clone.git(&["remote", "rename", "origin", "fork/team"]);
     clone.git(&["branch", "topic"]);
     clone.git(&["config", "branch.topic.remote", "fork/team"]);
@@ -4744,7 +4744,7 @@ fn fetching_a_local_branch_uses_its_differently_named_gone_upstream_and_slash_re
 #[test]
 fn fetching_remote_ref_resolves_unusual_mapping_and_reports_force_update() {
     let clone = TempClone::new("fetch-force");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     clone.git(&[
         "config",
         "remote.origin.fetch",
@@ -4783,7 +4783,7 @@ fn fetching_remote_ref_resolves_unusual_mapping_and_reports_force_update() {
 #[test]
 fn fetching_refuses_excluded_ambiguous_local_and_symbolic_destinations() {
     let clone = TempClone::new("fetch-unsafe");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let remote = FetchBranchTarget::RemoteTrackingRef("refs/remotes/origin/main".into());
     let local = FetchBranchTarget::LocalBranch("main".into());
     let head = git_output_from(clone.path(), &["rev-parse", "HEAD"]);
@@ -4875,7 +4875,7 @@ fn fetching_refuses_excluded_ambiguous_local_and_symbolic_destinations() {
 #[test]
 fn fetching_a_deleted_server_branch_fails_and_preserves_cached_and_local_tips() {
     let clone = TempClone::new("fetch-deleted");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     clone.in_peer(&["branch", "gone"]);
     clone.in_peer(&["push", "-q", "origin", "gone"]);
     clone.git(&["fetch", "-q", "origin"]);
@@ -4939,7 +4939,7 @@ fn network_roots_cover_tags_cached_remotes_disconnected_history_and_merge_parent
     fixture.write("island", "disconnected");
     fixture.commit("island");
     fixture.git(&["checkout", "-q", "main"]);
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let page = provider
         .network_page(&fixture.repository(), &NetworkRequest::default())
         .unwrap();
@@ -5007,7 +5007,7 @@ fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
     for index in 0..NETWORK_PAGE_SIZE + 7 {
         fixture.git(&["commit", "--allow-empty", "-qm", &format!("commit {index}")]);
     }
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     let first = provider
         .network_page(&fixture.repository(), &NetworkRequest::default())
         .unwrap();
@@ -5065,7 +5065,7 @@ fn network_unborn_detached_shallow_root_limits_and_invalid_cursors_are_explicit(
         network::{MAX_NETWORK_COMMITS, MAX_NETWORK_ROOTS},
     };
     let fixture = network_fixture("network-limits");
-    let provider = GitCliProvider::new("git");
+    let provider = provider();
     assert!(
         provider
             .network_page(&fixture.repository(), &NetworkRequest::default())

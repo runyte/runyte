@@ -69,7 +69,10 @@ fn fixture() -> (Fixture, App) {
     }
     let mut app =
         App::new_in_isolated_project(&root, HostPorts::isolated(Box::new(Clipboard))).unwrap();
-    app.ports.git = Some(Box::new(GitCliProvider::new("git")));
+    app.ports.git = Some(Box::new(
+        GitCliProvider::discover(std::env::var_os("PATH").as_deref())
+            .expect("these tests need a native Git executable on PATH"),
+    ));
     app.git
         .attach(Some(Repository::new(root.canonicalize().unwrap())));
     (Fixture(root), app)
