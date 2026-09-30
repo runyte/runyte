@@ -213,7 +213,7 @@ impl HelpTopic {
                 "Close a patch buffer to return to the file list. Closing either split side or :diff-off collapses the comparison and restores the list at the same file.",
             ],
             Self::GitNetwork => &[
-                "Read the cached commit network one commit per row. Enter opens full commit detail. Page commands retain roots and lanes; explicit refresh captures moved refs. Adjacent forks and joins use connectors; numbered parent lanes explain crossings and overflow. Narrow scope when a graph limit is reached. Generated text supports ordinary navigation, search and copying and does not wrap.",
+                "Read the cached commit network one commit per row. Enter opens full commit detail. Page commands retain roots and lanes; explicit refresh captures moved refs. Forks and joins are drawn as routes to each parent lane, crossing lanes without connecting; numbered parent lanes explain overflow. Narrow scope when a graph limit is reached. Generated text supports ordinary navigation, search and copying and does not wrap.",
             ],
             Self::GitLog => GIT_LOG_OVERVIEW,
             Self::GitBlame => GIT_BLAME_OVERVIEW,

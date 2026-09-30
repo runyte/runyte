@@ -697,9 +697,13 @@ Graph rows never wrap; horizontal scrolling reaches the full displayed text.
 Hashes are muted, HEAD has its own emphasis and lane colors use theme roles;
 shapes and labels retain meaning without color. ASCII glyphs are a Tab action.
 
-Adjacent forks and joins use one-row connectors. Crossings, octopus forks and
-lane overflow use labelled parent-lane destinations, with complete parent IDs
-available through Enter's ordinary commit detail. Shallow boundaries and graph
+Forks and joins are one-row routes from the commit to each parent lane, however
+far apart. A lane a route passes shows `╫` if it carries history and `─`
+otherwise (`|` and `-` in ASCII); a route's end is a corner or tee, or `┼`
+where a join has a longer route continuing past it (`+` in ASCII), so a join
+shows where two lines of history meet. Lane overflow and unplaced commits use
+labelled parent-lane destinations, with complete parent IDs available through
+Enter's ordinary commit detail. Shallow boundaries and graph
 limits are explicit text. Paging restores identical cached geometry; closing
 commit detail restores the graph's page, selected commit and viewport. Captured
 roots and labels remain fixed until explicit refresh; stale generations say so.
