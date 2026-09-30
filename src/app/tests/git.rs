@@ -4951,7 +4951,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
     // The menu snapshot is the same semantic surface an attached client
-    // receives: row actions first, then buffer-wide actions.
+    // receives, in the registry's authored action order.
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     let overlay = app
         .overlay_snapshots()
@@ -4964,7 +4964,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .iter()
             .map(|row| row.label.as_str())
             .collect::<Vec<_>>(),
-        ["d", "s", "u", "D", "o", "S", "c", "i", "p", "P"]
+        ["C", "A", "d", "s", "u", "D", "o", "S", "c", "i", "p", "P"]
     );
     // Each row's detail is three columns padded to the widest entry in the
     // menu, so the action word, the context and the sentence all line up
@@ -4976,16 +4976,18 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .map(|row| row.detail.as_str())
             .collect::<Vec<_>>(),
         [
-            "diff     row     Compare the two complete versions of the active file",
-            "stage    row     Stage every file the selection covers",
-            "unstage  row     Unstage every file the selection covers",
-            "discard  row     Discard every selected file's changes, after a confirmation",
-            "open     row     Open the file on this line",
-            "stage    buffer  Stage every changed file",
-            "commit   buffer  Write a message and commit what is staged",
-            "index    buffer  Review everything staged for the next commit",
-            "pull     buffer  Fast-forward the current branch onto what it tracks",
-            "push     buffer  Publish this branch to what it tracks",
+            "continue  buffer  Review the resolved index and write a merge commit message",
+            "abort     buffer  Review and confirm aborting the active merge",
+            "diff      row     Compare the two complete versions of the active file",
+            "stage     row     Stage every file the selection covers",
+            "unstage   row     Unstage every file the selection covers",
+            "discard   row     Discard every selected file's changes, after a confirmation",
+            "open      row     Open the file on this line",
+            "stage     buffer  Stage every changed file",
+            "commit    buffer  Write a message and commit what is staged",
+            "index     buffer  Review everything staged for the next commit",
+            "pull      buffer  Fast-forward the current branch onto what it tracks",
+            "push      buffer  Publish this branch to what it tracks",
         ]
     );
 
@@ -4998,7 +5000,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
             .unwrap()
             .selected,
-        Some(9)
+        Some(11)
     );
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.context_action_menu.is_none());
@@ -5007,6 +5009,41 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     assert!(app.context_action_menu.is_none());
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // Continue and abort stay discoverable, but an observed idle repository
+    // cannot submit either mutation through its menu mnemonics.
+    app.merge_ui.inventory = Some(crate::git::ConflictInventory {
+        operation: crate::git::RepositoryOperation::Idle,
+        head_oid: None,
+        entries: Vec::new(),
+        index_identity: String::new(),
+        current_identity: "main".into(),
+        other_identity: String::new(),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let idle_menu = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
+        .unwrap();
+    for row in &idle_menu.rows[..2] {
+        assert!(!row.available);
+        assert!(row.trailing_detail.contains("there is no active merge"));
+    }
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    for mnemonic in ['C', 'A'] {
+        let before = app.active_buffer().to_string();
+        context_action(&mut app, mnemonic);
+        assert!(app.status_error, "{}", app.status);
+        assert!(
+            app.status.contains("there is no active merge"),
+            "{}",
+            app.status
+        );
+        assert!(app.merge_ui.pending.is_none());
+        assert!(app.merge_ui.review.is_none());
+        assert_eq!(app.active_buffer().to_string(), before);
+    }
 
     // `Enter` — the row's diff. On an unstaged row that is the unstaged one.
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -5019,6 +5056,8 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     // Arrow/j/k navigation and Enter reach the same actions as mnemonics.
     open_list(&mut app);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 'j');
+    press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');

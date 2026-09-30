@@ -1599,12 +1599,22 @@ fn app_delegates_interpretation_state_to_the_input_grammar() {
 
 #[test]
 fn production_selection_replacements_are_revision_tracked() {
+    let assigns_selection = |line: &str| {
+        line.split_once(".selection")
+            .and_then(|(_, rest)| rest.trim_start().strip_prefix('='))
+            .is_some_and(|rest| !rest.starts_with('='))
+    };
+    assert!(assigns_selection("pane.selection = selection;"));
+    assert!(assigns_selection("pane.selection=selection;"));
+    assert!(!assigns_selection(
+        "self.selection == app.active().selection"
+    ));
     let source = production_source();
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();
     let assignments = production
         .lines()
         .map(str::trim)
-        .filter(|line| line.contains(".selection ="))
+        .filter(|line| assigns_selection(line))
         .collect::<Vec<_>>();
     assert_eq!(
         assignments,

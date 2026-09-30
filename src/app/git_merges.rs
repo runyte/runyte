@@ -379,6 +379,16 @@ impl App {
     }
 
     pub(super) fn request_merge_completion(&mut self, intent: ReviewIntent) {
+        let capabilities = self.command_capabilities();
+        let availability = if intent == ReviewIntent::Continue {
+            capabilities.git_merge_continue
+        } else {
+            capabilities.git_merge_active
+        };
+        if let Some(reason) = availability.reason() {
+            self.action_failed(reason);
+            return;
+        }
         let Some(repository) = self.merge_repository() else {
             return;
         };
