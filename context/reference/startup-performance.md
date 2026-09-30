@@ -17,6 +17,120 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-09-30 — Runyte 0.3.5
+
+Release `v0.3.5`, commit `b937570`, built with `cargo build --release --locked`
+and Rust 1.97.1. Machine: AMD Ryzen AI 9 365, 10 cores / 20 logical CPUs,
+Linux 7.2.5-200.fc44.x86_64, btrfs. Neovim 0.12.5 and Helix 25.07.1
+(`a05c151b`) are the installed packaged binaries. Python 3.14.7, pyte 0.8.2,
+and wcwidth 0.8.3 run the harnesses from the same commit.
+
+The build finished before measurement. The main harnesses ran sequentially;
+background system activity was not controlled. Standalone measurements ran
+inside the execution sandbox. Persistent measurements required execution
+outside it so the temporary hosts could start and bind local sockets.
+All configurations disable LSP and isolate editor settings and storage.
+PTY geometry is 120×40. These results describe this Linux machine only.
+
+### Readiness to edit
+
+Each cell is **median (min–max), milliseconds**, from ten measured warm-cache
+launches after one discarded warm-up per editor/fixture. Editor order rotates.
+The harness inserts one leading space as soon as the first document line is
+visible, waits for the edited line in a completed frame, then verifies a save
+of the entire file. All 240 measured readiness samples passed; no successful
+slow sample was removed. Initial syntax parsing may still be running.
+The fixtures contain 500, 5,000, 50,000, and 500,000 lines; text and Lua pairs are
+byte-identical, differing only by extension.
+
+| Fixture | Neovim | Helix | Runyte |
+| --- | ---: | ---: | ---: |
+| `short.txt` | 20.9 (18.2–26.3) | 32.2 (26.7–38.1) | 18.8 (16.5–22.2) |
+| `medium.txt` | 20.9 (17.5–25.8) | 32.7 (29.6–34.1) | 20.4 (18.4–24.5) |
+| `long.txt` | 22.6 (19.8–26.9) | 33.0 (28.7–37.5) | 26.9 (22.7–32.7) |
+| `huge.txt` | 38.6 (34.4–46.3) | 45.9 (38.5–48.9) | 88.0 (80.9–113.7) |
+| `short.lua` | 42.3 (38.2–63.6) | 39.1 (32.9–88.1) | 20.6 (18.2–30.5) |
+| `medium.lua` | 31.7 (26.0–33.3) | 63.7 (49.9–71.9) | 21.7 (17.8–35.5) |
+| `long.lua` | 31.3 (29.0–33.5) | 349.0 (285.7–410.0) | 27.9 (24.1–32.5) |
+| `huge.lua` | 45.7 (43.5–53.9) | 548.8 (542.9–550.9) | 102.5 (82.3–114.8) |
+
+Runyte has the lowest median in five of eight rows; Neovim has the lowest
+median for 50,000-line text and both 500,000-line fixtures. Several ranges
+overlap. These results measure one visible edit near the start of a file, including the harness's decoding and I/O,
+and do not establish a general editor ranking.
+
+The [startup samples](../../benchmarks/results/startup-2026-09-30.json)
+retain the original 180 readiness measurements and 60 supplementary Neovim
+internal measurements. Runyte and Helix internal milestones were not measured
+in this refresh; no probe builds were used. The separately collected
+[500,000-line samples](../../benchmarks/results/startup-2026-09-30-huge.json)
+add 60 readiness and 20 Neovim internal measurements with the same binaries
+and settings later on the same date. Each new file is 17,498,766 bytes. The
+expanded fixture generator is based on `b937570`; the artifact records hashes
+of all measurement scripts because the fixture addition was uncommitted.
+Large-file handling uses each editor's defaults; readiness does not establish
+equal parsing or highlighting progress. See the
+[startup methodology](../../benchmarks/README.md#startup-milestones).
+
+### Persistent attachment
+
+Each timing cell is **median (min–max), milliseconds**, from three samples.
+Cold start ends at the first About-pane output of the last newly started host;
+warm attach ends at a content marker in the restored one-line document.
+These are output timings, distinct from demonstrated editing readiness.
+Each attachment settles for 32 seconds before a 16-second idle observation.
+CPU is a percentage of one logical CPU, summed across the attached TUI and
+all benchmark hosts; it excludes terminal child processes. The noisy terminal
+in another session produces a line every 20 ms.
+
+| Scenario | Cold start | Warm attach | Editor CPU %, median (range) | Screen writes, each sample |
+| --- | ---: | ---: | ---: | --- |
+| One session | 34.23 (32.82–35.37) | 6.12 (6.00–7.07) | 0.00 (0.00–0.12) | 0, 0, 0 |
+| Three sessions | 33.26 (33.13–33.80) | 6.80 (6.37–7.08) | 0.12 (0.00–0.19) | 0, 0, 0 |
+| Three sessions, strip hidden | 34.04 (33.20–34.47) | 6.27 (6.26–6.57) | 0.12 (0.12–0.19) | 0, 0, 0 |
+| Three sessions, another terminal producing output | 33.43 (33.15–33.63) | 6.70 (6.08–6.82) | 0.25 (0.25–0.37) | 0, 0, 0 |
+
+The [persistent-session samples](../../benchmarks/results/session-navigation-2026-09-30.json)
+retain all timings, CPU, output counts, observation durations, and process counts.
+
+### Quit and idle
+
+Quitting immediately after the first large Lua document frame takes
+**4.9 (2.8–7.6) ms**, from ten samples after one discarded warm-up.
+The interval starts when `:q` plus Enter is sent and ends at successful exit.
+The stock binary does not report parser completion, so this measurement makes
+no claim that a parse was still active. The
+[early-quit samples](../../benchmarks/results/early-quit-2026-09-30.json)
+retain all observations.
+
+After terminal output settles, `run.py` measures quit from the final force-quit
+keystroke to successful exit. Ten samples per fixture give **4 ms** for
+50,000-line text and **22 ms** for 50,000-line Lua. Five independent ten-second
+idle windows with 5,000-line Lua open in a Git repository give **0.00% CPU**
+median (0.00–0.10% of one logical CPU) and **zero screen writes in every window**.
+The [settled-quit and idle report](../../benchmarks/results/quit-idle-2026-09-30.md)
+retains the harness output; this older harness retains aggregates rather than
+individual samples.
+
+### Reproduction and binary provenance
+
+```sh
+cargo build --release --locked
+benchmarks/.work/venv/bin/python benchmarks/startup.py --runs 10 --json /tmp/startup.json
+benchmarks/.work/venv/bin/python benchmarks/early_syntax_quit.py --runs 10 --json /tmp/early-quit.json
+benchmarks/.work/venv/bin/python benchmarks/run.py --only runyte --runs 10 --idle-runs 5 --fixtures long.txt,long.lua
+benchmarks/.work/venv/bin/python benchmarks/session_navigation.py --runs 3 --json /tmp/session-navigation.json
+```
+
+Use the pinned Python environment described in [the harness guide](../../benchmarks/README.md).
+Run timing workloads sequentially after compilation and tests finish.
+
+| Binary | SHA-256 |
+| --- | --- |
+| neovim | `31b1f7b2bbf9d790596e4f9a76f3b7f09c01cf501c314ffa68d365a7fc6a03b0` |
+| helix | `3f31b5db36dec738e153fc027edb280063616df8823598df2da56c80c71542e5` |
+| runyte | `c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e` |
+
 ## 2026-09-28 — large comparison edit-to-frame cost
 
 The ignored `large_diff_edit_to_frame_latency` test in

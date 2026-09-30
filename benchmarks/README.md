@@ -269,25 +269,29 @@ Git. They are generated rather than copied from the repository so that a result
 does not change when Runyte's own source does. Deleting `.work/` is safe; the
 next run rebuilds everything in it.
 
-The matrix is one document at three sizes, written twice. Every editor measured
+The matrix is one document at four sizes, written twice. Every editor measured
 here has the same single tree-sitter Lua grammar enabled for `.lua`, and no
 editor claims a language for `.txt`. The startup metric does not wait for that
-parse to complete.
+parse to complete. Readiness also does not establish equal background work:
+large-file handling remains at each editor's defaults.
 
 | Size | Lines | On disk |
 | --- | ---: | ---: |
 | short | 500 | 17 kB |
 | medium | 5,000 | 171 kB |
 | long | 50,000 | 1.7 MB |
+| huge | 500,000 | 17.5 MB |
 
 | Fixture | Varies |
 | --- | --- |
 | `short.txt` | First content from a small document with no language assigned. |
 | `medium.txt` | The same event from a realistic working file. |
 | `long.txt` | The same event from a large file. |
+| `huge.txt` | The same event from a 500,000-line file. |
 | `short.lua` | First content from the byte-identical small file with Lua assigned. |
 | `medium.lua` | The same language-assigned event from a realistic working file. |
 | `long.lua` | The same event where editors' choices about drawing before or after a large parse are visible. |
+| `huge.lua` | The same event with Lua assigned to the 500,000-line file. |
 
 **The `.txt` and `.lua` files of a size are byte-identical.** Only the extension
 differs. The difference between their first-content timestamps therefore shows
@@ -300,8 +304,8 @@ Reading the two axes:
 
 - Across a pair, the difference shows how language assignment affects time to
   the shared output event. It says nothing about later silent work.
-- Down a column, the same output event at ten and a hundred times the size shows
-  how document size affects time to that event.
+- Down a column, the same output event at ten, a hundred, and a thousand times
+  the size shows how document size affects time to that event.
 
 The Lua fixture contains no comments, long strings, or calls recognized by any
 editor's Lua injection query. All three editors therefore use the Lua grammar

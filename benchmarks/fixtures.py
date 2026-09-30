@@ -7,7 +7,7 @@ rather than copied out of the repository. A benchmark whose inputs were Runyte's
 own source files would report a different number every time that source changed,
 which is the opposite of what a regression benchmark is for.
 
-The matrix is one document at three sizes, written twice: once as ``.lua``,
+The matrix is one document at four sizes, written twice: once as ``.lua``,
 which every measured editor parses with the same single tree-sitter grammar, and
 once as ``.txt``, which no editor claims a language for. The two files of a size
 are byte-identical, so only the language assignment can explain different
@@ -18,11 +18,13 @@ shows how document size affects the same output event.
 ``short.txt``   500 lines with no language assigned.
 ``medium.txt``  5,000 lines with no language.
 ``long.txt``    50,000 lines with no language.
+``huge.txt``    500,000 lines with no language.
 ``short.lua``   the same 500 lines with the Lua grammar enabled.
 ``medium.lua``  the same 5,000 lines with the Lua grammar enabled.
 ``long.lua``    the same 50,000 lines with the Lua grammar enabled, where an
                 editor's choice to emit content before or after parsing is
                 visible in the result.
+``huge.lua``    the same 500,000 lines with the Lua grammar enabled.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ SIZES = {
     "short": 500,
     "medium": 5_000,
     "long": 50_000,
+    "huge": 500_000,
 }
 
 # The extension decides whether an editor claims a language for the document.

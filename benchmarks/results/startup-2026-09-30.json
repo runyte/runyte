@@ -1,0 +1,1733 @@
+{
+  "binaries": {
+    "neovim": {
+      "version": "NVIM v0.12.5",
+      "sha256": "31b1f7b2bbf9d790596e4f9a76f3b7f09c01cf501c314ffa68d365a7fc6a03b0"
+    },
+    "helix": {
+      "version": "helix 25.07.1 (a05c151b)",
+      "sha256": "3f31b5db36dec738e153fc027edb280063616df8823598df2da56c80c71542e5"
+    },
+    "runyte": {
+      "version": "runyte 0.3.5",
+      "sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e"
+    }
+  },
+  "samples": [
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 26.868697023019195
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 20.168408984318376
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 22.89498900063336
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 18.908636004198343
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 23.650072049349546
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 34.30391801521182
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 26.26750699710101
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 36.28135804319754
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 19.145361031405628
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 27.106905006803572
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 18.725086003541946
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 18.195206008385867
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 19.444588047917932
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 19.343239022418857
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 32.62368094874546
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 21.04976895498112
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 35.72953602997586
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 22.150077973492444
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 26.708622986916453
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 17.850750009529293
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 22.09504001075402
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 18.10295501491055
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 18.265864986460656
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 31.814983987715095
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 19.79067997308448
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 38.07053901255131
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 16.548947023693472
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 30.39422701112926
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 17.15117000276223
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 20.786367007531226
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 10.298391
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 12.214219
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 11.787501
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 9.380218
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 11.97022
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 12.6251
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 10.686486
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 10.627297
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 10.764576
+    },
+    {
+      "fixture": "short.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 12.493474
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 31.645466980990022
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 19.409139989875257
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 24.528826004825532
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 23.93286401638761
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 25.78974497737363
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 33.08504796586931
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 19.61903303163126
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 32.78466698247939
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 21.40011399751529
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 29.616748972330242
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 23.02093099569902
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 19.935374963097274
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 19.262432004325092
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 21.880900021642447
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 34.055816009640694
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 21.733961009886116
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.779546978417784
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 18.436557962559164
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 31.26154199708253
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 20.267657993827015
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 17.4686549580656
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 20.007575978524983
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 19.18275497155264
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 32.715560984797776
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 20.586784987244755
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 30.463945004157722
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 20.590112020727247
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 32.75641199434176
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 24.462464964017272
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 21.14353998331353
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 13.163335
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 13.761093
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 12.272449
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 12.782232
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 12.270489
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 17.496176
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 10.952525
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 13.706514
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 12.472297
+    },
+    {
+      "fixture": "medium.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 16.759682
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 33.85751700261608
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 26.126567041501403
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 22.64055301202461
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 27.597339008934796
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 26.92371403099969
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 37.53951599355787
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 22.16251299250871
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 32.37115504452959
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 27.57701900554821
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 31.758037977851927
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 22.661644965410233
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 24.249146052170545
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 24.151753983460367
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 22.57400198141113
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 35.53861199179664
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 19.76949902018532
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 33.62870600540191
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.66100399196148
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 33.96269300719723
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 30.041104007977992
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 21.97485399665311
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 28.765355003997684
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 23.31486897310242
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 28.718292014673352
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 24.408889992628247
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 30.326524982228875
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 24.403048038948327
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 31.960637017618865
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 25.566305965185165
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 20.40644100634381
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 14.681033
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 13.4905
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 37.435036
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 19.80396
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 19.35006
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 37.132723
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 22.774549
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 24.426758
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 34.134752
+    },
+    {
+      "fixture": "long.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 28.640458
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 88.08087295619771
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 30.490586010273546
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 50.866867997683585
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 21.261171030346304
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 63.58479300979525
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 42.650595016311854
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 38.20719796931371
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 41.04548797477037
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 18.18706694757566
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 37.08769800141454
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 22.53003598889336
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 45.74770398903638
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 18.806574982590973
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 44.56140100955963
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 38.72987598879263
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 38.65431796293706
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.897298980969936
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 19.909032969735563
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 39.50683301081881
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 22.217380988877267
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 39.241762016899884
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 19.69793700845912
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 42.71865799091756
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 34.584205015562475
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 40.444366983138025
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 43.84806897724047
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 19.83778300927952
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 35.779193975031376
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 25.182671030052006
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 41.91039898432791
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 9.542275,
+      "syntax_ready": 16.356227
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 11.226503,
+      "syntax_ready": 18.454407
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 12.372259,
+      "syntax_ready": 19.466275
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 11.456865,
+      "syntax_ready": 18.748769
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 11.310144,
+      "syntax_ready": 18.392128
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 12.578643,
+      "syntax_ready": 22.893651
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 12.339139,
+      "syntax_ready": 20.524995
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 11.864216,
+      "syntax_ready": 21.132184
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 11.422694,
+      "syntax_ready": 21.787622
+    },
+    {
+      "fixture": "short.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 10.834446,
+      "syntax_ready": 17.47739
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 53.41376597061753
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 17.764906981028616
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 27.793525019660592
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 23.185856000054628
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 26.38323203427717
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 63.63389902980998
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 33.34818501025438
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 71.87390001490712
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 35.486549022607505
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 66.77116797072813
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 22.822541010100394
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 31.842714990489185
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 19.928131019696593
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 31.96484496584162
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 63.772020977921784
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.27828198578209
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 67.58793297922239
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 17.845546011812985
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 62.44001199956983
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 31.23519103974104
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 29.333322017919272
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 20.541055011563003
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 26.009185996372253
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 56.42241099849343
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 32.09150402108207
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 65.84296299843118
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 17.90661597624421
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 49.884898005984724
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 23.78492202842608
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 31.49474097881466
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 9.371577,
+      "syntax_ready": 28.923577
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 10.550381,
+      "syntax_ready": 30.191469
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 13.547844,
+      "syntax_ready": 35.295044
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 13.42724,
+      "syntax_ready": 36.567336
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 12.551902,
+      "syntax_ready": 32.44899
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 13.694045,
+      "syntax_ready": 37.179997
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 12.535379,
+      "syntax_ready": 32.890195
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 13.564702,
+      "syntax_ready": 33.45155
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 12.194509,
+      "syntax_ready": 31.988429
+    },
+    {
+      "fixture": "medium.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 12.400227,
+      "syntax_ready": 33.321059
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 393.4125390369445
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 27.966083958745003
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 33.54440099792555
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 24.069883045740426
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 29.42686597816646
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 290.47717101639137
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 31.255259993486106
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 409.9971569958143
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 24.479148036334664
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 405.2562250290066
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 27.738325006794184
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 29.676756006665528
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 32.15218399418518
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 33.03959802724421
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 303.3125860383734
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.769306970294565
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 304.63356303516775
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 32.539014995563775
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 303.79705800442025
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 28.484141977969557
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 29.003774048760533
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 25.362956046592444
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 29.531210020650178
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 398.9092650008388
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 31.258016009815037
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 395.6333060050383
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 25.561375019606203
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 285.67116102203727
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 28.90055999159813
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 32.99484105082229
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 15.090916,
+      "syntax_ready": 168.18378
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 15.649926,
+      "syntax_ready": 163.683974
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 12.636163,
+      "syntax_ready": 165.488131
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 13.605838,
+      "syntax_ready": 164.589774
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 15.071631,
+      "syntax_ready": 162.336399
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 19.092114,
+      "syntax_ready": 164.737938
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 19.526376,
+      "syntax_ready": 166.46244
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 15.705266,
+      "syntax_ready": 169.038258
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 13.538746,
+      "syntax_ready": 161.363642
+    },
+    {
+      "fixture": "long.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 17.873362,
+      "syntax_ready": 171.773394
+    }
+  ],
+  "date": "2026-09-30",
+  "runyte_version": "0.3.5",
+  "source_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "harness_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "runyte_sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e"
+}

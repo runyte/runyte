@@ -1,0 +1,601 @@
+{
+  "binaries": {
+    "neovim": {
+      "version": "NVIM v0.12.5",
+      "sha256": "31b1f7b2bbf9d790596e4f9a76f3b7f09c01cf501c314ffa68d365a7fc6a03b0"
+    },
+    "helix": {
+      "version": "helix 25.07.1 (a05c151b)",
+      "sha256": "3f31b5db36dec738e153fc027edb280063616df8823598df2da56c80c71542e5"
+    },
+    "runyte": {
+      "version": "runyte 0.3.5",
+      "sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e"
+    }
+  },
+  "samples": [
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 38.5168120265007
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 87.95921702403575
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 35.59316199971363
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 113.65529696922749
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 38.46543002873659
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 46.130803995765746
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 36.82571602985263
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 45.767829986289144
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 94.504116976168
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 40.129573026206344
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 86.53232204960659
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 38.81058900151402
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 110.74604699388146
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 42.34699299558997
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 48.907193006016314
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 36.211728991474956
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 47.69148305058479
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 80.92015498550609
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 40.40160699514672
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 102.24437899887562
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 34.37528701033443
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 85.29842499410734
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 44.017748965416104
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 47.406382975168526
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 40.50167399691418
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 48.40859299292788
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 87.98976696562022
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 39.151169010438025
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 86.60332101862878
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 46.29103897605091
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 35.031483
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 27.864192
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 25.830882
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 31.585203
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 31.179158
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 33.891756
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 38.647756
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 29.018493
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 37.819785
+    },
+    {
+      "fixture": "huge.txt",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 29.63673
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 549.1377409780398
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 111.31836101412773
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 1,
+      "ready_to_edit": 44.43190305028111
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 114.04586501885206
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 44.54805102432147
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 2,
+      "ready_to_edit": 550.2497880370356
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 46.375806035939604
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 546.7840030323714
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 3,
+      "ready_to_edit": 113.35130996303633
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 550.9453859995119
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 82.34465698478743
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 4,
+      "ready_to_edit": 48.437821038533
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 82.60171196889132
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 50.48991600051522
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 5,
+      "ready_to_edit": 542.9446829948574
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 43.98805001983419
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 550.2285070251673
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 6,
+      "ready_to_edit": 112.62677499325946
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 548.5286340117455
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 93.60621200175956
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 7,
+      "ready_to_edit": 53.87488199630752
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 86.19136101333424
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 43.50526095367968
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 8,
+      "ready_to_edit": 545.0688099954277
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 44.94196601444855
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 549.1740030120127
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 9,
+      "ready_to_edit": 83.5293760173954
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "helix",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 545.5744339851663
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "runyte",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 114.8217209847644
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "ready",
+      "round": 10,
+      "ready_to_edit": 47.56641696440056
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 1,
+      "file_loaded": 32.495343,
+      "syntax_ready": 1472.716271
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 2,
+      "file_loaded": 27.521869,
+      "syntax_ready": 1583.385677
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 3,
+      "file_loaded": 26.057522,
+      "syntax_ready": 1445.37861
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 4,
+      "file_loaded": 35.140479,
+      "syntax_ready": 1458.294655
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 5,
+      "file_loaded": 23.857405,
+      "syntax_ready": 1458.242557
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 6,
+      "file_loaded": 26.902627,
+      "syntax_ready": 1435.662691
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 7,
+      "file_loaded": 34.412012,
+      "syntax_ready": 1467.570924
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 8,
+      "file_loaded": 23.56088,
+      "syntax_ready": 1430.80184
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 9,
+      "file_loaded": 26.371043,
+      "syntax_ready": 1450.953955
+    },
+    {
+      "fixture": "huge.lua",
+      "editor": "neovim",
+      "mode": "internal",
+      "round": 10,
+      "file_loaded": 27.569014,
+      "syntax_ready": 1452.13503
+    }
+  ],
+  "date": "2026-09-30",
+  "runyte_version": "0.3.5",
+  "source_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "runyte_sha256": "c623c669dc5fbc4460f505657f261a604958670eb6491fb4d2d4b575a40e2a9e",
+  "harness_base_commit": "b937570693160186cdd2862e26e83675d8475bea",
+  "harness_changes": "Added huge.txt and huge.lua (500,000 lines) to fixtures.py.",
+  "harness_sha256": {
+    "fixtures.py": "be507715f0dc6cb41f43e8d229d80a4b5c92b5b6ea8f78ada5cbf708a2e200b3",
+    "startup.py": "3f421fd66508c2d8bbc6d5357b3c9025e0176401d10d99349b06ab4ed0abab9a",
+    "run.py": "862a427bbc0f953206758a3622f191b397f5fede7dc229d8c46cdab6eddfa0ac",
+    "ptybench.py": "9df654645f3fe43c1450879c673e360e9ed769527731784a4454ab5e7fa405eb",
+    "neovim_milestones.lua": "821cbffab00dd7936522e3f8c65eb7f1b7d7187901a0680d3833206f00232c68"
+  }
+}
