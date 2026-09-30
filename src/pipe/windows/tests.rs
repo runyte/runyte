@@ -17,7 +17,7 @@ const TRACE_ENV: &str = "RUNYTE_INTERNAL_FILTER_TRACE";
 const SETUP_MILESTONES: &[(&str, &str)] = &[
     ("$ErrorActionPreference = 'Stop'", "policy-set"),
     (
-        "    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)",
+        "    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)",
         "utf8-created",
     ),
     ("    [Console]::InputEncoding = $utf8", "input-encoding-set"),
@@ -349,6 +349,32 @@ fn powershell_preserves_text_and_keeps_selection_out_of_code() {
         execute(
             "[Console]::Out.Write([Console]::In.ReadToEnd())",
             vec![input.clone()]
+        )
+        .unwrap(),
+        [input]
+    );
+}
+
+#[test]
+fn bootstrap_initializes_utf8_without_cmdlet_module_autoloading() {
+    let root = crate::test_support::TestRuntimeRoot::new("native-pipe-no-autoload").unwrap();
+    let bootstrap = format!("$PSModuleAutoLoadingPreference = 'None'\n{BOOTSTRAP}");
+    let input = "é😀\r\nno trailing newline";
+    let mut command = command_with_bootstrap(
+        "[Console]::Out.Write([Console]::In.ReadToEnd())",
+        root.path(),
+        &bootstrap,
+    )
+    .unwrap();
+    command
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_CACHE_HOME", root.join("cache"));
+    assert_eq!(
+        run_command(
+            &command,
+            vec![input.into()],
+            &AtomicBool::new(false),
+            Duration::from_secs(15),
         )
         .unwrap(),
         [input]

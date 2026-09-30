@@ -13,10 +13,12 @@ const COMMAND_ENV: &str = "RUNYTE_INTERNAL_FILTER_COMMAND";
 // Only this fixed bootstrap is placed on the Windows command line. The full
 // authored command can occupy its existing 16 KiB budget without base64's
 // UTF-16 expansion exceeding CreateProcess's command-line limit.
+// Bootstrap uses .NET constructors directly so initializing UTF-8 does not
+// require discovering and loading a PowerShell cmdlet module.
 const BOOTSTRAP: &str = r#"
 $ErrorActionPreference = 'Stop'
 try {
-    $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
     [Console]::InputEncoding = $utf8
     [Console]::OutputEncoding = $utf8
     $OutputEncoding = $utf8
