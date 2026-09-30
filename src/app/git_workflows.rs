@@ -837,6 +837,7 @@ impl App {
                     }
                     Err(error) => {
                         self.network_request_failed(id);
+                        self.merge_request_failed(id);
                         // The one boundary that has the operation, the request
                         // identity, and the error. Everything below returned a
                         // typed result rather than reporting it.
@@ -1315,6 +1316,7 @@ impl App {
         {
             self.open_git_stashes_result(stashes, false);
         }
+        self.refresh_conflict_inventory();
     }
 
     #[cfg(test)]
@@ -1552,10 +1554,14 @@ impl App {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| match mutation {
-                GitMutation::Merge(_)
-                | GitMutation::ResolveConflict(_)
-                | GitMutation::CommitMerge { .. }
-                | GitMutation::AbortMerge(_) => "Merge operation complete".into(),
+                GitMutation::Merge(plan) => match plan.outcome {
+                    crate::git::MergePreviewOutcome::AlreadyContained => "already up to date".into(),
+                    crate::git::MergePreviewOutcome::FastForward => "fast-forward completed; no merge commit was created".into(),
+                    _ => "merge applied; resolve conflicts if present, then explicitly continue and commit".into(),
+                },
+                GitMutation::ResolveConflict(plan) => format!("staged reviewed resolution of {}", crate::git::display_path(&plan.path)),
+                GitMutation::CommitMerge { .. } => "merge committed".into(),
+                GitMutation::AbortMerge(_) => "active merge aborted".into(),
                 GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
                 GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
                 GitMutation::Discard(_) => {
@@ -6151,6 +6157,15 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         }
+        if self
+            .merge_ui
+            .inventory
+            .as_ref()
+            .is_some_and(|i| matches!(i.operation, crate::git::RepositoryOperation::Merge { .. }))
+        {
+            self.request_merge_completion(super::git_merges::ReviewIntent::Continue);
+            return;
+        }
         if self.ports.git_service.is_some() {
             let _ = self.request_commit_open_refresh();
             return;
@@ -6250,6 +6265,20 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         };
+        if self
+            .merge_ui
+            .commit_buffer
+            .is_some_and(|buffer| buffer != buffer_id)
+            || (self.merge_ui.commit_buffer != Some(buffer_id)
+                && self.merge_ui.inventory.as_ref().is_some_and(|i| {
+                    matches!(i.operation, crate::git::RepositoryOperation::Merge { .. })
+                }))
+        {
+            self.action_failed(
+                "an active merge must be committed from its own reviewed merge-message buffer",
+            );
+            return;
+        }
         let message = commit_message_body(&self.buffers[buffer_id].to_string());
         if message.is_empty() {
             self.action_failed("a commit needs a message; write one above the comments");

@@ -103,6 +103,12 @@ impl App {
         self.merge_ui.commit_buffer = None;
     }
     pub(super) fn close_merge_origin(&mut self, buffer: usize) {
+        if self.merge_ui.commit_buffer == Some(buffer) {
+            if let Some(plan) = self.merge_ui.commit.take() {
+                plan.invalidate();
+            }
+            self.merge_ui.commit_buffer = None;
+        }
         let owns = self
             .merge_ui
             .pending
@@ -118,6 +124,32 @@ impl App {
             self.invalidate_unsubmitted_merge_review();
         }
         self.invalidate_merge_file_guards(buffer);
+    }
+    pub(super) fn merge_request_failed(&mut self, id: GitRequestId) {
+        if self
+            .merge_ui
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.id == id)
+        {
+            self.merge_ui.pending.take().unwrap().guard.invalidate();
+        }
+        if self.merge_ui.details_request == Some(id) {
+            self.merge_ui.details_request = None;
+            if let Some(review) = self.merge_ui.review.as_mut() {
+                review.detail = Some(vec![
+                    "The reviewed detail could not be read. Back returns to the review.".into(),
+                ]);
+            }
+        }
+        if self
+            .merge_ui
+            .conflict_read
+            .as_ref()
+            .is_some_and(|(request, _, _)| *request == id)
+        {
+            self.merge_ui.conflict_read = None;
+        }
     }
     pub(super) fn refresh_conflict_inventory(&mut self) {
         if self.merge_ui.inventory.is_none() {
