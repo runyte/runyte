@@ -4951,7 +4951,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
     // The menu snapshot is the same semantic surface an attached client
-    // receives: row actions first, then buffer-wide actions.
+    // receives, in the registry's authored action order.
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     let overlay = app
         .overlay_snapshots()
@@ -4964,7 +4964,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .iter()
             .map(|row| row.label.as_str())
             .collect::<Vec<_>>(),
-        ["d", "s", "u", "D", "o", "S", "c", "i", "p", "P"]
+        ["C", "A", "d", "s", "u", "D", "o", "S", "c", "i", "p", "P"]
     );
     // Each row's detail is three columns padded to the widest entry in the
     // menu, so the action word, the context and the sentence all line up
@@ -4976,16 +4976,18 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .map(|row| row.detail.as_str())
             .collect::<Vec<_>>(),
         [
-            "diff     row     Compare the two complete versions of the active file",
-            "stage    row     Stage every file the selection covers",
-            "unstage  row     Unstage every file the selection covers",
-            "discard  row     Discard every selected file's changes, after a confirmation",
-            "open     row     Open the file on this line",
-            "stage    buffer  Stage every changed file",
-            "commit   buffer  Write a message and commit what is staged",
-            "index    buffer  Review everything staged for the next commit",
-            "pull     buffer  Fast-forward the current branch onto what it tracks",
-            "push     buffer  Publish this branch to what it tracks",
+            "continue  buffer  Review the resolved index and write a merge commit message",
+            "abort     buffer  Review and confirm aborting the active merge",
+            "diff      row     Compare the two complete versions of the active file",
+            "stage     row     Stage every file the selection covers",
+            "unstage   row     Unstage every file the selection covers",
+            "discard   row     Discard every selected file's changes, after a confirmation",
+            "open      row     Open the file on this line",
+            "stage     buffer  Stage every changed file",
+            "commit    buffer  Write a message and commit what is staged",
+            "index     buffer  Review everything staged for the next commit",
+            "pull      buffer  Fast-forward the current branch onto what it tracks",
+            "push      buffer  Publish this branch to what it tracks",
         ]
     );
 
@@ -4998,7 +5000,7 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
             .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
             .unwrap()
             .selected,
-        Some(9)
+        Some(11)
     );
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.context_action_menu.is_none());
@@ -5007,6 +5009,41 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     assert!(app.context_action_menu.is_none());
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // Continue and abort stay discoverable, but an observed idle repository
+    // cannot submit either mutation through its menu mnemonics.
+    app.merge_ui.inventory = Some(crate::git::ConflictInventory {
+        operation: crate::git::RepositoryOperation::Idle,
+        head_oid: None,
+        entries: Vec::new(),
+        index_identity: String::new(),
+        current_identity: "main".into(),
+        other_identity: String::new(),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let idle_menu = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::BufferActions)
+        .unwrap();
+    for row in &idle_menu.rows[..2] {
+        assert!(!row.available);
+        assert!(row.trailing_detail.contains("there is no active merge"));
+    }
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    for mnemonic in ['C', 'A'] {
+        let before = app.active_buffer().to_string();
+        context_action(&mut app, mnemonic);
+        assert!(app.status_error, "{}", app.status);
+        assert!(
+            app.status.contains("there is no active merge"),
+            "{}",
+            app.status
+        );
+        assert!(app.merge_ui.pending.is_none());
+        assert!(app.merge_ui.review.is_none());
+        assert_eq!(app.active_buffer().to_string(), before);
+    }
 
     // `Enter` — the row's diff. On an unstaged row that is the unstaged one.
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
@@ -5019,6 +5056,8 @@ fn every_key_the_changed_file_list_advertises_does_what_it_says() {
     // Arrow/j/k navigation and Enter reach the same actions as mnemonics.
     open_list(&mut app);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    press(&mut app, 'j');
+    press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');
     press(&mut app, 'j');
@@ -6777,6 +6816,29 @@ fn a_failed_mutation_snapshot_schedules_immediate_reconciliation() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn complete_idle_commit_operation_preflight(
+    app: &mut App,
+    operations: &std::sync::mpsc::Receiver<GitOperation>,
+) {
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(operation, GitOperation::Conflicts { .. }));
+    let id = app.merge_ui.commit_preflight.as_ref().unwrap().0;
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id,
+        operation,
+        result: Box::new(Ok(GitResponse::Conflicts(crate::git::ConflictInventory {
+            operation: crate::git::RepositoryOperation::Idle,
+            head_oid: Some("a".repeat(40)),
+            entries: vec![],
+            index_identity: "idle-index".into(),
+            current_identity: "main".into(),
+            other_identity: "absent".into(),
+        }))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+}
+
 #[test]
 fn commit_open_waits_for_the_refreshed_index() {
     use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus, StatusStats};
@@ -6806,6 +6868,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         .unwrap();
 
     app.open_commit_message();
+    complete_idle_commit_operation_preflight(&mut app, &operations);
 
     let operation = operations
         .recv_timeout(std::time::Duration::from_secs(1))
@@ -6821,7 +6884,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         files: Vec::new(),
     };
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(2),
+        id: GitRequestId::from_raw(3),
         operation,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: repository.clone(),
@@ -6863,7 +6926,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         }],
     };
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(3),
+        id: GitRequestId::from_raw(4),
         operation: retry,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository,
@@ -6914,12 +6977,13 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
     app.open_commit_message();
+    complete_idle_commit_operation_preflight(&mut app, &operations);
     let operation = operations
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(2),
+        id: GitRequestId::from_raw(3),
         operation,
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "refresh Git".to_owned(),
@@ -6937,7 +7001,7 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         .unwrap();
     assert!(matches!(reconciliation, GitOperation::Refresh { .. }));
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(3),
+        id: GitRequestId::from_raw(4),
         operation: reconciliation,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: Repository::new(&root),
@@ -8349,5 +8413,222 @@ fn a_commit_search_refuses_outside_a_repository_and_reports_a_capped_page() {
         list.title
     );
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn fetch_action_captures_exact_rows_without_requiring_clean_buffers() {
+    use crate::git::{FetchBranchTarget, MemoryGitProvider, Repository, Upstream};
+    let root = temporary("git-fetch-rows");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(
+        MemoryGitProvider::new(Repository::new(&root))
+            .with_branches(&["main", "topic"], "main")
+            .with_branch_detail("topic", Some(Upstream::origin("main", None)), false)
+            .with_remote_branch("fork/team", "feature/search"),
+    );
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    // A local branch need not be checked out, and its upstream may have vanished.
+    press(&mut app, 'j');
+    context_action(&mut app, 'f');
+    assert_eq!(
+        provider.fetches(),
+        vec![FetchBranchTarget::LocalBranch("topic".into())]
+    );
+    select_remote_branch(&mut app, "fork/team/feature/search");
+    let selected = app.active().head();
+    let mut dirty = Buffer::scratch();
+    dirty.path = Some(root.join("dirty.txt"));
+    dirty.dirty = true;
+    app.buffers.push(dirty);
+    app.syntax.push(None);
+    app.execute_command("git-fetch-branch").unwrap();
+    assert_eq!(
+        provider.fetches(),
+        vec![
+            FetchBranchTarget::LocalBranch("topic".into()),
+            FetchBranchTarget::RemoteTrackingRef("refs/remotes/fork/team/feature/search".into())
+        ]
+    );
+    assert_eq!(app.active().head(), selected);
+    assert!(app.buffers.last().unwrap().dirty);
+    assert_eq!(provider.pulls(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn fetch_capability_explains_untracked_local_upstreams_in_colon_and_tab_discovery() {
+    use crate::git::{MemoryGitProvider, Repository, Upstream};
+    let root = temporary("git-fetch-disabled");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let provider = Rc::new(MemoryGitProvider::new(Repository::new(&root)));
+    ports.replace_git(Box::new(Rc::clone(&provider)));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    assert!(
+        app.command_capabilities()
+            .git_fetch_branch
+            .reason()
+            .unwrap()
+            .contains("branch list")
+    );
+    app.execute_command("git-branches").unwrap();
+    let reason = app
+        .command_capabilities()
+        .git_fetch_branch
+        .reason()
+        .unwrap()
+        .to_owned();
+    assert!(reason.contains("configure a remote upstream"));
+    let commands = app.matching_commands();
+    assert_eq!(
+        commands
+            .iter()
+            .find(|command| command.name == "git-fetch-branch")
+            .unwrap()
+            .availability
+            .reason(),
+        Some(reason.as_str())
+    );
+    app.open_context_actions();
+    let snapshots = app.overlay_snapshots();
+    let fetch = snapshots
+        .iter()
+        .flat_map(|overlay| &overlay.rows)
+        .find(|row| row.label == "f")
+        .unwrap();
+    assert!(!fetch.available);
+    assert_eq!(fetch.trailing_detail, reason);
+    context_action(&mut app, 'f');
+    assert!(provider.fetches().is_empty());
+    let mut local = Upstream::origin("main", None);
+    local.remote = ".".into();
+    local.tracking_reference = "refs/heads/main".into();
+    app.ports.replace_git(Box::new(
+        MemoryGitProvider::new(Repository::new(&root)).with_branch_detail(
+            "main",
+            Some(local),
+            false,
+        ),
+    ));
+    app.execute_command("git-branches").unwrap();
+    assert!(
+        app.command_capabilities()
+            .git_fetch_branch
+            .reason()
+            .unwrap()
+            .contains("not a network")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn asynchronous_fetch_reconciles_failed_and_cancelled_refs_without_stealing_focus() {
+    use crate::git::{FetchBranchTarget, MemoryGitProvider, RemoteBranch};
+    let root = temporary("git-fetch-service-result");
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let repository = Repository::new(&root);
+    let mut ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    ports.replace_git(Box::new(
+        MemoryGitProvider::new(repository.clone()).with_remote_branch("fork/team", "main"),
+    ));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.execute_command("git-branches").unwrap();
+    select_remote_branch(&mut app, "fork/team/main");
+    let branches_buffer = app.active().buffer;
+    let (service, operations) = GitServiceHandle::recording_for_test();
+    app.attach_git_service(service);
+    assert!(matches!(
+        operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GitOperation::Discover { .. }
+    ));
+    app.git.attach(Some(repository.clone()));
+    for (step, state) in [GitServiceState::Failed, GitServiceState::Cancelled]
+        .into_iter()
+        .enumerate()
+    {
+        app.execute_command("git-fetch-branch").unwrap();
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        let GitOperation::Mutate {
+            mutation, refresh, ..
+        } = &operation
+        else {
+            panic!("fetch must use the ordered mutation worker")
+        };
+        assert_eq!(
+            *mutation,
+            GitMutation::FetchBranch(FetchBranchTarget::RemoteTrackingRef(
+                "refs/remotes/fork/team/main".into()
+            ))
+        );
+        assert!(refresh.branches);
+        let mutation = mutation.clone();
+        let mut snapshot = empty_repository_snapshot(
+            repository.clone(),
+            RepositoryGeneration::default(),
+            refresh.clone(),
+        );
+        snapshot.branches = Some(crate::git::BranchList {
+            local: vec![Branch::new("main", true)],
+            remote: vec![
+                RemoteBranch::new("fork/team", "earlier"),
+                RemoteBranch::new("fork/team", "main"),
+            ],
+        });
+        if step == 1 {
+            app.execute_editor_command(EditorCommand::NewBuffer)
+                .unwrap();
+        }
+        let active = app.active().buffer;
+        app.apply_git_response(
+            operation,
+            GitResponse::Mutation {
+                mutation,
+                applied_paths: vec![],
+                summary: None,
+                failure: Some(if step == 0 {
+                    crate::git::GitError::Failed {
+                        command: "git fetch".into(),
+                        code: Some(1),
+                        signal: None,
+                        stderr: "connection lost".into(),
+                    }
+                } else {
+                    crate::git::GitError::Cancelled {
+                        command: "git fetch".into(),
+                    }
+                }),
+                snapshot: Box::new(Ok(snapshot)),
+            },
+            (None, state),
+            RequestedGitViews::default(),
+            None,
+            None,
+        );
+        assert_eq!(app.active().buffer, active);
+        assert!(
+            app.buffers[branches_buffer]
+                .to_string()
+                .contains("fork/team/earlier")
+        );
+        if step == 0 {
+            assert_eq!(
+                app.selected_fetch_target().unwrap(),
+                FetchBranchTarget::RemoteTrackingRef("refs/remotes/fork/team/main".into())
+            );
+        }
+    }
     fs::remove_dir_all(root).unwrap();
 }

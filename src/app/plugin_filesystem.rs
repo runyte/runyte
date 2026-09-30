@@ -77,6 +77,7 @@ impl App {
                 )
             }))
             || self.plugins.document_saves.contains(&buffer)
+            || self.merge_commit_running(buffer)
     }
     pub(crate) fn plugin_filesystem_confirmation_matches(&self, revision: u64) -> bool {
         revision == self.confirmation_revision && self.fs_confirmation.is_some()

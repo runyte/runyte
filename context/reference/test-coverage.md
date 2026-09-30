@@ -74,6 +74,29 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-09-30 — reviewed Git workflows and commit network
+
+Measured natively on `x86_64-unknown-linux-gnu` at implementation commit
+`9bd991e`, with Rust 1.97.1 and cargo-llvm-cov 0.9.0, using the canonical
+`cargo llvm-cov --locked --workspace` command and unrestricted local
+socket/process access for integration fixtures.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 142,234 | 154,931 | 91.80% |
+| Functions | 12,858 | 14,002 | 91.83% |
+| Regions | 216,749 | 237,362 | 91.32% |
+
+The ordinary and instrumented suites each passed 4,325 tests with 41 ignored.
+Formatting and all-target Clippy with warnings denied passed. Added coverage
+exercises single-branch fetch isolation, simulated and guarded merges, conflict
+stages and transactional resolution, exact merge-message ownership, stale and
+late results, hook retry, modal key dispatch, responsive review geometry, and
+bounded commit-network traversal and navigation.
+
+The enforced floor remains 89%. Native macOS and Windows validation was not
+performed locally and remains subject to the existing CI gates.
+
 ## 2026-09-29 — editing commands and action bindings
 
 Measured natively on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and

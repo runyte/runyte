@@ -279,12 +279,81 @@ impl App {
         } else {
             git_project.clone()
         };
+        let git_fetch_branch = if git_project.is_available() {
+            self.selected_fetch_target()
+                .map(|_| CommandAvailability::Available)
+                .unwrap_or_else(CommandAvailability::Unavailable)
+        } else {
+            git_project.clone()
+        };
+        let unavailable = |reason: &str| CommandAvailability::Unavailable(reason.into());
+        let git_merge_active = if !git_project.is_available() {
+            git_project.clone()
+        } else {
+            match self.merge_ui.inventory.as_ref().map(|i| &i.operation) {
+                Some(crate::git::RepositoryOperation::Merge { .. }) => {
+                    CommandAvailability::Available
+                }
+                Some(crate::git::RepositoryOperation::Idle) => unavailable(
+                    "there is no active merge; fast-forwards do not need continue or abort",
+                ),
+                Some(_) => unavailable(
+                    "this is a non-merge Git operation; resolve its files, then continue or abort with Git",
+                ),
+                None => CommandAvailability::Available,
+            }
+        };
+        let git_merge_continue = if git_merge_active.is_available()
+            && self
+                .merge_ui
+                .inventory
+                .as_ref()
+                .is_some_and(|i| !i.entries.is_empty())
+        {
+            unavailable("resolve all unmerged index entries before continuing the merge")
+        } else {
+            git_merge_active.clone()
+        };
+        let selected_conflict = self.selected_conflict();
+        let git_conflict = if !git_project.is_available() {
+            git_project.clone()
+        } else if selected_conflict.is_some() {
+            CommandAvailability::Available
+        } else {
+            unavailable("select an unresolved conflict file or row")
+        };
+        let git_conflict_whole = if let (Some(entry), Some(inventory)) =
+            (selected_conflict, &self.merge_ui.inventory)
+        {
+            if inventory.related_paths(&entry.path).len() > 1 {
+                unavailable(
+                    "structural conflict spans related paths; review saved files or deletions individually",
+                )
+            } else if entry
+                .base
+                .iter()
+                .chain(entry.current.iter())
+                .chain(entry.other.iter())
+                .any(|s| s.mode == "160000")
+            {
+                unavailable("submodule conflict needs external resolution")
+            } else {
+                git_conflict.clone()
+            }
+        } else {
+            git_conflict.clone()
+        };
         AppCapabilitySnapshot {
             syntax,
             lsp_manager,
             lsp_document,
             git_project,
             git_refresh,
+            git_fetch_branch,
+            git_merge_active,
+            git_merge_continue,
+            git_conflict,
+            git_conflict_whole,
             persistent_session: persistent_session_availability(
                 cfg!(any(unix, windows)),
                 self.persistent_session,
@@ -1631,6 +1700,9 @@ impl App {
         {
             key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
         }
+        if self.merge_ui.review.is_some() {
+            return self.handle_merge_review_key(key);
+        }
         if self.directory_tree_delete.is_some() {
             self.handle_tree_delete_key(key);
             return Ok(());
@@ -1762,6 +1834,9 @@ impl App {
         if self.exact_confirmation_accepts_space() {
             return false;
         }
+        if self.merge_ui.review.is_some() {
+            return true;
+        }
         // A nested action menu is the topmost overlay even when the picker
         // beneath it already has a query.
         if self.context_action_menu.is_some()
@@ -1790,7 +1865,11 @@ impl App {
     }
 
     fn exact_confirmation_accepts_space(&self) -> bool {
-        self.git_branch_switch.is_some()
+        self.merge_ui
+            .review
+            .as_ref()
+            .is_some_and(super::git_merge_review::MergeReview::input_focused)
+            || self.git_branch_switch.is_some()
             || self
                 .git_branch_deletion
                 .as_ref()
@@ -1815,6 +1894,14 @@ impl App {
             || self.plugins.provider_overwrite.is_some()
         {
             return false;
+        }
+        if self
+            .merge_ui
+            .review
+            .as_ref()
+            .is_some_and(super::git_merge_review::MergeReview::input_focused)
+        {
+            return true;
         }
         if self.git_branch_switch.is_some() {
             return true;
@@ -1868,6 +1955,12 @@ impl App {
             return Ok(());
         }
         if text.is_empty() {
+            return Ok(());
+        }
+        if let Some(review) = self.merge_ui.review.as_mut() {
+            if review.input_focused() {
+                insert_confirmation_text(&mut review.acknowledgment, &mut review.cursor, text);
+            }
             return Ok(());
         }
         if let Some(confirmation) = self.git_branch_switch.as_mut() {
@@ -4140,6 +4233,9 @@ impl App {
 
     fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
         use EditorCommand as Command;
+        if self.handle_merge_command(command) {
+            return Ok(());
+        }
         if self.handle_directory_tree_command(command)? {
             return Ok(());
         }
@@ -4518,12 +4614,39 @@ impl App {
             Command::CheckoutBranch => self.checkout_selected_branch(),
             Command::CreateBranch => self.create_branch_prompt(),
             Command::DeleteBranch => self.delete_selected_branch(),
+            Command::MergeBranch
+            | Command::OpenGitConflicts
+            | Command::OpenGitConflict
+            | Command::ContinueMerge
+            | Command::AbortMerge
+            | Command::NextConflict
+            | Command::PreviousConflict
+            | Command::KeepConflictCurrent
+            | Command::TakeConflictOther
+            | Command::InspectConflictSides
+            | Command::ResolveConflict
+            | Command::ResolveConflictLiteralMarkers
+            | Command::ReturnToGitConflicts
+            | Command::KeepConflictFileCurrent
+            | Command::TakeConflictFileOther
+            | Command::MergeReviewApprove
+            | Command::MergeReviewCancel
+            | Command::MergeReviewBack
+            | Command::MergeReviewNext
+            | Command::MergeReviewPrevious
+            | Command::MergeReviewLeft
+            | Command::MergeReviewRight
+            | Command::MergeReviewEnter => unreachable!("handled merge commands"),
+            Command::FetchBranch => self.fetch_selected_branch(),
             Command::PullBranch => self.pull_current_branch(),
             Command::PushBranch => self.push_selected_branch(),
             Command::OpenWorktree => self.open_selected_worktree(),
             Command::CreateWorktree => self.create_branch_worktree_prompt(),
             Command::CreateNewWorktree => self.create_worktree_prompt(true),
             Command::RemoveWorktree => self.remove_selected_worktree(),
+            Command::NextGitNetworkPage => self.next_git_network_page(),
+            Command::PreviousGitNetworkPage => self.previous_git_network_page(),
+            Command::ToggleGitNetworkAscii => self.toggle_git_network_ascii(),
             Command::NextGitLogPage => self.next_git_log_page(),
             Command::PreviousGitLogPage => self.previous_git_log_page(),
             Command::OpenGitCommit => self.open_selected_git_commit(),
@@ -5913,6 +6036,22 @@ impl App {
             }
             (Colon::GitWorktrees, InvocationParameters::None) => {
                 self.open_git_worktrees();
+                Ok(())
+            }
+            (Colon::GitNetwork | Colon::GitNetworkAll, InvocationParameters::None) => {
+                self.open_git_network(crate::git::NetworkScope::All);
+                Ok(())
+            }
+            (Colon::GitNetworkHead, InvocationParameters::None) => {
+                self.open_git_network(crate::git::NetworkScope::Head);
+                Ok(())
+            }
+            (Colon::GitNetworkChooseRef, InvocationParameters::None) => {
+                self.choose_git_network_ref();
+                Ok(())
+            }
+            (Colon::GitNetworkRef, InvocationParameters::OptionalText(Some(reference))) => {
+                self.open_git_network(crate::git::NetworkScope::Ref(reference));
                 Ok(())
             }
             (Colon::GitLog, InvocationParameters::None) => {

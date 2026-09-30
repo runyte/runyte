@@ -775,7 +775,8 @@ impl App {
                 if matches!(
                     operation,
                     GitOperation::CompareRevisions { .. } | GitOperation::RevisionFile { .. }
-                ) && !self.accept_revision_response(id)
+                ) && self.merge_ui.details_request != Some(id)
+                    && !self.accept_revision_response(id)
                 {
                     return;
                 }
@@ -812,6 +813,17 @@ impl App {
                     self.git_state.snapshot_stale = true;
                     let _ = self.request_git_refresh();
                 }
+                if state == GitServiceState::Cancelled
+                    && matches!(
+                        operation,
+                        GitOperation::Network { .. }
+                            | GitOperation::NetworkRoots { .. }
+                            | GitOperation::CommitDetail { .. }
+                    )
+                {
+                    self.network_request_failed(id);
+                    return;
+                }
                 match *result {
                     Ok(response) => {
                         self.apply_git_response(
@@ -824,6 +836,8 @@ impl App {
                         );
                     }
                     Err(error) => {
+                        self.network_request_failed(id);
+                        self.merge_request_failed(id);
                         // The one boundary that has the operation, the request
                         // identity, and the error. Everything below returned a
                         // typed result rather than reporting it.
@@ -987,12 +1001,70 @@ impl App {
         #[cfg(not(any(unix, windows)))]
         let _ = request;
         match response {
+            GitResponse::Merged { applied, response } => {
+                let activate = self
+                    .merge_ui
+                    .mutation_origin
+                    .take()
+                    .is_some_and(|origin| origin.matches(self))
+                    && applied.outcome == crate::git::MergeApplied::Conflicted;
+                self.apply_git_response(
+                    operation,
+                    *response,
+                    completion,
+                    requested_views,
+                    log_view_request,
+                    action,
+                );
+                let has_index_conflicts = !applied.inventory.entries.is_empty();
+                self.show_git_conflicts(applied.inventory, activate);
+                if let Some(diagnostic) = applied.diagnostic {
+                    if applied.outcome == crate::git::MergeApplied::Conflicted
+                        && has_index_conflicts
+                    {
+                        self.info_from(
+                            "Git",
+                            "Merge needs conflict resolution",
+                            diagnostic.to_string(),
+                        );
+                    } else {
+                        self.error_from("Git", "Merge needs recovery", diagnostic.to_string());
+                    }
+                }
+            }
+            GitResponse::PreparedMerge(plan) => {
+                self.receive_merge_plan(request, super::git_merges::ReviewPlan::Merge(plan))
+            }
+            GitResponse::PreparedResolution(plan) => {
+                self.receive_merge_plan(request, super::git_merges::ReviewPlan::Resolution(plan))
+            }
+            GitResponse::PreparedMergeCompletion(plan) => {
+                let intent = self
+                    .merge_ui
+                    .pending
+                    .as_ref()
+                    .map(|p| p.intent)
+                    .unwrap_or(super::git_merges::ReviewIntent::Continue);
+                self.receive_merge_plan(
+                    request,
+                    super::git_merges::ReviewPlan::Completion(plan, intent),
+                );
+            }
+            GitResponse::Conflicts(inventory) => {
+                self.receive_conflict_inventory(request, inventory)
+            }
+            GitResponse::ConflictSides { entry, sides } => {
+                self.receive_conflict_sides(request, entry, sides)
+            }
             GitResponse::RevisionComparison(comparison) => {
                 if let GitOperation::CompareRevisions { repository, .. } = operation {
                     self.show_revision_comparison(repository, comparison);
                 }
             }
             GitResponse::RevisionFile(view) => {
+                if self.receive_merge_detail(request, view.clone()) {
+                    return;
+                }
                 if let GitOperation::RevisionFile {
                     repository,
                     comparison,
@@ -1057,6 +1129,12 @@ impl App {
                     None => self.open_worktree_removal_confirmation(plan),
                 }
             }
+            GitResponse::NetworkRoots {
+                scope,
+                roots,
+                limited,
+            } => self.apply_network_roots(request, scope, roots, limited),
+            GitResponse::Network { page, .. } => self.apply_network_response(request, page),
             GitResponse::Log { request, page } => {
                 if request.cursor.is_some()
                     && log_view_request
@@ -1121,7 +1199,11 @@ impl App {
                     self.forget_partial_guard(buffer, guard, true);
                 }
             }
-            GitResponse::CommitDetail(detail) => self.open_git_commit_detail_result(detail),
+            GitResponse::CommitDetail(detail) => {
+                if self.accept_network_detail_response(request) {
+                    self.open_git_commit_detail_result(detail);
+                }
+            }
             GitResponse::Blame { source, lines } => self.open_git_blame_result(source, lines),
             GitResponse::Snapshot(snapshot) => {
                 self.apply_repository_snapshot(*snapshot, true, requested_views.index);
@@ -1190,6 +1272,7 @@ impl App {
             self.reload_clean_repository_buffers();
         }
         self.refresh_git_status_buffer();
+        self.check_network_roots();
         if let Some(branches) = snapshot.branches {
             self.refresh_git_branches_from(branches, "");
         }
@@ -1233,6 +1316,7 @@ impl App {
         {
             self.open_git_stashes_result(stashes, false);
         }
+        self.refresh_conflict_inventory();
     }
 
     #[cfg(test)]
@@ -1296,8 +1380,38 @@ impl App {
                 | GitMutation::CreateTrackingBranch { .. }
                 | GitMutation::Pull
                 | GitMutation::RebaseOntoUpstream
+                | GitMutation::Merge(_)
+                | GitMutation::AbortMerge(_)
         ) {
             self.reload_clean_repository_buffers();
+        }
+        if matches!(&mutation, GitMutation::ResolveConflict(plan) if !matches!(plan.choice, crate::git::ResolutionChoice::SavedFile { .. }))
+        {
+            self.reload_clean_repository_buffers();
+        }
+        if matches!(
+            mutation,
+            GitMutation::ResolveConflict(_)
+                | GitMutation::AbortMerge(_)
+                | GitMutation::CommitMerge { .. }
+        ) {
+            self.refresh_conflict_inventory();
+        }
+        if matches!(mutation, GitMutation::CommitMerge { .. }) {
+            self.merge_ui.commit_request = None;
+        }
+        let completed_guard = match &mutation {
+            GitMutation::Merge(p) => Some(p.guard.id()),
+            GitMutation::ResolveConflict(p) => Some(p.guard.id()),
+            GitMutation::AbortMerge(p) | GitMutation::CommitMerge { plan: p, .. } => {
+                Some(p.guard.id())
+            }
+            _ => None,
+        };
+        if let Some(id) = completed_guard
+            && !(failure.is_some() && matches!(mutation, GitMutation::CommitMerge { .. }))
+        {
+            self.merge_ui.guards.retain(|g| g.id() != id);
         }
         if matches!(
             mutation,
@@ -1308,13 +1422,21 @@ impl App {
         if matches!(mutation, GitMutation::Discard(_)) {
             self.reload_git_paths(&applied_paths);
         }
-        if matches!(mutation, GitMutation::Commit { .. })
-            && failure.is_none()
-            && let Some(buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
-                    .then_some(index)
-            })
+        if matches!(
+            mutation,
+            GitMutation::Commit { .. } | GitMutation::CommitMerge { .. }
+        ) && failure.is_none()
+            && let Some(buffer) = if matches!(mutation, GitMutation::CommitMerge { .. }) {
+                self.merge_ui.commit_buffer
+            } else {
+                self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+                    (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
+                        .then_some(index)
+                })
+            }
         {
+            self.merge_ui.commit = None;
+            self.merge_ui.commit_buffer = None;
             let _ = self.buffers[buffer].discard_changes_to("");
             self.close_buffer(buffer);
             self.return_from_commit();
@@ -1437,6 +1559,14 @@ impl App {
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| match mutation {
+                GitMutation::Merge(plan) => match plan.outcome {
+                    crate::git::MergePreviewOutcome::AlreadyContained => "already up to date".into(),
+                    crate::git::MergePreviewOutcome::FastForward => "fast-forward completed; no merge commit was created".into(),
+                    _ => "merge applied; resolve conflicts if present, then explicitly continue and commit".into(),
+                },
+                GitMutation::ResolveConflict(plan) => format!("staged reviewed resolution of {}", crate::git::display_path(&plan.path)),
+                GitMutation::CommitMerge { .. } => "merge committed".into(),
+                GitMutation::AbortMerge(_) => "active merge aborted".into(),
                 GitMutation::Stage(_) => format!("staged {} path(s)", applied_paths.len()),
                 GitMutation::Unstage(_) => format!("unstaged {} path(s)", applied_paths.len()),
                 GitMutation::Discard(_) => {
@@ -1454,6 +1584,7 @@ impl App {
                     format!("deleted branch {}", plan.branch)
                 }
                 GitMutation::Commit { .. } => "committed".to_owned(),
+                GitMutation::FetchBranch(_) => "fetched selected branch".to_owned(),
                 GitMutation::Pull => "pull completed".to_owned(),
                 GitMutation::RebaseOntoUpstream => "replayed onto the upstream".to_owned(),
                 GitMutation::Push { branch } => format!("pushed {branch}"),
@@ -4458,6 +4589,8 @@ impl App {
             Self::git_log_line_to_row(row)
                 .and_then(|row| self.git_state.log_rows.get(row))
                 .map(|commit| commit.oid.clone())
+        } else if self.active_buffer().is_git_network() {
+            self.selected_network_oid()
         } else if self.active_buffer().is_git_blame() {
             self.git_state
                 .blame_rows
@@ -4469,14 +4602,26 @@ impl App {
     }
 
     pub(super) fn open_selected_git_commit(&mut self) {
-        if !self.active_buffer().is_git_log() && !self.active_buffer().is_git_blame() {
-            self.action_failed("commit navigation is only available in log and blame views");
+        if !self.active_buffer().is_git_log()
+            && !self.active_buffer().is_git_blame()
+            && !self.active_buffer().is_git_network()
+        {
+            self.action_failed(
+                "commit navigation is only available in log, network and blame views",
+            );
             return;
         }
         let Some(oid) = self.selected_git_commit_oid() else {
             self.action_failed("this row is uncommitted");
             return;
         };
+        if self.active_buffer().is_git_network() {
+            let buffer = self.active().buffer;
+            let position = super::view_position::ViewPosition::capture(self.active());
+            self.active_mut()
+                .saved_view_positions
+                .insert(buffer, position);
+        }
         self.open_git_commit_oid(oid);
     }
 
@@ -4486,7 +4631,9 @@ impl App {
             return;
         };
         if self.ports.git_service.is_some() {
-            let _ = self.request_git(GitOperation::CommitDetail { repository, oid });
+            if let Some(id) = self.request_git(GitOperation::CommitDetail { repository, oid }) {
+                self.note_network_detail_request(id);
+            }
         } else if let Some(provider) = self.ports.git.as_deref() {
             match provider.commit_detail(&repository, &oid) {
                 Ok(detail) => self.open_git_commit_detail_result(detail),
@@ -4496,6 +4643,7 @@ impl App {
     }
 
     pub(super) fn open_git_commit_detail_result(&mut self, detail: CommitDetail) {
+        let network_origin = self.network_return_origin();
         let oid = detail.summary.oid.clone();
         let name = format!("[git commit {}]", detail.summary.abbreviated);
         let parents = if detail.summary.parents.is_empty() {
@@ -4534,6 +4682,9 @@ impl App {
         }
         self.active_mut().preserve_scroll = false;
         self.mode = Mode::Normal;
+        if let Some(origin) = network_origin {
+            self.remember_network_return(buffer, origin);
+        }
     }
 
     pub(super) fn request_git_blame(&mut self, full_file: bool) {
@@ -5564,7 +5715,7 @@ impl App {
     /// A branch that is no longer there — the one a delete just removed — leaves
     /// the caret on the row that took its place rather than jumping to the top,
     /// so a second delete is aimed where the reader is looking.
-    fn refresh_git_branches_buffer(&mut self, selected: &str) {
+    pub(super) fn refresh_git_branches_buffer(&mut self, selected: &str) {
         let Some(_buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_git_branches()).then_some(index)
         }) else {
@@ -5670,7 +5821,7 @@ impl App {
     ///
     /// Staging from the list changes what the list says, and re-opening it
     /// would throw away the row someone had just moved to.
-    fn refresh_git_status_buffer(&mut self) {
+    pub(super) fn refresh_git_status_buffer(&mut self) {
         let Some(buffer) = self.git_status_buffer() else {
             return;
         };
@@ -6011,15 +6162,24 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         }
+        if self
+            .merge_ui
+            .inventory
+            .as_ref()
+            .is_some_and(|i| matches!(i.operation, crate::git::RepositoryOperation::Merge { .. }))
+        {
+            self.request_merge_completion(super::git_merges::ReviewIntent::Continue);
+            return;
+        }
         if self.ports.git_service.is_some() {
-            let _ = self.request_commit_open_refresh();
+            self.request_commit_operation_preflight();
             return;
         }
         self.refresh_git_status();
         self.open_commit_message_from_current_status();
     }
 
-    fn request_commit_open_refresh(&mut self) -> bool {
+    pub(super) fn request_commit_open_refresh(&mut self) -> bool {
         let Some(repository) = self.git.repository().cloned() else {
             return false;
         };
@@ -6110,9 +6270,26 @@ impl App {
             self.action_failed("this project is not in a Git repository");
             return;
         };
+        if self
+            .merge_ui
+            .commit_buffer
+            .is_some_and(|buffer| buffer != buffer_id)
+            || (self.merge_ui.commit_buffer != Some(buffer_id)
+                && self.merge_ui.inventory.as_ref().is_some_and(|i| {
+                    matches!(i.operation, crate::git::RepositoryOperation::Merge { .. })
+                }))
+        {
+            self.action_failed(
+                "an active merge must be committed from its own reviewed merge-message buffer",
+            );
+            return;
+        }
         let message = commit_message_body(&self.buffers[buffer_id].to_string());
         if message.is_empty() {
             self.action_failed("a commit needs a message; write one above the comments");
+            return;
+        }
+        if self.commit_reviewed_merge(buffer_id, message.clone()) {
             return;
         }
         if self.ports.git_service.is_some() {
@@ -6165,6 +6342,16 @@ impl App {
     /// Nothing about the index changes: what was staged stays staged, which is
     /// what makes this safe to reach for. Only the text is lost.
     pub(super) fn abandon_commit_message(&mut self, buffer_id: usize) {
+        if self.merge_ui.commit_buffer == Some(buffer_id) {
+            if self.merge_ui.commit_request.is_some() {
+                self.action_failed("the reviewed merge commit is running; wait for its result before abandoning the message");
+                return;
+            }
+            if let Some(plan) = self.merge_ui.commit.take() {
+                plan.invalidate();
+            }
+            self.merge_ui.commit_buffer = None;
+        }
         let _ = self.buffers[buffer_id].discard_changes_to("");
         self.close_buffer(buffer_id);
         self.return_from_commit();
@@ -6343,6 +6530,9 @@ impl App {
     /// switching branches outside the editor moves the text every mark is
     /// measured against, and no buffer changes when it happens.
     pub(super) fn refresh_git(&mut self) {
+        if self.active_buffer().is_git_network() {
+            self.open_git_network(self.network.scope.clone());
+        }
         if self.refresh_revision_comparison() {
             return;
         }

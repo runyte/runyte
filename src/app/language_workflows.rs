@@ -3368,7 +3368,9 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
+            | BufferKind::GitNetwork
             | BufferKind::GitLog
             | BufferKind::GitBlame
             | BufferKind::GitStash
@@ -3474,7 +3476,9 @@ impl App {
             | BufferKind::Notifications { .. }
             | BufferKind::GitStatus
             | BufferKind::GitBranches
+            | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
+            | BufferKind::GitNetwork
             | BufferKind::GitLog
             | BufferKind::GitBlame
             | BufferKind::GitStash
@@ -3564,6 +3568,9 @@ impl App {
 
     /// Retires a buffer and completes the commit-message cancellation detour.
     pub(super) fn close_buffer_returning_from_commit(&mut self, buffer: usize) {
+        if self.refuse_running_merge_message(buffer) {
+            return;
+        }
         let commit_message = self.buffers[buffer].is_commit_message();
         self.close_buffer(buffer);
         if commit_message {
@@ -3574,6 +3581,7 @@ impl App {
 
     pub(super) fn close_buffer(&mut self, buffer: usize) {
         self.retire_buffer(buffer, true);
+        self.restore_network_return(buffer);
     }
 
     fn retire_buffer(&mut self, buffer: usize, announce: bool) {
@@ -3593,6 +3601,7 @@ impl App {
             return;
         }
         self.invalidate_partial_guards(buffer);
+        self.close_merge_origin(buffer);
 
         let name = self.buffers[buffer].display_name();
         let git_path = (self.buffers[buffer].kind == BufferKind::File)
@@ -3966,6 +3975,9 @@ impl App {
                 self.jump_to_syntax_outline(buffer, target)
             }
             Some(ListAction::Macro(register)) => self.replay_macro(register, 1)?,
+            Some(ListAction::GitNetworkRef(reference)) => {
+                self.open_git_network(crate::git::NetworkScope::Ref(reference))
+            }
             Some(ListAction::GitCommit(oid)) => self.open_git_commit_oid(oid),
             Some(ListAction::CheckoutGitBranch(branch)) => {
                 self.checkout_local_branch_named(&branch)

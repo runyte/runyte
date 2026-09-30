@@ -49,6 +49,11 @@ pub enum CommandCapability {
     LspDocument,
     LspManager,
     GitProject,
+    GitFetchBranch,
+    GitMergeActive,
+    GitMergeContinue,
+    GitConflict,
+    GitConflictWhole,
     /// Refresh a discovered repository or retry a failed discovery.
     GitRefresh,
     /// A persistent session host this editor can reach: the platform supports
@@ -85,6 +90,11 @@ pub enum ColonCommand {
     GitDiscard,
     GitIndex,
     GitLog,
+    GitNetwork,
+    GitNetworkHead,
+    GitNetworkAll,
+    GitNetworkRef,
+    GitNetworkChooseRef,
     GitSearchCommits,
     GitRefresh,
     GitStage,
@@ -256,6 +266,11 @@ impl ColonCommand {
         Self::GitDiscard,
         Self::GitIndex,
         Self::GitLog,
+        Self::GitNetwork,
+        Self::GitNetworkHead,
+        Self::GitNetworkAll,
+        Self::GitNetworkRef,
+        Self::GitNetworkChooseRef,
         Self::GitSearchCommits,
         Self::GitRefresh,
         Self::GitStage,
@@ -340,6 +355,11 @@ impl ColonCommand {
             | Self::GitDiffSideBySide
             | Self::GitDiscard
             | Self::GitIndex
+            | Self::GitNetwork
+            | Self::GitNetworkHead
+            | Self::GitNetworkAll
+            | Self::GitNetworkChooseRef
+            | Self::GitNetworkRef
             | Self::GitLog
             | Self::GitSearchCommits
             | Self::GitRefresh
@@ -784,6 +804,30 @@ editor_commands! {
     CheckoutBranch => ("checkout-branch", "Check out this branch locally"),
     CreateBranch => ("create-branch", "Create a branch at the one on this line and switch to it"),
     DeleteBranch => ("delete-branch", "Delete the branch on this line, after a confirmation"),
+    MergeBranch => ("git-merge-branch", "Review merging this branch into the current branch"),
+    OpenGitConflicts => ("git-conflicts", "Open unresolved Git conflicts"),
+    OpenGitConflict => ("open-git-conflict", "Open this conflict at its first unresolved region"),
+    ContinueMerge => ("git-merge-continue", "Review the resolved index and write a merge commit message"),
+    AbortMerge => ("git-merge-abort", "Review and confirm aborting the active merge"),
+    NextConflict => ("git-conflict-next", "Go to the next unresolved region or file"),
+    PreviousConflict => ("git-conflict-previous", "Go to the previous unresolved region or file"),
+    KeepConflictCurrent => ("git-conflict-keep-current", "Keep Current in this region as an undoable edit"),
+    TakeConflictOther => ("git-conflict-take-other", "Take Other in this region as an undoable edit"),
+    InspectConflictSides => ("git-conflict-sides", "Inspect Base, Current and Other index stages"),
+    ResolveConflictLiteralMarkers => ("git-conflict-resolve-literal-markers", "Review staging literal marker text as resolved"),
+    ResolveConflict => ("git-conflict-resolve", "Review staging this saved file or deletion as resolved"),
+    ReturnToGitConflicts => ("git-conflict-list", "Return to the unresolved conflict list"),
+    KeepConflictFileCurrent => ("git-conflict-file-current", "Review replacing the whole file with Current"),
+    TakeConflictFileOther => ("git-conflict-file-other", "Review replacing the whole file with Other"),
+    MergeReviewApprove => ("git-review-approve", "Approve the reviewed Git operation"),
+    MergeReviewCancel => ("git-review-cancel", "Cancel this Git review"),
+    MergeReviewBack => ("git-review-back", "Return to the Git review"),
+    MergeReviewNext => ("git-review-next", "Select the next review row or action"),
+    MergeReviewPrevious => ("git-review-previous", "Select the previous review row or action"),
+    MergeReviewLeft => ("git-review-left", "Select Approve in the review footer"),
+    MergeReviewRight => ("git-review-right", "Select Cancel in the review footer"),
+    MergeReviewEnter => ("git-review-enter", "Inspect a change or activate the selected review action"),
+    FetchBranch => ("git-fetch-branch", "Fetch this remote branch or local branch upstream"),
     PullBranch => ("pull-branch", "Fast-forward the current branch onto what it tracks"),
     PushBranch => ("push-branch", "Publish this branch to what it tracks"),
     OpenWorktree => ("open-worktree", "Attach to the worktree on this line"),
@@ -796,9 +840,12 @@ editor_commands! {
         "Create a new branch and worktree from this checkout; attach in persistent mode"
     ),
     RemoveWorktree => ("remove-worktree", "Remove the worktree on this row, leaving its branch"),
+    NextGitNetworkPage => ("next-git-network-page", "Show the next commit network page"),
+    PreviousGitNetworkPage => ("previous-git-network-page", "Show the previous commit network page"),
+    ToggleGitNetworkAscii => ("toggle-git-network-ascii", "Toggle ASCII commit network glyphs"),
     NextGitLogPage => ("next-git-log-page", "Show the next page of the Git log"),
     PreviousGitLogPage => ("previous-git-log-page", "Show the previous page of the Git log"),
-    OpenGitCommit => ("open-git-commit", "Open the commit on this log or blame row"),
+    OpenGitCommit => ("open-git-commit", "Open the commit on this log, network or blame row"),
     OpenWorkspaceSearchResult => (
         "open-workspace-search-result",
         "Open the workspace-search result on this line"
@@ -1044,6 +1091,20 @@ impl EditorCommand {
             | Self::TriggerCompletion
             | Self::RenameSymbol
             | Self::CodeAction => Some(CommandCapability::LspDocument),
+            Self::FetchBranch => Some(CommandCapability::GitFetchBranch),
+            Self::ContinueMerge => Some(CommandCapability::GitMergeContinue),
+            Self::AbortMerge => Some(CommandCapability::GitMergeActive),
+            Self::KeepConflictFileCurrent | Self::TakeConflictFileOther => {
+                Some(CommandCapability::GitConflictWhole)
+            }
+            Self::OpenGitConflict
+            | Self::NextConflict
+            | Self::PreviousConflict
+            | Self::KeepConflictCurrent
+            | Self::TakeConflictOther
+            | Self::InspectConflictSides
+            | Self::ResolveConflict
+            | Self::ResolveConflictLiteralMarkers => Some(CommandCapability::GitConflict),
             _ if matches!(self.category(), CommandCategory::Git) => {
                 Some(CommandCapability::GitProject)
             }
@@ -1330,15 +1391,42 @@ impl EditorCommand {
             | Self::CheckoutBranch
             | Self::CreateBranch
             | Self::DeleteBranch
+            | Self::MergeBranch
+            | Self::OpenGitConflicts
+            | Self::OpenGitConflict
+            | Self::ContinueMerge
+            | Self::AbortMerge
+            | Self::NextConflict
+            | Self::PreviousConflict
+            | Self::KeepConflictCurrent
+            | Self::TakeConflictOther
+            | Self::InspectConflictSides
+            | Self::ResolveConflict
+            | Self::ResolveConflictLiteralMarkers
+            | Self::ReturnToGitConflicts
+            | Self::KeepConflictFileCurrent
+            | Self::TakeConflictFileOther
+            | Self::MergeReviewApprove
+            | Self::MergeReviewCancel
+            | Self::MergeReviewBack
+            | Self::MergeReviewNext
+            | Self::MergeReviewPrevious
+            | Self::MergeReviewLeft
+            | Self::MergeReviewRight
+            | Self::MergeReviewEnter
+            | Self::FetchBranch
             | Self::PullBranch
             | Self::PushBranch => CommandCategory::Git,
             Self::OpenWorktree
             | Self::CreateWorktree
             | Self::CreateNewWorktree
             | Self::RemoveWorktree => CommandCategory::Git,
-            Self::NextGitLogPage | Self::PreviousGitLogPage | Self::OpenGitCommit => {
-                CommandCategory::Git
-            }
+            Self::NextGitNetworkPage
+            | Self::PreviousGitNetworkPage
+            | Self::ToggleGitNetworkAscii
+            | Self::NextGitLogPage
+            | Self::PreviousGitLogPage
+            | Self::OpenGitCommit => CommandCategory::Git,
             Self::ActivateSetting | Self::OpenSettings | Self::OpenThemeSettings => {
                 CommandCategory::Configuration
             }
@@ -2041,12 +2129,178 @@ pub const COMMANDS: &[CommandSpec] = &[
         "Compare with this branch or worktree",
         NoArguments
     ),
+    editor_spec!(
+        Editor::MergeBranch,
+        "git-merge-branch",
+        [],
+        "git-merge-branch",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::OpenGitConflicts,
+        "git-conflicts",
+        [],
+        "git-conflicts",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ContinueMerge,
+        "git-merge-continue",
+        [],
+        "git-merge-continue",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::AbortMerge,
+        "git-merge-abort",
+        [],
+        "git-merge-abort",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::NextConflict,
+        "git-conflict-next",
+        [],
+        "git-conflict-next",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousConflict,
+        "git-conflict-previous",
+        [],
+        "git-conflict-previous",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::KeepConflictCurrent,
+        "git-conflict-keep-current",
+        [],
+        "git-conflict-keep-current",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::TakeConflictOther,
+        "git-conflict-take-other",
+        [],
+        "git-conflict-take-other",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::InspectConflictSides,
+        "git-conflict-sides",
+        [],
+        "git-conflict-sides",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ResolveConflictLiteralMarkers,
+        "git-conflict-resolve-literal-markers",
+        [],
+        "git-conflict-resolve-literal-markers",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ResolveConflict,
+        "git-conflict-resolve",
+        [],
+        "git-conflict-resolve",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ReturnToGitConflicts,
+        "git-conflict-list",
+        [],
+        "git-conflict-list",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::KeepConflictFileCurrent,
+        "git-conflict-file-current",
+        [],
+        "git-conflict-file-current",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::TakeConflictFileOther,
+        "git-conflict-file-other",
+        [],
+        "git-conflict-file-other",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::FetchBranch,
+        "git-fetch-branch",
+        [],
+        "git-fetch-branch",
+        NoArguments
+    ),
     spec!(
         ColonId(Colon::GitBranches),
         "git-branches",
         [],
         "git-branches",
         "Open the local and remote branch list",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetwork),
+        "git-network",
+        [],
+        "git-network",
+        "Open or refresh the cached commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkHead),
+        "git-network-head",
+        [],
+        "git-network-head",
+        "Restrict the commit network to current HEAD",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkAll),
+        "git-network-all",
+        [],
+        "git-network-all",
+        "Show all cached refs and HEAD in the commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkChooseRef),
+        "git-network-choose-ref",
+        [],
+        "git-network-choose-ref",
+        "Choose a captured full ref for the commit network",
+        NoArguments
+    ),
+    spec!(
+        ColonId(Colon::GitNetworkRef),
+        "git-network-ref",
+        [],
+        "git-network-ref <full-ref>",
+        "Restrict the commit network to an exact full ref",
+        Required(FreeText)
+    ),
+    editor_spec!(
+        Editor::NextGitNetworkPage,
+        "next-git-network-page",
+        [],
+        "next-git-network-page",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviousGitNetworkPage,
+        "previous-git-network-page",
+        [],
+        "previous-git-network-page",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::ToggleGitNetworkAscii,
+        "toggle-git-network-ascii",
+        [],
+        "toggle-git-network-ascii",
         NoArguments
     ),
     spec!(
@@ -2787,6 +3041,10 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::GitDiffSideBySide
             | Colon::GitDiscard
             | Colon::GitIndex
+            | Colon::GitNetwork
+            | Colon::GitNetworkHead
+            | Colon::GitNetworkChooseRef
+            | Colon::GitNetworkAll
             | Colon::GitLog
             | Colon::GitSearchCommits
             | Colon::GitRefresh
@@ -2845,6 +3103,9 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         ) => crate::plugin::valid_name(value),
         (Colon::LspRestart | Colon::ContextAccess, InvocationParameters::OptionalText(value)) => {
             value.as_ref().is_none_or(|value| !value.is_empty())
+        }
+        (Colon::GitNetworkRef, InvocationParameters::OptionalText(Some(value))) => {
+            value.starts_with("refs/") && !value.contains(['\0', '\n'])
         }
         (Colon::Pipe, InvocationParameters::OptionalText(Some(value))) => !value.trim().is_empty(),
         (Colon::Grammar, InvocationParameters::Grammar(_)) => true,
@@ -3020,7 +3281,25 @@ fn invocation_from_parts(
     match id {
         CommandId::Plugin(_) => Err(invalid()),
         CommandId::Editor(command) => match (command, argument) {
-            (EditorCommand::CloseWindow, ParsedArgument::None)
+            (EditorCommand::MergeBranch, ParsedArgument::None)
+            | (EditorCommand::OpenGitConflicts, ParsedArgument::None)
+            | (EditorCommand::ContinueMerge, ParsedArgument::None)
+            | (EditorCommand::AbortMerge, ParsedArgument::None)
+            | (EditorCommand::NextConflict, ParsedArgument::None)
+            | (EditorCommand::PreviousConflict, ParsedArgument::None)
+            | (EditorCommand::KeepConflictCurrent, ParsedArgument::None)
+            | (EditorCommand::TakeConflictOther, ParsedArgument::None)
+            | (EditorCommand::InspectConflictSides, ParsedArgument::None)
+            | (EditorCommand::ResolveConflictLiteralMarkers, ParsedArgument::None)
+            | (EditorCommand::ResolveConflict, ParsedArgument::None)
+            | (EditorCommand::ReturnToGitConflicts, ParsedArgument::None)
+            | (EditorCommand::KeepConflictFileCurrent, ParsedArgument::None)
+            | (EditorCommand::TakeConflictFileOther, ParsedArgument::None)
+            | (EditorCommand::FetchBranch, ParsedArgument::None)
+            | (EditorCommand::NextGitNetworkPage, ParsedArgument::None)
+            | (EditorCommand::PreviousGitNetworkPage, ParsedArgument::None)
+            | (EditorCommand::ToggleGitNetworkAscii, ParsedArgument::None)
+            | (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFilePicker, ParsedArgument::None)
@@ -3175,6 +3454,10 @@ fn invocation_from_parts(
                 | ColonCommand::GitDiffSideBySide
                 | ColonCommand::GitDiscard
                 | ColonCommand::GitIndex
+                | ColonCommand::GitNetwork
+                | ColonCommand::GitNetworkHead
+                | ColonCommand::GitNetworkChooseRef
+                | ColonCommand::GitNetworkAll
                 | ColonCommand::GitLog
                 | ColonCommand::GitSearchCommits
                 | ColonCommand::GitRefresh
@@ -3247,6 +3530,9 @@ fn invocation_from_parts(
                 id,
                 InvocationParameters::OptionalText(Some(value)),
             )),
+            (ColonCommand::GitNetworkRef, ParsedArgument::Text(Some(value))) => Ok(
+                CommandInvocation::new(id, InvocationParameters::OptionalText(Some(value))),
+            ),
             (ColonCommand::Pipe, ParsedArgument::Text(Some(value))) => Ok(CommandInvocation::new(
                 id,
                 InvocationParameters::OptionalText(Some(value)),

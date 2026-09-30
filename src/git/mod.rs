@@ -23,8 +23,11 @@ pub mod blame;
 pub mod branch_view;
 pub mod cli;
 pub mod comparison;
+pub mod conflict_regions;
 pub mod diff;
 pub mod history;
+pub mod merge;
+pub mod network;
 pub mod patch;
 pub(crate) mod repository_lock;
 pub mod service;
@@ -46,6 +49,12 @@ pub use history::{
     LogCursor, LogPage, LogRequest, MAX_COMMIT_SEARCH_RESULTS, MAX_LOG_PAGE_SIZE,
     parse_commit_search, parse_log,
 };
+pub use merge::{
+    ConflictEntry, ConflictInventory, ConflictStage, MergeApplied, MergeApplyResult,
+    MergeCompletionPlan, MergeConflictMessage, MergePlan, MergePreviewOutcome, RepositoryOperation,
+    ResolutionChoice, ResolutionPlan,
+};
+pub use network::{NetworkCursor, NetworkPage, NetworkRequest, NetworkRoot, NetworkScope};
 pub use patch::{
     BufferRevisionGuard, MAX_PATCH_BYTES, PartialStageRequest, PartialStageSelection, PatchHunk,
     RepositoryFingerprint, parse_hunks, select_lines,
@@ -223,6 +232,13 @@ impl fmt::Display for GitError {
 }
 
 impl std::error::Error for GitError {}
+
+fn merge_unsupported() -> GitError {
+    GitError::Malformed {
+        command: "reviewed merge".into(),
+        detail: "provider does not support reviewed merges".into(),
+    }
+}
 
 fn stale_deletion(target: &str) -> GitError {
     GitError::Failed {
@@ -405,6 +421,13 @@ impl RemoteBranch {
         remote_branch.reference = reference.into();
         remote_branch
     }
+}
+
+/// The selected branch identity, resolved from configuration immediately before fetching.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum FetchBranchTarget {
+    LocalBranch(String),
+    RemoteTrackingRef(String),
 }
 
 /// The complete branch view, read as one service result so its inverse
@@ -699,6 +722,65 @@ pub enum DiffScope {
 /// for today, which is what keeps a fake implementation honest and a real one
 /// small.
 pub trait GitProvider {
+    fn conflict_sides(
+        &self,
+        _repository: &Repository,
+        _entry: &ConflictEntry,
+    ) -> Result<[BaseContent; 3]> {
+        Err(merge_unsupported())
+    }
+    fn operation_state(&self, _repository: &Repository) -> Result<RepositoryOperation> {
+        Err(merge_unsupported())
+    }
+    fn prepare_merge(
+        &self,
+        _repository: &Repository,
+        _source: &str,
+        _guard: BufferRevisionGuard,
+    ) -> Result<MergePlan> {
+        Err(merge_unsupported())
+    }
+    fn apply_merge(&self, _repository: &Repository, _plan: &MergePlan) -> Result<MergeApplyResult> {
+        Err(merge_unsupported())
+    }
+    fn conflicts(&self, _repository: &Repository) -> Result<ConflictInventory> {
+        Err(merge_unsupported())
+    }
+    fn prepare_resolution(
+        &self,
+        _repository: &Repository,
+        _path: &Path,
+        _choice: ResolutionChoice,
+        _guard: BufferRevisionGuard,
+    ) -> Result<ResolutionPlan> {
+        Err(merge_unsupported())
+    }
+    fn resolve_conflict(
+        &self,
+        _repository: &Repository,
+        _plan: &ResolutionPlan,
+    ) -> Result<ConflictInventory> {
+        Err(merge_unsupported())
+    }
+    fn prepare_merge_completion(
+        &self,
+        _repository: &Repository,
+        _guard: BufferRevisionGuard,
+    ) -> Result<MergeCompletionPlan> {
+        Err(merge_unsupported())
+    }
+    fn commit_merge(
+        &self,
+        _repository: &Repository,
+        _plan: &MergeCompletionPlan,
+        _message: &str,
+    ) -> Result<String> {
+        Err(merge_unsupported())
+    }
+    fn abort_merge(&self, _repository: &Repository, _plan: &MergeCompletionPlan) -> Result<String> {
+        Err(merge_unsupported())
+    }
+
     /// Capture committed tips and list their differences without reading local edits.
     fn compare_revisions(
         &self,
@@ -870,6 +952,28 @@ pub trait GitProvider {
             return Err(typed_deletion_required("worktree"));
         }
         self.remove_worktree(repository, &plan.path)
+    }
+
+    /// Recheck only roots, without traversing history or performing network IO.
+    fn network_roots(
+        &self,
+        _repository: &Repository,
+        _scope: &NetworkScope,
+    ) -> Result<(Vec<NetworkRoot>, bool)> {
+        Err(GitError::Unavailable {
+            detail: "this Git provider does not expose network roots".into(),
+        })
+    }
+
+    /// A bounded graph page traversing a captured set of commit roots.
+    fn network_page(
+        &self,
+        _repository: &Repository,
+        _request: &NetworkRequest,
+    ) -> Result<NetworkPage> {
+        Err(GitError::Unavailable {
+            detail: "this Git provider does not expose a commit network".to_owned(),
+        })
     }
 
     /// One bounded topological history page, continued by object identity.
@@ -1105,6 +1209,18 @@ pub trait GitProvider {
     /// again. Callers are expected to have asked first.
     fn discard(&self, repository: &Repository, path: &Path) -> Result<()>;
 
+    /// Fetches only the selected remote-tracking ref or local branch's upstream.
+    /// Never changes local branch tips, the index, or working files.
+    fn fetch_branch(
+        &self,
+        _repository: &Repository,
+        _target: &FetchBranchTarget,
+    ) -> Result<String> {
+        Err(GitError::Unavailable {
+            detail: "single-branch fetching is unavailable in this Git provider".to_owned(),
+        })
+    }
+
     /// Fetches the current branch's upstream and fast-forwards onto it.
     ///
     /// Fast-forward only. A pull that had to merge could leave the working tree
@@ -1195,6 +1311,7 @@ pub struct MemoryGitProvider {
     pulled: std::cell::Cell<usize>,
     rebased: std::cell::Cell<usize>,
     pushed: std::cell::RefCell<Vec<String>>,
+    fetched: std::cell::RefCell<Vec<FetchBranchTarget>>,
     /// Refuses only network operations, so a test can reach one with
     /// everything around it working.
     refuse_network: bool,
@@ -1232,6 +1349,7 @@ impl MemoryGitProvider {
             pulled: std::cell::Cell::new(0),
             rebased: std::cell::Cell::new(0),
             pushed: std::cell::RefCell::new(Vec::new()),
+            fetched: std::cell::RefCell::new(Vec::new()),
             refuse_network: false,
             status: std::cell::RefCell::new(RepositoryStatus {
                 head: Head::Branch("main".to_owned()),
@@ -1300,6 +1418,11 @@ impl MemoryGitProvider {
     pub fn refusing_stats(mut self) -> Self {
         self.refuse_stats = true;
         self
+    }
+
+    #[must_use]
+    pub fn fetches(&self) -> Vec<FetchBranchTarget> {
+        self.fetched.borrow().clone()
     }
 
     #[must_use]
@@ -1800,6 +1923,14 @@ impl GitProvider for MemoryGitProvider {
         Ok(())
     }
 
+    fn fetch_branch(&self, _repository: &Repository, target: &FetchBranchTarget) -> Result<String> {
+        if self.failing || self.refuse_network {
+            return self.refuse();
+        }
+        self.fetched.borrow_mut().push(target.clone());
+        Ok("Fetched selected branch".to_owned())
+    }
+
     fn pull(&self, _repository: &Repository) -> Result<String> {
         if self.failing || self.refuse_network {
             return self.refuse();
@@ -2020,6 +2151,10 @@ impl GitProvider for std::rc::Rc<MemoryGitProvider> {
 
     fn commit(&self, repository: &Repository, message: &str) -> Result<String> {
         self.as_ref().commit(repository, message)
+    }
+
+    fn fetch_branch(&self, repository: &Repository, target: &FetchBranchTarget) -> Result<String> {
+        self.as_ref().fetch_branch(repository, target)
     }
 
     fn pull(&self, repository: &Repository) -> Result<String> {

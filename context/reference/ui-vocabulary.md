@@ -100,8 +100,8 @@ them, regardless of which extensibility direction is chosen.
   discarded. The editable
   explorer and commit-message buffer are special;
   pathless scratch text is not. The complete scoped set is `Directory`,
-  `Settings`, `GitStatus`, `GitBranches`, `GitWorktrees`, `GitComparison`,
-  `GitRevisionDiff`, `GitLog`, `GitBlame`,
+  `Settings`, `GitStatus`, `GitBranches`, `GitConflicts`, `GitWorktrees`, `GitComparison`,
+  `GitRevisionDiff`, `GitNetwork`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
   `BindingScope`. `BindingScope::Markdown` is deliberately not in that set: it
   covers every Markdown document as well as the page rendered from one, so an
@@ -685,3 +685,38 @@ fresh physical action can approve. Prepared or dropped frames do not count.
 The bundled protocol 53 carries the frontend's presented frame with physical
 input. Repeats, macros, pointer input, paste and semantic commands cannot
 approve. The overlay consumes Enter; the terminal receives no submit key.
+
+## Commit network
+
+`[git network]` is a retained read-only special buffer, opened with `Space g n`.
+Its header identifies the captured scope and graph page. Each document row is
+one commit and contains the hash, grapheme-aware author initials, stable lanes,
+ref labels and subject. Connector geometry is document text, so search and
+selection cannot create or select a second commit from a connector-only row.
+Graph rows never wrap; horizontal scrolling reaches the full displayed text.
+Hashes are muted, HEAD has its own emphasis and lane colors use theme roles;
+shapes and labels retain meaning without color. ASCII glyphs are a Tab action.
+
+Adjacent forks and joins use one-row connectors. Crossings, octopus forks and
+lane overflow use labelled parent-lane destinations, with complete parent IDs
+available through Enter's ordinary commit detail. Shallow boundaries and graph
+limits are explicit text. Paging restores identical cached geometry; closing
+commit detail restores the graph's page, selected commit and viewport. Captured
+roots and labels remain fixed until explicit refresh; stale generations say so.
+Tab actions select all cached refs, HEAD or an exact captured full ref. Graph
+work runs on demand rather than on an idle timer.
+
+Private bundled-client protocol version 70 adds the text-role values `GitHash`,
+`GitHead`, `GitLane0`, `GitLane1`, `GitLane2` and `GitLane3`. These carry muted
+hashes, emphasized HEAD labels and the four repeating lane theme roles; graph
+geometry remains ordinary text. The public plugin contract is unchanged.
+
+
+Native Git merge reviews are management overlays rather than buffers. Their
+semantic `GitMergeReview` layout has a scrollable body, optional exact-branch
+acknowledgment input, and a pinned Approve/Cancel or Back/Cancel footer. Initial
+focus is Cancel; details retain the root selection and scroll and have no
+approval authority. Small terminals stack the footer actions when needed.
+`GitConflictFile` and `GitConflictMarkdown` are ordinary document contexts,
+with only contextual Tab actions added; the latter retains Markdown commands.
+The private bundled-client protocol version 71 adds this overlay kind/layout.

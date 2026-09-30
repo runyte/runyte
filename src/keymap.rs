@@ -238,10 +238,17 @@ pub enum BindingScope {
     Settings,
     GitStatus,
     GitBranches,
+    GitConflicts,
+    GitConflictFile,
+    GitConflictMarkdown,
+    GitMergeReview,
+    GitMergeDetail,
+    GitMergeInput,
     GitWorktrees,
     GitComparison,
     GitRevisionDiff,
     GitLog,
+    GitNetwork,
     GitBlame,
     GitStash,
     WorkspaceSearch,
@@ -276,11 +283,18 @@ impl BindingScope {
         Self::Settings,
         Self::GitStatus,
         Self::GitBranches,
+        Self::GitConflicts,
+        Self::GitConflictFile,
+        Self::GitConflictMarkdown,
+        Self::GitMergeReview,
+        Self::GitMergeDetail,
+        Self::GitMergeInput,
         Self::Terminal,
         Self::GitWorktrees,
         Self::GitComparison,
         Self::GitRevisionDiff,
         Self::GitLog,
+        Self::GitNetwork,
         Self::GitBlame,
         Self::GitStash,
         Self::WorkspaceSearch,
@@ -290,6 +304,16 @@ impl BindingScope {
         Self::Markdown,
         Self::SessionManager,
     ];
+
+    pub(crate) const fn is_merge_review(self) -> bool {
+        matches!(
+            self,
+            Self::GitMergeReview | Self::GitMergeDetail | Self::GitMergeInput
+        )
+    }
+    pub(crate) const fn owns_modal_input(self) -> bool {
+        self.is_merge_review() || matches!(self, Self::DirectoryTree)
+    }
 
     /// Whether the scope belongs to a generated view rather than to a document
     /// someone opened.
@@ -305,6 +329,11 @@ impl BindingScope {
                 | Self::Markdown
                 | Self::SessionManager
                 | Self::DirectoryTree
+                | Self::GitConflictFile
+                | Self::GitConflictMarkdown
+                | Self::GitMergeReview
+                | Self::GitMergeDetail
+                | Self::GitMergeInput
         )
     }
 }
@@ -419,6 +448,7 @@ impl Binding {
     /// including suffixes of the editor-owned window prefix.
     pub fn visible_in(&self, mode: Mode, scope: BindingScope) -> bool {
         self.is_active_in(mode)
+            && !(scope.is_merge_review() && self.scope == BindingScope::Global)
             && !(scope == BindingScope::Terminal
                 && matches!(mode, Mode::Insert | Mode::Replace)
                 && !self.actions.is_empty())
@@ -777,7 +807,7 @@ impl Keymap {
     fn rebuild_lookup_index(&mut self) {
         // Keep positions into the binding registry so cloned maps can update
         // descriptions without leaving lookup, help, and hints out of sync.
-        let mut scopes = vec![BindingScope::Global];
+        let mut scopes = BindingScope::ALL.to_vec();
         for binding in &self.bindings {
             if !scopes.contains(&binding.scope) {
                 scopes.push(binding.scope);
@@ -795,10 +825,9 @@ impl Keymap {
         ] {
             for &scope in &scopes {
                 if scope != BindingScope::Global
-                    && !self
-                        .bindings
-                        .iter()
-                        .any(|binding| binding.scope == scope && binding.is_active_in(mode))
+                    && !self.bindings.iter().any(|binding| {
+                        scope_includes(scope, binding.scope) && binding.is_active_in(mode)
+                    })
                 {
                     continue;
                 }
@@ -946,7 +975,7 @@ impl Keymap {
     pub fn context_actions(&self, scope: BindingScope) -> impl Iterator<Item = &ContextAction> {
         self.context_actions
             .iter()
-            .filter(move |action| action.scope == scope)
+            .filter(move |action| scope_includes(scope, action.scope))
     }
 
     pub fn all_context_actions(&self) -> &[ContextAction] {
@@ -1115,7 +1144,7 @@ impl Keymap {
     ) -> impl Iterator<Item = &BindingNamespace> {
         self.namespaces.iter().filter(move |namespace| {
             namespace.is_active_in(mode)
-                && (namespace.scope == BindingScope::Global
+                && ((!scope.is_merge_review() && namespace.scope == BindingScope::Global)
                     || scope_includes(scope, namespace.scope))
         })
     }
@@ -1141,7 +1170,11 @@ impl Keymap {
         let Some(entry) = self
             .lookup_index
             .get(&(mode, scope))
-            .or_else(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+            .or_else(|| {
+                (!scope.is_merge_review())
+                    .then(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+                    .flatten()
+            })
             .and_then(|sequences| sequences.get(sequence))
         else {
             return Lookup::NoMatch;
@@ -1202,6 +1235,10 @@ fn git_branches(sequence: impl Into<KeySequence>, command: EditorCommand) -> Bin
 
 fn git_worktrees(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
     Binding::implemented_in(MODAL, BindingScope::GitWorktrees, sequence, target)
+}
+
+fn git_network(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
+    Binding::implemented_in(MODAL, BindingScope::GitNetwork, sequence, target)
 }
 
 fn git_log(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
@@ -1692,6 +1729,10 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('g'), Key::char('l')],
             ColonCommand::GitLog,
         ),
+        primary_modal(
+            [Key::char(' '), Key::char('g'), Key::char('n')],
+            ColonCommand::GitNetwork,
+        ),
         // `f` reads as the finder wherever it appears, and this is a finder
         // over commits rather than the buffer search `/` now spells. Commits
         // are the only Git corpus large enough to need one; branches and
@@ -2069,8 +2110,172 @@ fn built_in_bindings() -> Vec<Binding> {
             Key::plain(KeyCode::Enter),
             ColonCommand::GitDiff,
         ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('a'),
+            Command::MergeReviewApprove,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('A'),
+            Command::MergeReviewApprove,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeReview,
+            Key::char('C'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewBack,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeDetail,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Escape),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Down),
+            Command::MergeReviewNext,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Up),
+            Command::MergeReviewPrevious,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Left),
+            Command::MergeReviewLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Right),
+            Command::MergeReviewRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::plain(KeyCode::Enter),
+            Command::MergeReviewEnter,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitMergeInput,
+            Key::ctrl('c'),
+            Command::MergeReviewCancel,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::GitConflicts,
+            Key::plain(KeyCode::Enter),
+            Command::OpenGitConflict,
+        ),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('g'), Key::char('c')],
+            Command::OpenGitConflicts,
+        ),
         git_branches(Key::plain(KeyCode::Enter), Command::CheckoutBranch),
         git_worktrees(Key::plain(KeyCode::Enter), Command::OpenWorktree),
+        git_network(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
+        git_network(Key::ctrl('n'), Command::NextGitNetworkPage),
+        git_network(Key::ctrl('p'), Command::PreviousGitNetworkPage),
         git_log(Key::plain(KeyCode::Enter), Command::OpenGitCommit),
         // Paging lives on Ctrl chords so the Git log keeps every motion key.
         git_log(Key::ctrl('n'), Command::NextGitLogPage),
@@ -2448,6 +2653,11 @@ fn with_fast_pane_keys(mut bindings: Vec<Binding>) -> Vec<Binding> {
 
 fn scope_includes(active: BindingScope, binding: BindingScope) -> bool {
     active == binding
+        || (active == BindingScope::GitConflictMarkdown
+            && matches!(
+                binding,
+                BindingScope::Markdown | BindingScope::GitConflictFile
+            ))
 }
 
 fn build_keymap(bindings: Vec<Binding>) -> Keymap {
@@ -2514,11 +2724,137 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
     let actions = vec![
         ContextAction::row(
             BindingScope::GitBranches,
+            Key::char('m'),
+            "merge",
+            EditorCommand::MergeBranch,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflicts,
+            Key::char('c'),
+            "continue",
+            EditorCommand::ContinueMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflicts,
+            Key::char('A'),
+            "abort",
+            EditorCommand::AbortMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitStatus,
+            Key::char('C'),
+            "continue",
+            EditorCommand::ContinueMerge,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitStatus,
+            Key::char('A'),
+            "abort",
+            EditorCommand::AbortMerge,
+        ),
+        ContextAction::row(
+            BindingScope::GitBranches,
+            Key::char('f'),
+            "fetch",
+            EditorCommand::FetchBranch,
+        ),
+        ContextAction::row(
+            BindingScope::GitBranches,
             Key::char('d'),
             "compare",
             ColonCommand::GitCompare,
         )
         .with_description("Compare committed tips with this branch"),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('d'),
+            "sides",
+            EditorCommand::InspectConflictSides,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('r'),
+            "resolve",
+            EditorCommand::ResolveConflict,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('R'),
+            "literal",
+            EditorCommand::ResolveConflictLiteralMarkers,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('O'),
+            "keepfile",
+            EditorCommand::KeepConflictFileCurrent,
+        ),
+        ContextAction::row(
+            BindingScope::GitConflicts,
+            Key::char('T'),
+            "takefile",
+            EditorCommand::TakeConflictFileOther,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('R'),
+            "literal",
+            EditorCommand::ResolveConflictLiteralMarkers,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('n'),
+            "next",
+            EditorCommand::NextConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('p'),
+            "previous",
+            EditorCommand::PreviousConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('o'),
+            "current",
+            EditorCommand::KeepConflictCurrent,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('t'),
+            "other",
+            EditorCommand::TakeConflictOther,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('d'),
+            "sides",
+            EditorCommand::InspectConflictSides,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('r'),
+            "resolve",
+            EditorCommand::ResolveConflict,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('l'),
+            "list",
+            EditorCommand::ReturnToGitConflicts,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('O'),
+            "keepfile",
+            EditorCommand::KeepConflictFileCurrent,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitConflictFile,
+            Key::char('T'),
+            "takefile",
+            EditorCommand::TakeConflictFileOther,
+        ),
         ContextAction::row(
             BindingScope::GitWorktrees,
             Key::char('d'),
@@ -2526,6 +2862,30 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             ColonCommand::GitCompare,
         )
         .with_description("Compare committed tips with this worktree"),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('a'),
+            "all",
+            ColonCommand::GitNetworkAll,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('h'),
+            "head",
+            ColonCommand::GitNetworkHead,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('r'),
+            "ref",
+            ColonCommand::GitNetworkChooseRef,
+        ),
+        ContextAction::buffer(
+            BindingScope::GitNetwork,
+            Key::char('g'),
+            "glyphs",
+            EditorCommand::ToggleGitNetworkAscii,
+        ),
         ContextAction::row(
             BindingScope::GitComparison,
             Key::char('d'),
@@ -3074,7 +3434,7 @@ mod tests {
         for (keymap_name, keymap) in built_in_keymaps() {
             for mode in [Mode::Normal, Mode::Select] {
                 for &scope in BindingScope::ALL {
-                    if scope == BindingScope::DirectoryTree {
+                    if scope.owns_modal_input() {
                         continue;
                     }
                     assert!(
@@ -3230,7 +3590,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 14,
+            special, 16,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }
@@ -3250,6 +3610,8 @@ mod tests {
         assert_eq!(
             actions,
             vec![
+                ("C".to_owned(), "git-merge-continue", ActionContext::Buffer),
+                ("A".to_owned(), "git-merge-abort", ActionContext::Buffer),
                 ("d".to_owned(), "git-diff-side-by-side", ActionContext::Row),
                 ("s".to_owned(), "git-stage", ActionContext::Row),
                 ("u".to_owned(), "git-unstage", ActionContext::Row),
@@ -3283,8 +3645,12 @@ mod tests {
         for scope in [
             BindingScope::GitStatus,
             BindingScope::GitBranches,
+            BindingScope::GitConflicts,
+            BindingScope::GitConflictFile,
+            BindingScope::GitConflictMarkdown,
             BindingScope::GitWorktrees,
             BindingScope::GitStash,
+            BindingScope::GitNetwork,
             BindingScope::Diff,
             BindingScope::Directory,
         ] {
@@ -3311,12 +3677,23 @@ mod tests {
         assert_eq!(
             named(BindingScope::GitBranches),
             vec![
+                ("m".to_owned(), "merge"),
+                ("f".to_owned(), "fetch"),
                 ("d".to_owned(), "compare"),
                 ("n".to_owned(), "create"),
                 ("w".to_owned(), "worktree"),
                 ("D".to_owned(), "delete"),
                 ("p".to_owned(), "pull"),
                 ("P".to_owned(), "push"),
+            ]
+        );
+        assert_eq!(
+            named(BindingScope::GitNetwork),
+            vec![
+                ("a".to_owned(), "all"),
+                ("h".to_owned(), "head"),
+                ("r".to_owned(), "ref"),
+                ("g".to_owned(), "glyphs"),
             ]
         );
         assert_eq!(

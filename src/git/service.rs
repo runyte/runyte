@@ -139,6 +139,13 @@ pub struct BlameSource {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum GitMutation {
+    Merge(Box<super::MergePlan>),
+    ResolveConflict(Box<super::ResolutionPlan>),
+    CommitMerge {
+        plan: Box<super::MergeCompletionPlan>,
+        message: String,
+    },
+    AbortMerge(Box<super::MergeCompletionPlan>),
     Stage(Vec<PathBuf>),
     Unstage(Vec<PathBuf>),
     Discard(Vec<PathBuf>),
@@ -160,6 +167,7 @@ pub enum GitMutation {
     Commit {
         message: String,
     },
+    FetchBranch(super::FetchBranchTarget),
     Pull,
     /// Replays the current branch's unpushed commits onto its upstream, which
     /// is what a reader confirms after [`GitMutation::Pull`] reports drift in
@@ -187,6 +195,7 @@ enum MutationIdentity {
     CreateTrackingBranch(String, String),
     DeleteBranch(String),
     Commit(String),
+    FetchBranch(super::FetchBranchTarget),
     Pull,
     RebaseOntoUpstream,
     Push(String),
@@ -210,6 +219,7 @@ impl GitMutation {
             }
             Self::DeleteBranch { plan, .. } => MutationIdentity::DeleteBranch(plan.branch.clone()),
             Self::Commit { message } => MutationIdentity::Commit(message.clone()),
+            Self::FetchBranch(target) => MutationIdentity::FetchBranch(target.clone()),
             Self::Pull => MutationIdentity::Pull,
             Self::RebaseOntoUpstream => MutationIdentity::RebaseOntoUpstream,
             Self::Push { branch } => MutationIdentity::Push(branch.clone()),
@@ -221,7 +231,11 @@ impl GitMutation {
             // Repeating an exact partial request after the first succeeds must
             // run and fail its fingerprint check, not be mistaken for a
             // harmless duplicate while queued behind it.
-            Self::PartialStage(_) => return None,
+            Self::PartialStage(_)
+            | Self::Merge(_)
+            | Self::ResolveConflict(_)
+            | Self::CommitMerge { .. }
+            | Self::AbortMerge(_) => return None,
         })
     }
 }
@@ -229,6 +243,10 @@ impl GitMutation {
 impl GitMutation {
     fn label(&self) -> &'static str {
         match self {
+            Self::Merge(_) => "apply reviewed merge",
+            Self::ResolveConflict(_) => "resolve reviewed conflict",
+            Self::CommitMerge { .. } => "commit reviewed merge",
+            Self::AbortMerge(_) => "abort reviewed merge",
             Self::Stage(_) => "stage",
             Self::Unstage(_) => "unstage",
             Self::Discard(_) => "discard",
@@ -237,6 +255,7 @@ impl GitMutation {
             Self::CreateTrackingBranch { .. } => "create tracking branch",
             Self::DeleteBranch { .. } => "delete branch",
             Self::Commit { .. } => "commit",
+            Self::FetchBranch(_) => "fetch branch",
             Self::Pull => "pull",
             Self::RebaseOntoUpstream => "rebase onto upstream",
             Self::Push { .. } => "push",
@@ -253,6 +272,28 @@ impl GitMutation {
 
 #[derive(Clone, Debug)]
 pub enum GitOperation {
+    ConflictSides {
+        repository: Repository,
+        entry: Box<super::ConflictEntry>,
+    },
+    PrepareMerge {
+        repository: Repository,
+        source: String,
+        guard: super::BufferRevisionGuard,
+    },
+    Conflicts {
+        repository: Repository,
+    },
+    PrepareResolution {
+        repository: Repository,
+        path: PathBuf,
+        choice: super::ResolutionChoice,
+        guard: super::BufferRevisionGuard,
+    },
+    PrepareMergeCompletion {
+        repository: Repository,
+        guard: super::BufferRevisionGuard,
+    },
     CompareRevisions {
         repository: Repository,
         target: super::ComparisonTarget,
@@ -301,6 +342,14 @@ pub enum GitOperation {
         repository: Repository,
         path: PathBuf,
     },
+    NetworkRoots {
+        repository: Repository,
+        scope: super::NetworkScope,
+    },
+    Network {
+        repository: Repository,
+        request: super::NetworkRequest,
+    },
     Log {
         repository: Repository,
         request: LogRequest,
@@ -346,7 +395,12 @@ impl GitOperation {
     fn repository_key(&self) -> PathBuf {
         match self {
             Self::Discover { start } => start.clone(),
-            Self::Status { repository }
+            Self::ConflictSides { repository, .. }
+            | Self::PrepareMerge { repository, .. }
+            | Self::Conflicts { repository }
+            | Self::PrepareResolution { repository, .. }
+            | Self::PrepareMergeCompletion { repository, .. }
+            | Self::Status { repository }
             | Self::StagedContent { repository, .. }
             | Self::Diff { repository, .. }
             | Self::CompareRevisions { repository, .. }
@@ -356,6 +410,8 @@ impl GitOperation {
             | Self::Worktrees { repository }
             | Self::PrepareBranchDeletion { repository, .. }
             | Self::PrepareWorktreeRemoval { repository, .. }
+            | Self::NetworkRoots { repository, .. }
+            | Self::Network { repository, .. }
             | Self::Log { repository, .. }
             | Self::SearchCommits { repository }
             | Self::Stashes { repository }
@@ -385,7 +441,14 @@ impl GitOperation {
     pub fn refreshes_ambient_snapshot(&self) -> bool {
         !matches!(
             self,
-            Self::CommitDetail { .. }
+            Self::ConflictSides { .. }
+                | Self::PrepareMerge { .. }
+                | Self::Conflicts { .. }
+                | Self::PrepareResolution { .. }
+                | Self::PrepareMergeCompletion { .. }
+                | Self::CommitDetail { .. }
+                | Self::NetworkRoots { .. }
+                | Self::Network { .. }
                 | Self::Blame { .. }
                 | Self::CompareRevisions { .. }
                 | Self::RevisionFile { .. }
@@ -407,6 +470,11 @@ impl GitOperation {
 
     pub(crate) fn label(&self) -> &'static str {
         match self {
+            Self::ConflictSides { .. } => "read conflict sides",
+            Self::PrepareMerge { .. } => "review merge",
+            Self::Conflicts { .. } => "read conflicts",
+            Self::PrepareResolution { .. } => "review conflict resolution",
+            Self::PrepareMergeCompletion { .. } => "review merge completion",
             Self::Discover { .. } => "discover repository",
             Self::Status { .. } => "refresh status",
             Self::StagedContent { .. } => "read staged base",
@@ -418,6 +486,8 @@ impl GitOperation {
             Self::Worktrees { .. } => "list worktrees",
             Self::PrepareBranchDeletion { .. } => "review branch deletion",
             Self::PrepareWorktreeRemoval { .. } => "review worktree removal",
+            Self::NetworkRoots { .. } => "check commit network roots",
+            Self::Network { .. } => "read commit network",
             Self::Log { .. } => "read log",
             Self::SearchCommits { .. } => "search commits",
             Self::Stashes { .. } => "list stashes",
@@ -432,7 +502,13 @@ impl GitOperation {
 
     fn read_key(&self) -> Option<ReadKey> {
         match self {
-            Self::CompareRevisions { .. } | Self::RevisionFile { .. } => None,
+            Self::ConflictSides { .. } => None,
+            Self::PrepareMerge { .. }
+            | Self::Conflicts { .. }
+            | Self::PrepareResolution { .. }
+            | Self::PrepareMergeCompletion { .. }
+            | Self::CompareRevisions { .. }
+            | Self::RevisionFile { .. } => None,
             Self::Discover { start } => Some(ReadKey::Discover(start.clone())),
             Self::Status { repository } => {
                 Some(ReadKey::Status(repository.workdir().to_path_buf()))
@@ -466,6 +542,17 @@ impl GitOperation {
                 Some(ReadKey::Worktrees(repository.workdir().to_path_buf()))
             }
             Self::PrepareBranchDeletion { .. } | Self::PrepareWorktreeRemoval { .. } => None,
+            Self::NetworkRoots { repository, scope } => Some(ReadKey::NetworkRoots(
+                repository.workdir().to_path_buf(),
+                scope.clone(),
+            )),
+            Self::Network {
+                repository,
+                request,
+            } => Some(ReadKey::Network(
+                repository.workdir().to_path_buf(),
+                request.clone(),
+            )),
             Self::Log {
                 repository,
                 request,
@@ -530,6 +617,18 @@ pub struct RepositorySnapshot {
 
 #[derive(Clone, Debug)]
 pub enum GitResponse {
+    Merged {
+        applied: super::MergeApplyResult,
+        response: Box<GitResponse>,
+    },
+    ConflictSides {
+        entry: super::ConflictEntry,
+        sides: [BaseContent; 3],
+    },
+    PreparedMerge(Box<super::MergePlan>),
+    Conflicts(super::ConflictInventory),
+    PreparedResolution(Box<super::ResolutionPlan>),
+    PreparedMergeCompletion(Box<super::MergeCompletionPlan>),
     RevisionComparison(super::RevisionComparison),
     RevisionFile(super::RevisionFileView),
     Discovered(Option<Repository>),
@@ -552,6 +651,15 @@ pub enum GitResponse {
     Worktrees(Vec<Worktree>),
     PreparedBranchDeletion(BranchDeletionPlan),
     PreparedWorktreeRemoval(WorktreeRemovalPlan),
+    NetworkRoots {
+        scope: super::NetworkScope,
+        roots: Vec<super::NetworkRoot>,
+        limited: bool,
+    },
+    Network {
+        request: super::NetworkRequest,
+        page: super::NetworkPage,
+    },
     Log {
         request: LogRequest,
         page: LogPage,
@@ -572,6 +680,15 @@ pub enum GitResponse {
         failure: Option<GitError>,
         snapshot: Box<Result<RepositorySnapshot>>,
     },
+}
+
+impl GitResponse {
+    pub fn underlying_response(&self) -> &Self {
+        match self {
+            Self::Merged { response, .. } => response.underlying_response(),
+            response => response,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -847,6 +964,8 @@ enum ReadKey {
     FileComparison(PathBuf, DiffScope, PathBuf),
     Branches(PathBuf),
     Worktrees(PathBuf),
+    NetworkRoots(PathBuf, super::NetworkScope),
+    Network(PathBuf, super::NetworkRequest),
     Log(PathBuf, LogRequest),
     SearchCommits(PathBuf),
     Stashes(PathBuf),
@@ -950,7 +1069,10 @@ fn schedule<W: GitServiceWorker>(
                     GitServiceState::Cancelled
                 } else if completion.result.is_err()
                     || matches!(
-                        &completion.result,
+                        completion
+                            .result
+                            .as_ref()
+                            .map(GitResponse::underlying_response),
                         Ok(GitResponse::Mutation {
                             failure: Some(_),
                             ..
@@ -1290,6 +1412,36 @@ fn execute(
         }
     }
     match operation {
+        GitOperation::ConflictSides { repository, entry } => provider
+            .conflict_sides(repository, entry)
+            .map(|sides| GitResponse::ConflictSides {
+                entry: entry.as_ref().clone(),
+                sides,
+            }),
+        GitOperation::PrepareMerge {
+            repository,
+            source,
+            guard,
+        } => provider
+            .prepare_merge(repository, source, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedMerge),
+        GitOperation::Conflicts { repository } => {
+            provider.conflicts(repository).map(GitResponse::Conflicts)
+        }
+        GitOperation::PrepareResolution {
+            repository,
+            path,
+            choice,
+            guard,
+        } => provider
+            .prepare_resolution(repository, path, *choice, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedResolution),
+        GitOperation::PrepareMergeCompletion { repository, guard } => provider
+            .prepare_merge_completion(repository, guard.clone())
+            .map(Box::new)
+            .map(GitResponse::PreparedMergeCompletion),
         GitOperation::CompareRevisions { repository, target } => provider
             .compare_revisions(repository, target)
             .map(GitResponse::RevisionComparison),
@@ -1351,6 +1503,22 @@ fn execute(
         GitOperation::PrepareWorktreeRemoval { repository, path } => provider
             .prepare_worktree_removal(repository, path)
             .map(GitResponse::PreparedWorktreeRemoval),
+        GitOperation::NetworkRoots { repository, scope } => provider
+            .network_roots(repository, scope)
+            .map(|(roots, limited)| GitResponse::NetworkRoots {
+                scope: scope.clone(),
+                roots,
+                limited,
+            }),
+        GitOperation::Network {
+            repository,
+            request,
+        } => provider
+            .network_page(repository, request)
+            .map(|page| GitResponse::Network {
+                request: request.clone(),
+                page,
+            }),
         GitOperation::Log {
             repository,
             request,
@@ -1398,6 +1566,45 @@ fn execute(
         } => {
             let mut applied_paths = Vec::new();
             let outcome: Result<Option<String>> = match mutation {
+                GitMutation::Merge(plan) => match provider.apply_merge(repository, plan) {
+                    Ok(applied) => {
+                        let summary = Some(
+                            match applied.outcome {
+                                super::MergeApplied::AlreadyContained => "Already up to date",
+                                super::MergeApplied::FastForward => "Fast-forward complete",
+                                super::MergeApplied::PendingCommit => "Merge ready to commit",
+                                super::MergeApplied::Conflicted => {
+                                    "Merge needs conflict resolution"
+                                }
+                            }
+                            .into(),
+                        );
+                        let response = mutation_response(
+                            provider,
+                            repository,
+                            mutation,
+                            spec,
+                            generation,
+                            MutationResultParts {
+                                applied_paths,
+                                summary,
+                                failure: None,
+                            },
+                        );
+                        return Ok(GitResponse::Merged {
+                            applied,
+                            response: Box::new(response),
+                        });
+                    }
+                    Err(error) => Err(error),
+                },
+                GitMutation::ResolveConflict(plan) => {
+                    provider.resolve_conflict(repository, plan).map(|_| None)
+                }
+                GitMutation::CommitMerge { plan, message } => {
+                    provider.commit_merge(repository, plan, message).map(Some)
+                }
+                GitMutation::AbortMerge(plan) => provider.abort_merge(repository, plan).map(Some),
                 GitMutation::Stage(paths) => {
                     mutate_paths(provider, repository, paths, true, &mut applied_paths)
                 }
@@ -1442,6 +1649,9 @@ fn execute(
                     .delete_branch_guarded(repository, plan, *authorization)
                     .map(|()| None),
                 GitMutation::Commit { message } => provider.commit(repository, message).map(Some),
+                GitMutation::FetchBranch(target) => {
+                    provider.fetch_branch(repository, target).map(Some)
+                }
                 GitMutation::Pull => provider.pull(repository).map(Some),
                 GitMutation::RebaseOntoUpstream => {
                     provider.rebase_onto_upstream(repository).map(Some)

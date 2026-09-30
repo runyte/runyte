@@ -71,6 +71,25 @@ impl GitCliProvider {
                 (oid, label)
             }
         };
+        self.read_tree_comparison(
+            repository,
+            target.clone(),
+            left_label,
+            right_label,
+            left_oid,
+            right_oid,
+        )
+    }
+
+    pub(super) fn read_tree_comparison(
+        &self,
+        repository: &Repository,
+        target: ComparisonTarget,
+        left_label: String,
+        right_label: String,
+        left_oid: String,
+        right_oid: String,
+    ) -> Result<RevisionComparison> {
         let base = [
             "--literal-pathspecs",
             "diff",
@@ -93,7 +112,7 @@ impl GitCliProvider {
                 .collect();
         let files = parse_files(&raw, &stats)?;
         Ok(RevisionComparison {
-            target: target.clone(),
+            target,
             left_label,
             right_label,
             left_oid,

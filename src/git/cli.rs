@@ -13,6 +13,10 @@
 //! [`GitError::TooLarge`].
 
 mod comparison;
+mod conflicts;
+mod fetch;
+mod merge;
+mod network;
 
 use std::{
     ffi::{OsStr, OsString},
@@ -955,7 +959,8 @@ impl GitCliProvider {
         arguments: &[S],
         limit: usize,
     ) -> Result<Vec<u8>> {
-        self.run_bounded_until(directory, arguments, limit, self.local_read_timeout)
+        self.run_bounded_until(directory, arguments, limit, self.local_read_timeout, false)
+            .map(|(_, output)| output)
     }
 
     fn run_bounded_until<S: AsRef<OsStr>>(
@@ -964,7 +969,8 @@ impl GitCliProvider {
         arguments: &[S],
         limit: usize,
         timeout: std::time::Duration,
-    ) -> Result<Vec<u8>> {
+        accept_conflict: bool,
+    ) -> Result<(bool, Vec<u8>)> {
         let described = self.describe(arguments);
         let pipe_finalizer = self.pipe_finalizer(directory)?;
         let (mut child, child_exit) = self.spawn(directory, arguments, false, false)?;
@@ -1044,7 +1050,7 @@ impl GitCliProvider {
                 limit,
             });
         }
-        if !status.success() {
+        if !status.success() && !(accept_conflict && status.code() == Some(1)) {
             return Err(GitError::Failed {
                 command: described,
                 code: status.code(),
@@ -1052,7 +1058,7 @@ impl GitCliProvider {
                 stderr: failure_output(&stdout, &stderr),
             });
         }
-        Ok(stdout)
+        Ok((status.success(), stdout))
     }
 
     fn run_with_input_bounded<S: AsRef<OsStr>>(
@@ -2233,6 +2239,89 @@ impl GitCliProvider {
 }
 
 impl GitProvider for GitCliProvider {
+    fn conflict_sides(
+        &self,
+        repository: &Repository,
+        entry: &super::ConflictEntry,
+    ) -> Result<[BaseContent; 3]> {
+        let content = |stage: &Option<super::ConflictStage>| match stage {
+            None => Ok(BaseContent::Absent),
+            Some(stage) if stage.mode == "160000" => Ok(BaseContent::Text(format!(
+                "Subproject commit {}\n",
+                stage.oid
+            ))),
+            Some(stage) if valid_object_id(&stage.oid) => {
+                self.object_content(repository, &stage.oid)
+            }
+            _ => Err(super::merge_unsupported()),
+        };
+        Ok([
+            content(&entry.base)?,
+            content(&entry.current)?,
+            content(&entry.other)?,
+        ])
+    }
+
+    fn operation_state(&self, repository: &Repository) -> Result<super::RepositoryOperation> {
+        self.inspect_operation(repository)
+    }
+    fn prepare_merge(
+        &self,
+        repository: &Repository,
+        source: &str,
+        guard: super::BufferRevisionGuard,
+    ) -> Result<super::MergePlan> {
+        self.prepare_reviewed_merge(repository, source, guard)
+    }
+    fn apply_merge(
+        &self,
+        repository: &Repository,
+        plan: &super::MergePlan,
+    ) -> Result<super::MergeApplyResult> {
+        self.apply_reviewed_merge(repository, plan)
+    }
+    fn conflicts(&self, repository: &Repository) -> Result<super::ConflictInventory> {
+        self.read_conflicts(repository)
+    }
+    fn prepare_resolution(
+        &self,
+        repository: &Repository,
+        path: &Path,
+        choice: super::ResolutionChoice,
+        guard: super::BufferRevisionGuard,
+    ) -> Result<super::ResolutionPlan> {
+        self.review_resolution(repository, path, choice, guard)
+    }
+    fn resolve_conflict(
+        &self,
+        repository: &Repository,
+        plan: &super::ResolutionPlan,
+    ) -> Result<super::ConflictInventory> {
+        self.apply_resolution(repository, plan)
+    }
+    fn prepare_merge_completion(
+        &self,
+        repository: &Repository,
+        guard: super::BufferRevisionGuard,
+    ) -> Result<super::MergeCompletionPlan> {
+        self.review_completion(repository, guard)
+    }
+    fn commit_merge(
+        &self,
+        repository: &Repository,
+        plan: &super::MergeCompletionPlan,
+        message: &str,
+    ) -> Result<String> {
+        self.finish_merge(repository, plan, message)
+    }
+    fn abort_merge(
+        &self,
+        repository: &Repository,
+        plan: &super::MergeCompletionPlan,
+    ) -> Result<String> {
+        self.cancel_merge(repository, plan)
+    }
+
     fn discover(&self, start: &Path) -> Result<Option<Repository>> {
         self.discover_with_marker_probe(start, has_git_marker)
     }
@@ -2632,6 +2721,22 @@ impl GitProvider for GitCliProvider {
             });
         }
         self.remove_worktree(repository, &plan.path)
+    }
+
+    fn network_roots(
+        &self,
+        repository: &Repository,
+        scope: &super::NetworkScope,
+    ) -> Result<(Vec<super::NetworkRoot>, bool)> {
+        self.read_network_roots(repository, scope)
+    }
+
+    fn network_page(
+        &self,
+        repository: &Repository,
+        request: &super::NetworkRequest,
+    ) -> Result<super::NetworkPage> {
+        self.read_network_page(repository, request)
     }
 
     fn log_page(&self, repository: &Repository, request: &LogRequest) -> Result<LogPage> {
@@ -3533,6 +3638,14 @@ impl GitProvider for GitCliProvider {
         .map(|_| ())
     }
 
+    fn fetch_branch(
+        &self,
+        repository: &Repository,
+        target: &super::FetchBranchTarget,
+    ) -> Result<String> {
+        self.fetch_selected_branch(repository, target)
+    }
+
     fn pull(&self, repository: &Repository) -> Result<String> {
         self.upstream_branch(repository, "git pull", "pull into", "pull from")?;
         // The fetch and the merge are run separately rather than as one `git
@@ -3715,21 +3828,15 @@ impl GitProvider for GitCliProvider {
     }
 
     fn commit(&self, repository: &Repository, message: &str) -> Result<String> {
-        // The message is one argument vector element, so nothing in it can be
-        // read as an option or as syntax however it is written.
-        //
-        // `--cleanup=whitespace` because the comment lines have already been
-        // removed here, the way Git removes them after an editor session; a
-        // stricter mode would then go on to strip content nobody asked it to.
-        self.run_text(
-            repository.workdir(),
-            &[
-                OsStr::new("commit"),
-                OsStr::new("--cleanup=whitespace"),
-                OsStr::new("-m"),
-                OsStr::new(message),
-            ],
-        )
+        if matches!(
+            self.inspect_operation(repository)?,
+            super::RepositoryOperation::Merge { .. }
+        ) {
+            return Err(merge::refusal(
+                "an active merge requires a fresh merge completion review before committing",
+            ));
+        }
+        self.commit_captured_message(repository, message)
     }
 
     fn unstage(&self, repository: &Repository, path: &Path) -> Result<()> {
@@ -4029,7 +4136,7 @@ fn stash_apply_error(error: GitError) -> GitError {
             code,
             signal,
             stderr: format!(
-                "{stderr}{}the stash was retained; resolve conflicts with an external Git tool",
+                "{stderr}{}the stash was retained; unresolved index stages require resolution",
                 if stderr.is_empty() { "" } else { "; " }
             ),
         },

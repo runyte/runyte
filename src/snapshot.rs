@@ -319,6 +319,7 @@ pub enum OverlayInput {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayout {
+    GitMergeReview,
     Standard,
     Preview,
     /// A single typed setting value.
@@ -347,6 +348,7 @@ impl OverlayAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayKind {
+    GitMergeReview,
     FilesystemConfirmation,
     FilePicker,
     ResultList,
@@ -372,6 +374,7 @@ impl OverlayKind {
     /// Exhaustive producer inventory used by contract tests. Adding an
     /// overlay kind therefore requires classifying it deliberately.
     pub const ALL: &'static [Self] = &[
+        Self::GitMergeReview,
         Self::FilesystemConfirmation,
         Self::FilePicker,
         Self::ResultList,
@@ -656,6 +659,12 @@ pub enum TextRunKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextRole {
     Plain,
+    GitHash,
+    GitHead,
+    GitLane0,
+    GitLane1,
+    GitLane2,
+    GitLane3,
     Selected,
     PrimarySelected,
     PrimaryCaret,
@@ -1516,15 +1525,18 @@ impl App {
         )
         .with_lone_range_shown(self.config.editor.selecting_motions);
         let mut role_at = |offset: Offset| {
-            if !active {
-                return TextRole::Plain;
+            let role = if !active {
+                TextRole::Plain
+            } else if let Some(preview) = preview {
+                preview.role_at(offset)
+            } else {
+                selection_roles.role_at(offset)
+            };
+            if role == TextRole::Plain {
+                self.network_role_at(pane.buffer, offset).unwrap_or(role)
+            } else {
+                role
             }
-            // An open search prompt draws what Enter would select in place of
-            // the selection it would replace.
-            if let Some(preview) = preview {
-                return preview.role_at(offset);
-            }
-            selection_roles.role_at(offset)
         };
         let label_at = |offset: Offset| {
             active
@@ -2441,7 +2453,7 @@ mod tests {
 
     #[test]
     fn overlay_kind_inventory_is_exhaustive_and_semantically_typed() {
-        assert_eq!(OverlayKind::ALL.len(), 16);
+        assert_eq!(OverlayKind::ALL.len(), 17);
         let mut app = App::new(Config::default(), None).unwrap();
         app.execute(crate::command::CommandInvocation::service_health())
             .unwrap();

@@ -74,6 +74,7 @@ unit_enum!(
     OverlayKind,
     core::OverlayKind,
     [
+        GitMergeReview,
         FilesystemConfirmation,
         FilePicker,
         ResultList,
@@ -116,13 +117,27 @@ unit_enum!(
 unit_enum!(
     OverlayLayout,
     core::OverlayLayout,
-    [Standard, Preview, Setting, SettingChoice, Anchored, Bottom]
+    [
+        GitMergeReview,
+        Standard,
+        Preview,
+        Setting,
+        SettingChoice,
+        Anchored,
+        Bottom
+    ]
 );
 unit_enum!(
     TextRole,
     core::TextRole,
     [
         Plain,
+        GitHash,
+        GitHead,
+        GitLane0,
+        GitLane1,
+        GitLane2,
+        GitLane3,
         Selected,
         PrimarySelected,
         PrimaryCaret,

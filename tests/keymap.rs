@@ -37,7 +37,7 @@ fn every_mode_sequence_is_unique_and_described() {
 #[test]
 fn git_namespace_keeps_only_navigation_and_refresh_commands() {
     let retained = [
-        " gg", " gd", " gD", " gr", " gt", " gf", " gl", " gb", " gB", " gw",
+        " gg", " gd", " gD", " gr", " gt", " gf", " gl", " gn", " gc", " gb", " gB", " gw",
     ];
     for keys in retained {
         assert!(
@@ -49,7 +49,22 @@ fn git_namespace_keeps_only_navigation_and_refresh_commands() {
         );
     }
 
-    for keys in [" ga", " gc", " gi", " gs", " gS", " gu"] {
+    for mode in [Mode::Normal, Mode::Select] {
+        for (keys, target) in [
+            (
+                " gc",
+                BindingTarget::Editor(EditorCommand::OpenGitConflicts),
+            ),
+            (" gn", BindingTarget::Colon(ColonCommand::GitNetwork)),
+        ] {
+            assert!(matches!(
+                default_keymap().lookup(mode, &sequence(keys)),
+                Lookup::Exact(binding) if binding.target == target
+            ));
+        }
+    }
+
+    for keys in [" ga", " gi", " gs", " gS", " gu"] {
         assert!(
             matches!(
                 default_keymap().lookup(Mode::Normal, &sequence(keys)),
@@ -159,15 +174,43 @@ fn finder_and_workspace_search_are_global_in_every_buffer_scope() {
 }
 
 /// `f` is the finder in every namespace it appears in, so the short spelling
-/// and the namespace spelling have to be the same command identity wherever a
-/// buffer scope can shadow a binding. The alias is advertised on the namespace
-/// row, but only the registry decides what either sequence runs.
+/// and the namespace spelling have to be the same command identity wherever an
+/// ordinary buffer scope can shadow a binding. Modal review scopes instead
+/// own their input and cannot dispatch either global finder spelling. The
+/// alias is advertised on the namespace row, but only the registry decides
+/// what either sequence runs.
 #[test]
 fn the_finders_short_spelling_matches_its_namespace_spelling_in_every_scope() {
     for &scope in BindingScope::ALL {
         for mode in [Mode::Normal, Mode::Select] {
             let short = default_keymap().lookup_in(mode, scope, &sequence(" f"));
             let namespaced = default_keymap().lookup_in(mode, scope, &sequence(" /f"));
+            if matches!(
+                scope,
+                BindingScope::GitMergeReview
+                    | BindingScope::GitMergeDetail
+                    | BindingScope::GitMergeInput
+            ) {
+                assert!(matches!(short, Lookup::NoMatch), "{scope:?} {mode:?}");
+                assert!(matches!(namespaced, Lookup::NoMatch), "{scope:?} {mode:?}");
+                assert!(matches!(
+                    default_keymap().lookup_in(
+                        mode,
+                        scope,
+                        &KeySequence::from(Key::plain(KeyCode::Enter))
+                    ),
+                    Lookup::Exact(binding)
+                        if binding.scope == scope
+                            && binding.target == BindingTarget::Editor(EditorCommand::MergeReviewEnter)
+                ));
+                assert!(
+                    default_keymap()
+                        .bindings_for_scope(mode, scope)
+                        .all(|binding| binding.scope == scope),
+                    "global bindings leaked into {scope:?} {mode:?}"
+                );
+                continue;
+            }
             let (Lookup::Exact(short), Lookup::Exact(namespaced)) = (short, namespaced) else {
                 panic!("the finder is unreachable in {scope:?} {mode:?}");
             };
