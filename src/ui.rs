@@ -2614,6 +2614,12 @@ fn text_run_style(
     let normal = Style::default().fg(foreground).bg(background);
     let base = match role {
         TextRole::Plain => normal,
+        TextRole::GitHash => normal.fg(theme.muted),
+        TextRole::GitHead => normal.fg(theme.accent).add_modifier(Modifier::BOLD),
+        TextRole::GitLane0 => normal.fg(theme.accent),
+        TextRole::GitLane1 => normal.fg(theme.change_added),
+        TextRole::GitLane2 => normal.fg(theme.directory),
+        TextRole::GitLane3 => normal.fg(theme.warning),
         TextRole::Selected => normal.bg(theme.selection),
         TextRole::PrimarySelected => normal.bg(theme.selection_primary),
         TextRole::PrimaryCaret => Style::default()

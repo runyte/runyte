@@ -4632,6 +4632,9 @@ impl App {
             Command::CreateWorktree => self.create_branch_worktree_prompt(),
             Command::CreateNewWorktree => self.create_worktree_prompt(true),
             Command::RemoveWorktree => self.remove_selected_worktree(),
+            Command::NextGitNetworkPage => self.next_git_network_page(),
+            Command::PreviousGitNetworkPage => self.previous_git_network_page(),
+            Command::ToggleGitNetworkAscii => self.toggle_git_network_ascii(),
             Command::NextGitLogPage => self.next_git_log_page(),
             Command::PreviousGitLogPage => self.previous_git_log_page(),
             Command::OpenGitCommit => self.open_selected_git_commit(),
@@ -6021,6 +6024,22 @@ impl App {
             }
             (Colon::GitWorktrees, InvocationParameters::None) => {
                 self.open_git_worktrees();
+                Ok(())
+            }
+            (Colon::GitNetwork | Colon::GitNetworkAll, InvocationParameters::None) => {
+                self.open_git_network(crate::git::NetworkScope::All);
+                Ok(())
+            }
+            (Colon::GitNetworkHead, InvocationParameters::None) => {
+                self.open_git_network(crate::git::NetworkScope::Head);
+                Ok(())
+            }
+            (Colon::GitNetworkChooseRef, InvocationParameters::None) => {
+                self.choose_git_network_ref();
+                Ok(())
+            }
+            (Colon::GitNetworkRef, InvocationParameters::OptionalText(Some(reference))) => {
+                self.open_git_network(crate::git::NetworkScope::Ref(reference));
                 Ok(())
             }
             (Colon::GitLog, InvocationParameters::None) => {

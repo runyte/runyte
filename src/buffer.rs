@@ -177,6 +177,7 @@ pub enum BufferKind {
     GitWorktrees,
     /// Bounded commit summaries, one stable object identity per row.
     GitLog,
+    GitNetwork,
     /// Live-buffer attribution, aligned one row per requested source line.
     GitBlame,
     GitStash,
@@ -2382,6 +2383,12 @@ impl Buffer {
         }
     }
 
+    pub fn git_network(text: &str) -> Self {
+        let mut buffer = Self::git_log(text);
+        buffer.kind = BufferKind::GitNetwork;
+        buffer
+    }
+
     pub fn git_log(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
@@ -2595,6 +2602,7 @@ impl Buffer {
             BufferKind::GitBranches => Some("the branch list is read-only"),
             BufferKind::GitConflicts => Some("the conflict list is read-only"),
             BufferKind::GitWorktrees => Some("the worktree list is read-only"),
+            BufferKind::GitNetwork => Some("the Git network is read-only"),
             BufferKind::GitLog => Some("the Git log is read-only"),
             BufferKind::GitBlame => Some("the Git blame view is read-only"),
             BufferKind::GitStash => Some("the Git stash list is read-only"),
@@ -2677,7 +2685,7 @@ impl Buffer {
     /// the whole file, would instead pay a pass over all of it for every frame
     /// it stays on screen, and is shown unwrapped.
     pub fn soft_wrap_viable(&self) -> bool {
-        self.longest_line <= SOFT_WRAP_LINE_LIMIT
+        !self.is_git_network() && self.longest_line <= SOFT_WRAP_LINE_LIMIT
     }
 
     pub fn setting_at(&self, row: usize) -> Option<SettingId> {
@@ -2704,6 +2712,10 @@ impl Buffer {
 
     pub fn is_git_worktrees(&self) -> bool {
         self.kind == BufferKind::GitWorktrees
+    }
+
+    pub fn is_git_network(&self) -> bool {
+        self.kind == BufferKind::GitNetwork
     }
 
     pub fn is_git_log(&self) -> bool {
@@ -2790,6 +2802,7 @@ impl Buffer {
             BufferKind::GitBranches => GIT_BRANCHES_NAME.to_owned(),
             BufferKind::GitConflicts => "[git conflicts]".to_owned(),
             BufferKind::GitWorktrees => GIT_WORKTREES_NAME.to_owned(),
+            BufferKind::GitNetwork => "[git network]".to_owned(),
             BufferKind::GitLog => GIT_LOG_NAME.to_owned(),
             BufferKind::GitBlame => GIT_BLAME_NAME.to_owned(),
             BufferKind::GitStash => GIT_STASH_NAME.to_owned(),
