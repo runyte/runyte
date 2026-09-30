@@ -1042,7 +1042,8 @@ const GIT_BRANCHES_OVERVIEW: &[&str] = &[
     "`Tab D` reviews a selected local branch: Enter is enough when an upstream or another local branch retains its tip; otherwise type the exact branch name. Cached upstream state reflects the last fetch.",
     "A branch checked out in a registered worktree takes that worktree, and the persistent session on it, with it. One confirmation names all three levels and always asks for the exact branch name; accepting stops the session, removes the worktree, then deletes the branch, and a failure at any level stops there. More than one checkout, or a checkout at this Runyte root, is still refused.",
     "`Tab p` fast-forwards the current branch onto what it tracks. When the two have both moved on it offers instead to replay the local commits on top of the upstream's: Enter rebases, Escape leaves the branch as it is, and a conflict undoes the replay rather than leaving a tree to resolve here. In the branch list it refuses a row that is not the current branch. `Tab P` publishes the selected branch, setting an upstream the first time; it never forces.",
-    "Both reach the network and hold the editor until the remote answers or two minutes pass. Nothing can prompt for a password while they run, so an authentication that needs one fails instead of hanging.",
+    "`Tab f` fetches just this cached remote branch or this local branch's configured remote upstream. It updates one remote-tracking ref, including a force-pushed tip, while preserving local branches, working files, other cached refs, and tags. Configure an upstream first when the local branch has none; a local `.` upstream cannot be fetched.",
+    "Fetch, pull, and push run in the background with a two-minute deadline, progress, and cancellation through `:git-cancel`. Nothing can prompt for a password while they run, so authentication that needs one fails instead of hanging.",
 ];
 
 const GIT_WORKTREES_OVERVIEW: &[&str] = &[

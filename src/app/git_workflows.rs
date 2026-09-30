@@ -1454,6 +1454,7 @@ impl App {
                     format!("deleted branch {}", plan.branch)
                 }
                 GitMutation::Commit { .. } => "committed".to_owned(),
+                GitMutation::FetchBranch(_) => "fetched selected branch".to_owned(),
                 GitMutation::Pull => "pull completed".to_owned(),
                 GitMutation::RebaseOntoUpstream => "replayed onto the upstream".to_owned(),
                 GitMutation::Push { branch } => format!("pushed {branch}"),
@@ -5564,7 +5565,7 @@ impl App {
     /// A branch that is no longer there — the one a delete just removed — leaves
     /// the caret on the row that took its place rather than jumping to the top,
     /// so a second delete is aimed where the reader is looking.
-    fn refresh_git_branches_buffer(&mut self, selected: &str) {
+    pub(super) fn refresh_git_branches_buffer(&mut self, selected: &str) {
         let Some(_buffer) = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_git_branches()).then_some(index)
         }) else {
@@ -5670,7 +5671,7 @@ impl App {
     ///
     /// Staging from the list changes what the list says, and re-opening it
     /// would throw away the row someone had just moved to.
-    fn refresh_git_status_buffer(&mut self) {
+    pub(super) fn refresh_git_status_buffer(&mut self) {
         let Some(buffer) = self.git_status_buffer() else {
             return;
         };

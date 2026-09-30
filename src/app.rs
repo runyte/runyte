@@ -268,6 +268,7 @@ mod file_workflows;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
 mod git_comparison;
+mod git_fetch;
 mod git_workflows;
 mod input;
 mod language_workflows;

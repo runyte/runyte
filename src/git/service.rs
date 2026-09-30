@@ -160,6 +160,7 @@ pub enum GitMutation {
     Commit {
         message: String,
     },
+    FetchBranch(super::FetchBranchTarget),
     Pull,
     /// Replays the current branch's unpushed commits onto its upstream, which
     /// is what a reader confirms after [`GitMutation::Pull`] reports drift in
@@ -187,6 +188,7 @@ enum MutationIdentity {
     CreateTrackingBranch(String, String),
     DeleteBranch(String),
     Commit(String),
+    FetchBranch(super::FetchBranchTarget),
     Pull,
     RebaseOntoUpstream,
     Push(String),
@@ -210,6 +212,7 @@ impl GitMutation {
             }
             Self::DeleteBranch { plan, .. } => MutationIdentity::DeleteBranch(plan.branch.clone()),
             Self::Commit { message } => MutationIdentity::Commit(message.clone()),
+            Self::FetchBranch(target) => MutationIdentity::FetchBranch(target.clone()),
             Self::Pull => MutationIdentity::Pull,
             Self::RebaseOntoUpstream => MutationIdentity::RebaseOntoUpstream,
             Self::Push { branch } => MutationIdentity::Push(branch.clone()),
@@ -237,6 +240,7 @@ impl GitMutation {
             Self::CreateTrackingBranch { .. } => "create tracking branch",
             Self::DeleteBranch { .. } => "delete branch",
             Self::Commit { .. } => "commit",
+            Self::FetchBranch(_) => "fetch branch",
             Self::Pull => "pull",
             Self::RebaseOntoUpstream => "rebase onto upstream",
             Self::Push { .. } => "push",
@@ -1442,6 +1446,9 @@ fn execute(
                     .delete_branch_guarded(repository, plan, *authorization)
                     .map(|()| None),
                 GitMutation::Commit { message } => provider.commit(repository, message).map(Some),
+                GitMutation::FetchBranch(target) => {
+                    provider.fetch_branch(repository, target).map(Some)
+                }
                 GitMutation::Pull => provider.pull(repository).map(Some),
                 GitMutation::RebaseOntoUpstream => {
                     provider.rebase_onto_upstream(repository).map(Some)

@@ -49,6 +49,7 @@ pub enum CommandCapability {
     LspDocument,
     LspManager,
     GitProject,
+    GitFetchBranch,
     /// Refresh a discovered repository or retry a failed discovery.
     GitRefresh,
     /// A persistent session host this editor can reach: the platform supports
@@ -784,6 +785,7 @@ editor_commands! {
     CheckoutBranch => ("checkout-branch", "Check out this branch locally"),
     CreateBranch => ("create-branch", "Create a branch at the one on this line and switch to it"),
     DeleteBranch => ("delete-branch", "Delete the branch on this line, after a confirmation"),
+    FetchBranch => ("git-fetch-branch", "Fetch this remote branch or local branch upstream"),
     PullBranch => ("pull-branch", "Fast-forward the current branch onto what it tracks"),
     PushBranch => ("push-branch", "Publish this branch to what it tracks"),
     OpenWorktree => ("open-worktree", "Attach to the worktree on this line"),
@@ -1044,6 +1046,7 @@ impl EditorCommand {
             | Self::TriggerCompletion
             | Self::RenameSymbol
             | Self::CodeAction => Some(CommandCapability::LspDocument),
+            Self::FetchBranch => Some(CommandCapability::GitFetchBranch),
             _ if matches!(self.category(), CommandCategory::Git) => {
                 Some(CommandCapability::GitProject)
             }
@@ -1330,6 +1333,7 @@ impl EditorCommand {
             | Self::CheckoutBranch
             | Self::CreateBranch
             | Self::DeleteBranch
+            | Self::FetchBranch
             | Self::PullBranch
             | Self::PushBranch => CommandCategory::Git,
             Self::OpenWorktree
@@ -2039,6 +2043,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "git-compare",
         "Compare with this branch or worktree",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::FetchBranch,
+        "git-fetch-branch",
+        [],
+        "git-fetch-branch",
         NoArguments
     ),
     spec!(
@@ -3020,7 +3031,8 @@ fn invocation_from_parts(
     match id {
         CommandId::Plugin(_) => Err(invalid()),
         CommandId::Editor(command) => match (command, argument) {
-            (EditorCommand::CloseWindow, ParsedArgument::None)
+            (EditorCommand::FetchBranch, ParsedArgument::None)
+            | (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)
             | (EditorCommand::OpenDirectoryFilePicker, ParsedArgument::None)
