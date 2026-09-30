@@ -171,7 +171,10 @@ impl App {
         }
     }
     pub(super) fn refresh_conflict_inventory(&mut self) {
-        if self.merge_ui.inventory.is_none() {
+        if self.merge_ui.inventory.as_ref().is_none_or(|i| {
+            matches!(i.operation, git::RepositoryOperation::Idle)
+                && self.merge_ui.conflict_buffer.is_none()
+        }) {
             return;
         }
         if let Some(repository) = self.git.repository().cloned()

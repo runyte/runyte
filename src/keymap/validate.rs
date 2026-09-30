@@ -71,7 +71,9 @@ pub fn validate(
             } else {
                 bindings
                     .iter()
-                    .filter(|binding| binding.is_active_in(mode) && binding.scope == scope)
+                    .filter(|binding| {
+                        binding.is_active_in(mode) && super::scope_includes(scope, binding.scope)
+                    })
                     .collect::<Vec<_>>()
             };
             let scoped_sequences = scoped
@@ -138,12 +140,15 @@ pub fn validate(
             // The sidebar owns input independently of the document pane. Its
             // navigation keys intentionally replace document motions while it
             // has focus; ordinary buffer scopes still may only add bindings.
-            if scope != BindingScope::Global && scope != BindingScope::DirectoryTree {
+            if scope != BindingScope::Global && !scope.owns_modal_input() {
                 let globals_by_sequence = globals
                     .iter()
                     .map(|binding| (&binding.sequence, *binding))
                     .collect::<HashMap<_, _>>();
-                for scoped in effective.iter().filter(|binding| binding.scope == scope) {
+                for scoped in effective
+                    .iter()
+                    .filter(|binding| super::scope_includes(scope, binding.scope))
+                {
                     if let Some(global) = globals_by_sequence.get(&scoped.sequence) {
                         violations.push(Violation {
                             kind: ViolationKind::GlobalScopedShadowing,

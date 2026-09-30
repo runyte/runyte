@@ -360,7 +360,7 @@ impl App {
             .body
             .height,
         )
-        .max(1);
+        .clamp(1, 510);
         if review.detail.is_none() && review.focus < review.rows.len() {
             if review.focus < review.root_scroll {
                 review.root_scroll = review.focus;

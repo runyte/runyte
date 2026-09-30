@@ -6777,6 +6777,29 @@ fn a_failed_mutation_snapshot_schedules_immediate_reconciliation() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn complete_idle_commit_operation_preflight(
+    app: &mut App,
+    operations: &std::sync::mpsc::Receiver<GitOperation>,
+) {
+    let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(operation, GitOperation::Conflicts { .. }));
+    let id = app.merge_ui.commit_preflight.as_ref().unwrap().0;
+    app.apply_git_service_event(GitServiceEvent::Completed {
+        id,
+        operation,
+        result: Box::new(Ok(GitResponse::Conflicts(crate::git::ConflictInventory {
+            operation: crate::git::RepositoryOperation::Idle,
+            head_oid: Some("a".repeat(40)),
+            entries: vec![],
+            index_identity: "idle-index".into(),
+            current_identity: "main".into(),
+            other_identity: "absent".into(),
+        }))),
+        state: GitServiceState::Completed,
+        coalesced: false,
+    });
+}
+
 #[test]
 fn commit_open_waits_for_the_refreshed_index() {
     use crate::git::{Divergence, FileState, FileStatus, Head, RepositoryStatus, StatusStats};
@@ -6806,6 +6829,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         .unwrap();
 
     app.open_commit_message();
+    complete_idle_commit_operation_preflight(&mut app, &operations);
 
     let operation = operations
         .recv_timeout(std::time::Duration::from_secs(1))
@@ -6821,7 +6845,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         files: Vec::new(),
     };
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(2),
+        id: GitRequestId::from_raw(3),
         operation,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: repository.clone(),
@@ -6863,7 +6887,7 @@ fn commit_open_waits_for_the_refreshed_index() {
         }],
     };
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(3),
+        id: GitRequestId::from_raw(4),
         operation: retry,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository,
@@ -6914,12 +6938,13 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
     app.open_commit_message();
+    complete_idle_commit_operation_preflight(&mut app, &operations);
     let operation = operations
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(2),
+        id: GitRequestId::from_raw(3),
         operation,
         result: Box::new(Err(crate::git::GitError::Failed {
             command: "refresh Git".to_owned(),
@@ -6937,7 +6962,7 @@ fn cancelling_a_coalesced_commit_check_does_not_reopen_the_intent() {
         .unwrap();
     assert!(matches!(reconciliation, GitOperation::Refresh { .. }));
     app.apply_git_service_event(GitServiceEvent::Completed {
-        id: GitRequestId::from_raw(3),
+        id: GitRequestId::from_raw(4),
         operation: reconciliation,
         result: Box::new(Ok(GitResponse::Snapshot(Box::new(RepositorySnapshot {
             repository: Repository::new(&root),

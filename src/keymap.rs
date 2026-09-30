@@ -305,6 +305,16 @@ impl BindingScope {
         Self::SessionManager,
     ];
 
+    pub(crate) const fn is_merge_review(self) -> bool {
+        matches!(
+            self,
+            Self::GitMergeReview | Self::GitMergeDetail | Self::GitMergeInput
+        )
+    }
+    pub(crate) const fn owns_modal_input(self) -> bool {
+        self.is_merge_review() || matches!(self, Self::DirectoryTree)
+    }
+
     /// Whether the scope belongs to a generated view rather than to a document
     /// someone opened.
     ///
@@ -438,6 +448,7 @@ impl Binding {
     /// including suffixes of the editor-owned window prefix.
     pub fn visible_in(&self, mode: Mode, scope: BindingScope) -> bool {
         self.is_active_in(mode)
+            && !(scope.is_merge_review() && self.scope == BindingScope::Global)
             && !(scope == BindingScope::Terminal
                 && matches!(mode, Mode::Insert | Mode::Replace)
                 && !self.actions.is_empty())
@@ -796,7 +807,7 @@ impl Keymap {
     fn rebuild_lookup_index(&mut self) {
         // Keep positions into the binding registry so cloned maps can update
         // descriptions without leaving lookup, help, and hints out of sync.
-        let mut scopes = vec![BindingScope::Global];
+        let mut scopes = BindingScope::ALL.to_vec();
         for binding in &self.bindings {
             if !scopes.contains(&binding.scope) {
                 scopes.push(binding.scope);
@@ -814,10 +825,9 @@ impl Keymap {
         ] {
             for &scope in &scopes {
                 if scope != BindingScope::Global
-                    && !self
-                        .bindings
-                        .iter()
-                        .any(|binding| binding.scope == scope && binding.is_active_in(mode))
+                    && !self.bindings.iter().any(|binding| {
+                        scope_includes(scope, binding.scope) && binding.is_active_in(mode)
+                    })
                 {
                     continue;
                 }
@@ -1134,7 +1144,7 @@ impl Keymap {
     ) -> impl Iterator<Item = &BindingNamespace> {
         self.namespaces.iter().filter(move |namespace| {
             namespace.is_active_in(mode)
-                && (namespace.scope == BindingScope::Global
+                && ((!scope.is_merge_review() && namespace.scope == BindingScope::Global)
                     || scope_includes(scope, namespace.scope))
         })
     }
@@ -3420,7 +3430,7 @@ mod tests {
         for (keymap_name, keymap) in built_in_keymaps() {
             for mode in [Mode::Normal, Mode::Select] {
                 for &scope in BindingScope::ALL {
-                    if scope == BindingScope::DirectoryTree {
+                    if scope.owns_modal_input() {
                         continue;
                     }
                     assert!(
