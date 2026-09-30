@@ -3132,6 +3132,7 @@ Remote
 | `Tab w` | Create a worktree for this branch; attach in persistent mode |
 | `Tab d` | Compare committed tips with this branch |
 | `Tab D` | Delete this local branch, with its worktree and session, after a confirmation |
+| `Tab f` | Fetch this cached remote branch or this local branch's upstream |
 | `Tab p` | Fast-forward the current local branch onto what it tracks |
 | `Tab P` | Publish this local branch to what it tracks |
 
@@ -3428,11 +3429,31 @@ Creating a stash uses a command that names its scope:
 - An apply conflict keeps the stash and reports that resolving it belongs in
   an external Git tool.
 
-### Pull and push
+### Fetch, pull, and push
 
-Pull and push are the only commands here that use the network. They are
-`Tab p` and `Tab P` in the branch list and the changed-file list. Fetch has no
-binding; `:git-refresh` re-reads what is already local.
+`Tab f` in the branch list fetches one branch. Pull and push use `Tab p` and
+`Tab P` in the branch list and the changed-file list. `:git-refresh` re-reads
+what is already local.
+
+#### Fetch (`Tab f`)
+
+- A remote row fetches its exact server branch into the selected remote-tracking
+  ref. A local row fetches its configured upstream, including a differently
+  named or currently missing upstream.
+- Configure a remote upstream first for a local branch that has none. A local
+  `.` upstream is not a network target. Excluded or ambiguous fetch mappings,
+  symbolic destinations, and mappings outside `refs/remotes/` are refused.
+- Only the selected remote-tracking ref changes. Other cached branches and tags
+  stay in place; no pruning or tag fetching occurs. A force-pushed upstream may
+  replace that cached ref, and the retained Git operation notification identifies
+  the forced update.
+- Local branches, the index, and working files remain intact. Unsaved buffers
+  and a dirty working tree do not prevent fetching.
+- The branch list refreshes and retains its selected ref, including after
+  failure or cancellation. Discovering branches not yet known locally belongs
+  in an external Git tool; there is no whole-remote fetch action.
+
+`:git-fetch-branch` performs the same action on the selected branch-list row.
 
 #### Pull (`Tab p`)
 
@@ -3476,7 +3497,7 @@ Escape leaves the branch as it was.
 
 ### Background operation and failures
 
-Git discovery, reads, mutations, hooks, pull, and push run on a bounded
+Git discovery, reads, mutations, hooks, fetch, pull, and push run on a bounded
 background service, so editing and rendering continue while they queue or run.
 
 **Progress.** A long mutation temporarily replaces the status row with the
@@ -4971,6 +4992,7 @@ The working directory starts where Runyte was launched.
 | `:git-discard` | Throw away a file's uncommitted changes, after a confirmation |
 | `:git-commit` | Write a message and commit what is staged |
 | `:git-branches` | Open the local and cached remote branch list |
+| `:git-fetch-branch` | Fetch the selected cached remote branch or local upstream |
 | `:git-worktrees` | Open the repository worktree list |
 | `:git-compare` | Compare committed tips with the selected branch or worktree |
 | `:git-log` | Open the Git log, or refresh it from its first page |
@@ -6634,6 +6656,7 @@ with `{ command: name, argument: text }`.
 | `close!` | `close!` | Close the active buffer and discard its unsaved text |
 | `git-compare` | `git-compare` | Compare with this branch or worktree |
 | `git-branches` | `git-branches` | Open the local and remote branch list |
+| `git-fetch-branch` | `git-fetch-branch` | Fetch this remote branch or local branch upstream |
 | `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
 | `git-search-commits` | `git-search-commits` | Fuzzy-search commits reachable from HEAD by message, object ID, author, or date |
 | `git-blame` | `git-blame` | Show attribution for the primary line using live buffer text |

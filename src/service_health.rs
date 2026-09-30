@@ -77,6 +77,7 @@ pub struct AppCapabilitySnapshot {
     pub lsp_document: CommandAvailability,
     pub git_project: CommandAvailability,
     pub git_refresh: CommandAvailability,
+    pub git_fetch_branch: CommandAvailability,
     pub persistent_session: CommandAvailability,
     pub session_controls: CommandAvailability,
 }
@@ -99,6 +100,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::LspManager => self.lsp_manager.clone(),
             CommandCapability::GitProject => self.git_project.clone(),
             CommandCapability::GitRefresh => self.git_refresh.clone(),
+            CommandCapability::GitFetchBranch => self.git_fetch_branch.clone(),
             CommandCapability::PersistentSession => self.persistent_session.clone(),
             CommandCapability::SessionControls => self.session_controls.clone(),
         }
@@ -299,6 +301,7 @@ mod tests {
             lsp_document: CommandAvailability::Unavailable("no configured server".to_owned()),
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
+            git_fetch_branch: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Unavailable(
                 PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
             ),

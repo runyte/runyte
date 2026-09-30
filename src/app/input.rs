@@ -279,12 +279,20 @@ impl App {
         } else {
             git_project.clone()
         };
+        let git_fetch_branch = if git_project.is_available() {
+            self.selected_fetch_target()
+                .map(|_| CommandAvailability::Available)
+                .unwrap_or_else(CommandAvailability::Unavailable)
+        } else {
+            git_project.clone()
+        };
         AppCapabilitySnapshot {
             syntax,
             lsp_manager,
             lsp_document,
             git_project,
             git_refresh,
+            git_fetch_branch,
             persistent_session: persistent_session_availability(
                 cfg!(any(unix, windows)),
                 self.persistent_session,
@@ -4518,6 +4526,7 @@ impl App {
             Command::CheckoutBranch => self.checkout_selected_branch(),
             Command::CreateBranch => self.create_branch_prompt(),
             Command::DeleteBranch => self.delete_selected_branch(),
+            Command::FetchBranch => self.fetch_selected_branch(),
             Command::PullBranch => self.pull_current_branch(),
             Command::PushBranch => self.push_selected_branch(),
             Command::OpenWorktree => self.open_selected_worktree(),

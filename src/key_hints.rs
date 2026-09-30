@@ -229,6 +229,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
                 crate::command::CommandCapability::GitProject
                 | crate::command::CommandCapability::GitRefresh,
             ) => " no Git",
+            Some(crate::command::CommandCapability::GitFetchBranch) => " unavailable",
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
             Some(crate::command::CommandCapability::SessionControls) => " session controls",
             None => " unavailable",
@@ -829,6 +830,7 @@ mod tests {
                 "Git repository discovery failed".to_owned(),
             ),
             git_refresh: CommandAvailability::Available,
+            git_fetch_branch: CommandAvailability::Available,
             persistent_session: CommandAvailability::Unavailable(
                 "needs workspace.mode: persistent".to_owned(),
             ),
@@ -1000,6 +1002,7 @@ mod tests {
             ),
             git_project: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             git_refresh: CommandAvailability::Unavailable("not a Git repository".to_owned()),
+            git_fetch_branch: CommandAvailability::Unavailable("not a Git repository".to_owned()),
             persistent_session: CommandAvailability::Available,
             session_controls: CommandAvailability::Available,
         };
@@ -1050,6 +1053,7 @@ mod tests {
             lsp_document: CommandAvailability::Available,
             git_project: CommandAvailability::Available,
             git_refresh: CommandAvailability::Available,
+            git_fetch_branch: CommandAvailability::Available,
             session_controls: persistent_session.clone(),
             persistent_session,
         };
