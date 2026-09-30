@@ -961,6 +961,8 @@ impl App {
             BindingScope::GitBranches
         } else if self.active_buffer().is_git_worktrees() {
             BindingScope::GitWorktrees
+        } else if self.active_buffer().is_git_network() {
+            BindingScope::GitNetwork
         } else if self.active_buffer().is_git_log() {
             BindingScope::GitLog
         } else if self.active_buffer().is_git_blame() {

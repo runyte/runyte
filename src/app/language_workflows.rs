@@ -3370,6 +3370,7 @@ impl App {
             | BufferKind::GitBranches
             | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
+            | BufferKind::GitNetwork
             | BufferKind::GitLog
             | BufferKind::GitBlame
             | BufferKind::GitStash
@@ -3477,6 +3478,7 @@ impl App {
             | BufferKind::GitBranches
             | BufferKind::GitConflicts
             | BufferKind::GitWorktrees
+            | BufferKind::GitNetwork
             | BufferKind::GitLog
             | BufferKind::GitBlame
             | BufferKind::GitStash
@@ -3576,6 +3578,7 @@ impl App {
 
     pub(super) fn close_buffer(&mut self, buffer: usize) {
         self.retire_buffer(buffer, true);
+        self.restore_network_return(buffer);
     }
 
     fn retire_buffer(&mut self, buffer: usize, announce: bool) {
@@ -3968,6 +3971,9 @@ impl App {
                 self.jump_to_syntax_outline(buffer, target)
             }
             Some(ListAction::Macro(register)) => self.replay_macro(register, 1)?,
+            Some(ListAction::GitNetworkRef(reference)) => {
+                self.open_git_network(crate::git::NetworkScope::Ref(reference))
+            }
             Some(ListAction::GitCommit(oid)) => self.open_git_commit_oid(oid),
             Some(ListAction::CheckoutGitBranch(branch)) => {
                 self.checkout_local_branch_named(&branch)

@@ -2881,6 +2881,7 @@ Otherwise there is simply no gutter and no branch in the status line, and the
 | `Space g b` | List local and cached remote branches and check one out locally |
 | `Space g w` | Open the repository worktree list |
 | `Space g l` | Open paged commit history |
+| `Space g n` | Open the cached commit network |
 | `Space g f` | Fuzzy-search commits in a hash/title list with author, date, and full-message preview |
 | `Space g B` | Open live-buffer attribution for the whole file |
 | `Space g t` | Open the bounded stash list |
@@ -3372,6 +3373,48 @@ Git's topological order.
   even if new commits appeared above; otherwise the nearest row. Only the
   first page refreshes automatically; later pages sit behind a commit boundary
   and cannot change.
+
+#### Commit network
+
+`Space g n` opens `[git network]`, a read-only graph of commits reachable from
+local branches, cached remote branches, tags, and HEAD. Opening it never fetches.
+Each document row names exactly one commit: a 12-character hash, Unicode author
+initials, graph lanes, captured refs, and subject. HEAD has a distinct label;
+lane colors accompany visible node and edge shapes. The graph does not wrap;
+horizontal scrolling reaches long labels and subjects.
+
+Enter opens the ordinary full commit detail, including all merge parents.
+Closing that detail returns to the same graph page, commit and viewport.
+`Ctrl-n` and `Ctrl-p` move forward and backward through cached 200-commit pages,
+so returning to an earlier page preserves its exact lanes. The first line names
+the scope, page, continuation and any limit. Tab opens these registered actions:
+
+| Action | Default key | Colon command |
+| --- | --- | --- |
+| All cached refs and HEAD | `Tab a` | `:git-network-all` |
+| Current HEAD only | `Tab h` | `:git-network-head` |
+| Choose an exact captured ref | `Tab r` | `:git-network-choose-ref` |
+| Toggle ASCII graph glyphs | `Tab g` | `:toggle-git-network-ascii` |
+| Next graph page | `Ctrl-n` | `:next-git-network-page` |
+| Previous graph page | `Ctrl-p` | `:previous-git-network-page` |
+
+`:git-network-ref refs/heads/main` selects an exact full ref directly.
+`:git-network` or `Space r` explicitly captures new roots; refreshing keeps the
+selected object while it remains within the bounded traversal. Page continuation
+uses the original object IDs and labels even if refs move, and marks that
+generation stale. No remote access or idle graph scan runs.
+
+Ordinary forks and joins use connectors on the commit row. Crossings and larger
+forks that cannot fit unambiguously show a labelled parent-lane route instead;
+`overflow` preserves an edge whose lane cannot fit. Enter exposes the full
+parent IDs. Shallow boundaries are labelled. The limits are 256 captured refs
+plus HEAD, 16 lanes, 50 retained pages and 10,000 traversed commits per generation, with a 2 MiB
+subprocess-output bound per read. An atomic refresh temporarily retains at most
+two bounded generations until the replacement can preserve the selected commit.
+Graph traversal reads immutable object ancestry without replacement refs; changing
+shallow boundaries requires a fresh generation. An explicit graph-limit state recommends
+narrowing the scope instead of silently dropping ancestry. The page is ordinary
+buffer text for movement, search, selections, copying, splits and retention.
 
 #### Searching commits
 
@@ -4996,6 +5039,10 @@ The working directory starts where Runyte was launched.
 | `:git-worktrees` | Open the repository worktree list |
 | `:git-compare` | Compare committed tips with the selected branch or worktree |
 | `:git-log` | Open the Git log, or refresh it from its first page |
+| `:git-network` | Open or refresh the cached commit network |
+| `:git-network-head` / `:git-network-all` | Restrict the network to HEAD / all cached refs |
+| `:git-network-choose-ref` | Choose a captured full ref |
+| `:git-network-ref <full-ref>` | Restrict the network to an exact full ref |
 | `:git-search-commits` | Fuzzy-search commits by message, ID, author, or date with a full-message preview |
 | `:git-blame` | Show live-buffer attribution for the primary line |
 | `:git-blame-file` | Open full-file live-buffer attribution |
@@ -6658,6 +6705,11 @@ with `{ command: name, argument: text }`.
 | `git-branches` | `git-branches` | Open the local and remote branch list |
 | `git-fetch-branch` | `git-fetch-branch` | Fetch this remote branch or local branch upstream |
 | `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
+| `git-network` | `git-network` | Open or refresh the cached commit network |
+| `git-network-head` | `git-network-head` | Restrict the commit network to HEAD |
+| `git-network-all` | `git-network-all` | Show all cached refs and HEAD |
+| `git-network-choose-ref` | `git-network-choose-ref` | Choose a captured exact ref |
+| `git-network-ref` | `git-network-ref <full-ref>` | Restrict the commit network to an exact full ref |
 | `git-search-commits` | `git-search-commits` | Fuzzy-search commits reachable from HEAD by message, object ID, author, or date |
 | `git-blame` | `git-blame` | Show attribution for the primary line using live buffer text |
 | `git-blame-file` | `git-blame-file` | Open full-file attribution using live buffer text |
