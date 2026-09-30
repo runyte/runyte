@@ -12,6 +12,7 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub(super) struct MergeUi {
     pub review: Option<super::git_merge_review::MergeReview>,
+    pub editor_area: Option<crate::layout::Rect>,
     pub keys: crate::keymap::KeySequence,
     pub pending: Option<PendingReview>,
     pub inventory: Option<ConflictInventory>,

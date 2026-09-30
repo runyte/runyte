@@ -405,6 +405,8 @@ impl App {
             .retain(visible_git, self.diffs.iter().map(DiffSession::id));
         self.refresh_search_preview();
         self.directory_tree.poll();
+        self.merge_ui.editor_area = Some(geometry.editor);
+        self.reflow_merge_review();
         self.areas.clear();
         let tree_area = if self.directory_tree.visible
             && self.maximized.is_none()
