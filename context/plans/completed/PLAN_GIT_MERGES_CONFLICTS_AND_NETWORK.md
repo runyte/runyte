@@ -1,8 +1,108 @@
 # Git merges conflicts and network view
 
-Status: active. Approved for implementation on 2026-09-30.
+Status: completed on 2026-09-30. Native platform CI acceptance remains pending.
 
 Created: 2026-09-30. Source baseline: `47d955c`.
+
+## Delivery and acceptance record
+
+The plan was committed before implementation as `54b1e55`. Sol High subagents
+implemented the backend, fetching, network, merge/conflict workflows, rendering,
+and lifecycle tests in separate worktrees. Reviewed slices and review corrections
+were merged into `exp`; `9bd991e` is the final integrated implementation revision.
+
+Delivered behavior:
+
+- Branch-list `Tab m` opens a cancellable, nested merge review for every valid
+  outcome. Applying a true merge leaves it uncommitted; a separate reviewed
+  Continue action and merge-message save create the commit. Fast-forwards require
+  approval, and already-contained sources remain inspectable without mutation.
+- Branch-list `Tab f` fetches only the selected cached remote branch or local
+  branch's configured upstream, preserving unrelated refs and tags.
+- `Space g c` opens index-backed conflicts with transactional region choices,
+  ordinary manual editing, reviewed whole-file staging, and guarded continuation
+  and abort. Merge-message ownership survives a failed hook without weakening
+  the captured disk, index, or buffer checks.
+- `Space g n` opens the cached commit network with hashes, initials, themed lanes,
+  ref labels, subjects, stable paging, scope selection, ASCII fallback, and
+  existing commit-detail navigation.
+
+Current user-facing behavior is documented in `docs/user-guide.md`, the README,
+keymap register, and UI vocabulary. The private bundled-client protocol is now
+version 71; the public plugin contract is unchanged. New Git work runs through
+existing asynchronous service ownership, with no new startup scan or idle timer.
+
+At `9bd991e`, native Linux validation passed `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, `cargo test`,
+`cargo llvm-cov --locked --workspace`, and `cargo build --release --locked`.
+Both ordinary and instrumented suites passed 4,325 tests with 41 ignored.
+Canonical line coverage is 91.80%, above the unchanged 89% floor; complete counts
+are recorded in `context/reference/test-coverage.md`. Review and regression tests
+cover real repositories, stale approvals, content/mode preservation, hook retry,
+message-buffer ownership, modal input, small-terminal footer geometry, unusual
+histories, immutable graph generations, and traversal limits.
+
+Native macOS coverage and Windows build/lint/test acceptance were not run in
+this Linux workspace. Those remain required by the existing CI jobs; this record
+does not claim cross-platform execution.
+
+### Large-history and idle measurements
+
+Measured the ordinary release binary at `9bd991e` on native x86-64 Linux with
+Git 2.55.0, Rust 1.97.1, and an AMD Ryzen AI 9 365. The temporary deterministic
+repository contained 21,008 commits, eight merges, 26 refs, and approximately
+3.86 MB of Git metadata: a 12,000-commit main history, eight 1,000-commit topics,
+eight merge commits, and a 1,000-commit disconnected history. The terminal was
+120 by 40 cells; the repository's PTY harness decoded visible output.
+
+After discarding one warmup, five fresh-process samples measured from the final
+command key to all 35 visible commit hashes/subjects, cleared row tails, and
+cleared loading status. Expected rows came from an independent Git traversal.
+The display check permits the explicit parent-lane annotation. Preliminary
+prefix-only timings were discarded because this backend does not emit
+synchronized-update boundaries and a matching header can precede a complete draw.
+
+| Interaction | Median | Observed range |
+| --- | ---: | ---: |
+| Open network | 270.6 ms | 269.3–322.5 ms |
+| Read page 2 | 269.9 ms | 267.0–317.7 ms |
+| Cached previous page | 5.8 ms | 3.9–6.6 ms |
+| Cached next page | 6.4 ms | 4.5–6.8 ms |
+
+One bounded traversal additionally checked every page through page 50 and the
+explicit 10,000-commit limit message. Uncached pages 3–50 took 266.1–322.5 ms
+(median 268.8 ms). This is a small-file synthetic history and a warm filesystem
+cache observation, not a universal latency guarantee for large repositories.
+
+Three alternating 16-second idle windows for an ordinary file and the network
+view each consumed zero or one CPU clock tick per window (0–0.0625% of one core,
+100 Hz accounting), with zero terminal output bytes. Both accumulated two ticks
+across their three windows. Process-thread context-switch deltas were 108–109
+for the ordinary file and 105–109 for the network view per window. These deltas
+are a scheduling proxy, not a direct wakeup count; the short observation and
+clock resolution do not establish a general CPU upper bound. No additional
+network-view idle activity was observed in this fixture.
+
+### Implemented bounds and limitations
+
+Reviewed merging requires supported `merge-tree` and attribute-query capabilities,
+an attached committed destination, and a clean index, working tree, and relevant
+editor buffers. Unsupported custom merge/filter/encoding behavior and incompatible
+repository settings are refused explicitly. Preview does not alter the working
+tree or index. Review captures repository identity, tips, configuration,
+attributes, disk/index state, and buffer revisions; changed inputs require a new
+review. Binary and absent sides support whole-file choices; structural groups and
+submodule conflicts may require manual resolution.
+
+The network retains 200 commits per page, at most 50 pages (10,000 commits),
+16 lanes, and 256 refs plus HEAD. Limits and shallow boundaries are explicit.
+Ambiguous crossings and multi-parent routes use labelled parent-lane information
+instead of false edges. Moving refs mark the captured generation stale; changing
+shallow boundaries requires refresh. Fetching does not discover remote branches
+or fetch an entire remote.
+
+The design below is retained as implementation rationale. Current source and
+user documentation take precedence over proposed details.
 
 ## Purpose and decisions
 
