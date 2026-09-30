@@ -9,8 +9,7 @@ use super::{
     NotificationDraft, NotificationSeverity, Path, PickerItem, PreviewPolicy, PromptKind, Result,
     Selection, ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId, SettingPreview,
     SettingType, SettingValue, SettingsView, Theme, ThemeAppearance, WorkspaceMode, fs,
-    outcome_clause, persist_setting, registry_failure_summary, render_settings_page,
-    startup_status,
+    outcome_clause, persist_setting, registry_failure_summary, startup_status,
 };
 use crate::{
     buffer::GeneratedViewIdentity, config::ExplorerSort, content_alignment::ContentAlignment,
@@ -319,12 +318,15 @@ impl App {
             .copied()
             .map(|setting| (setting, self.persisted_setting_label(setting)))
             .collect::<Vec<_>>();
-        render_settings_page(&values)
+        crate::settings::render_settings_with_overrides(&values, &self.persisted_config.indentation)
     }
 
     pub(super) fn open_settings_buffer(&mut self) {
+        if !self.active_buffer().is_settings() {
+            self.settings_origin_buffer = Some(self.active().buffer);
+        }
         let page = self.settings_page();
-        let rendered = Buffer::settings(&page.text, page.rows);
+        let rendered = Buffer::settings_page(&page);
         let buffer = match self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_settings()).then_some(index)
         }) {
@@ -350,7 +352,7 @@ impl App {
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
         self.mode = Mode::Normal;
-        self.status("config · Enter changes the setting on this row");
+        self.status("config · Enter edits · Tab offers indentation overrides");
     }
 
     pub(super) fn open_notifications_buffer(&mut self) {
@@ -429,7 +431,7 @@ impl App {
 
     pub(super) fn refresh_settings_buffers(&mut self) {
         let page = self.settings_page();
-        let rendered = Buffer::settings(&page.text, page.rows);
+        let rendered = Buffer::settings_page(&page);
         for index in 0..self.buffers.len() {
             if self.buffers[index].is_settings() {
                 self.buffers[index] = rendered.clone();
@@ -447,7 +449,11 @@ impl App {
             self.status("no setting on this row");
             return;
         };
-        self.open_setting_values(setting);
+        if let Some(scope) = self.active_buffer().setting_override_at(row).cloned() {
+            self.open_override_value(setting, scope);
+        } else {
+            self.open_setting_values(setting);
+        }
     }
 
     pub(super) fn setting_values(&self, setting: SettingId) -> Vec<SettingValue> {
@@ -574,6 +580,7 @@ impl App {
             .unwrap_or(0);
         self.settings_view = Some(SettingsView::Values(Box::new(SettingPreview {
             setting,
+            override_scope: None,
             original_config: self.config.clone(),
             original_theme: self.theme.clone(),
             original_theme_name: self.theme_name.clone(),
@@ -589,8 +596,14 @@ impl App {
             return;
         };
         let setting = preview.setting;
-        let Some(ListAction::SettingValue { value, .. }) = self.selected_list_action() else {
-            return;
+        let scope = preview.override_scope.clone();
+        let value = match self.selected_list_action() {
+            Some(ListAction::SettingValue { value, .. }) => value,
+            Some(ListAction::Indentation(super::indentation_workflows::Action::Value {
+                value,
+                ..
+            })) => value,
+            _ => return,
         };
         if setting.descriptor().preview == PreviewPolicy::RestartRequired {
             self.status(format!(
@@ -599,7 +612,14 @@ impl App {
             ));
             return;
         }
-        if let Err(error) = setting.apply(&value, &mut self.config) {
+        let applied = if let Some(scope) = &scope {
+            crate::settings::apply_override(&mut self.config, setting, scope, Some(&value))
+        } else {
+            setting
+                .apply(&value, &mut self.config)
+                .map_err(|error| error.to_string())
+        };
+        if let Err(error) = applied {
             self.action_failed(error.to_string());
             return;
         }
@@ -649,7 +669,7 @@ impl App {
     /// its choice list. A failed save uses this so a value that could not be
     /// persisted never remains effective merely because the person has not
     /// pressed Escape yet; the list stays open and can be retried.
-    fn rollback_setting_preview(&mut self) -> Option<SettingId> {
+    pub(super) fn rollback_setting_preview(&mut self) -> Option<SettingId> {
         let SettingsView::Values(preview) = self.settings_view.as_ref()?;
         let preview = (**preview).clone();
         self.config = preview.original_config;

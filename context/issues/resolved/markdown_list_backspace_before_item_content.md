@@ -39,7 +39,9 @@ Backspace that joins the lines back to the original text;
 `markdown_backspace_at_an_existing_item_content_start_uses_character_columns`
 covers multibyte content, tab separators, task items, and a wide marker after
 a multibyte row, plus carets one column off the content start, inside a wide
-separator, and on non-list text, which keep ordinary Backspace.
+separator, and on non-list text. A later aligned-indentation change makes
+Backspace in ordinary leading whitespace delete to the previous visual tab
+stop; Backspace after text still deletes one character.
 
 Known limitation: after the first press, the item's text remains a
 continuation of the previous item, but the numbers of the items after it are

@@ -123,8 +123,8 @@ fn markdown_task_backspace_keeps_tab_separator_and_visual_content_column() {
     ordinary.edit_backspace();
     assert_eq!(
         text(&ordinary),
-        " ",
-        "unowned spaces keep character Backspace"
+        "",
+        "ordinary indentation deletes to the previous tab stop"
     );
 }
 
@@ -293,7 +293,7 @@ fn markdown_backspace_at_an_existing_item_content_start_uses_character_columns()
     for (before, caret, after) in [
         ("- żółw", 3, "- ółw"),
         ("1.  item", 3, "1. item"),
-        ("  not a list", 2, " not a list"),
+        ("  not a list", 2, "not a list"),
     ] {
         let mut app = markdown(before);
         app.replace_active_selection(Selection::point(caret));

@@ -209,6 +209,7 @@ pub enum BufferKind {
     /// soft-wraps it, so activation never parses the rendered columns.
     Settings {
         rows: Vec<Option<SettingId>>,
+        overrides: std::collections::BTreeMap<usize, crate::indentation::Scope>,
     },
     /// The retained in-memory notification history, newest first.
     ///
@@ -2538,7 +2539,10 @@ impl Buffer {
             text,
             path: None,
             dirty: false,
-            kind: BufferKind::Settings { rows },
+            kind: BufferKind::Settings {
+                rows,
+                overrides: Default::default(),
+            },
             directory: None,
             git_log_hints: HashMap::new(),
             undo: Vec::new(),
@@ -2688,8 +2692,23 @@ impl Buffer {
         !self.is_git_network() && self.longest_line <= SOFT_WRAP_LINE_LIMIT
     }
 
+    pub fn setting_override_at(&self, row: usize) -> Option<&crate::indentation::Scope> {
+        let BufferKind::Settings { overrides, .. } = &self.kind else {
+            return None;
+        };
+        overrides.get(&row)
+    }
+
+    pub(crate) fn settings_page(page: &crate::settings::SettingsPage) -> Self {
+        let mut buffer = Self::settings(&page.text, page.rows.clone());
+        if let BufferKind::Settings { overrides, .. } = &mut buffer.kind {
+            *overrides = page.overrides.clone();
+        }
+        buffer
+    }
+
     pub fn setting_at(&self, row: usize) -> Option<SettingId> {
-        let BufferKind::Settings { rows } = &self.kind else {
+        let BufferKind::Settings { rows, .. } = &self.kind else {
             return None;
         };
         rows.get(row).copied().flatten()

@@ -30,6 +30,7 @@ pub mod hash;
 pub mod headless;
 pub mod help;
 pub(crate) mod help_document;
+pub mod indentation;
 pub mod input;
 pub mod input_grammar;
 pub mod jump_labels;

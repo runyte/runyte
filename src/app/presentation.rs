@@ -624,7 +624,7 @@ impl App {
             );
             let soft_wrap = self.pane_soft_wrap(pane_id);
             let scroll_offset = self.config.editor.scroll_offset;
-            let tab_width = self.config.editor.tab_width;
+            let tab_width = self.indentation_for(buffer_id).tab_width;
             // Resolved before the pane is borrowed mutably, and against the
             // sessions alone so the two borrows stay disjoint.
             let diff = diff_projection(&self.diffs, pane_id);
@@ -2400,6 +2400,36 @@ impl App {
                         None,
                     ));
                 }
+            } else if let PromptKind::IndentationValue(setting)
+            | PromptKind::IndentationPattern(setting) = self.prompt_kind
+            {
+                let (title, detail) = if let Some(scope) = &self.indentation_prompt_scope {
+                    (
+                        format!(
+                            "{} · {} · integer 1–16 · Enter save · Esc cancel",
+                            setting.descriptor().title,
+                            scope.label()
+                        ),
+                        self.indentation_prompt_hint.clone().unwrap_or_default(),
+                    )
+                } else {
+                    ("File pattern · Enter continue · Esc cancel".into(), "Workspace-relative / paths; * and ? match within a directory; ** crosses directories; basename patterns match at any depth. Later matching rules win.".into())
+                };
+                let message = if self.status_error {
+                    format!("{detail} · {}", self.status)
+                } else {
+                    detail
+                };
+                let mut snapshot = bounded(
+                    OverlayKind::Prompt,
+                    title,
+                    self.command.clone(),
+                    Vec::new(),
+                    None,
+                    Some(message),
+                );
+                snapshot.query_cursor = Some(self.command_cursor);
+                overlays.push(snapshot);
             } else if matches!(self.prompt_kind, PromptKind::SettingValue(_)) {
                 let title = match self.prompt_kind {
                     PromptKind::SettingValue(setting) => match setting.descriptor().value_type {

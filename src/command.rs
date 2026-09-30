@@ -850,6 +850,9 @@ editor_commands! {
         "open-workspace-search-result",
         "Open the workspace-search result on this line"
     ),
+    OverrideSettingLanguage => ("override-setting-language", "Override indentation for a language"),
+    OverrideSettingPattern => ("override-setting-pattern", "Override indentation for a file pattern"),
+    RemoveSettingOverride => ("remove-setting-override", "Remove the indentation override"),
     ActivateSetting => ("activate-setting", "Change the setting on this line"),
     OpenSettings => ("open-settings", "Open editor settings"),
     OpenThemeSettings => ("open-theme-settings", "Choose and save the editor theme"),
@@ -1427,9 +1430,12 @@ impl EditorCommand {
             | Self::NextGitLogPage
             | Self::PreviousGitLogPage
             | Self::OpenGitCommit => CommandCategory::Git,
-            Self::ActivateSetting | Self::OpenSettings | Self::OpenThemeSettings => {
-                CommandCategory::Configuration
-            }
+            Self::OverrideSettingLanguage
+            | Self::OverrideSettingPattern
+            | Self::RemoveSettingOverride
+            | Self::ActivateSetting
+            | Self::OpenSettings
+            | Self::OpenThemeSettings => CommandCategory::Configuration,
             Self::OpenWorkspaceSearchResult => CommandCategory::View,
             Self::ShowHelp | Self::ShowAbout | Self::ShowTutorial => CommandCategory::Help,
             Self::OpenTerminal

@@ -1056,8 +1056,9 @@ impl App {
         let path = self.active_buffer().path.clone().unwrap_or_default();
         self.lsp_request(
             RequestKind::Format {
-                tab_size: self.config.editor.tab_width.max(1) as u32,
-                insert_spaces: true,
+                tab_size: self.active_indentation().tab_width.max(1) as u32,
+                insert_spaces: self.active_indentation().style
+                    == crate::config::IndentStyle::Spaces,
             },
             PendingRequest::Edits {
                 label: "formatted",
@@ -3180,6 +3181,7 @@ impl App {
         let actions = self
             .keymap
             .context_actions(self.key_binding_scope())
+            .filter(|action| self.setting_context_action_available(action.target))
             .copied()
             .collect::<Vec<_>>();
         if actions.is_empty() {
@@ -3881,6 +3883,10 @@ impl App {
             self.action_failed("no matching setting choice · clear the filter or press Esc");
             return Ok(());
         }
+        if let Some(ListAction::Indentation(action)) = chosen {
+            self.activate_indentation_action(action);
+            return Ok(());
+        }
         if let Some(ListAction::SettingValue { setting, value }) = chosen {
             self.persist_selected_setting(setting, value);
             return Ok(());
@@ -4003,7 +4009,9 @@ impl App {
             Some(ListAction::Workspace(_)) => {
                 unreachable!("native session rows return before attachment")
             }
-            Some(ListAction::SettingValue { .. }) | Some(ListAction::ExplorerSetting { .. }) => {
+            Some(ListAction::Indentation(_))
+            | Some(ListAction::SettingValue { .. })
+            | Some(ListAction::ExplorerSetting { .. }) => {
                 unreachable!("settings actions return before closing the shared picker")
             }
             None => {}

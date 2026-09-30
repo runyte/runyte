@@ -90,9 +90,7 @@ use crate::{
         AppCapabilitySnapshot, CommandAvailability, ServiceHealthEntry, ServiceHealthSnapshot,
         ServiceState, persistent_session_availability,
     },
-    settings::{
-        PreviewPolicy, SettingId, SettingType, SettingValue, persist_setting, render_settings_page,
-    },
+    settings::{PreviewPolicy, SettingId, SettingType, SettingValue, persist_setting},
     startup::{StartupPhase, StartupTrace},
     structural_selection::{
         ExpansionHistory, HistoryReset, ShrinkResult, navigate_text_object, select_delimiter,
@@ -281,6 +279,7 @@ mod movement;
 mod navigation_workflows;
 use navigation_workflows::DestinationScope;
 mod diff_work;
+mod indentation_workflows;
 mod picker_workflows;
 pub(crate) mod pipe;
 mod plugin_documents;
@@ -1214,6 +1213,8 @@ pub enum PromptKind {
     JoinDelimiter,
     /// Collects a non-enumerated setting value in a popup.
     SettingValue(SettingId),
+    IndentationValue(SettingId),
+    IndentationPattern(SettingId),
     /// Collects the directory the finder should be rooted at. Completes over
     /// the filesystem as it is typed, and accepts a path outside the
     /// workspace, which is the point of it.
@@ -1773,6 +1774,7 @@ pub enum PointerOutcome {
 #[derive(Clone, Debug)]
 struct SettingPreview {
     setting: SettingId,
+    override_scope: Option<crate::indentation::Scope>,
     original_config: Config,
     original_theme: Theme,
     original_theme_name: String,
@@ -3194,6 +3196,9 @@ pub struct App {
     list_actions: Vec<ListAction>,
     /// Which registry-backed settings surface owns the shared list picker.
     settings_view: Option<SettingsView>,
+    indentation_prompt_scope: Option<crate::indentation::Scope>,
+    indentation_prompt_hint: Option<String>,
+    settings_origin_buffer: Option<usize>,
     pointer_drag: Option<PointerDrag>,
     pointer_autoscroll: Option<mouse_autoscroll::Autoscroll>,
     /// Code actions backing a code-action picker.
@@ -3474,7 +3479,14 @@ impl App {
             .as_ref()
             .map(|maps| Arc::clone(&maps[usize::from(config.editor.fast_pane_keys)]))
             .unwrap_or_else(|| keymap_for(config.editor.fast_pane_keys));
-        let keymap = Arc::new(keymap.with_indent_style(config.editor.indent));
+        let keymap = Arc::new(
+            keymap
+                .with_indent_style(config.editor.indent)
+                .with_indent_overrides(
+                    !config.indentation.languages.is_empty()
+                        || !config.indentation.files.is_empty(),
+                ),
+        );
         let live_help =
             crate::key_spelling::resolve(crate::key_spelling::actionable::STARTUP_HELP, &keymap)
                 .expect("startup help marker must resolve")
@@ -3698,6 +3710,9 @@ impl App {
             pending_lsp_replies: VecDeque::new(),
             list_actions: Vec::new(),
             settings_view: None,
+            indentation_prompt_scope: None,
+            indentation_prompt_hint: None,
+            settings_origin_buffer: None,
             pointer_drag: None,
             pointer_autoscroll: None,
             lsp_actions: Vec::new(),
@@ -3820,6 +3835,7 @@ enum ListAction {
     /// A file offered for a Markdown link, and the heading it names.
     OpenPathAtHeading(PathBuf, String),
     CodeAction(usize),
+    Indentation(indentation_workflows::Action),
     SettingValue {
         setting: SettingId,
         value: SettingValue,

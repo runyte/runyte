@@ -66,7 +66,14 @@ impl App {
                 std::sync::Arc::clone(&maps[usize::from(self.config.editor.fast_pane_keys)])
             })
             .unwrap_or_else(|| keymap_for(self.config.editor.fast_pane_keys));
-        self.keymap = std::sync::Arc::new(keymap.with_indent_style(self.config.editor.indent));
+        self.keymap = std::sync::Arc::new(
+            keymap
+                .with_indent_style(self.config.editor.indent)
+                .with_indent_overrides(
+                    !self.config.indentation.languages.is_empty()
+                        || !self.config.indentation.files.is_empty(),
+                ),
+        );
     }
 
     /// Whether this key moves between panes on its own right now.
@@ -1293,7 +1300,7 @@ impl App {
                                         &self.buffers[buffer],
                                         row,
                                         prepared.wrap_width,
-                                        self.config.editor.tab_width,
+                                        self.indentation_for(buffer).tab_width,
                                     )
                                 })
                                 .is_some_and(|layout| layout.width > prepared.wrap_width)
@@ -1446,7 +1453,7 @@ impl App {
                 buffer,
                 document_row,
                 pane.wrap_width,
-                self.config.editor.tab_width,
+                self.indentation_for(pane.buffer_id).tab_width,
             )?;
             let scroll = if layout.width > pane.wrap_width {
                 pane.scroll_col
@@ -1465,8 +1472,12 @@ impl App {
             || {
                 let start = pane.scroll_col.min(buffer.line_len(document_row));
                 let end = buffer.line_len(document_row);
-                let cells =
-                    crate::wrap::cells_from_column(&line, start, end, self.config.editor.tab_width);
+                let cells = crate::wrap::cells_from_column(
+                    &line,
+                    start,
+                    end,
+                    self.indentation_for(pane.buffer_id).tab_width,
+                );
                 (start, end, cells)
             },
             |segment| {
@@ -1499,14 +1510,14 @@ impl App {
                 &line,
                 start,
                 screen_cell,
-                self.config.editor.tab_width,
+                self.indentation_for(pane.buffer_id).tab_width,
             )
         } else {
             crate::wrap::column_for_scrolled_cell(
                 &line,
                 start,
                 screen_cell,
-                self.config.editor.tab_width,
+                self.indentation_for(pane.buffer_id).tab_width,
             )
         }
         .min(end);
@@ -1641,7 +1652,7 @@ impl App {
                 buffer,
                 document_row,
                 pane.wrap_width,
-                self.config.editor.tab_width,
+                self.indentation_for(pane.buffer_id).tab_width,
             )?;
             let scroll = if layout.width > pane.wrap_width {
                 pane.scroll_col
@@ -1662,7 +1673,7 @@ impl App {
             &line,
             start,
             screen_cell,
-            self.config.editor.tab_width,
+            self.indentation_for(pane.buffer_id).tab_width,
         );
         if let Some(segment) = projected.segment {
             character = character.min(segment.end);
@@ -4663,6 +4674,9 @@ impl App {
             Command::ShowHelp => self.open_help(),
             Command::ShowAbout => self.open_about(),
             Command::ShowTutorial => self.open_tutorial(None)?,
+            command @ (Command::OverrideSettingLanguage
+            | Command::OverrideSettingPattern
+            | Command::RemoveSettingOverride) => self.run_setting_action(command),
             Command::ActivateSetting => self.activate_selected_setting(),
             Command::FocusWindowLeft => self.focus_from_terminal_insert(-1, 0),
             Command::FocusWindowDown => self.focus_from_terminal_insert(0, 1),
@@ -4696,13 +4710,15 @@ impl App {
             Command::InsertNewline if self.mode == Mode::Replace => self.replace_mode_text("\n"),
             Command::InsertNewline => self.edit_newline(),
             Command::InsertTab if self.mode == Mode::Replace => {
-                self.replace_mode_indentation(self.config.editor.indent)
+                self.replace_mode_indentation(self.active_indentation().style)
             }
-            Command::InsertTab => self.insert_indentation(self.config.editor.indent),
+            Command::InsertTab => self.insert_indentation(self.active_indentation().style),
             Command::InsertLiteralTab if self.mode == Mode::Replace => {
-                self.replace_mode_indentation(self.config.editor.indent.other())
+                self.replace_mode_indentation(self.active_indentation().style.other())
             }
-            Command::InsertLiteralTab => self.insert_indentation(self.config.editor.indent.other()),
+            Command::InsertLiteralTab => {
+                self.insert_indentation(self.active_indentation().style.other())
+            }
             Command::CommitUndoCheckpoint => {
                 let buffer_id = self.active().buffer;
                 self.buffers[buffer_id].commit_undo_group();
@@ -4856,7 +4872,18 @@ impl App {
                 ) {
                     return Ok(());
                 }
-                if let PromptKind::SettingValue(setting) = kind {
+                if let PromptKind::IndentationPattern(setting) = kind {
+                    if let Err(error) = crate::indentation::compile_pattern(&value) {
+                        self.action_failed(error);
+                        return Ok(());
+                    }
+                    self.finish_prompt();
+                    self.open_override_value(setting, crate::indentation::Scope::Files(value));
+                    return Ok(());
+                }
+                if let PromptKind::SettingValue(setting) | PromptKind::IndentationValue(setting) =
+                    kind
+                {
                     let value = match setting.descriptor().value_type {
                         SettingType::Integer { minimum, maximum } => {
                             let Ok(number) = value.trim().parse::<usize>() else {
@@ -4884,7 +4911,16 @@ impl App {
                         self.action_failed(error.to_string());
                         return Ok(());
                     }
-                    if self.persist_selected_setting(setting, value) {
+                    let saved = if matches!(kind, PromptKind::IndentationValue(_)) {
+                        if let Some(scope) = self.indentation_prompt_scope.clone() {
+                            self.persist_indentation_override(setting, scope, Some(value))
+                        } else {
+                            false
+                        }
+                    } else {
+                        self.persist_selected_setting(setting, value)
+                    };
+                    if saved {
                         self.finish_prompt();
                     }
                     return Ok(());
@@ -5284,6 +5320,8 @@ impl App {
     }
 
     pub(super) fn open_prompt(&mut self, kind: PromptKind) {
+        self.indentation_prompt_scope = None;
+        self.indentation_prompt_hint = None;
         self.abandon_search_preview();
         self.prompt_input_error = None;
         if self.mode != Mode::Command {
@@ -5312,6 +5350,8 @@ impl App {
     }
 
     fn finish_prompt(&mut self) {
+        self.indentation_prompt_scope = None;
+        self.indentation_prompt_hint = None;
         self.abandon_search_preview();
         self.prompt_input_error = None;
         #[cfg(any(unix, windows))]

@@ -1020,7 +1020,7 @@ The keys shared by Insert and Replace modes:
 | --- | --- |
 | `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (persistent mode) |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
-| `Backspace` / `Shift-Backspace`; `Delete` | Delete the previous / next character |
+| `Backspace` / `Shift-Backspace`; `Delete` | Delete to the previous indentation stop in leading whitespace, otherwise the previous character / delete the next character |
 | `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |
 | `Ctrl-u` / `Ctrl-k` | Delete to the start / end of the line |
 | `Enter` / `Ctrl-j` | Insert a newline with the current indentation and optional smart indentation |
@@ -1086,6 +1086,19 @@ buffer language's line comment.
 - Each caret is handled independently.
 
 #### New lines and indentation
+
+In Insert mode, Tab advances to the next visual tab stop. Backspace within
+leading spaces and tabs removes indentation to the previous stop. With width 4,
+Backspace moves columns 8 → 4, 6 → 4, and 4 → 0 (columns counted from zero).
+Mixed spaces and tabs use their displayed columns. After text, Backspace deletes
+one character; at the start of a line it keeps ordinary newline joining.
+Selections, paired characters, and Markdown list handling retain their existing
+behavior. Replace-mode Backspace still restores overwritten text.
+
+`editor.tab_width` and `editor.indent` supply defaults. Language and file-pattern
+exceptions apply to individual buffers, including their display, wrapping,
+mouse positioning and language-server formatting options. See
+[Indentation overrides](#indentation-overrides).
 
 | Key | Keeps | Adds |
 | --- | --- | --- |
@@ -5828,6 +5841,63 @@ says so when you save them:
 | `workspace.mode` | Standalone or persistent launch is chosen before the editor starts. The saved value applies to future bare launches. |
 
 The `keys` section is never written by this page. Edit it in the file.
+
+### Indentation overrides
+
+In `Space o o`, move to `editor.tab_width` or `editor.indent` and press Tab.
+Choose **Override for language…**, select a language, then enter the width or
+choose spaces/tabs. Or choose **Override for file pattern…**, enter a pattern,
+then set the value. Widths remain limited to 1–16.
+
+Only saved overrides appear beneath the setting. Enter edits an override; Tab
+opens **Remove override**. Escape cancels, including any style preview. An
+explicit override equal to the global default stays explicit, so later changes
+to the default do not change it. Removal writes `null` for that field, preserving
+comments and rule order; the row disappears and the field inherits again.
+
+The value popup identifies the inherited value and source. A file pattern can
+cover several languages, so it has no single inherited value. When the document
+from which settings were opened matches the pattern, the popup shows that
+file's inherited value; otherwise it explains the varying inheritance and shows
+the global default.
+
+The same rules can be authored in YAML:
+
+```yaml
+editor:
+  tab_width: 4
+  indent: spaces
+indentation:
+  languages:
+    python:
+      tab_width: 4
+    yaml:
+      tab_width: 2
+  files:
+    '**/generated/*.yaml':
+      tab_width: 4
+    'Makefile':
+      indent: tabs
+```
+
+Each field inherits independently: global default, language override, then
+matching file patterns in their YAML order. The last matching rule that sets a
+field wins. Editing an existing rule keeps its position; a new rule is appended.
+There are no built-in language overrides or content-based indentation detection.
+
+Patterns match paths relative to the workspace root, which does not change with
+`:cd`. A pattern without `/` matches a filename at any depth. `*` matches within
+a directory, `?` matches one character, and `**` spans directories; `**/` also
+matches zero directories. Use `/` on every platform. Absolute paths, `..`,
+backslashes, character classes and brace expansion are not supported. A pattern
+may contain at most 256 bytes, and each scope allows at most 128 entries.
+Matching does not scan the filesystem. Local files outside the workspace do not
+match file rules. Pathless and provider documents can use their detected language
+but have no local path for file rules.
+
+Overrides apply to existing open buffers immediately. Removing one changes how
+indentation is displayed and subsequently edited; it does not rewrite existing
+text. Editing the YAML manually takes effect through `:config-reload`.
 
 ### Editing the file and reloading
 

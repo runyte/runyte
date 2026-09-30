@@ -150,3 +150,17 @@ themes:
 #     args: [/home/example/.local/share/runyte/plugins/uppercase.py]
 #     bindings:
 #       uppercase: F12
+
+# Optional indentation exceptions. Fields inherit independently; later matching
+# file rules win over language settings. Paths are workspace-relative, with /.
+# indentation:
+#   languages:
+#     python:
+#       tab_width: 4
+#     yaml:
+#       tab_width: 2
+#   files:
+#     '**/generated/*.yaml':
+#       tab_width: 4
+#     'Makefile':
+#       indent: tabs

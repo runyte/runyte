@@ -1014,7 +1014,7 @@ impl App {
             cursor: self.panes[&prepared.pane_id].cursor(buffer),
             mode: self.mode,
             theme: self.theme.clone(),
-            tab_width: self.config.editor.tab_width,
+            tab_width: self.indentation_for(prepared.buffer_id).tab_width,
             line_numbers: self.config.editor.line_numbers,
             render_whitespace: self.config.editor.render_whitespace,
             command_mode_dim: self.config.editor.command_mode_dim,
@@ -1123,7 +1123,7 @@ impl App {
                         segment,
                         cursor.col,
                         prepared.wrap_width,
-                        self.config.editor.tab_width,
+                        self.indentation_for(prepared.buffer_id).tab_width,
                     )
                 })
         });
@@ -1184,7 +1184,7 @@ impl App {
                     buffer,
                     document_row,
                     prepared.wrap_width,
-                    self.config.editor.tab_width,
+                    self.indentation_for(prepared.buffer_id).tab_width,
                 )
             {
                 let scroll = if layout.width > prepared.wrap_width {
@@ -1218,7 +1218,7 @@ impl App {
                                 .take(line_len.saturating_sub(start_col)),
                             start_col,
                             prepared.text_width,
-                            self.config.editor.tab_width,
+                            self.indentation_for(prepared.buffer_id).tab_width,
                         )
                     },
                     |segment| {
@@ -1337,7 +1337,7 @@ impl App {
                 segment,
                 cursor.col,
                 prepared.wrap_width,
-                self.config.editor.tab_width,
+                self.indentation_for(prepared.buffer_id).tab_width,
             )
         });
         let mut runs = self.snapshot_text_runs(prepared, buffer, highlights, context);
@@ -1477,6 +1477,7 @@ impl App {
         highlights: &[Span],
         context: RowContext,
     ) -> Vec<TextRun> {
+        let tab_width = self.indentation_for(prepared.buffer_id).tab_width;
         let pane = &self.panes[&prepared.pane_id];
         let active = prepared.pane_id == self.active_pane;
         let row_start = buffer.line_to_offset(context.row);
@@ -1545,12 +1546,8 @@ impl App {
         };
 
         if let Some(index) = context.segment.and_then(|segment| segment.table)
-            && let Some(layout) = crate::wrap::table_layout(
-                buffer,
-                context.row,
-                prepared.wrap_width,
-                self.config.editor.tab_width,
-            )
+            && let Some(layout) =
+                crate::wrap::table_layout(buffer, context.row, prepared.wrap_width, tab_width)
         {
             let scroll = if layout.width > context.text_width {
                 prepared.scroll_col
@@ -1671,7 +1668,7 @@ impl App {
                         .take(line_len.saturating_sub(start_col)),
                     start_col,
                     context.text_width,
-                    self.config.editor.tab_width,
+                    tab_width,
                 )
             },
             |segment| {
@@ -1765,7 +1762,7 @@ impl App {
                 if remaining == 0 {
                     break;
                 }
-                let tab_width = self.config.editor.tab_width.max(1);
+                let tab_width = tab_width.max(1);
                 let width = (tab_width - (visual_col % tab_width)).min(remaining);
                 if self.config.editor.render_whitespace {
                     current.push('→');
@@ -2038,6 +2035,10 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
         PromptKind::NewWorktreeBranch => "new worktree branch: ".to_owned(),
         PromptKind::WorktreeDestination => "worktree destination: ".to_owned(),
         PromptKind::JoinDelimiter => "join with (empty joins directly): ".to_owned(),
+        PromptKind::IndentationPattern(_) => "file pattern: ".to_owned(),
+        PromptKind::IndentationValue(setting) => {
+            format!("{} override: ", setting.descriptor().title)
+        }
         PromptKind::SettingValue(setting) => format!("{}: ", setting.descriptor().title),
         PromptKind::FinderPath => "find under path: ".to_owned(),
         PromptKind::DirectoryTreeSearch => "tree search (regex): ".to_owned(),

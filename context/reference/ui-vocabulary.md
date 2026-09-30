@@ -117,7 +117,14 @@ them, regardless of which extensibility direction is chosen.
   first two take their content widths with two-space gaps, and descriptions
   have no inserted line breaks or trailing padding. Each setting is one logical
   line. Ordinary soft wrapping and horizontal scrolling apply per pane without
-  rewriting the shared document.
+  rewriting the shared document. Saved indentation overrides appear directly
+  below their parent setting and retain semantic language/pattern identities.
+  Enter edits either kind of row; Tab offers override creation on width/style
+  defaults and removal on override rows. Language choice uses a searchable
+  picker, file patterns use a text prompt, and values use the existing numeric
+  prompt or choice list. Value prompts identify inheritance and its source;
+  pattern inheritance is contextual because different files can inherit
+  different language values.
 - **Rendered page** — a generated read-only buffer holding a document as it is
   meant to be read rather than as it is written. `?` renders the active
   Markdown document into one and returns from it to the source; both stay open,

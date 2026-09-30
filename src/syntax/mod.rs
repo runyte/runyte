@@ -49,6 +49,12 @@ pub(crate) fn is_builtin_language_name(name: &str) -> bool {
         .any(|language| language.name == name)
 }
 
+pub(crate) fn builtin_language_names() -> impl Iterator<Item = &'static str> {
+    grammars::BUILTIN_LANGUAGES
+        .iter()
+        .map(|language| language.name)
+}
+
 /// Stable identity of a language within a [`Registry`].
 ///
 /// The corresponding tree-house language handle is deliberately kept private

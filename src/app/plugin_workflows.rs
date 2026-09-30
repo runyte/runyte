@@ -251,7 +251,11 @@ impl App {
     pub(crate) fn install_plugin_keymaps(&mut self, maps: [Arc<Keymap>; 2]) {
         self.keymap = Arc::new(
             maps[usize::from(self.config.editor.fast_pane_keys)]
-                .with_indent_style(self.config.editor.indent),
+                .with_indent_style(self.config.editor.indent)
+                .with_indent_overrides(
+                    !self.config.indentation.languages.is_empty()
+                        || !self.config.indentation.files.is_empty(),
+                ),
         );
         self.configured_keymaps = Some(maps);
         self.grammar.reset();

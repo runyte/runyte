@@ -12,7 +12,7 @@ through keybindings. No need to remember them though — every keybinding sequen
 shows hints with possible completions.
 
 Runyte can do **quite a lot**:
-- multipane text editing
+- multipane text editing with aligned indentation and language/file overrides
 - terminal multiplexing
 - file browsing and management
 - Git, including reviewed merges, conflict resolution, branch/worktree

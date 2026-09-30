@@ -27,6 +27,7 @@ pub use paths::default_config_root;
 pub struct Config {
     pub plugins: Vec<crate::plugin::PluginConfig>,
     pub editor: EditorConfig,
+    pub indentation: crate::indentation::Overrides,
     pub workspace: WorkspaceConfig,
     pub lsp: LspConfig,
     pub git: GitConfig,
@@ -878,6 +879,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             editor: EditorConfig::default(),
+            indentation: crate::indentation::Overrides::default(),
             workspace: WorkspaceConfig::default(),
             lsp: LspConfig::default(),
             git: GitConfig::default(),
@@ -1123,6 +1125,7 @@ impl Config {
     }
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
+        self.indentation.validate()?;
         // `keys` is deliberately absent: structural and semantic errors take
         // the non-fatal configured-keymap path so a typo cannot lock someone
         // out of the editor needed to repair the file.

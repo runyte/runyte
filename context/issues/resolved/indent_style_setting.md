@@ -34,8 +34,16 @@ Replace, multi-caret merge and Backspace restoration, line indent/unindent,
 and smart newline style. The 25 focused indent tests, formatting and Clippy
 passed.
 
-Known limitation: indentation is a global setting; file detection,
-per-language defaults and `.editorconfig` remain outside this change.
+A later extension adds explicit language and ordered workspace-relative file
+pattern overrides for width and style, with contextual actions in `[config]`.
+Tab, line indent, smart newline and LSP formatting resolve the same buffer
+settings used by display and pointer targeting. When overrides are configured,
+key hints describe the buffer-dependent style rather than claiming the global
+style applies everywhere. Coverage is in `tests/indentation.rs` and
+`src/app/tests/indentation.rs`.
+
+Known limitation: content-based indentation detection, built-in per-language
+defaults and `.editorconfig` remain unsupported.
 
 ## Report
 

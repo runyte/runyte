@@ -703,6 +703,26 @@ impl Keymap {
 
     /// Resolve indent-key descriptions from the live setting in the same
     /// registry used by dispatch, help, and key hints.
+    pub(crate) fn with_indent_overrides(mut self, enabled: bool) -> Self {
+        if enabled {
+            for binding in &mut self.bindings {
+                if !binding.actions.is_empty() {
+                    continue;
+                }
+                binding.description = match binding.target {
+                    BindingTarget::Editor(EditorCommand::InsertTab) => {
+                        "Insert this buffer's configured indentation".into()
+                    }
+                    BindingTarget::Editor(EditorCommand::InsertLiteralTab) => {
+                        "Insert the other indentation style for this buffer".into()
+                    }
+                    _ => continue,
+                };
+            }
+        }
+        self
+    }
+
     pub(crate) fn with_indent_style(&self, style: crate::config::IndentStyle) -> Self {
         let mut keymap = self.clone();
         for binding in &mut keymap.bindings {
@@ -3065,6 +3085,27 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             "details",
             EditorCommand::ToggleDirectoryDetails,
         ),
+        ContextAction::row(
+            BindingScope::Settings,
+            Key::char('l'),
+            "language",
+            EditorCommand::OverrideSettingLanguage,
+        )
+        .with_description("Override for language…"),
+        ContextAction::row(
+            BindingScope::Settings,
+            Key::char('f'),
+            "files",
+            EditorCommand::OverrideSettingPattern,
+        )
+        .with_description("Override for file pattern…"),
+        ContextAction::row(
+            BindingScope::Settings,
+            Key::char('r'),
+            "remove",
+            EditorCommand::RemoveSettingOverride,
+        )
+        .with_description("Remove override"),
         ContextAction::buffer(
             BindingScope::Directory,
             Key::char('o'),

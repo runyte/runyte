@@ -1086,7 +1086,7 @@ impl App {
                     cursor.row,
                     cursor.col,
                     width,
-                    self.config.editor.tab_width,
+                    self.indentation_for(buffer_id).tab_width,
                 )
             } else {
                 0
@@ -1103,7 +1103,7 @@ impl App {
                 segment,
                 amount,
                 width,
-                self.config.editor.tab_width,
+                self.indentation_for(buffer_id).tab_width,
                 soft_wrap,
             );
             let pane = self.active_mut();
@@ -1136,7 +1136,7 @@ impl App {
                 &self.buffers[buffer_id],
                 row,
                 width,
-                self.config.editor.tab_width,
+                self.indentation_for(buffer_id).tab_width,
             )
             .len();
             let previous_row = previous_visible_row(&folds, row);
@@ -1145,7 +1145,7 @@ impl App {
                     &self.buffers[buffer_id],
                     previous_row,
                     width,
-                    self.config.editor.tab_width,
+                    self.indentation_for(buffer_id).tab_width,
                 )
                 .len()
                 .saturating_sub(1)

@@ -718,6 +718,10 @@ impl From<CorePromptKind> for PromptKind {
             CorePromptKind::NewWorktreeBranch => Self::NewWorktreeBranch,
             CorePromptKind::WorktreeDestination => Self::WorktreeDestination,
             CorePromptKind::JoinDelimiter => Self::JoinDelimiter,
+            CorePromptKind::IndentationPattern(_) => Self::SettingValue("file pattern".into()),
+            CorePromptKind::IndentationValue(setting) => {
+                Self::SettingValue(format!("{} override", setting.descriptor().key))
+            }
             CorePromptKind::SettingValue(setting) => {
                 Self::SettingValue(setting.descriptor().key.to_owned())
             }

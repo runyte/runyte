@@ -618,7 +618,7 @@ impl App {
         let scroll_wrap = self.panes[&pane_id].scroll_wrap;
         let wrap_width = self.panes[&pane_id].wrap_width.max(1);
         let soft_wrap = self.pane_soft_wrap(pane_id);
-        let tab_width = self.config.editor.tab_width;
+        let tab_width = self.active_indentation().tab_width;
         let buffer = &self.buffers[buffer_id];
         let folds = self.resolved_folds(pane_id);
         let diff = self.diff_projection(pane_id);
@@ -686,7 +686,7 @@ impl App {
     /// regenerates any two-key label that would cross the viewport edge.
     pub(super) fn label_visible_words(&mut self) {
         let height = self.viewport_height();
-        let tab_width = self.config.editor.tab_width;
+        let tab_width = self.active_indentation().tab_width;
         let soft_wrap = self.pane_soft_wrap(self.active_pane);
         let pane = self.active();
         // The width the pane actually wraps at, gutter already subtracted, as
@@ -1245,7 +1245,7 @@ impl App {
             self.replace_mode_text("\t");
             return;
         }
-        let width = self.config.editor.tab_width.max(1);
+        let width = self.active_indentation().tab_width.max(1);
         let buffer = self.active_buffer();
         let mut remaining = self
             .active()
@@ -1335,8 +1335,10 @@ impl App {
         let selection = self.active().selection.clone();
         let buffer = &self.buffers[buffer_id];
         let syntax = self.syntax[buffer_id].as_ref();
-        let unit = match self.config.editor.indent {
-            crate::config::IndentStyle::Spaces => " ".repeat(self.config.editor.tab_width.max(1)),
+        let unit = match self.active_indentation().style {
+            crate::config::IndentStyle::Spaces => {
+                " ".repeat(self.active_indentation().tab_width.max(1))
+            }
             crate::config::IndentStyle::Tabs => "\t".to_owned(),
         };
         let smart_newline = self.config.editor.smart_newline;
@@ -1462,6 +1464,7 @@ impl App {
         let pending_alignments = std::mem::take(&mut self.list_alignments);
         let buffer = &self.buffers[buffer_id];
         let markdown = self.config.editor.smart_newline && self.is_markdown_document(buffer_id);
+        let width = self.indentation_for(buffer_id).tab_width;
         let revision = buffer.revision();
         let pane = self.active_pane;
         let selection_count = self.active().selection.len();
@@ -1559,6 +1562,18 @@ impl App {
                     if aligned {
                         continue;
                     }
+                }
+            }
+            if self.mode == Mode::Insert {
+                let row = buffer.offset_to_row(head);
+                let start = buffer.line_to_offset(row);
+                if let Some(keep) = crate::indentation::backspace_start(
+                    buffer.text().line(row).chars().take(head - start),
+                    width,
+                ) {
+                    // Coalesce overlapping caret deletions with ordinary spans.
+                    ordinary.push((start + keep, head));
+                    continue;
                 }
             }
             ordinary.push((head - 1, head));
@@ -1701,7 +1716,7 @@ impl App {
             self.insert_char('\t');
             return;
         }
-        let width = self.config.editor.tab_width.max(1);
+        let width = self.active_indentation().tab_width.max(1);
         let buffer = self.active_buffer();
         let selection = self.active().selection.clone();
         let indents: Vec<String> = selection
@@ -2631,7 +2646,7 @@ impl App {
     pub(super) fn copy_selection_padded(&mut self, down: bool) {
         let buffer = self.active_buffer();
         let last_row = buffer.last_row();
-        let tab_width = self.config.editor.tab_width;
+        let tab_width = self.active_indentation().tab_width;
         let mut additions = Vec::new();
         let mut padding: BTreeMap<usize, usize> = BTreeMap::new();
 
@@ -2975,7 +2990,7 @@ impl App {
     /// was talking about, and the refusal is the whole point of the command
     /// noticing that a table is not there.
     pub(super) fn format_selected_tables(&mut self) {
-        let tab_width = self.config.editor.tab_width;
+        let tab_width = self.active_indentation().tab_width;
         let formatted = {
             let buffer = self.active_buffer();
             merged_line_spans(buffer, self.operative_spans())
@@ -3018,7 +3033,7 @@ impl App {
                 visual_column(
                     &buffer.line_string(position.row),
                     position.col,
-                    self.config.editor.tab_width,
+                    self.active_indentation().tab_width,
                 )
             })
             .collect();
@@ -3260,8 +3275,8 @@ impl App {
 
     pub(super) fn indent(&mut self, unindent: bool) {
         let buffer_id = self.active().buffer;
-        let width = self.config.editor.tab_width.max(1);
-        let unit = match self.config.editor.indent {
+        let width = self.active_indentation().tab_width.max(1);
+        let unit = match self.active_indentation().style {
             crate::config::IndentStyle::Spaces => " ".repeat(width),
             crate::config::IndentStyle::Tabs => "\t".to_owned(),
         };

@@ -760,21 +760,63 @@ pub struct SettingsPage {
     pub text: String,
     pub rows: Vec<Option<SettingId>>,
     pub spans: Vec<Span>,
+    pub overrides: std::collections::BTreeMap<usize, crate::indentation::Scope>,
 }
 
 /// One logical line per setting, with content-sized name and saved-value
 /// columns. Descriptions remain unwrapped text; each pane applies ordinary
 /// visual soft wrapping independently without changing buffer coordinates.
 pub fn render_settings_page(values: &[(SettingId, String)]) -> SettingsPage {
+    render_settings_with_overrides(values, &crate::indentation::Overrides::default())
+}
+
+pub fn render_settings_with_overrides(
+    values: &[(SettingId, String)],
+    overrides: &crate::indentation::Overrides,
+) -> SettingsPage {
+    let mut entries = Vec::new();
+    for (setting, value) in values {
+        let descriptor = setting.descriptor();
+        entries.push((
+            *setting,
+            descriptor.key.to_owned(),
+            value.clone(),
+            descriptor.description.to_owned(),
+            None,
+        ));
+        for scope in overrides
+            .languages
+            .keys()
+            .cloned()
+            .map(crate::indentation::Scope::Language)
+            .chain(
+                overrides
+                    .files
+                    .iter()
+                    .map(|rule| crate::indentation::Scope::Files(rule.pattern.clone())),
+            )
+        {
+            if let Some(value) = override_value(*setting, &scope, overrides) {
+                entries.push((
+                    *setting,
+                    format!("  {}", scope.label()),
+                    value.to_string(),
+                    "Enter edits · Tab removes override".into(),
+                    Some(scope),
+                ));
+            }
+        }
+    }
+    let values = entries;
     let name_width = values
         .iter()
-        .map(|(setting, _)| setting.descriptor().key.width())
+        .map(|(_, name, _, _, _)| name.width())
         .max()
         .unwrap_or(0)
         .max("Setting".width());
     let value_width = values
         .iter()
-        .map(|(_, value)| value.width())
+        .map(|(_, _, value, _, _)| value.width())
         .max()
         .unwrap_or(0)
         .max("Saved value".width());
@@ -793,16 +835,16 @@ pub fn render_settings_page(values: &[(SettingId, String)]) -> SettingsPage {
     let mut offset = text.chars().count();
     let name_scope = Scope::named("function").expect("registered setting name scope");
     let value_scope = Scope::named("constant").expect("registered setting value scope");
-    for (setting, value) in values {
-        let descriptor = setting.descriptor();
-        let row = row_text(descriptor.key, value, descriptor.description);
-        let name_end = offset + descriptor.key.chars().count();
+    let mut overrides = std::collections::BTreeMap::new();
+    for (setting, name, value, description, scope) in &values {
+        let row = row_text(name, value, description);
+        let name_end = offset + name.chars().count();
         spans.push(Span {
             from: offset,
             to: name_end,
             scope: name_scope,
         });
-        let value_start = name_end + name_width - descriptor.key.width() + COLUMN_GAP.len();
+        let value_start = name_end + name_width - name.width() + COLUMN_GAP.len();
         if !value.is_empty() {
             spans.push(Span {
                 from: value_start,
@@ -812,9 +854,17 @@ pub fn render_settings_page(values: &[(SettingId, String)]) -> SettingsPage {
         }
         offset += row.chars().count();
         text.push_str(&row);
+        if let Some(scope) = scope {
+            overrides.insert(rows.len(), scope.clone());
+        }
         rows.push(Some(*setting));
     }
-    SettingsPage { text, rows, spans }
+    SettingsPage {
+        text,
+        rows,
+        spans,
+        overrides,
+    }
 }
 
 fn pad_cells(value: &str, width: usize) -> String {
@@ -951,12 +1001,12 @@ struct Line<'a> {
     end: usize,
     indent: usize,
     text: &'a str,
-    entry: Option<Entry<'a>>,
+    entry: Option<Entry>,
 }
 
 #[derive(Clone, Debug)]
-struct Entry<'a> {
-    key: &'a str,
+struct Entry {
+    key: String,
     value_start: usize,
     value_end: usize,
 }
@@ -1087,22 +1137,28 @@ fn reject_unsafe_tokens(
     Ok(())
 }
 
-fn parse_entry<'a>(text: &'a str, line_start: usize, indent: usize) -> Option<Entry<'a>> {
+fn parse_entry(text: &str, line_start: usize, indent: usize) -> Option<Entry> {
     let content = &text[indent..];
     if content.is_empty() || content.starts_with('#') || content.starts_with('-') {
         return None;
     }
-    let colon = content.find(':')?;
-    let key = &content[..colon];
-    if key.is_empty()
-        || !key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-        || content
-            .as_bytes()
-            .get(colon + 1)
-            .is_some_and(|byte| !byte.is_ascii_whitespace())
-    {
+    let colon = content
+        .char_indices()
+        .filter(|(_, c)| *c == ':')
+        .find_map(|(index, _)| {
+            if content
+                .as_bytes()
+                .get(index + 1)
+                .is_some_and(|c| !c.is_ascii_whitespace())
+            {
+                return None;
+            }
+            serde_yaml::from_str::<String>(&content[..index])
+                .ok()
+                .map(|key| (index, key))
+        })?;
+    let (colon, key) = colon;
+    if key.is_empty() {
         return None;
     }
     let after_colon = indent + colon + 1;
@@ -1384,6 +1440,173 @@ fn io_error(operation: &'static str, path: &Path, source: io::Error) -> SettingE
         path: path.to_path_buf(),
         source,
     }
+}
+
+/// Returns only an explicitly saved value, never a fallback.
+pub fn override_value(
+    setting: SettingId,
+    scope: &crate::indentation::Scope,
+    overrides: &crate::indentation::Overrides,
+) -> Option<SettingValue> {
+    let values = scope.values(overrides)?;
+    match setting {
+        SettingId::EditorTabWidth => values.tab_width.map(SettingValue::Integer),
+        SettingId::EditorIndent => values.indent.map(SettingValue::Indent),
+        _ => None,
+    }
+}
+
+pub fn persist_override(
+    path: &Path,
+    setting: SettingId,
+    scope: &crate::indentation::Scope,
+    value: Option<&SettingValue>,
+) -> Result<Config, SettingError> {
+    let field = match setting {
+        SettingId::EditorTabWidth => "tab_width",
+        SettingId::EditorIndent => "indent",
+        _ => {
+            return Err(SettingError::InvalidConfig(
+                "only indentation settings support overrides".into(),
+            ));
+        }
+    };
+    let target = resolve_write_target(path)?;
+    let source = match fs::read_to_string(&target) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(source) => return Err(io_error("read", &target, source)),
+    };
+    let lines = scan_document(&source)?;
+    let current = parse_config(&source)?;
+    if let Some(value) = value {
+        setting.validate(value, &current)?;
+    }
+    let scalar = value.map_or_else(|| "null".to_owned(), yaml_scalar);
+    let patched = patch_mapping_path(&source, &lines, &scope.path(field), &scalar, 0)?;
+    let updated = parse_config(&patched)?;
+    if override_value(setting, scope, &updated.indentation).as_ref() != value {
+        return Err(SettingError::InvalidConfig(
+            "override did not resolve to the requested value".into(),
+        ));
+    }
+    atomic_write(&target, patched.as_bytes())?;
+    Ok(updated)
+}
+
+/// Patch one leaf of a block mapping. Quoted path keys are decoded by the same
+/// scanner used for duplicate detection. Flow parents remain refused.
+fn patch_mapping_path(
+    source: &str,
+    lines: &[Line<'_>],
+    path: &[String],
+    scalar: &str,
+    indent: usize,
+) -> Result<String, SettingError> {
+    let key = &path[0];
+    if let Some(index) = lines.iter().position(|line| {
+        line.indent == indent && line.entry.as_ref().is_some_and(|entry| entry.key == *key)
+    }) {
+        let line = &lines[index];
+        if path.len() == 1 {
+            return replace_scalar(source, line, scalar);
+        }
+        ensure_mapping(line)?;
+        let end = lines[index + 1..]
+            .iter()
+            .position(|line| is_content(line) && line.indent <= indent)
+            .map_or(lines.len(), |offset| index + 1 + offset);
+        let children = &lines[index + 1..end];
+        let child_indent = children
+            .iter()
+            .filter(|line| line.entry.is_some())
+            .map(|line| line.indent)
+            .min()
+            .unwrap_or(indent + 2);
+        if children.iter().any(|line| is_content(line)) {
+            return patch_mapping_path(source, children, &path[1..], scalar, child_indent);
+        }
+        return Ok(insert_at(
+            source,
+            line.end,
+            &mapping_addition(source, &path[1..], scalar, child_indent, line.end),
+        ));
+    }
+    let insertion = lines
+        .iter()
+        .rfind(|line| is_content(line))
+        .map_or(source.len(), |line| line.end);
+    Ok(insert_at(
+        source,
+        insertion,
+        &mapping_addition(source, path, scalar, indent, insertion),
+    ))
+}
+
+fn mapping_addition(
+    source: &str,
+    path: &[String],
+    scalar: &str,
+    indent: usize,
+    insertion: usize,
+) -> String {
+    let newline = newline(source);
+    let mut addition = if insertion > 0 && !source[..insertion].ends_with('\n') {
+        newline.to_owned()
+    } else {
+        String::new()
+    };
+    for (index, key) in path.iter().enumerate() {
+        let quoted = format!("'{}'", key.replace('\'', "''"));
+        // The penultimate component is the user-selected language or filename
+        // pattern. Even `123` and `true` must remain YAML string keys.
+        let key = if path.len() - index != 2
+            && key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            key
+        } else {
+            &quoted
+        };
+        addition.push_str(&format!("{}{key}:", " ".repeat(indent + index * 2)));
+        if index == path.len() - 1 {
+            addition.push_str(&format!(" {scalar}"));
+        }
+        addition.push_str(newline);
+    }
+    addition
+}
+
+/// Applies one scoped setting without changing the other inherited field.
+pub fn apply_override(
+    config: &mut Config,
+    setting: SettingId,
+    scope: &crate::indentation::Scope,
+    value: Option<&SettingValue>,
+) -> Result<(), String> {
+    if let Some(value) = value {
+        setting
+            .validate(value, config)
+            .map_err(|error| error.to_string())?;
+    }
+    let mut values = scope
+        .values(&config.indentation)
+        .cloned()
+        .unwrap_or_default();
+    match (setting, value) {
+        (SettingId::EditorTabWidth, Some(SettingValue::Integer(width))) => {
+            values.tab_width = Some(*width)
+        }
+        (SettingId::EditorTabWidth, None) => values.tab_width = None,
+        (SettingId::EditorIndent, Some(SettingValue::Indent(style))) => {
+            values.indent = Some(*style)
+        }
+        (SettingId::EditorIndent, None) => values.indent = None,
+        _ => return Err("unsupported indentation override".into()),
+    }
+    let mut updated = config.indentation.clone();
+    updated.set(scope, values)?;
+    config.indentation = updated;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -194,7 +194,7 @@ impl HelpTopic {
                 "{binding:Space d t} toggles it. {binding:Space d d} refreshes and expands the active file's ancestors, selects the file, and focuses the tree. Files outside the workspace select its root. {binding:Esc} returns focus to the pane.",
             ],
             Self::Config => &[
-                "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row.",
+                "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row. Tab on tab width or indent style offers language and file-pattern overrides; saved overrides appear beneath the setting, with Enter to edit and Tab to remove.",
                 "Edits made to the configuration file outside this page reach the running editor through :config-reload. Nothing is watched, an unusable file leaves the running configuration alone, and a setting read at startup is named as needing a restart rather than shown as already in effect.",
             ],
             Self::Notifications => &[
