@@ -1107,6 +1107,47 @@ fn missing_merge_tree_capability_refuses_without_touching_index_or_disk() {
 }
 
 #[test]
+fn ordinary_commit_cannot_complete_a_merge_started_after_message_capture() {
+    let f = Fixture::new();
+    f.divergent(false);
+    let p = GitCliProvider::new("git");
+    assert_eq!(
+        p.operation_state(&f.repo()).unwrap(),
+        RepositoryOperation::Idle
+    );
+    let captured_message = "ordinary message captured before external merge";
+    f.git(&["merge", "--no-ff", "--no-commit", "feature"]);
+    let head = f.git(&["rev-parse", "HEAD"]);
+    let index = fs::read(f.0.join(".git/index")).unwrap();
+    let error = p.commit(&f.repo(), captured_message).unwrap_err();
+    assert!(error.to_string().contains("merge completion review"));
+    assert_eq!(f.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(fs::read(f.0.join(".git/index")).unwrap(), index);
+    assert!(f.0.join(".git/MERGE_HEAD").exists());
+    let review = p
+        .prepare_merge_completion(&f.repo(), BufferRevisionGuard::new())
+        .unwrap();
+    p.commit_merge(&f.repo(), &review, "reviewed external merge")
+        .unwrap();
+    assert_eq!(
+        f.git(&["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split_whitespace()
+            .count(),
+        3
+    );
+
+    f.write("ordinary", "ordinary staged edit\n");
+    f.git(&["add", "ordinary"]);
+    p.commit(&f.repo(), "ordinary commit after merge").unwrap();
+    assert_eq!(
+        f.git(&["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split_whitespace()
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn unborn_checkout_conflict_inventory_is_empty_without_inventing_a_head() {
     let f = Fixture::new();
     f.git(&["symbolic-ref", "HEAD", "refs/heads/unborn"]);
