@@ -2,9 +2,10 @@
 
 //! Captured multi-root history and pure sparse-lane graph layout.
 //!
-//! Lane numbers are stable for a generation. Edges which cannot be drawn
-//! unambiguously on one row name their destination lanes instead; commit
-//! detail always exposes the complete parent identities.
+//! Lane numbers are stable for a generation. Every edge is drawn on its
+//! commit's row as a route to its parent lane; an edge whose lane cannot fit
+//! names its destination instead, and commit detail always exposes the
+//! complete parent identities.
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -142,54 +143,72 @@ impl GraphRow {
     }
 
     pub fn graph_with_width(&self, ascii: bool, width: usize) -> String {
+        const UP: u8 = 1;
+        const DOWN: u8 = 2;
+        const LEFT: u8 = 4;
+        const RIGHT: u8 = 8;
+        // Set where a route ends, so a lane it merely passes stays a crossing.
+        const ENDPOINT: u8 = 16;
         let width = width.clamp(self.width(), MAX_NETWORK_LANES);
-        let mut cells = vec![' '; width * 2 - 1];
+        let mut cells = vec![0_u8; width * 2 - 1];
         for &lane in &self.active {
-            cells[lane * 2] = if ascii { '|' } else { '│' };
+            cells[lane * 2] |= UP | DOWN;
         }
         if let Some(lane) = self.lane {
-            cells[lane * 2] = if ascii { '*' } else { '●' };
-            let external = self
+            // Each edge to another lane is a horizontal route from the commit
+            // to that lane, however many lanes it passes; a lane it crosses
+            // keeps its vertical and becomes a crossing.
+            for target in self
                 .edges
                 .iter()
                 .filter_map(|(_, target)| target.filter(|target| *target != lane))
-                .collect::<Vec<_>>();
-            if external.len() == 1
-                && self.edges.iter().all(|(_, lane)| lane.is_some())
-                && external[0].abs_diff(lane) == 1
             {
-                let target = external[0];
-                cells[lane.min(target) * 2 + 1] = if ascii { '-' } else { '─' };
-                let occupied = self.active.contains(&target);
-                cells[target * 2] = if ascii {
-                    '+'
-                } else {
-                    match (target > lane, occupied) {
-                        (true, false) => '╮',
-                        (false, false) => '╭',
-                        (true, true) => '┤',
-                        (false, true) => '├',
-                    }
-                };
+                for cell in &mut cells[lane.min(target) * 2 + 1..lane.max(target) * 2] {
+                    *cell |= LEFT | RIGHT;
+                }
+                cells[target * 2] |= ENDPOINT | DOWN | if target > lane { LEFT } else { RIGHT };
             }
         }
-        cells.into_iter().collect()
+        let mut text = cells
+            .into_iter()
+            .map(|bits| {
+                let endpoint = bits & ENDPOINT != 0;
+                let bits = bits & !ENDPOINT;
+                if bits == 0 {
+                    ' '
+                } else if ascii {
+                    match bits {
+                        b if b == UP | DOWN => '|',
+                        b if b == LEFT | RIGHT => '-',
+                        // A vertical lane passing through a route stays a bar;
+                        // `+` marks only where a route ends.
+                        b if b == UP | DOWN | LEFT | RIGHT && !endpoint => '|',
+                        _ => '+',
+                    }
+                } else {
+                    match bits {
+                        b if b == UP | DOWN => '│',
+                        b if b == LEFT | RIGHT => '─',
+                        b if b == DOWN | LEFT => '╮',
+                        b if b == DOWN | RIGHT => '╭',
+                        b if b == UP | DOWN | LEFT => '┤',
+                        b if b == UP | DOWN | RIGHT => '├',
+                        b if b == DOWN | LEFT | RIGHT => '┬',
+                        b if b == UP | DOWN | LEFT | RIGHT && !endpoint => '╫',
+                        _ => '┼',
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Some(lane) = self.lane {
+            text[lane * 2] = if ascii { '*' } else { '●' };
+        }
+        text.into_iter().collect()
     }
 
     pub fn route_note(&self) -> String {
-        let ambiguous = self.lane.is_none()
-            || self.edges.iter().any(|(_, target)| target.is_none())
-            || self
-                .edges
-                .iter()
-                .filter(|(_, target)| *target != self.lane)
-                .count()
-                > 1
-            || self.edges.iter().any(|(_, target)| {
-                target
-                    .zip(self.lane)
-                    .is_some_and(|(a, b)| a.abs_diff(b) > 1)
-            });
+        let ambiguous =
+            self.lane.is_none() || self.edges.iter().any(|(_, target)| target.is_none());
         let mut note = if ambiguous {
             format!(
                 " [parent lanes: {}; Enter inspects parents]",
@@ -375,6 +394,78 @@ mod tests {
         let root = lanes.row(commit("root", &[]), false);
         assert_eq!(root.lane, Some(0));
         assert!(lanes.pending.iter().all(Option::is_none));
+    }
+    #[test]
+    fn distant_joins_and_forks_are_drawn_as_routes_across_lanes() {
+        // Fork point with two children on non-adjacent lanes, as in
+        // a child on lane 0 whose parent was reserved on lane 2.
+        let lanes = GraphLanes {
+            pending: vec![None, Some("mid".into()), Some("base".into())],
+        };
+        let row = lanes.clone().row(commit("tip", &["base"]), false);
+        assert_eq!(row.lane, Some(0));
+        assert_eq!(row.edges, [("base".into(), Some(2))]);
+        assert_eq!(row.graph(false), "●─╫─┤");
+        assert_eq!(row.graph(true), "*-|-+");
+        assert!(row.route_note().is_empty());
+        // A merge reaches an unoccupied distant lane past a crossed lane.
+        let mut lanes = GraphLanes {
+            pending: vec![None, Some("mid".into())],
+        };
+        let row = lanes.row(commit("m", &["a", "b", "c"]), false);
+        assert_eq!(row.graph(false), "●─╫─┬─╮");
+        assert_eq!(row.graph(true), "*-|-+-+");
+        // A route that ends on an occupied lane is a join, not a crossing.
+        let mut lanes = GraphLanes {
+            pending: vec![None, Some("b".into())],
+        };
+        let row = lanes.row(commit("m", &["a", "b", "c"]), false);
+        assert_eq!(row.graph(false), "●─┼─╮");
+        assert_eq!(row.graph(true), "*-+-+");
+        // Octopus targets on occupied and free lanes, a longer route passing a join.
+        let mut lanes = GraphLanes {
+            pending: vec![None, Some("b".into()), Some("c".into())],
+        };
+        let row = lanes.row(commit("m", &["a", "b", "c", "d"]), false);
+        assert_eq!(row.graph(false), "●─┼─┼─╮");
+        assert_eq!(row.graph(true), "*-+-+-+");
+        // A route crossing an empty lane is a plain line; routes go both ways.
+        let mut lanes = GraphLanes {
+            pending: vec![Some("root".into()), None, Some("x".into())],
+        };
+        let row = lanes.row(commit("x", &["root"]), false);
+        assert_eq!(row.graph(false), "├───●");
+        assert_eq!(row.graph(true), "+---*");
+        // A route to a newly allocated lane on the left.
+        let mut lanes = GraphLanes {
+            pending: vec![None, Some("x".into())],
+        };
+        let row = lanes.row(commit("x", &["p", "q"]), false);
+        assert_eq!(row.graph(false), "╭─●");
+        assert_eq!(row.graph(true), "+-*");
+        let mut lanes = GraphLanes {
+            pending: vec![Some("c".into()), None, Some("x".into())],
+        };
+        let row = lanes.row(commit("c", &["x"]), false);
+        assert_eq!(row.graph(false), "●───┤");
+        assert_eq!(row.graph(true), "*---+");
+        let mut lanes = GraphLanes {
+            pending: vec![Some("l".into()), Some("m".into())],
+        };
+        let row = lanes.row(commit("m", &["l", "r", "s"]), false);
+        assert_eq!(row.graph(false), "├─●─╮");
+        // Routes leftwards.
+        let mut lanes = GraphLanes {
+            pending: vec![Some("root".into()), Some("x".into()), None],
+        };
+        let row = lanes.row(commit("x", &["root"]), false);
+        assert_eq!(row.graph(false), "├─●");
+        let mut lanes = GraphLanes {
+            pending: vec![Some("root".into()), Some("y".into()), Some("z".into())],
+        };
+        let row = lanes.row(commit("z", &["root"]), false);
+        assert_eq!(row.graph(false), "├─╫─●");
+        assert_eq!(row.graph(true), "+-|-*");
     }
     #[test]
     fn unplaced_commits_never_replace_or_reassign_an_existing_lane() {

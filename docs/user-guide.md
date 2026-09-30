@@ -3418,10 +3418,16 @@ selected object while it remains within the bounded traversal. Page continuation
 uses the original object IDs and labels even if refs move, and marks that
 generation stale. No remote access or idle graph scan runs.
 
-Ordinary forks and joins use connectors on the commit row. Crossings and larger
-forks that cannot fit unambiguously show a labelled parent-lane route instead;
-`overflow` preserves an edge whose lane cannot fit. Enter exposes the full
-parent IDs. Shallow boundaries are labelled. The limits are 256 captured refs
+Forks and joins are drawn on the commit row as a horizontal route from the
+commit to each parent's lane, however many lanes apart. A lane the route passes
+shows `╫` if it carries history and `─` otherwise (`|` and `-` in ASCII). Where
+a route ends is a corner or tee, or `┼` where a join has a longer route
+continuing past it; in ASCII every route end is `+`. A route that ends on a
+lane already waiting for that parent is a join, which is how a fork point shows
+where two lines of history meet. A row whose parent lane cannot fit is labelled
+with its numbered parent lanes, and `overflow` stands for a lane beyond the 16
+that fit; an unplaced commit is labelled too. Enter exposes the full parent
+IDs. Shallow boundaries are labelled. The limits are 256 captured refs
 plus HEAD, 16 lanes, 50 retained pages and 10,000 traversed commits per generation, with a 2 MiB
 subprocess-output bound per read. An atomic refresh temporarily retains at most
 two bounded generations until the replacement can preserve the selected commit.
