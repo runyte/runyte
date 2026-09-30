@@ -136,32 +136,66 @@ impl GitCliProvider {
                 "this structural conflict requires manual file management; review and stage each affected path",
             ));
         }
-        if matches!(
-            choice,
+        let disk_identity = self.merge_disk(repo)?;
+        let reviewed_content = match choice {
             ResolutionChoice::SavedFile {
-                allow_literal_markers: false
-            }
-        ) {
-            match std::fs::symlink_metadata(path) {
-                Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                allow_literal_markers,
+            } => match std::fs::symlink_metadata(path) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => BaseContent::Absent,
                 Err(e) => return Err(refusal(e.to_string())),
                 Ok(metadata) if metadata.is_file() => {
                     let bytes = read_file_for_comparison(path, self.max_output_bytes)?;
-                    if marker_like(&bytes, entry.marker_width) {
+                    if !allow_literal_markers && marker_like(&bytes, entry.marker_width) {
                         return Err(refusal(
                             "file contains conflict markers; resolve them or explicitly review literal marker text",
                         ));
                     }
+                    if crate::external_open::is_binary(&bytes, true) {
+                        BaseContent::Binary
+                    } else {
+                        String::from_utf8(bytes)
+                            .map(BaseContent::Text)
+                            .unwrap_or(BaseContent::Binary)
+                    }
                 }
-                Ok(metadata) if metadata.file_type().is_symlink() => (),
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    let target = std::fs::read_link(path).map_err(|e| refusal(e.to_string()))?;
+                    if target.as_os_str().as_encoded_bytes().len() > self.max_output_bytes {
+                        return Err(GitError::TooLarge {
+                            command: format!("read link {}", path.display()),
+                            limit: self.max_output_bytes,
+                        });
+                    }
+                    target
+                        .to_str()
+                        .map(|target| BaseContent::Text(target.into()))
+                        .unwrap_or(BaseContent::Binary)
+                }
                 Ok(_) => {
                     return Err(refusal(
                         "structural path requires explicit manual file management",
                     ));
                 }
+            },
+            ResolutionChoice::Current | ResolutionChoice::Other => {
+                let selected = if choice == ResolutionChoice::Current {
+                    &entry.current
+                } else {
+                    &entry.other
+                };
+                match selected {
+                    Some(stage) => self.object_content(repo, &stage.oid)?,
+                    None => BaseContent::Absent,
+                }
             }
+        };
+        // The displayed content must belong to the captured mutation authority.
+        if self.merge_disk(repo)? != disk_identity
+            || self.read_conflicts(repo)? != inventory
+            || !guard.is_valid()
+        {
+            return Err(stale());
         }
-        let disk_identity = self.merge_disk(repo)?;
         let mut plan = ResolutionPlan {
             review_identity: String::new(),
             repository: repo.clone(),
@@ -169,6 +203,7 @@ impl GitCliProvider {
             path: path.to_owned(),
             choice,
             entry,
+            reviewed_content,
             inventory,
             disk_identity,
             guard,
@@ -203,19 +238,7 @@ impl GitCliProvider {
                     &plan.entry.other
                 };
                 let relative = self.relative(repo, &plan.path)?;
-                if selected.is_none() {
-                    // Git owns path validation and refuses an unexpected directory.
-                    self.run(
-                        repo.workdir(),
-                        &[
-                            OsStr::new("--literal-pathspecs"),
-                            OsStr::new("rm"),
-                            OsStr::new("-f"),
-                            OsStr::new("--"),
-                            relative.as_os_str(),
-                        ],
-                    )?;
-                } else {
+                if let Some(selected) = selected {
                     let side = if plan.choice == ResolutionChoice::Current {
                         "--ours"
                     } else {
@@ -227,6 +250,32 @@ impl GitCliProvider {
                             OsStr::new("--literal-pathspecs"),
                             OsStr::new("checkout"),
                             OsStr::new(side),
+                            OsStr::new("--"),
+                            relative.as_os_str(),
+                        ],
+                    )?;
+                    // Checkout must succeed before replacing the unmerged stages.
+                    // Adding the worktree file would infer its mode from disk,
+                    // losing reviewed executable/symlink modes on some platforms.
+                    self.run(
+                        repo.workdir(),
+                        &[
+                            OsStr::new("update-index"),
+                            OsStr::new("--add"),
+                            OsStr::new("--cacheinfo"),
+                            OsStr::new(&selected.mode),
+                            OsStr::new(&selected.oid),
+                            relative.as_os_str(),
+                        ],
+                    )?;
+                } else {
+                    // Git owns path validation and refuses an unexpected directory.
+                    self.run(
+                        repo.workdir(),
+                        &[
+                            OsStr::new("--literal-pathspecs"),
+                            OsStr::new("rm"),
+                            OsStr::new("-f"),
                             OsStr::new("--"),
                             relative.as_os_str(),
                         ],
