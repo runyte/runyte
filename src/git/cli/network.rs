@@ -186,6 +186,9 @@ impl GitCliProvider {
             || !cursor.offset.is_multiple_of(NETWORK_PAGE_SIZE)
             || cursor.roots.len() > MAX_NETWORK_ROOTS + 1
             || cursor.lanes.pending.len() > crate::git::network::MAX_NETWORK_LANES
+            || cursor.lanes.colors.len() != cursor.lanes.pending.len()
+            || cursor.lanes.colors.iter().any(|color| *color >= 4)
+            || cursor.lanes.next_color >= 4
             || cursor.roots.iter().any(|root| !valid_object_id(&root.oid))
             || cursor
                 .lanes

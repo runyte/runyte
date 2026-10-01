@@ -25,6 +25,9 @@ The retained completed records cover:
 - [Git merges, conflicts, and network view](completed/PLAN_GIT_MERGES_CONFLICTS_AND_NETWORK.md):
   reviewed branch merges with separate commit approval, single-branch fetching,
   transactional conflict resolution, and a bounded navigable commit graph;
+- [Git-style network routing and readable commit timestamps](completed/PLAN_GIT_NETWORK_ROUTING.md):
+  continuous colored paths, connector rows, compacting lanes, explicit commit
+  row identities, and author-local date/time in shared commit detail;
 - [Editing commands and action bindings](completed/PLAN_EDITING_AND_ACTION_BINDINGS.md):
   outer-edge line extension, independent mode-specific action sequences,
   preserved open-line indentation, and optional bracket and quote auto-closing;

@@ -14,6 +14,9 @@ pub(super) struct NetworkState {
     pending: Option<PendingNetwork>,
     ascii: bool,
     selected: Option<String>,
+    selected_relative: usize,
+    /// Header has no identity; connector rows carry only restoration ownership.
+    document_rows: Vec<Option<(usize, usize)>>,
     generation: u64,
     roots_check: Option<(GitRequestId, u64)>,
     roots_dirty: bool,
@@ -28,8 +31,46 @@ pub(super) struct NetworkReturnOrigin {
     pane: usize,
     generation: u64,
     page: usize,
-    position: super::view_position::ViewPosition,
+    position: super::view_position::ViewPosition<NetworkSelection>,
 }
+type RowColumn = (usize, usize);
+
+/// Document coordinates survive ASCII label changes without losing ranges.
+struct NetworkSelection {
+    ranges: Vec<(RowColumn, RowColumn)>,
+    primary: usize,
+}
+impl NetworkSelection {
+    fn capture(buffer: &Buffer, selection: &Selection) -> Self {
+        let locate = |offset| {
+            let row = buffer.offset_to_row(offset);
+            (row, offset.saturating_sub(buffer.line_to_offset(row)))
+        };
+        Self {
+            ranges: selection
+                .ranges()
+                .iter()
+                .map(|range| (locate(range.anchor), locate(range.head)))
+                .collect(),
+            primary: selection.primary_index(),
+        }
+    }
+
+    fn resolve(&self, buffer: &Buffer) -> Selection {
+        let locate = |(row, column): RowColumn| {
+            let row = row.min(buffer.len_lines().saturating_sub(1));
+            buffer.line_to_offset(row) + column.min(buffer.line_len(row))
+        };
+        Selection::new(
+            self.ranges
+                .iter()
+                .map(|&(anchor, head)| crate::selection::Range::new(locate(anchor), locate(head)))
+                .collect(),
+            self.primary,
+        )
+    }
+}
+
 struct NetworkReturn {
     detail: usize,
     origin: NetworkReturnOrigin,
@@ -60,9 +101,18 @@ struct PendingNetwork {
 
 impl App {
     pub(super) fn open_git_network(&mut self, scope: NetworkScope) {
-        let anchor = (scope == self.network.scope)
-            .then(|| self.selected_network_oid())
+        let identity = (scope == self.network.scope)
+            .then(|| self.network_row_identity())
             .flatten();
+        self.network.selected_relative = identity.map_or(0, |(_, relative)| relative);
+        let anchor = identity.and_then(|(index, _)| {
+            self.network
+                .pages
+                .get(self.network.page)?
+                .rows
+                .get(index)
+                .map(|row| row.commit.oid.clone())
+        });
         self.network.loading = None;
         self.request_network_page(
             NetworkRequest {
@@ -186,16 +236,24 @@ impl App {
         self.show_network_page(true);
     }
 
-    pub(super) fn selected_network_oid(&self) -> Option<String> {
+    fn network_row_identity(&self) -> Option<(usize, usize)> {
         if !self.active_buffer().is_git_network() {
             return None;
         }
         let line = self.active_buffer().offset_to_row(self.active().head());
+        self.network.document_rows.get(line).copied().flatten()
+    }
+
+    pub(super) fn selected_network_oid(&self) -> Option<String> {
+        let (index, relative) = self.network_row_identity()?;
+        if relative != 0 {
+            return None;
+        }
         self.network
             .pages
             .get(self.network.page)?
             .rows
-            .get(line.checked_sub(1)?)
+            .get(index)
             .map(|row| row.commit.oid.clone())
     }
 
@@ -229,31 +287,18 @@ impl App {
             .max()
             .unwrap_or(1);
         let mut spans = Vec::new();
+        let mut document_rows = vec![None];
+        let mut commit_lines = Vec::new();
         let mut offset = text.chars().count() + 1;
-        for row in &page.rows {
+        for (index, row) in page.rows.iter().enumerate() {
+            commit_lines.push(document_rows.len());
+            document_rows.push(Some((index, 0)));
+            use crate::git::network::{GRAPH_COLUMN, HASH_COLUMNS, connector_text, display_label};
             use crate::snapshot::TextRole;
-            use unicode_width::UnicodeWidthStr;
             let line = row.text_with_width(self.network.ascii, graph_width);
-            spans.push((offset..offset + 12, TextRole::GitHash));
-            let initials = crate::git::network::author_initials(&row.commit.author);
-            let graph = offset
-                + 14
-                + initials.chars().count()
-                + 4usize.saturating_sub(initials.width())
-                + 2;
-            for lane in 0..graph_width {
-                let start = graph + lane * 2;
-                let end = (start + 2).min(graph + graph_width * 2 - 1);
-                spans.push((
-                    start..end,
-                    [
-                        TextRole::GitLane0,
-                        TextRole::GitLane1,
-                        TextRole::GitLane2,
-                        TextRole::GitLane3,
-                    ][lane % 4],
-                ));
-            }
+            spans.push((offset..offset + HASH_COLUMNS, TextRole::GitHash));
+            let graph = offset + row.metadata_prefix().chars().count();
+            graph_spans(&mut spans, &row.node, graph);
             if let Some(label) = row
                 .commit
                 .decorations
@@ -261,11 +306,7 @@ impl App {
                 .filter(|label| label.starts_with("HEAD"))
             {
                 let start = graph + graph_width * 2 + 2;
-                let displayed_label = if self.network.ascii {
-                    label.replace("HEAD → ", "HEAD -> ")
-                } else {
-                    label.clone()
-                };
+                let displayed_label = display_label(label);
                 spans.push((
                     start..start + displayed_label.chars().count(),
                     TextRole::GitHead,
@@ -274,16 +315,33 @@ impl App {
             text.push('\n');
             text.push_str(&line);
             offset += line.chars().count() + 1;
+            for (relative, connector) in row.connectors.iter().enumerate() {
+                let line = connector_text(connector, self.network.ascii, graph_width);
+                graph_spans(&mut spans, connector, offset + GRAPH_COLUMN);
+                document_rows.push(Some((index, relative + 1)));
+                text.push('\n');
+                text.push_str(&line);
+                offset += line.chars().count() + 1;
+            }
         }
         if page.rows.is_empty() {
             text.push_str("\nNo commits (unborn HEAD or empty scope)");
         }
-        let selected = self
-            .network
-            .selected
-            .take()
+        let selected = activate
+            .then(|| self.network.selected.take())
+            .flatten()
             .and_then(|oid| page.rows.iter().position(|row| row.commit.oid == oid))
-            .map_or(1, |row| row + 1);
+            .map_or(1, |index| {
+                commit_lines[index]
+                    + self
+                        .network
+                        .selected_relative
+                        .min(page.rows[index].connectors.len())
+            });
+        if activate {
+            self.network.selected_relative = 0;
+        }
+        self.network.document_rows = document_rows;
         let buffer = self
             .network
             .buffer
@@ -294,7 +352,13 @@ impl App {
                 self.buffers.len() - 1
             });
         self.network.buffer = Some(buffer);
-        self.replace_virtual_preserving_row(buffer, &text);
+        self.replace_virtual_preserving_positions(
+            buffer,
+            &text,
+            Some(true),
+            |buffer, pane| NetworkSelection::capture(buffer, &pane.selection),
+            |buffer, selection| selection.resolve(buffer),
+        );
         self.network.spans = spans;
         if activate && self.active().buffer != buffer {
             self.switch_buffer(buffer);
@@ -304,6 +368,7 @@ impl App {
         if activate {
             self.active_mut()
                 .replace_selection(Selection::point(offset));
+            self.active_mut().preserve_scroll = false;
             self.mode = Mode::Normal;
         }
     }
@@ -315,7 +380,10 @@ impl App {
                 pane: self.active_pane,
                 generation: self.network.generation,
                 page: self.network.page,
-                position: super::view_position::ViewPosition::capture(self.active()),
+                position: super::view_position::ViewPosition::capture_with(
+                    self.active(),
+                    NetworkSelection::capture(self.active_buffer(), &self.active().selection),
+                ),
             })
     }
 
@@ -346,10 +414,15 @@ impl App {
             }
             self.network.page = value.origin.page;
             self.show_network_page(false);
+            let selection = value
+                .origin
+                .position
+                .selection
+                .resolve(&self.buffers[self.panes[&pane].buffer]);
             value
                 .origin
                 .position
-                .restore(self.panes.get_mut(&pane).unwrap());
+                .restore_with(self.panes.get_mut(&pane).unwrap(), selection);
         }
     }
 
@@ -573,10 +646,36 @@ impl App {
             return;
         }
         self.network.ascii = !self.network.ascii;
-        self.network.selected = self.selected_network_oid();
-        let position = super::view_position::ViewPosition::capture(self.active());
         self.show_network_page(false);
-        position.restore(self.active_mut());
+    }
+}
+
+fn graph_spans(
+    spans: &mut Vec<(std::ops::Range<usize>, crate::snapshot::TextRole)>,
+    line: &crate::git::network::GraphLine,
+    offset: usize,
+) {
+    use crate::snapshot::TextRole;
+    let roles = [
+        TextRole::GitLane0,
+        TextRole::GitLane1,
+        TextRole::GitLane2,
+        TextRole::GitLane3,
+    ];
+    for (column, cell) in line.cells.iter().enumerate() {
+        if cell.character(false) == ' ' {
+            continue;
+        }
+        let role = roles[usize::from(cell.color)];
+        let start = offset + column;
+        if let Some((range, previous)) = spans.last_mut()
+            && *previous == role
+            && range.end == start
+        {
+            range.end += 1;
+        } else {
+            spans.push((start..start + 1, role));
+        }
     }
 }
 

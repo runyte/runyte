@@ -1528,32 +1528,50 @@ impl App {
     /// exist. Row fallback is deterministic when the selected line vanished.
     pub(super) fn replace_virtual_preserving_row(&mut self, buffer: usize, text: &str) {
         let old = self.buffers[buffer].to_string();
-        let selections = self
+        self.replace_virtual_preserving_positions(
+            buffer,
+            text,
+            None,
+            |buffer, pane| {
+                let row = buffer.offset_to_row(pane.head());
+                let column = pane.head().saturating_sub(buffer.line_to_offset(row));
+                (row, column, diff_row_identity(&old, row))
+            },
+            |buffer, (old_row, column, identity)| {
+                let row = identity
+                    .as_ref()
+                    .and_then(|identity| diff_row_for_identity(text, identity))
+                    .unwrap_or_else(|| old_row.min(buffer.len_lines().saturating_sub(1)));
+                Selection::point(buffer.line_to_offset(row) + column.min(buffer.line_len(row)))
+            },
+        );
+    }
+
+    /// Shared replacement/selection ownership for generated documents. Callers
+    /// choose identity mapping and explicitly opt into a scroll policy; None
+    /// leaves the pane's existing policy unchanged.
+    pub(super) fn replace_virtual_preserving_positions<T>(
+        &mut self,
+        buffer: usize,
+        text: &str,
+        preserve_scroll: Option<bool>,
+        capture: impl Fn(&Buffer, &super::Pane) -> T,
+        resolve: impl Fn(&Buffer, T) -> Selection,
+    ) {
+        let positions = self
             .panes
             .iter()
             .filter(|(_, pane)| pane.buffer == buffer)
-            .map(|(pane_id, pane)| {
-                let head = pane.head();
-                let row = self.buffers[buffer].offset_to_row(head);
-                // Carry the column as well as the row, so a refresh puts the
-                // cursor back where it was on the line rather than dragging
-                // it to the first column.
-                let column = head.saturating_sub(self.buffers[buffer].line_to_offset(row));
-                (*pane_id, row, column, diff_row_identity(&old, row))
-            })
+            .map(|(id, pane)| (*id, capture(&self.buffers[buffer], pane)))
             .collect::<Vec<_>>();
         self.buffers[buffer].replace_virtual_text(text);
-        for (pane_id, old_row, column, identity) in selections {
-            let row = identity
-                .as_ref()
-                .and_then(|identity| diff_row_for_identity(text, identity))
-                .unwrap_or_else(|| old_row.min(self.buffers[buffer].len_lines().saturating_sub(1)));
-            // The replacement row may be shorter than the one the cursor came
-            // from, so the column lands at its end rather than past it.
-            let offset = self.buffers[buffer].line_to_offset(row)
-                + column.min(self.buffers[buffer].line_len(row));
-            if let Some(pane) = self.panes.get_mut(&pane_id) {
-                pane.replace_selection(Selection::point(offset));
+        for (id, position) in positions {
+            let selection = resolve(&self.buffers[buffer], position);
+            if let Some(pane) = self.panes.get_mut(&id) {
+                pane.replace_selection(selection);
+                if let Some(preserve) = preserve_scroll {
+                    pane.preserve_scroll = preserve;
+                }
             }
         }
     }

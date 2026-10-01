@@ -696,26 +696,40 @@ approve. The overlay consumes Enter; the terminal receives no submit key.
 ## Commit network
 
 `[git network]` is a retained read-only special buffer, opened with `Space g n`.
-Its header identifies the captured scope and graph page. Each document row is
-one commit and contains the hash, grapheme-aware author initials, stable lanes,
-ref labels and subject. Connector geometry is document text, so search and
-selection cannot create or select a second commit from a connector-only row.
-Graph rows never wrap; horizontal scrolling reaches the full displayed text.
-Hashes are muted, HEAD has its own emphasis and lane colors use theme roles;
-shapes and labels retain meaning without color. ASCII glyphs are a Tab action.
+Its header identifies the captured scope and graph page. Each commit row
+contains the hash, grapheme-aware author initials, colored paths, ref labels,
+and subject. Connector rows route forks, joins, crossings, and compaction in
+ordinary document text. Explicit row identities distinguish commit metadata
+from connectors: Enter acts only on a commit row, while ordinary movement,
+search, selection, copying, and line numbers include connector rows. Graph rows
+never wrap; horizontal scrolling reaches the full text. Hashes are muted and
+HEAD has its own emphasis. ASCII glyphs are a Tab action with identical row
+identities. The `HEAD ->` label uses identical metadata text in both modes.
+Page activation follows the new caret; redraws and detail return preserve the
+viewport.
 
-Forks and joins are one-row routes from the commit to each parent lane, however
-far apart. A lane a route passes shows `╫` if it carries history and `─`
-otherwise (`|` and `-` in ASCII); a route's end is a corner or tee, or `┼`
-where a join has a longer route continuing past it (`+` in ASCII), so a join
-shows where two lines of history meet. Lane overflow and unplaced commits use
-labelled parent-lane destinations, with complete parent IDs available through
-Enter's ordinary commit detail. Shallow boundaries and graph
-limits are explicit text. Paging restores identical cached geometry; closing
-commit detail restores the graph's page, selected commit and viewport. Captured
-roots and labels remain fixed until explicit refresh; stale generations say so.
-Tab actions select all cached refs, HEAD or an exact captured full ref. Graph
-work runs on demand rather than on an idle timer.
+Colors follow paths when lanes expand or compact. Existing parent paths retain
+their colors when joined. The four existing lane theme roles are selected by
+path color rather than column. Diagonal routes use `╱` and `╲` (`/` and `\` in
+ASCII); `╳` (`x`) crosses without joining. The shared crossing cell uses the
+moving path's color; both paths retain their colors on either side. Shapes
+remain meaningful without color. A root leaves a separating connector row so
+an unrelated root reusing its column does not appear connected.
+
+Each commit block has at most 64 connector rows within 16 lanes. Existing
+parents need no free lane: at capacity a dedicated horizontal connector uses
+`<` or `>` to name its destination, with `╫` (`x`) crossing intermediate paths.
+Routes beyond lane or row budgets list undrawn parent commit IDs in an overflow
+note, with full IDs in commit detail; notes do not name shifting lane numbers. Shallow boundaries and graph limits remain explicit. Pages count
+200 commits, and cached geometry and colors replay identically. Closing detail
+restores the originating page, caret and viewport. Refresh preserves the commit
+OID and, from a connector, its owning block and relative row where possible.
+Captured roots and labels remain fixed until explicit refresh; stale generations
+say so. Tab actions select all cached refs, HEAD or an exact captured full ref.
+Graph work runs on demand rather than on an idle timer.
+
+Commit detail shared by the log and network displays `Author-time:` as
+`YYYY-MM-DD HH:MM` in the commit author's original timezone.
 
 Private bundled-client protocol version 70 adds the text-role values `GitHash`,
 `GitHead`, `GitLane0`, `GitLane1`, `GitLane2` and `GitLane3`. These carry muted

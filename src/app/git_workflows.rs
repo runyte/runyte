@@ -4612,7 +4612,11 @@ impl App {
             return;
         }
         let Some(oid) = self.selected_git_commit_oid() else {
-            self.action_failed("this row is uncommitted");
+            self.action_failed(if self.active_buffer().is_git_network() {
+                "select a commit row to open its detail"
+            } else {
+                "this row is uncommitted"
+            });
             return;
         };
         if self.active_buffer().is_git_network() {
@@ -4655,7 +4659,7 @@ impl App {
             "commit {}\nAuthor: {}\nAuthor-time: {}\nParents: {}\n\n{}\n",
             detail.summary.oid,
             detail.summary.author,
-            detail.summary.author_time,
+            detail.summary.author_datetime,
             parents,
             detail.body.trim_end()
         );

@@ -38,6 +38,8 @@ fn git_command(root: &std::path::Path, arguments: &[&str]) -> Command {
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join(".fixture-config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:05:00+02:00")
+        .env("GIT_COMMITTER_DATE", "2026-01-02T12:00:00-05:00")
         .env("GIT_CONFIG_GLOBAL", root.join(".fixture-global"))
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT");
@@ -101,6 +103,10 @@ fn commands_tab_scopes_ascii_and_commit_detail_return_use_native_navigation() {
     let position = super::super::view_position::ViewPosition::capture(app.active());
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.active_buffer().is_git_commit_oid(&oid));
+    assert_eq!(
+        app.active_buffer().line_string(2).trim_end(),
+        "Author-time: 2026-01-01 00:05"
+    );
     let detail = app.active().buffer;
     app.close_buffer(detail);
     assert_eq!(app.active().buffer, buffer);
@@ -167,7 +173,7 @@ fn stale_root_events_preserve_rows_and_explicit_git_refresh_captures_new_generat
 
 #[test]
 fn graph_snapshot_roles_and_private_protocol_round_trip_preserve_owned_text() {
-    let (_fixture, mut app) = fixture();
+    let (_fixture, mut app) = merge_fixture();
     command(&mut app, "git-network");
     let prepared = app.prepare_view(FrameGeometry {
         screen: Rect {
@@ -372,4 +378,285 @@ fn atomic_refresh_retains_at_most_two_bounded_generations() {
     assert!(app.network.loading.is_none());
     assert_eq!(app.network.pages.len(), MAX_NETWORK_PAGES);
     assert_eq!(app.network.page, 0);
+}
+
+fn merge_fixture() -> (Fixture, App) {
+    let (fixture, app) = fixture();
+    for args in [
+        vec!["commit", "--allow-empty", "-qm", "main change"],
+        vec!["checkout", "-q", "side"],
+        vec!["commit", "--allow-empty", "-qm", "side change"],
+        vec!["checkout", "-q", "main"],
+        vec!["merge", "--no-ff", "-qm", "merge branches", "side"],
+    ] {
+        assert!(git_command(&fixture.0, &args).status().unwrap().success());
+    }
+    (fixture, app)
+}
+
+#[test]
+fn connector_rows_are_not_commits_and_refresh_restores_their_block_position() {
+    let (_fixture, mut app) = merge_fixture();
+    command(&mut app, "git-network");
+    let buffer = app.active().buffer;
+    assert_eq!(app.network.document_rows[2], Some((0, 1)));
+    assert!(commit_line(&app, 1) > 2);
+    let offset = app.active_buffer().line_to_offset(2);
+    app.active_mut().replace_selection(Selection::point(offset));
+    assert!(app.selected_network_oid().is_none());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().buffer, buffer);
+    command(&mut app, "toggle-git-network-ascii");
+    assert_eq!(app.active_buffer().offset_to_row(app.active().head()), 2);
+    assert!(app.active_buffer().line_string(2).contains('\\'));
+    command(&mut app, "git-network");
+    assert_eq!(app.active_buffer().offset_to_row(app.active().head()), 2);
+    assert!(app.selected_network_oid().is_none());
+    let second = commit_line(&app, 1);
+    let expected = app.network.pages[0].rows[1].commit.oid.clone();
+    let offset = app.active_buffer().line_to_offset(second);
+    app.active_mut().replace_selection(Selection::point(offset));
+    assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.active_buffer().is_git_commit_oid(&expected));
+    let detail = app.active().buffer;
+    app.close_buffer(detail);
+    assert_eq!(
+        app.active_buffer().offset_to_row(app.active().head()),
+        second
+    );
+    assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
+}
+
+#[test]
+fn log_enter_uses_the_same_author_local_timestamp_as_network_enter() {
+    let (_fixture, mut app) = fixture();
+    for c in [' ', 'g', 'l'] {
+        key(&mut app, KeyCode::Char(c), Modifiers::NONE);
+    }
+    assert!(app.active_buffer().is_git_log());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        app.active_buffer().line_string(2).trim_end(),
+        "Author-time: 2026-01-01 00:05"
+    );
+}
+
+#[test]
+fn connector_spans_color_the_path_instead_of_the_column() {
+    let (_fixture, mut app) = merge_fixture();
+    command(&mut app, "git-network");
+    let buffer = app.active().buffer;
+    let node_color = app.network_role_at(buffer, app.active_buffer().line_to_offset(1) + 20);
+    let fork_color = app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 21);
+    assert_eq!(node_color, Some(TextRole::GitLane0));
+    assert_eq!(fork_color, Some(TextRole::GitLane1));
+    // One column's adjacent cells belong to two different paths.
+    assert_eq!(
+        app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 20),
+        node_color
+    );
+    assert_ne!(node_color, fork_color);
+    let before = app.network.spans.clone();
+    command(&mut app, "toggle-git-network-ascii");
+    assert_eq!(
+        app.network
+            .spans
+            .iter()
+            .map(|(_, role)| role)
+            .collect::<Vec<_>>(),
+        before.iter().map(|(_, role)| role).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 21),
+        fork_color
+    );
+}
+
+#[test]
+fn ascii_toggle_preserves_multirange_selections_and_independent_split_positions() {
+    use crate::selection::Range;
+    let (_fixture, mut app) = merge_fixture();
+    command(&mut app, "git-network");
+    let first = app.active_pane;
+    let start = app.active_buffer().line_to_offset(2);
+    let end = app.active_buffer().line_to_offset(commit_line(&app, 1));
+    app.active_mut().replace_selection(Selection::new(
+        vec![Range::new(start + 20, start + 22), Range::point(end + 2)],
+        1,
+    ));
+    app.active_mut().scroll_col = 7;
+    app.split(crate::layout::Axis::Horizontal, None).unwrap();
+    let second = app.active_pane;
+    assert_ne!(first, second);
+    app.active_mut()
+        .replace_selection(Selection::point(end + 5));
+    app.active_mut().scroll_col = 3;
+    let positions = |app: &App| {
+        app.panes
+            .iter()
+            .filter(|(_, pane)| pane.buffer == app.active().buffer)
+            .map(|(id, pane)| {
+                let coordinates = |offset| {
+                    let row = app.active_buffer().offset_to_row(offset);
+                    (row, offset - app.active_buffer().line_to_offset(row))
+                };
+                (
+                    *id,
+                    pane.selection.primary_index(),
+                    pane.selection
+                        .ranges()
+                        .iter()
+                        .map(|range| (coordinates(range.anchor), coordinates(range.head)))
+                        .collect::<Vec<_>>(),
+                    pane.scroll_row,
+                    pane.scroll_col,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = positions(&app);
+    command(&mut app, "toggle-git-network-ascii");
+    assert_eq!(positions(&app), before);
+    command(&mut app, "toggle-git-network-ascii");
+    assert_eq!(positions(&app), before);
+}
+
+#[test]
+fn detail_return_survives_ascii_toggle_in_another_pane() {
+    let (_fixture, mut app) = merge_fixture();
+    command(&mut app, "git-network");
+    let graph_pane = app.active_pane;
+    app.split(crate::layout::Axis::Horizontal, None).unwrap();
+    let detail_pane = app.active_pane;
+    let row = commit_line(&app, 1);
+    let offset = app.active_buffer().line_to_offset(row) + 2;
+    app.active_mut().replace_selection(Selection::point(offset));
+    let oid = app.selected_network_oid().unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let detail = app.active().buffer;
+    app.active_pane = graph_pane;
+    command(&mut app, "toggle-git-network-ascii");
+    app.active_pane = detail_pane;
+    app.close_buffer(detail);
+    assert_eq!(app.selected_network_oid(), Some(oid));
+    assert_eq!(
+        app.active().head(),
+        app.active_buffer().line_to_offset(row) + 2
+    );
+}
+
+fn commit_line(app: &App, index: usize) -> usize {
+    app.network
+        .document_rows
+        .iter()
+        .position(|identity| *identity == Some((index, 0)))
+        .unwrap()
+}
+
+fn tall_page(app: &App) -> NetworkPage {
+    let mut page = app.network.pages[0].clone();
+    let mut lanes = crate::git::network::GraphLanes::default();
+    let template = page.rows[0].commit.clone();
+    page.rows = (0..100)
+        .map(|i| {
+            let mut commit = template.clone();
+            commit.oid = format!("{i:040x}");
+            commit.parents = if i == 99 {
+                vec![]
+            } else {
+                vec![format!("{:040x}", i + 1)]
+            };
+            lanes.row(commit, false)
+        })
+        .collect();
+    page
+}
+
+fn assert_network_caret_visible(app: &mut App) {
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 100,
+            height: 14,
+            ..Default::default()
+        },
+        editor: Rect {
+            width: 100,
+            height: 12,
+            ..Default::default()
+        },
+        status: Default::default(),
+        message: Default::default(),
+    };
+    app.prepare_view(geometry);
+    let row = app.active_buffer().offset_to_row(app.active().head());
+    assert!(row >= app.active().scroll_row);
+    assert!(
+        row < app.active().scroll_row + 10,
+        "caret row {row}, viewport starts at {}",
+        app.active().scroll_row
+    );
+}
+
+#[test]
+fn paging_from_a_scrolled_page_reveals_the_new_caret() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network");
+    let page = tall_page(&app);
+    app.network.pages = vec![page.clone(), page];
+    app.show_network_page(true);
+    let offset = app.active_buffer().line_to_offset(85);
+    app.active_mut().replace_selection(Selection::point(offset));
+    app.active_mut().scroll_row = 80;
+    app.active_mut().preserve_scroll = true;
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    assert_eq!(app.active_buffer().offset_to_row(app.active().head()), 1);
+    assert!(!app.active().preserve_scroll);
+    assert_network_caret_visible(&mut app);
+    app.active_mut().scroll_row = 80;
+    app.active_mut().preserve_scroll = true;
+    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    assert_network_caret_visible(&mut app);
+}
+
+#[test]
+fn refresh_reveals_an_anchor_that_moves_more_than_one_screen() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network");
+    let page = tall_page(&app);
+    let anchor = page.rows[0].commit.oid.clone();
+    app.network.pages = vec![page.clone()];
+    app.show_network_page(true);
+    let mut refreshed = page;
+    refreshed.rows.rotate_left(1);
+    app.active_mut().preserve_scroll = true;
+    app.open_network_result(refreshed, 0, NetworkScope::All, Some(anchor.clone()));
+    assert_eq!(app.selected_network_oid(), Some(anchor));
+    assert!(!app.active().preserve_scroll);
+    assert_network_caret_visible(&mut app);
+}
+
+#[test]
+fn ascii_toggle_preserves_the_exact_selected_head_row_subject() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network");
+    let text = app.active_buffer().line_string(1);
+    let column = text[..text.find("first commit").unwrap()].chars().count();
+    let offset = app.active_buffer().line_to_offset(1) + column;
+    app.active_mut()
+        .replace_selection(Selection::single(crate::selection::Range::new(
+            offset,
+            offset + 5,
+        )));
+    for _ in 0..2 {
+        command(&mut app, "toggle-git-network-ascii");
+        let row = app.active_buffer().line_string(1);
+        let actual_column = app.active().head() - app.active_buffer().line_to_offset(1);
+        assert_eq!(actual_column, column + 5);
+        assert_eq!(
+            row.chars().skip(column).take(5).collect::<String>(),
+            "first"
+        );
+        assert_eq!(app.active().selection.primary().anchor, offset);
+    }
 }

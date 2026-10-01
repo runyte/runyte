@@ -4349,6 +4349,10 @@ fn open_commit_detail(body: &str, patch: &str) -> App {
 fn commit_detail_buffers_reuse_full_object_identity() {
     let mut app = open_commit_detail("first", "diff --git a/a b/a\n");
     let first_buffer = app.active().buffer;
+    assert_eq!(
+        app.active_buffer().line_string(2).trim_end(),
+        "Author-time: 2026-08-14 12:34"
+    );
     let original_count = app.buffers.len();
 
     let mut same = match app.buffers[first_buffer].kind.clone() {
@@ -4371,6 +4375,10 @@ fn commit_detail_buffers_reuse_full_object_identity() {
         patch: String::new(),
     });
     assert_eq!(app.active().buffer, first_buffer);
+    assert_eq!(
+        app.active_buffer().line_string(2).trim_end(),
+        "Author-time: 2026-08-17 12:34"
+    );
     assert_eq!(app.buffers.len(), original_count);
 
     same.replace_range(..1, "f");

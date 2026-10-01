@@ -5370,3 +5370,65 @@ fn network_sha256_object_ids_and_long_unicode_subjects_remain_explicit() {
         page.rows[0].commit.oid[..12]
     );
 }
+
+#[test]
+fn network_page_boundary_completes_merge_routes_and_retains_path_colors() {
+    use runyte::git::{
+        NetworkRequest,
+        network::{GraphLanes, NETWORK_PAGE_SIZE},
+    };
+    let fixture = network_fixture("network-merge-page-boundary");
+    fixture.write("base", "base\n");
+    fixture.commit("base");
+    fixture.git(&["branch", "side"]);
+    fixture.git(&["commit", "--allow-empty", "-qm", "main child"]);
+    fixture.git(&["checkout", "-q", "side"]);
+    fixture.git(&["commit", "--allow-empty", "-qm", "side child"]);
+    fixture.git(&["checkout", "-q", "main"]);
+    fixture.git(&["merge", "--no-ff", "-qm", "merge", "side"]);
+    let merge = git_output(&fixture, &["rev-parse", "HEAD"]);
+    import_network_history(&fixture, NETWORK_PAGE_SIZE - 1, Some(merge.trim()));
+    let provider = provider();
+    let first = provider
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    assert_eq!(first.rows.last().unwrap().commit.oid, merge.trim());
+    assert!(!first.rows.last().unwrap().connectors.is_empty());
+    let cursor = first.next.clone().unwrap();
+    assert_eq!(cursor.lanes.colors.len(), 2);
+    for invalid in 0..3 {
+        let mut bad = cursor.clone();
+        match invalid {
+            0 => {
+                bad.lanes.colors.pop();
+            }
+            1 => bad.lanes.colors[0] = 4,
+            _ => bad.lanes.next_color = 4,
+        }
+        assert!(
+            provider
+                .network_page(
+                    &fixture.repository(),
+                    &NetworkRequest {
+                        cursor: Some(bad),
+                        ..NetworkRequest::default()
+                    }
+                )
+                .is_err()
+        );
+    }
+    let second = provider
+        .network_page(
+            &fixture.repository(),
+            &NetworkRequest {
+                cursor: Some(cursor),
+                ..NetworkRequest::default()
+            },
+        )
+        .unwrap();
+    let mut lanes = GraphLanes::default();
+    for row in first.rows.iter().chain(&second.rows) {
+        assert_eq!(lanes.row(row.commit.clone(), row.shallow), *row);
+    }
+    assert!(lanes.pending.is_empty());
+}
