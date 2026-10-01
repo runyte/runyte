@@ -1454,6 +1454,8 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .any(|action| action.target == BindingTarget::Editor(*command))
         {
             CommandExposure::Bound
+        } else if !crate::keymap::actions::editor_modes(*command).is_empty() {
+            CommandExposure::ConfigurableOnly
         } else {
             panic!("unclassified editor command: {command:?}");
         };
@@ -1487,7 +1489,14 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::SharedColon)
             .count(),
-        73
+        55
+    );
+    assert_eq!(
+        exposures
+            .iter()
+            .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
+            .count(),
+        2
     );
     assert_eq!(
         exposures
@@ -1497,7 +1506,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         EditorCommand::ALL.len()
             - INTERNAL_EDITOR_COMMANDS.len()
             - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 74
+            - 58
     );
 
     for spec in COMMANDS {

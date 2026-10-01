@@ -18,7 +18,7 @@ struct State {
     line_select: Option<Mode>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) struct Origin {
     pane: usize,
     buffer: usize,
@@ -211,17 +211,6 @@ impl App {
             self.status("selection history is unavailable in this view");
             return;
         };
-        // The palette has already left Command mode before executing its
-        // invocation. Its origin is the real selection state to redo.
-        let current = self
-            .selection_prompt_origin
-            .as_ref()
-            .filter(|prompt| {
-                prompt.origin.pane == current.pane
-                    && prompt.origin.buffer == current.buffer
-                    && prompt.origin.revision == current.revision
-            })
-            .map_or(current, |prompt| prompt.origin.clone());
         let Some(history) = self.active_mut().selection_history.get_mut(&current.buffer) else {
             self.status(if redo {
                 "no later selection"

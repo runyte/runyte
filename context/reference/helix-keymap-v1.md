@@ -125,7 +125,7 @@ is open. Help's scoped `q` is also globally unbound.
 | `d`, `c` | delete/change selection | matching edit commands | Implemented | Applies to every selection. An empty range represents one character. `d` after a transient `x`/`X` selection writes and removes whole lines, while an explicit `v` selection remains characterwise. |
 | `v` | `select_mode` | `enter-select-mode` | Implemented | Toggles Select mode. |
 | `x` | `extend_line_below` | `select-line` | Implemented · Deviation | The first press snaps partial or empty ranges to whole lines, then grows the lower outer edge, per selection, and never shrinks it, whatever `X` did before; a non-empty selection whose text already spans whole lines grows on the first press, the same rule `X` uses; this deliberately differs from Helix, whose `x` also requires the line ending to be selected, because Runyte's offsets are inclusive, so a non-transient selection spanning a line's full text cannot be told from a whole-line one. `X` follows the same rule. `select-line` and `extend-line-below` behave identically; only `select-line-up` walks the moving edge. Unlike `v`, the resulting selection is transient: any other command ends it and restores the previous mode. |
-| `X` | `extend_line_above` | `extend-line-above` | Implemented · Deviation | Snaps partial selections to whole lines, then grows at the upper outer edge without shrinking. `x x X` adds the line above. `extend-line-below` is available by command; `select-line-up` retains the old edge walk for custom bindings. Runyte keeps transient whole-line mode and inclusive offsets. |
+| `X` | `extend_line_above` | `extend-line-above` | Implemented · Deviation | Snaps partial selections to whole lines, then grows at the upper outer edge without shrinking. `x x X` adds the line above. `extend-line-below` is available for custom bindings; `select-line-up` retains the old edge walk for custom bindings. Neither, nor `extend-line-above`, has a `:` spelling. Runyte keeps transient whole-line mode and inclusive offsets. |
 | `%` | `select_all` | `select-all` | Implemented | Selects the complete buffer. |
 | `;` | `collapse_selection` | `collapse-selection` | Implemented | Collapses every range to its head. |
 | `Alt-;` | `flip_selections` | `flip-selection` | Implemented | Swaps cursor and anchor. |
@@ -485,8 +485,7 @@ editor's strip uses exact live-publication identities and
 can visit a running entry by click. Explorer `Tab s`, the manager Ctrl-o
 directory chooser, a terminal's validated reported directory, and Git
 worktree open/create visit or start the selected exact directory's session
-through the native catalog. `Space 1`–`Space 9`, `:session-1` through
-`:session-9`, and `Shift-Left`/`Shift-Right` visit running sessions by number
+through the native catalog. `Space 1`–`Space 9` and `Shift-Left`/`Shift-Right` visit running sessions by number
 or cycle order. `:session-stop` requires
 an explicit unambiguous selector on Windows, and `:session-clean` cleans
 verified stopped history globally. The control commands use the

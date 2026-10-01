@@ -24,17 +24,18 @@ Recording surrounds completed input and semantic command actions, rather than
 individual selection assignments. Nested execution and counted motions form
 one entry; pointer press through release or cancellation forms one entry,
 including edge autoscroll. A bounded prompt origin groups prompt opening,
-acceptance and cancellation. It also supplies the true redo source after the
-command palette has returned to Normal mode, preserving Select and whole-line
-state when the command is typed. Cancelled prompts do not add history or clear
+acceptance and cancellation. Cancelled prompts do not add history or clear
 redo. New selection changes discard the redo branch; no-ops preserve it.
 
 The commands are `selection-undo` and `selection-redo`, bound to `Alt-u` and
-`Alt-U` with discoverable `Space s u` and `Space s U` spellings. Both are also
-colon commands. These are Runyte additions, not default Helix bindings. The
-original report did not settle the text-edit policy; this implementation stops
-at text revision boundaries rather than mapping old selections through edits
-or mixing selection changes into text undo.
+`Alt-U` with discoverable `Space s u` and `Space s U` spellings. They were
+also colon commands until the palette was narrowed to commands looked up by
+name; selection editing is now reached only through keys and configured
+bindings, and the prompt-origin redo source that existed only for the typed
+spelling was removed with it. These are Runyte additions, not default Helix
+bindings. The original report did not settle the text-edit policy; this
+implementation stops at text revision boundaries rather than mapping old
+selections through edits or mixing selection changes into text undo.
 
 History is bounded to 128 states and 4,096 aggregate ranges per buffer, for up
 to 32 buffers per pane. Oversized selections end their history. Read-only buffers
@@ -55,7 +56,8 @@ Regression coverage in `src/app/tests/selection_history.rs`:
 - `selection_history_bounds_retained_buffers`
 - `selection_history_replayed_keys_and_counted_history_commands`
 - `selection_history_does_not_reenter_insert_or_restore_across_replacement`
-- `selection_history_typed_colon_commands_preserve_line_and_select_modes`
+- `selection_history_redo_restores_line_and_select_modes`
+- `selection_history_has_no_typed_spelling_and_a_refused_one_keeps_history`
 - `selection_history_cancelled_prompts_after_line_selection_preserve_redo`
 - `selection_history_search_from_lines_is_one_step_and_restores_line_behavior`
 

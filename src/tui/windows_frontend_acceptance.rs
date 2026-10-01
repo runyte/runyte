@@ -1202,7 +1202,7 @@ fn switch_parent_fixture() {
     returning.until_screen("WORKSPACE_A");
     inject_directory(&inbox_a, &newly_started);
     returning.until_screen("WORKSPACE_NEW");
-    returning.send(":previous-session\r");
+    returning.send("\x17a"); // Ctrl-w a: previous session
     returning.until_screen("WORKSPACE_A");
     inject_directory(&inbox_a, &newly_started);
     returning.until_screen("WORKSPACE_NEW");

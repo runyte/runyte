@@ -86,9 +86,9 @@ fn selection_history_aliases_and_semantic_execution_share_history() {
     )
     .unwrap();
     assert_eq!(app.active().head(), 0);
-    app.execute_command("selection-redo").unwrap();
+    redo_selection(&mut app);
     assert_eq!(app.active().head(), 1);
-    app.execute_command("selection-undo").unwrap();
+    undo_selection(&mut app);
     assert_eq!(app.active().head(), 0);
 }
 
@@ -325,12 +325,13 @@ fn typed_command(app: &mut App, command: &str) {
 }
 
 #[test]
-fn selection_history_typed_colon_commands_preserve_line_and_select_modes() {
+fn selection_history_redo_restores_line_and_select_modes() {
     let mut app = document();
     press(&mut app, 'x');
     let line = app.active().selection.clone();
-    typed_command(&mut app, "selection-undo");
+    undo_selection(&mut app);
     assert_eq!(app.active().selection, Selection::point(0));
+    assert!(app.line_select.is_none());
     redo_selection(&mut app);
     assert_eq!(app.active().selection, line);
     assert!(app.line_select.is_some());
@@ -341,11 +342,28 @@ fn selection_history_typed_colon_commands_preserve_line_and_select_modes() {
         press(&mut app, ch);
     }
     let selected = app.active().selection.clone();
-    typed_command(&mut app, "selection-undo");
+    undo_selection(&mut app);
     assert_ne!(app.active().selection, selected);
     redo_selection(&mut app);
     assert_eq!(app.active().selection, selected);
     assert_eq!(app.mode, Mode::Select);
+}
+
+#[test]
+fn selection_history_has_no_typed_spelling_and_a_refused_one_keeps_history() {
+    let mut app = document();
+    press(&mut app, 'x');
+    let line = app.active().selection.clone();
+    // An unknown name leaves the palette open; nothing runs.
+    typed_command(&mut app, "selection-undo");
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.active().selection, line);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.active().selection, line);
+    undo_selection(&mut app);
+    assert_eq!(app.active().selection, Selection::point(0));
+    redo_selection(&mut app);
+    assert_eq!(app.active().selection, line);
 }
 
 #[test]

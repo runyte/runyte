@@ -14,7 +14,8 @@ head row, so changing direction can shrink the range. The new function uses
 both outer bounds and grows only the requested boundary. It preserves inclusive
 positions and transient whole-line semantics, unlike Helix's half-open storage.
 `X` invokes `extend-line-above`; `extend-line-below` and the retained
-`select-line-up` are named commands. Terminal review uses equivalent boundaries.
+`select-line-up` are named actions for configured bindings. Terminal review
+uses equivalent boundaries.
 The tutorial now uses selection undo to retract the second `x`. A bare caret
 on a one-character or empty row first establishes whole-line mode; it is not
 mistaken for an existing whole-line selection merely because its inclusive

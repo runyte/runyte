@@ -5706,7 +5706,9 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
         fs::read_to_string(&after_pid).unwrap(),
         "the original shell was replaced"
     );
-    type_colon_command(&mut terminal, "previous-session");
+    // Ctrl-w a returns to the previous persistent session.
+    std::io::Write::write_all(&mut terminal, b"\x17a").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
     wait_for_interactive_attachment(
         &mut source,
         switcher.0.as_mut().unwrap(),
