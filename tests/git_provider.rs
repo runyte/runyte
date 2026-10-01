@@ -4912,6 +4912,45 @@ fn network_fixture(name: &str) -> TempRepository {
     fixture
 }
 
+/// Builds paging histories in one completed import, without hundreds of
+/// porcelain commits creating loose objects and invoking auto-maintenance.
+/// `parent` retains an existing root's tree; `None` starts an empty history.
+fn import_network_history(fixture: &TempRepository, count: usize, parent: Option<&str>) {
+    use std::io::Write;
+
+    let mut input = String::new();
+    for index in 1..=count {
+        let message = format!("commit {index}");
+        input.push_str(&format!("commit refs/heads/main\nmark :{index}\ncommitter Graph Author <graph@example.invalid> {} +0000\ndata {}\n{}\n", 1_700_000_000 + index, message.len(), message));
+        if index > 1 {
+            input.push_str(&format!("from :{}\n", index - 1));
+        } else if let Some(parent) = parent {
+            input.push_str(&format!("from {parent}\n"));
+        }
+        input.push('\n');
+    }
+    let mut child = Command::new("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(fixture.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "git fast-import failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn network_roots_cover_tags_cached_remotes_disconnected_history_and_merge_parents() {
     use runyte::git::{NetworkRequest, NetworkScope};
@@ -5004,9 +5043,8 @@ fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
     let fixture = network_fixture("network-paging");
     fixture.write("file", "initial");
     fixture.commit("initial");
-    for index in 0..NETWORK_PAGE_SIZE + 7 {
-        fixture.git(&["commit", "--allow-empty", "-qm", &format!("commit {index}")]);
-    }
+    let root = git_output(&fixture, &["rev-parse", "HEAD"]);
+    import_network_history(&fixture, NETWORK_PAGE_SIZE + 7, Some(root.trim()));
     let provider = provider();
     let first = provider
         .network_page(&fixture.repository(), &NetworkRequest::default())
@@ -5015,6 +5053,8 @@ fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    assert_eq!(expected.len(), NETWORK_PAGE_SIZE + 8);
+    assert_eq!(expected.last().unwrap(), root.trim());
     let continuation = NetworkRequest {
         cursor: first.next.clone(),
         ..NetworkRequest::default()
@@ -5168,9 +5208,8 @@ fn network_selected_ref_continues_captured_pages_after_ref_deletion() {
     let fixture = network_fixture("network-deleted-ref");
     fixture.write("file", "root");
     fixture.commit("root");
-    for index in 0..NETWORK_PAGE_SIZE + 2 {
-        fixture.git(&["commit", "--allow-empty", "-qm", &format!("commit {index}")]);
-    }
+    let root = git_output(&fixture, &["rev-parse", "HEAD"]);
+    import_network_history(&fixture, NETWORK_PAGE_SIZE + 2, Some(root.trim()));
     fixture.git(&["branch", "captured"]);
     let provider = provider();
     let request = NetworkRequest {
@@ -5275,37 +5314,8 @@ fn network_total_traversal_limit_has_no_invented_continuation() {
         NetworkRequest,
         network::{MAX_NETWORK_COMMITS, MAX_NETWORK_PAGES},
     };
-    use std::io::Write;
     let fixture = network_fixture("network-total-limit");
-    let mut input = String::new();
-    for index in 1..=MAX_NETWORK_COMMITS + 1 {
-        let message = format!("commit {index}");
-        input.push_str(&format!("commit refs/heads/main\nmark :{index}\ncommitter Graph Author <graph@example.invalid> {} +0000\ndata {}\n{}\n", 1_700_000_000 + index, message.len(), message));
-        if index > 1 {
-            input.push_str(&format!("from :{}\n", index - 1));
-        }
-        input.push('\n');
-    }
-    let mut child = Command::new("git")
-        .args(["fast-import", "--quiet"])
-        .current_dir(fixture.path())
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    import_network_history(&fixture, MAX_NETWORK_COMMITS + 1, None);
     let provider = provider();
     let started = Instant::now();
     let mut request = NetworkRequest::default();

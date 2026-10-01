@@ -1263,8 +1263,9 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         HostResponse::Welcome { .. }
     ));
     let initial = next_idle_frame(&mut client).await;
-    let terminal_command =
-        "/bin/sh -c 'sleep 0.3; printf \"hidden-unread\\033]2;hidden-ready\\007\"; sleep 30'";
+    // The host must acknowledge detach before the child can emit output.
+    // A startup delay races with opening the document on a busy runner.
+    let terminal_command = "/bin/sh -c 'while [ ! -e emit-hidden-output ]; do sleep 0.01; done; printf \"hidden-unread\\033]2;hidden-ready\\007\"; sleep 30'";
     let outcome =
         invoke_with_argument_when_current(&mut client, "terminal", Some(terminal_command), initial)
             .await;
@@ -1308,6 +1309,7 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         detach(&mut client, "detaching with a hidden terminal").await,
         None
     );
+    fs::write(root.join("emit-hidden-output"), "continue").unwrap();
     let mut detached_control = LocalClient::connect(&endpoint, geometry(), false)
         .await
         .unwrap();
