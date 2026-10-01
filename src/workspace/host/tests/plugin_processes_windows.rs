@@ -248,7 +248,7 @@ async fn native_process_requests_retain_binary_output_and_release_handle() {
 }
 
 #[tokio::test]
-async fn closing_a_running_helper_settles_its_descendant_before_reply() {
+async fn closing_a_running_helper_acknowledges_cleanup_and_retires_its_descendant() {
     let root = Root::new();
     std::fs::write(root.path().join("spawn-descendant"), b"").unwrap();
     let (mut host, mut events, mut replies) = host(&root);
@@ -287,10 +287,6 @@ async fn closing_a_running_helper_settles_its_descendant_before_reply() {
     while host.plugin_processes.contains_key(&handle) {
         pump(&mut host, &mut events).await;
     }
-    assert_eq!(
-        unsafe { WaitForSingleObject(child.as_raw_handle(), 0) },
-        WAIT_OBJECT_0
-    );
     let mut closed = false;
     while let Ok(message) = replies.try_recv() {
         if let HostMessage::Application(api::HostMessage::Response { id, outcome }) = message
@@ -301,6 +297,15 @@ async fn closing_a_running_helper_settles_its_descendant_before_reply() {
         }
     }
     assert!(closed, "close was not acknowledged");
+    // Cleanup acknowledgement proves a signaled leader and an empty private
+    // job. Windows may retire job accounting before this separately retained
+    // descendant process object becomes signaled (terminate_and_wait_tree's
+    // contract). Wait on that exact object, as the native launcher tests do.
+    assert_eq!(
+        unsafe { WaitForSingleObject(child.as_raw_handle(), 5000) },
+        WAIT_OBJECT_0,
+        "retained descendant handle did not become signaled after cleanup"
+    );
 }
 
 #[tokio::test]
