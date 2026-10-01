@@ -3411,9 +3411,15 @@ color alone does not identify a branch.
 Branch labels follow captured branch tips along first-parent paths. Git does not
 record the branch on which a commit was originally created; shared history keeps
 the surviving displayed path's label. The current symbolic HEAD name is preferred,
-then a local branch, then a cached remote branch. Paths without a known branch
-show `[unlabelled]`; tags are still shown as refs but do not supply branch names.
-Captured names remain fixed until explicit refresh.
+then a local branch, then a cached remote branch. Paths without a known name
+fall back to local branch containment: `[in dev]` means the commit is reachable
+from exactly one local branch, and `[in dev, ...]` means it is reachable from
+several. The displayed containing branch is the current local branch when it
+contains the commit; otherwise it is the branch with the newest tip commit
+(committer timestamp, with branch name breaking ties). This is current
+membership, not historical branch ownership. Remote branches and tags do not
+count toward this fallback. `[?]` means neither a path name nor local containment
+is known. Captured names and membership remain fixed until explicit refresh.
 
 Enter opens full commit detail, including the full object ID, all merge parents,
 and `Author-time: YYYY-MM-DD HH:MM` in the author's original timezone. Short hash
@@ -3435,6 +3441,15 @@ page, continuation, and any limit. Tab opens these registered actions:
 commit while it remains within the bounded traversal. Continuation uses the
 original object IDs and labels even if refs move, marking that generation stale.
 No remote access or idle graph scan runs.
+
+Containment is captured independently of the selected graph scope, from up to
+256 local branches and a topological walk of up to 10,000 commits. An incomplete
+branch inventory disables the fallback; commits beyond that ancestry walk also
+retain `[?]` when their paths have no name. These bounds, including the 2 MiB
+ancestry-output bound, display a separate `local containment limit` notice
+rather than guessing a name or claiming a single containing branch from
+incomplete evidence. This notice preserves the graph's continuation status;
+narrowing the graph scope does not change the containment bounds.
 
 If a parent needs a new lane beyond the 16-lane limit, an `overflow parents`
 note lists its abbreviated ID; existing parent lanes remain connected even at

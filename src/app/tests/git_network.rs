@@ -312,7 +312,15 @@ fn stale_generation_root_check_and_cancelled_read_release_state_without_publicat
     assert!(app.network.roots_check.is_none());
     app.network.generation += 1;
     app.network.roots_check = Some((id, generation));
-    app.apply_network_roots(Some(id), NetworkScope::All, Vec::new(), false);
+    app.apply_network_roots(
+        Some(id),
+        NetworkScope::All,
+        crate::git::NetworkRoots {
+            roots: Vec::new(),
+            limited: false,
+            local_branch_fingerprint: String::new(),
+        },
+    );
     assert!(!app.network.pages[0].stale);
     assert!(app.network.roots_check.is_none());
     let page = app.network.pages[0].clone();
@@ -708,4 +716,77 @@ fn six_character_hash_collisions_keep_full_commit_selection_identity() {
             Some(row.commit.oid.as_str())
         );
     }
+}
+
+#[test]
+fn scoped_network_marks_containment_stale_without_changing_captured_rows() {
+    let (fixture, mut app) = fixture();
+    for args in [
+        vec!["checkout", "-q", "side"],
+        vec!["commit", "--allow-empty", "-qm", "topic"],
+        vec!["checkout", "-q", "main"],
+        vec!["merge", "--no-ff", "-qm", "merge topic", "side"],
+        vec!["branch", "-D", "side"],
+        vec!["branch", "copy"],
+        vec!["tag", "captured"],
+    ] {
+        assert!(
+            git_command(&fixture.0, &args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    command(&mut app, "git-network-ref refs/tags/captured");
+    let previous = app.network.pages[0].rows.clone();
+    assert!(
+        previous
+            .iter()
+            .any(|row| row.branch_label() == "[in main, ...] ")
+    );
+    assert!(app.network.pages[0].next.is_none());
+    assert!(
+        git_command(&fixture.0, &["branch", "-D", "copy"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    app.check_network_roots();
+    assert!(app.network.pages[0].stale);
+    assert_eq!(app.network.pages[0].rows, previous);
+    command(&mut app, "git-network-ref refs/tags/captured");
+    assert!(!app.network.pages[0].stale);
+    assert!(
+        app.network.pages[0]
+            .rows
+            .iter()
+            .any(|row| row.branch_label() == "[in main] ")
+    );
+}
+
+#[test]
+fn containment_limit_header_preserves_graph_status_without_narrow_scope_advice() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network-head");
+    app.network.pages[0].membership_limited = true;
+    app.show_network_page(false);
+    let header = app.active_buffer().line_string(0);
+    assert!(header.contains(" | end | local containment limit:"));
+    assert!(!header.contains("narrow scope"));
+    app.network.pages[0].next = Some(crate::git::NetworkCursor {
+        roots: vec![],
+        offset: 200,
+        lanes: Default::default(),
+        roots_limited: false,
+        shallow_fingerprint: String::new(),
+        membership: Default::default(),
+    });
+    app.show_network_page(false);
+    assert!(
+        app.active_buffer()
+            .line_string(0)
+            .contains(" | continues | local containment limit:")
+    );
 }

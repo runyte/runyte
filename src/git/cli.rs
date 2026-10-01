@@ -2727,8 +2727,8 @@ impl GitProvider for GitCliProvider {
         &self,
         repository: &Repository,
         scope: &super::NetworkScope,
-    ) -> Result<(Vec<super::NetworkRoot>, bool)> {
-        self.read_network_roots(repository, scope)
+    ) -> Result<super::NetworkRoots> {
+        self.read_network_root_snapshot(repository, scope)
     }
 
     fn network_page(

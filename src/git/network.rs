@@ -5,7 +5,10 @@
 //! Each commit occupies one rectangular graph row. Cursor state preserves
 //! pending path columns and colors across pages.
 
+mod membership;
 mod routing;
+pub use membership::NetworkMembership;
+pub(crate) use membership::{LocalBranch, LocalBranches};
 pub use routing::{GraphCell, GraphLine};
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -49,6 +52,13 @@ pub struct NetworkRoot {
     pub references: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetworkRoots {
+    pub roots: Vec<NetworkRoot>,
+    pub limited: bool,
+    pub local_branch_fingerprint: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct GraphLanes {
     pub pending: Vec<Option<String>>,
@@ -63,9 +73,11 @@ pub struct GraphLanes {
 pub struct NetworkCursor {
     pub roots: Vec<NetworkRoot>,
     pub offset: usize,
-    pub lanes: GraphLanes,
+    pub lanes: Box<GraphLanes>,
     pub roots_limited: bool,
     pub shallow_fingerprint: String,
+    /// Shared immutable containment evidence for this captured generation.
+    pub membership: std::sync::Arc<NetworkMembership>,
 }
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -84,6 +96,13 @@ pub struct GraphRow {
     pub shallow: bool,
     pub node: GraphLine,
     pub branch: Option<String>,
+    pub containing_branch: Option<ContainingBranch>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContainingBranch {
+    pub name: String,
+    pub multiple: bool,
 }
 
 impl GraphRow {
@@ -128,7 +147,14 @@ impl GraphRow {
     }
 
     pub fn branch_label(&self) -> String {
-        format!("[{}] ", self.branch.as_deref().unwrap_or("unlabelled"))
+        if let Some(branch) = &self.branch {
+            format!("[{branch}] ")
+        } else if let Some(branch) = &self.containing_branch {
+            let more = if branch.multiple { ", ..." } else { "" };
+            format!("[in {}{more}] ", branch.name)
+        } else {
+            "[?] ".into()
+        }
     }
 
     pub fn text_with_width(&self, width: usize) -> String {
@@ -200,6 +226,8 @@ pub struct NetworkPage {
     pub stale: bool,
     pub limited: bool,
     pub roots_limited: bool,
+    pub local_branch_fingerprint: String,
+    pub membership_limited: bool,
 }
 
 #[cfg(test)]

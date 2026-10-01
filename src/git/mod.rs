@@ -54,7 +54,9 @@ pub use merge::{
     MergeCompletionPlan, MergeConflictMessage, MergePlan, MergePreviewOutcome, RepositoryOperation,
     ResolutionChoice, ResolutionPlan,
 };
-pub use network::{NetworkCursor, NetworkPage, NetworkRequest, NetworkRoot, NetworkScope};
+pub use network::{
+    NetworkCursor, NetworkPage, NetworkRequest, NetworkRoot, NetworkRoots, NetworkScope,
+};
 pub use patch::{
     BufferRevisionGuard, MAX_PATCH_BYTES, PartialStageRequest, PartialStageSelection, PatchHunk,
     RepositoryFingerprint, parse_hunks, select_lines,
@@ -959,7 +961,7 @@ pub trait GitProvider {
         &self,
         _repository: &Repository,
         _scope: &NetworkScope,
-    ) -> Result<(Vec<NetworkRoot>, bool)> {
+    ) -> Result<NetworkRoots> {
         Err(GitError::Unavailable {
             detail: "this Git provider does not expose network roots".into(),
         })

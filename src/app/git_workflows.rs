@@ -1129,11 +1129,9 @@ impl App {
                     None => self.open_worktree_removal_confirmation(plan),
                 }
             }
-            GitResponse::NetworkRoots {
-                scope,
-                roots,
-                limited,
-            } => self.apply_network_roots(request, scope, roots, limited),
+            GitResponse::NetworkRoots { scope, snapshot } => {
+                self.apply_network_roots(request, scope, snapshot)
+            }
             GitResponse::Network { page, .. } => self.apply_network_response(request, page),
             GitResponse::Log { request, page } => {
                 if request.cursor.is_some()

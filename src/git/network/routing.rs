@@ -213,6 +213,7 @@ impl GraphLanes {
             shallow,
             node,
             branch,
+            containing_branch: None,
         }
     }
 }

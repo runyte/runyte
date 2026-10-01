@@ -36,7 +36,7 @@ fn metadata_columns_use_display_cells_with_unicode_initials() {
         summary.subject = "SUBJECT".into();
         let row = GraphLanes::default().row(summary, false);
         let text = row.text_with_width(2);
-        assert_eq!(text[..text.find("SUBJECT").unwrap()].width(), 32);
+        assert_eq!(text[..text.find("SUBJECT").unwrap()].width(), 23);
         assert_eq!(&text[..6], "aaaaaa");
     }
     assert_eq!(author_initials("A\u{301}lpha Beta"), "A\u{301}B");
@@ -57,7 +57,7 @@ fn ascii_graph_preserves_unicode_metadata() {
     assert_eq!(row.graph(), "*");
     assert_eq!(
         row.text(),
-        format!("{prefix}*  [unlabelled] [HEAD -> main, origin/main] subject after HEAD")
+        format!("{prefix}*  [?] [HEAD -> main, origin/main] subject after HEAD")
     );
 }
 
@@ -370,5 +370,56 @@ fn remote_branch_names_are_kept_but_tags_and_detached_head_do_not_invent_branche
         );
     }
     let row = GraphLanes::default().row(commit("unreferenced", &[]), false);
-    assert!(row.text().contains("[unlabelled]"));
+    assert!(row.text().contains("[?]"));
+}
+
+#[test]
+fn containment_counts_distinct_branches_across_duplicate_routes_and_bounded_prefixes() {
+    let local = |name: &str, oid: &str| LocalBranch {
+        name: name.into(),
+        oid: oid.into(),
+        current: false,
+        committer_time: 0,
+    };
+    let ancestry = [
+        ("a", vec!["left", "right"]),
+        ("b", vec!["right"]),
+        ("left", vec!["base"]),
+        ("right", vec!["base"]),
+        ("base", vec![]),
+    ];
+    for (tips, expected) in [
+        (vec![local("preferred", "a")], "[in preferred] "),
+        (
+            vec![local("preferred", "a"), local("other", "b")],
+            "[in preferred, ...] ",
+        ),
+    ] {
+        let membership = NetworkMembership::capture(
+            LocalBranches {
+                tips,
+                limited: false,
+            },
+            &ancestry,
+            false,
+        );
+        let mut row = GraphLanes::default().row(commit("base", &[]), false);
+        membership.label_row(&mut row);
+        assert_eq!(row.branch_label(), expected);
+        assert!(row.text().contains(expected));
+    }
+    let bounded = NetworkMembership::capture(
+        LocalBranches {
+            tips: vec![local("preferred", "a"), local("other", "b")],
+            limited: false,
+        },
+        &ancestry[..4],
+        true,
+    );
+    let mut visited = GraphLanes::default().row(commit("right", &[]), false);
+    bounded.label_row(&mut visited);
+    assert_eq!(visited.branch_label(), "[in preferred, ...] ");
+    let mut beyond = GraphLanes::default().row(commit("base", &[]), false);
+    bounded.label_row(&mut beyond);
+    assert_eq!(beyond.branch_label(), "[?] ");
 }

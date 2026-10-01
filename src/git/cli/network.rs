@@ -2,6 +2,8 @@
 
 use std::{collections::BTreeMap, ffi::OsString, io::Read};
 
+mod membership;
+
 use super::GitCliProvider;
 use crate::git::{
     GitError, Repository, Result,
@@ -20,6 +22,19 @@ fn malformed(detail: &str) -> GitError {
 }
 
 impl GitCliProvider {
+    pub(super) fn read_network_root_snapshot(
+        &self,
+        repository: &Repository,
+        scope: &NetworkScope,
+    ) -> Result<crate::git::network::NetworkRoots> {
+        let (roots, limited) = self.read_network_roots(repository, scope)?;
+        Ok(crate::git::network::NetworkRoots {
+            roots,
+            limited,
+            local_branch_fingerprint: self.read_network_local_branches(repository)?.fingerprint(),
+        })
+    }
+
     pub(super) fn read_network_roots(
         &self,
         repository: &Repository,
@@ -175,12 +190,23 @@ impl GitCliProvider {
                 "shallow boundaries changed; refresh the commit network",
             ));
         }
+        let local_branches = self.read_network_local_branches(repository)?;
+        let membership = match &request.cursor {
+            Some(cursor) => cursor.membership.clone(),
+            None => std::sync::Arc::new(
+                self.read_network_membership(repository, local_branches.clone())?,
+            ),
+        };
+        let membership_stale = membership.branches != local_branches;
+        let local_branch_fingerprint = membership.branches.fingerprint();
+        let membership_limited = membership.limited;
         let cursor = request.cursor.clone().unwrap_or_else(|| NetworkCursor {
             roots: current.clone(),
             offset: 0,
-            lanes: GraphLanes::default(),
+            lanes: Box::new(GraphLanes::default()),
             roots_limited,
             shallow_fingerprint: shallow_fingerprint.clone(),
+            membership,
         });
         if cursor.offset >= MAX_NETWORK_COMMITS
             || !cursor.offset.is_multiple_of(NETWORK_PAGE_SIZE)
@@ -210,9 +236,11 @@ impl GitCliProvider {
                 rows: vec![],
                 next: None,
                 roots: vec![],
-                stale: current != cursor.roots,
+                stale: current != cursor.roots || membership_stale,
                 limited: false,
                 roots_limited: false,
+                local_branch_fingerprint,
+                membership_limited,
             });
         }
         let mut args = vec![
@@ -263,7 +291,9 @@ impl GitCliProvider {
                     .find(|root| root.oid == commit.oid)
                     .map_or_else(Vec::new, |root| root.labels.clone());
                 let boundary = shallow.lines().any(|oid| oid == commit.oid);
-                lanes.row_with_roots(commit, boundary, &cursor.roots)
+                let mut row = lanes.row_with_roots(commit, boundary, &cursor.roots);
+                cursor.membership.label_row(&mut row);
+                row
             })
             .collect::<Vec<_>>();
         let offset = cursor.offset + rows.len();
@@ -274,14 +304,19 @@ impl GitCliProvider {
             lanes,
             roots_limited: cursor.roots_limited,
             shallow_fingerprint,
+            membership: cursor.membership,
         });
         Ok(NetworkPage {
             rows,
             next,
-            stale: current != cursor.roots || roots_limited != cursor.roots_limited,
+            stale: current != cursor.roots
+                || roots_limited != cursor.roots_limited
+                || membership_stale,
             roots: cursor.roots,
             limited,
             roots_limited: cursor.roots_limited,
+            local_branch_fingerprint,
+            membership_limited,
         })
     }
 }

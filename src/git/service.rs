@@ -653,8 +653,7 @@ pub enum GitResponse {
     PreparedWorktreeRemoval(WorktreeRemovalPlan),
     NetworkRoots {
         scope: super::NetworkScope,
-        roots: Vec<super::NetworkRoot>,
-        limited: bool,
+        snapshot: super::NetworkRoots,
     },
     Network {
         request: super::NetworkRequest,
@@ -1518,10 +1517,9 @@ fn execute(
             .map(GitResponse::PreparedWorktreeRemoval),
         GitOperation::NetworkRoots { repository, scope } => provider
             .network_roots(repository, scope)
-            .map(|(roots, limited)| GitResponse::NetworkRoots {
+            .map(|snapshot| GitResponse::NetworkRoots {
                 scope: scope.clone(),
-                roots,
-                limited,
+                snapshot,
             }),
         GitOperation::Network {
             repository,

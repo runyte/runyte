@@ -273,6 +273,9 @@ impl App {
             freshness,
             limit
         );
+        if page.membership_limited {
+            text.push_str(" | local containment limit: some paths may show [?]");
+        }
         let graph_width = page
             .rows
             .iter()
@@ -456,9 +459,9 @@ impl App {
                 self.network.roots_check = Some((id, self.network.generation));
             }
         } else if let Some(provider) = self.ports.git.as_deref()
-            && let Ok((roots, limited)) = provider.network_roots(&repository, &scope)
+            && let Ok(snapshot) = provider.network_roots(&repository, &scope)
         {
-            self.mark_network_roots(&scope, roots, limited);
+            self.mark_network_roots(&scope, snapshot);
         }
     }
 
@@ -466,8 +469,7 @@ impl App {
         &mut self,
         request: Option<GitRequestId>,
         scope: NetworkScope,
-        roots: Vec<crate::git::NetworkRoot>,
-        limited: bool,
+        snapshot: crate::git::NetworkRoots,
     ) {
         let Some((id, generation)) = self.network.roots_check else {
             return;
@@ -477,7 +479,7 @@ impl App {
         }
         self.network.roots_check = None;
         if generation == self.network.generation {
-            self.mark_network_roots(&scope, roots, limited);
+            self.mark_network_roots(&scope, snapshot);
         }
         if std::mem::take(&mut self.network.roots_dirty) {
             self.check_network_roots();
@@ -505,20 +507,15 @@ impl App {
         }
     }
 
-    fn mark_network_roots(
-        &mut self,
-        scope: &NetworkScope,
-        roots: Vec<crate::git::NetworkRoot>,
-        limited: bool,
-    ) {
+    fn mark_network_roots(&mut self, scope: &NetworkScope, snapshot: crate::git::NetworkRoots) {
         if scope != &self.network.scope {
             return;
         }
-        let stale = self
-            .network
-            .pages
-            .first()
-            .is_some_and(|page| page.roots != roots || page.roots_limited != limited);
+        let stale = self.network.pages.first().is_some_and(|page| {
+            page.roots != snapshot.roots
+                || page.roots_limited != snapshot.limited
+                || page.local_branch_fingerprint != snapshot.local_branch_fingerprint
+        });
         if stale {
             for page in &mut self.network.pages {
                 page.stale = true;

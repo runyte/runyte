@@ -711,8 +711,15 @@ columns; completed paths leave reusable holes.
 Branch names are captured-tip labels propagated along first-parent paths, not
 historical branch ownership. Symbolic HEAD is preferred over local branches,
 then cached remote branches; tags do not name paths. Shared history keeps the
-existing destination path's name and color. Unknown names display `[unlabelled]`.
-Names, geometry, and colors survive page continuation and cached replay.
+existing destination path's name and color. Unknown path names fall back to
+`[in dev]` for membership in one local branch or `[in dev, ...]` for several.
+Prefer the current local branch if it contains the commit, otherwise the branch
+with the newest tip committer timestamp, breaking ties by branch name. Remote
+branches and tags do not count toward containment. If neither a path name nor
+local containment is known, display `[?]`. Containment uses a separate bounded
+capture of local branches regardless of graph scope; incomplete evidence does
+not invent names or uniqueness. Names, membership, geometry, and colors survive
+page continuation and cached replay.
 
 Every row after the header names a commit, and Enter opens full detail using its
 full object ID even when six-character hashes collide. Closing detail restores

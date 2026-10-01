@@ -4990,7 +4990,10 @@ fn network_roots_cover_tags_cached_remotes_disconnected_history_and_merge_parent
         .map(|(index, row)| (row.commit.oid.clone(), index))
         .collect::<std::collections::HashMap<_, _>>();
     let mut lanes = runyte::git::network::GraphLanes::default();
-    for row in &page.rows {
+    for original in &page.rows {
+        let mut row = original.clone();
+        row.containing_branch = None;
+        let row = &row;
         let actual = git_output(&fixture, &["show", "-s", "--format=%P", &row.commit.oid]);
         assert_eq!(
             row.commit.parents,
@@ -5094,6 +5097,7 @@ fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
                         lanes: Default::default(),
                         roots_limited: false,
                         shallow_fingerprint: runyte::hash::sha256_hex(b""),
+                        membership: Default::default(),
                     }),
                     ..NetworkRequest::default()
                 }
@@ -5151,6 +5155,9 @@ fn network_unborn_detached_shallow_root_limits_and_invalid_cursors_are_explicit(
             .decorations
             .contains(&"HEAD (detached)".to_owned())
     );
+    assert!(head.membership_limited);
+    assert!(!head.limited);
+    assert_eq!(head.rows[0].branch_label(), "[?] ");
     fs::write(fixture.path().join(".git/shallow"), format!("{root}\n")).unwrap();
     assert!(
         provider
@@ -5177,6 +5184,7 @@ fn network_unborn_detached_shallow_root_limits_and_invalid_cursors_are_explicit(
                             lanes: Default::default(),
                             roots_limited: false,
                             shallow_fingerprint: runyte::hash::sha256_hex(b""),
+                            membership: Default::default(),
                         }),
                         ..NetworkRequest::default()
                     }
@@ -5247,7 +5255,7 @@ fn network_selected_ref_continues_captured_pages_after_ref_deletion() {
         provider
             .network_roots(&fixture.repository(), &request.scope)
             .unwrap()
-            .0
+            .roots
             .is_empty()
     );
     let boundary = first.rows[0].commit.oid.clone();
@@ -5300,7 +5308,10 @@ fn network_octopus_and_criss_cross_ancestry_match_full_parent_graph() {
         .unwrap();
     assert!(page.rows.iter().any(|row| row.commit.parents.len() == 3));
     let mut lanes = runyte::git::network::GraphLanes::default();
-    for row in &page.rows {
+    for original in &page.rows {
+        let mut row = original.clone();
+        row.containing_branch = None;
+        let row = &row;
         assert_eq!(
             lanes.row_with_roots(row.commit.clone(), false, &page.roots),
             *row
@@ -5443,4 +5454,175 @@ fn network_page_boundary_completes_merge_routes_and_retains_path_colors() {
         );
     }
     assert!(lanes.pending.is_empty());
+}
+
+/// Creates immutable history with controlled tip timestamps, without changing
+/// process-global environment or writing an executable fixture.
+fn network_commit_at(
+    fixture: &TempRepository,
+    parents: &[&str],
+    time: i64,
+    message: &str,
+) -> String {
+    let tree = git_output(fixture, &["rev-parse", "HEAD^{tree}"]);
+    let mut command = Command::new("git");
+    command.args(["commit-tree", tree.trim(), "-m", message]);
+    for parent in parents {
+        command.args(["-p", parent]);
+    }
+    let output = command
+        .current_dir(fixture.path())
+        .env("GIT_AUTHOR_DATE", format!("{time} +0000"))
+        .env("GIT_COMMITTER_DATE", format!("{time} +0000"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn network_containment_prefers_current_then_newest_local_tip_and_counts_distinct_branches() {
+    use runyte::git::{NetworkRequest, NetworkScope};
+    let fixture = network_fixture("network-containment");
+    fixture.write("file", "root");
+    fixture.commit("root");
+    let root = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    let side = network_commit_at(&fixture, &[&root], 1_700_000_001, "deleted topic");
+    let main = network_commit_at(&fixture, &[&root, &side], 1_700_000_002, "merge topic");
+    fixture.git(&["update-ref", "refs/heads/main", &main]);
+    fixture.git(&["update-ref", "refs/remotes/origin/copy", &main]);
+    fixture.git(&["tag", "snapshot", &main]);
+    let provider = provider();
+    let label = |scope| {
+        let page = provider
+            .network_page(
+                &fixture.repository(),
+                &NetworkRequest {
+                    scope,
+                    cursor: None,
+                },
+            )
+            .unwrap();
+        let row = page.rows.iter().find(|row| row.commit.oid == side).unwrap();
+        assert!(row.branch.is_none());
+        row.branch_label()
+    };
+    // Two ancestry routes through the same branch still count as one branch.
+    assert_eq!(label(NetworkScope::All), "[in main] ");
+    let older = network_commit_at(&fixture, &[&main], 1_700_000_003, "older branch tip");
+    let newer = network_commit_at(&fixture, &[&main], 1_700_000_004, "newer branch tip");
+    fixture.git(&["update-ref", "refs/heads/a-older", &older]);
+    fixture.git(&["update-ref", "refs/heads/z-newer", &newer]);
+    for scope in [
+        NetworkScope::All,
+        NetworkScope::Head,
+        NetworkScope::Ref("refs/tags/snapshot".into()),
+    ] {
+        assert_eq!(label(scope), "[in main, ...] ");
+    }
+    fixture.git(&["checkout", "--detach", "-q", &main]);
+    assert_eq!(label(NetworkScope::Head), "[in z-newer, ...] ");
+    // Equal timestamps (and equal tips) resolve by branch name.
+    fixture.git(&["update-ref", "refs/heads/a-older", &newer]);
+    assert_eq!(label(NetworkScope::Head), "[in a-older, ...] ");
+    let unrelated = network_commit_at(&fixture, &[], 1_700_000_005, "unrelated current branch");
+    fixture.git(&["update-ref", "refs/heads/unrelated", &unrelated]);
+    fixture.git(&["checkout", "-q", "unrelated"]);
+    assert_eq!(
+        label(NetworkScope::Ref("refs/tags/snapshot".into())),
+        "[in a-older, ...] "
+    );
+    // A surviving path name retains precedence over containment.
+    let page = provider
+        .network_page(&fixture.repository(), &NetworkRequest::default())
+        .unwrap();
+    let row = page
+        .rows
+        .iter()
+        .find(|row| row.commit.oid == newer)
+        .unwrap();
+    assert_eq!(row.branch_label(), "[a-older] ");
+    assert!(row.containing_branch.is_none());
+}
+
+#[test]
+fn network_containment_survives_paging_branch_deletion_and_scope_changes_until_refresh() {
+    use runyte::git::{NetworkRequest, NetworkScope, network::NETWORK_PAGE_SIZE};
+    let fixture = network_fixture("network-containment-pages");
+    fixture.write("file", "root");
+    fixture.commit("root");
+    let root = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    import_network_history(&fixture, NETWORK_PAGE_SIZE + 2, Some(&root));
+    let side = git_output(&fixture, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+    let merge = network_commit_at(
+        &fixture,
+        &[&root, &side],
+        1_700_100_000,
+        "merge unnamed path",
+    );
+    fixture.git(&["update-ref", "refs/heads/main", &merge]);
+    fixture.git(&["branch", "copy"]);
+    fixture.git(&["tag", "captured", &merge]);
+    let provider = provider();
+    let request = NetworkRequest {
+        scope: NetworkScope::Ref("refs/tags/captured".into()),
+        cursor: None,
+    };
+    let first = provider
+        .network_page(&fixture.repository(), &request)
+        .unwrap();
+    assert!(
+        first
+            .rows
+            .iter()
+            .any(|row| row.branch_label() == "[in main, ...] ")
+    );
+    fixture.git(&["branch", "-D", "copy"]);
+    let continuation = NetworkRequest {
+        cursor: first.next.clone(),
+        ..request.clone()
+    };
+    let second = provider
+        .network_page(&fixture.repository(), &continuation)
+        .unwrap();
+    assert!(second.stale); // The selected tag itself did not move.
+    assert!(
+        second
+            .rows
+            .iter()
+            .any(|row| row.branch_label() == "[in main, ...] ")
+    );
+    assert_eq!(
+        second.rows,
+        provider
+            .network_page(&fixture.repository(), &continuation)
+            .unwrap()
+            .rows
+    );
+    let refreshed = provider
+        .network_page(&fixture.repository(), &request)
+        .unwrap();
+    assert!(!refreshed.stale);
+    assert!(
+        refreshed
+            .rows
+            .iter()
+            .any(|row| row.branch_label() == "[in main] ")
+    );
+    fixture.git(&["checkout", "--detach", "-q", &merge]);
+    fixture.git(&["branch", "-D", "main"]);
+    let unknown = provider
+        .network_page(&fixture.repository(), &request)
+        .unwrap();
+    assert!(unknown.rows.iter().all(|row| row.branch_label() == "[?] "));
 }
