@@ -3395,61 +3395,58 @@ Git's topological order.
 
 `Space g n` opens `[git network]`, a read-only graph of commits reachable from
 local branches, cached remote branches, tags, and HEAD. Opening it never fetches.
-Each commit row names one commit: a 12-character hash, Unicode author initials,
-graph paths, captured refs, and subject. Connector rows between commits route
-forks, joins, and lane compaction. HEAD has a distinct label; colors follow paths
-as they move between columns. The `HEAD ->` label stays the same in both graph
-glyph modes, preserving metadata positions. The graph does not wrap;
-horizontal scrolling reaches long labels and subjects.
+Each commit occupies one row: a six-character hash, Unicode author initials,
+ASCII graph, branch label, captured refs, and commit title. The branch label uses
+the same color as the commit's graph path. Paths retain their columns and colors
+until they end; empty columns can be reused without moving surviving paths.
+The graph does not wrap; horizontal scrolling reaches long names and titles.
 
-Enter on a commit row opens the ordinary full commit detail, including all merge
-parents and `Author-time: YYYY-MM-DD HH:MM` in the author's original timezone.
-Connector rows have no Enter action; ordinary movement, search, and copying
-include them. Closing that detail returns to the same graph page, commit and viewport.
-`Ctrl-n` and `Ctrl-p` move forward and backward through cached 200-commit pages,
-so returning to an earlier page preserves its exact lanes. The first line names
-the scope, page, continuation and any limit. Tab opens these registered actions:
+`*` marks a commit, `+` marks a parent connection, and `-` and `|` draw the
+rectangular paths. A `-|-` crossing passes through an unrelated path without
+joining it; its vertical stroke keeps that path's color. Horizontal segments use
+the destination path's color. Where several parents share a horizontal segment,
+the nearest endpoint supplies its color. Four theme colors repeat as needed, so
+color alone does not identify a branch.
+
+Branch labels follow captured branch tips along first-parent paths. Git does not
+record the branch on which a commit was originally created; shared history keeps
+the surviving displayed path's label. The current symbolic HEAD name is preferred,
+then a local branch, then a cached remote branch. Paths without a known branch
+show `[unlabelled]`; tags are still shown as refs but do not supply branch names.
+Captured names remain fixed until explicit refresh.
+
+Enter opens full commit detail, including the full object ID, all merge parents,
+and `Author-time: YYYY-MM-DD HH:MM` in the author's original timezone. Short hash
+collisions do not affect navigation: each row retains its full commit identity.
+Closing detail returns to the same page, selection, and viewport. `Ctrl-n` and
+`Ctrl-p` move through cached 200-commit pages. The first line names the scope,
+page, continuation, and any limit. Tab opens these registered actions:
 
 | Action | Default key | Colon command |
 | --- | --- | --- |
 | All cached refs and HEAD | `Tab a` | `:git-network-all` |
 | Current HEAD only | `Tab h` | `:git-network-head` |
 | Choose an exact captured ref | `Tab r` | `:git-network-choose-ref` |
-| Toggle ASCII graph glyphs | `Tab g` | `:toggle-git-network-ascii` |
 | Next graph page | `Ctrl-n` | `:next-git-network-page` |
 | Previous graph page | `Ctrl-p` | `:previous-git-network-page` |
 
 `:git-network-ref refs/heads/main` selects an exact full ref directly.
-`:git-network` or `Space r` explicitly captures new roots; refreshing keeps the
-selected object while it remains within the bounded traversal. Page continuation
-uses the original object IDs and labels even if refs move, and marks that
-generation stale. No remote access or idle graph scan runs.
+`:git-network` or `Space r` captures new roots; refreshing keeps the selected
+commit while it remains within the bounded traversal. Continuation uses the
+original object IDs and labels even if refs move, marking that generation stale.
+No remote access or idle graph scan runs.
 
-Paths expand and converge through diagonal connector rows. The first parent
-continues the commit's path where possible; an existing parent path keeps its
-color when another path joins it. Vacant lanes compact rather than leaving
-permanent gaps. `╳` marks a crossing without a join (`x` in ASCII); diagonals are
-`╱` and `╲` (`/` and `\` in ASCII). At a crossing's shared cell, the moving path
-supplies the color; both paths keep their own colors on either side. Four theme
-colors repeat as needed, so color alone does not identify a branch. At the lane
-or routing budget, an already visible parent can be reached on a dedicated
-horizontal connector row: `<` or `>` marks its destination, and `╫` (`x` in
-ASCII) passes through intermediate paths without joining them.
-
-A commit block contains one metadata row and at most 64 connector rows. If a
-parent route cannot fit within the 16-lane or connector-row budget, the commit
-lists undrawn parent commit IDs in an `overflow parents` note; Enter exposes
-every full parent ID. Unplaced commits and shallow boundaries are labelled. The limits are
-256 captured refs plus HEAD, 16 lanes, 50 retained pages and 10,000 traversed
-commits per generation, with 200 commits per page and a 2 MiB subprocess-output
-bound per read. Connector rows do not count against the commit page size. An
-atomic refresh temporarily retains at most two bounded generations until the
-replacement can preserve the selected commit. Refresh from a connector uses its
-owning commit block and preserves the relative row where possible.
-Graph traversal reads immutable object ancestry without replacement refs; changing
-shallow boundaries requires a fresh generation. An explicit graph-limit state recommends
-narrowing the scope instead of silently dropping ancestry. The page is ordinary
-buffer text for movement, search, selections, copying, splits and retention.
+If a parent needs a new lane beyond the 16-lane limit, an `overflow parents`
+note lists its abbreviated ID; existing parent lanes remain connected even at
+capacity. Enter exposes every full parent ID. Unplaced commits and shallow
+boundaries are labelled. Limits are 256 captured refs plus HEAD, 16 lanes,
+50 retained pages, and 10,000 commits per generation, with 200 commits per page
+and a 2 MiB subprocess-output bound per read. An atomic refresh temporarily
+retains at most two bounded generations while locating the selected commit.
+Traversal reads immutable ancestry without replacement refs; changing shallow
+boundaries requires a fresh generation. Narrow the scope when a graph limit is
+reached. Ordinary movement, search, copying, selections, and splits remain
+available throughout the network.
 
 #### Searching commits
 

@@ -187,6 +187,10 @@ impl GitCliProvider {
             || cursor.roots.len() > MAX_NETWORK_ROOTS + 1
             || cursor.lanes.pending.len() > crate::git::network::MAX_NETWORK_LANES
             || cursor.lanes.colors.len() != cursor.lanes.pending.len()
+            || cursor.lanes.branches.len() != cursor.lanes.pending.len()
+            || cursor.lanes.branches.iter().flatten().any(|branch| {
+                branch.len() > MAX_NETWORK_BYTES || branch.chars().any(char::is_control)
+            })
             || cursor.lanes.colors.iter().any(|color| *color >= 4)
             || cursor.lanes.next_color >= 4
             || cursor.roots.iter().any(|root| !valid_object_id(&root.oid))
@@ -259,7 +263,7 @@ impl GitCliProvider {
                     .find(|root| root.oid == commit.oid)
                     .map_or_else(Vec::new, |root| root.labels.clone());
                 let boundary = shallow.lines().any(|oid| oid == commit.oid);
-                lanes.row(commit, boundary)
+                lanes.row_with_roots(commit, boundary, &cursor.roots)
             })
             .collect::<Vec<_>>();
         let offset = cursor.offset + rows.len();

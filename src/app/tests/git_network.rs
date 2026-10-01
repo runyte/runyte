@@ -5,7 +5,7 @@ use crate::{
     app::{FrameGeometry, HostPorts},
     clipboard::SystemClipboard,
     command::parse_colon_command,
-    git::{CommitDetail, CommitSummary, GitCliProvider, Repository},
+    git::{CommitDetail, CommitSummary, GitCliProvider, Repository, network::GRAPH_COLUMN},
     input::{KeyCode, KeyStroke, Modifiers},
     layout::Rect,
     snapshot::{SnapshotRow, TextRole, TextRunKind},
@@ -87,7 +87,7 @@ fn command(app: &mut App, input: &str) {
 }
 
 #[test]
-fn commands_tab_scopes_ascii_and_commit_detail_return_use_native_navigation() {
+fn ascii_network_tab_scopes_and_commit_detail_return_use_native_navigation() {
     let (_fixture, mut app) = fixture();
     for c in [' ', 'g', 'n'] {
         key(&mut app, KeyCode::Char(c), Modifiers::NONE);
@@ -114,10 +114,8 @@ fn commands_tab_scopes_ascii_and_commit_detail_return_use_native_navigation() {
     assert_eq!(app.active().scroll_col, 9);
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert!(app.context_action_menu.is_some());
-    key(&mut app, KeyCode::Char('g'), Modifiers::NONE);
-    assert!(app.network.ascii);
     assert!(app.active_buffer().line_string(1).contains('*'));
-    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(parse_colon_command("toggle-git-network-ascii").is_err());
     key(&mut app, KeyCode::Char('h'), Modifiers::NONE);
     assert_eq!(app.network.scope, NetworkScope::Head);
     command(&mut app, "git-network-all");
@@ -134,7 +132,6 @@ fn commands_tab_scopes_ascii_and_commit_detail_return_use_native_navigation() {
         "git-network-choose-ref",
         "next-git-network-page",
         "previous-git-network-page",
-        "toggle-git-network-ascii",
     ] {
         command(&mut app, input);
         assert!(app.active_buffer().is_git_network());
@@ -395,37 +392,27 @@ fn merge_fixture() -> (Fixture, App) {
 }
 
 #[test]
-fn connector_rows_are_not_commits_and_refresh_restores_their_block_position() {
+fn every_graph_row_is_a_commit_and_refresh_keeps_the_selected_commit() {
     let (_fixture, mut app) = merge_fixture();
     command(&mut app, "git-network");
-    let buffer = app.active().buffer;
-    assert_eq!(app.network.document_rows[2], Some((0, 1)));
-    assert!(commit_line(&app, 1) > 2);
-    let offset = app.active_buffer().line_to_offset(2);
-    app.active_mut().replace_selection(Selection::point(offset));
-    assert!(app.selected_network_oid().is_none());
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.active().buffer, buffer);
-    command(&mut app, "toggle-git-network-ascii");
-    assert_eq!(app.active_buffer().offset_to_row(app.active().head()), 2);
-    assert!(app.active_buffer().line_string(2).contains('\\'));
-    command(&mut app, "git-network");
-    assert_eq!(app.active_buffer().offset_to_row(app.active().head()), 2);
-    assert!(app.selected_network_oid().is_none());
-    let second = commit_line(&app, 1);
-    let expected = app.network.pages[0].rows[1].commit.oid.clone();
-    let offset = app.active_buffer().line_to_offset(second);
-    app.active_mut().replace_selection(Selection::point(offset));
-    assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert!(app.active_buffer().is_git_commit_oid(&expected));
-    let detail = app.active().buffer;
-    app.close_buffer(detail);
     assert_eq!(
-        app.active_buffer().offset_to_row(app.active().head()),
-        second
+        app.active_buffer().len_lines(),
+        app.network.pages[0].rows.len() + 1
     );
-    assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
+    for index in 0..app.network.pages[0].rows.len() {
+        let row = index + 1;
+        let expected = app.network.pages[0].rows[index].commit.oid.clone();
+        let offset = app.active_buffer().line_to_offset(row);
+        app.active_mut().replace_selection(Selection::point(offset));
+        assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
+        command(&mut app, "git-network");
+        assert_eq!(app.active_buffer().offset_to_row(app.active().head()), row);
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert!(app.active_buffer().is_git_commit_oid(&expected));
+        let detail = app.active().buffer;
+        app.close_buffer(detail);
+        assert_eq!(app.selected_network_oid().as_ref(), Some(&expected));
+    }
 }
 
 #[test]
@@ -443,22 +430,26 @@ fn log_enter_uses_the_same_author_local_timestamp_as_network_enter() {
 }
 
 #[test]
-fn connector_spans_color_the_path_instead_of_the_column() {
+fn rectangular_branch_spans_keep_path_colors() {
     let (_fixture, mut app) = merge_fixture();
     command(&mut app, "git-network");
     let buffer = app.active().buffer;
-    let node_color = app.network_role_at(buffer, app.active_buffer().line_to_offset(1) + 20);
-    let fork_color = app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 21);
+    let node_color =
+        app.network_role_at(buffer, app.active_buffer().line_to_offset(1) + GRAPH_COLUMN);
+    let fork_color = app.network_role_at(
+        buffer,
+        app.active_buffer().line_to_offset(1) + GRAPH_COLUMN + 1,
+    );
     assert_eq!(node_color, Some(TextRole::GitLane0));
     assert_eq!(fork_color, Some(TextRole::GitLane1));
-    // One column's adjacent cells belong to two different paths.
+    // The horizontal branch segment uses the destination path's color.
     assert_eq!(
-        app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 20),
+        app.network_role_at(buffer, app.active_buffer().line_to_offset(1) + GRAPH_COLUMN),
         node_color
     );
     assert_ne!(node_color, fork_color);
     let before = app.network.spans.clone();
-    command(&mut app, "toggle-git-network-ascii");
+    app.show_network_page(false);
     assert_eq!(
         app.network
             .spans
@@ -468,13 +459,16 @@ fn connector_spans_color_the_path_instead_of_the_column() {
         before.iter().map(|(_, role)| role).collect::<Vec<_>>()
     );
     assert_eq!(
-        app.network_role_at(buffer, app.active_buffer().line_to_offset(2) + 21),
+        app.network_role_at(
+            buffer,
+            app.active_buffer().line_to_offset(1) + GRAPH_COLUMN + 1
+        ),
         fork_color
     );
 }
 
 #[test]
-fn ascii_toggle_preserves_multirange_selections_and_independent_split_positions() {
+fn redraw_preserves_multirange_selections_and_independent_split_positions() {
     use crate::selection::Range;
     let (_fixture, mut app) = merge_fixture();
     command(&mut app, "git-network");
@@ -482,7 +476,10 @@ fn ascii_toggle_preserves_multirange_selections_and_independent_split_positions(
     let start = app.active_buffer().line_to_offset(2);
     let end = app.active_buffer().line_to_offset(commit_line(&app, 1));
     app.active_mut().replace_selection(Selection::new(
-        vec![Range::new(start + 20, start + 22), Range::point(end + 2)],
+        vec![
+            Range::new(start + GRAPH_COLUMN, start + GRAPH_COLUMN + 2),
+            Range::point(end + 2),
+        ],
         1,
     ));
     app.active_mut().scroll_col = 7;
@@ -516,14 +513,15 @@ fn ascii_toggle_preserves_multirange_selections_and_independent_split_positions(
             .collect::<Vec<_>>()
     };
     let before = positions(&app);
-    command(&mut app, "toggle-git-network-ascii");
+    app.network.pages[0].stale = true;
+    app.show_network_page(false);
     assert_eq!(positions(&app), before);
-    command(&mut app, "toggle-git-network-ascii");
+    app.show_network_page(false);
     assert_eq!(positions(&app), before);
 }
 
 #[test]
-fn detail_return_survives_ascii_toggle_in_another_pane() {
+fn detail_return_survives_stale_header_redraw_in_another_pane() {
     let (_fixture, mut app) = merge_fixture();
     command(&mut app, "git-network");
     let graph_pane = app.active_pane;
@@ -536,7 +534,8 @@ fn detail_return_survives_ascii_toggle_in_another_pane() {
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let detail = app.active().buffer;
     app.active_pane = graph_pane;
-    command(&mut app, "toggle-git-network-ascii");
+    app.network.pages[0].stale = true;
+    app.show_network_page(false);
     app.active_pane = detail_pane;
     app.close_buffer(detail);
     assert_eq!(app.selected_network_oid(), Some(oid));
@@ -546,12 +545,8 @@ fn detail_return_survives_ascii_toggle_in_another_pane() {
     );
 }
 
-fn commit_line(app: &App, index: usize) -> usize {
-    app.network
-        .document_rows
-        .iter()
-        .position(|identity| *identity == Some((index, 0)))
-        .unwrap()
+fn commit_line(_app: &App, index: usize) -> usize {
+    index + 1
 }
 
 fn tall_page(app: &App) -> NetworkPage {
@@ -637,7 +632,7 @@ fn refresh_reveals_an_anchor_that_moves_more_than_one_screen() {
 }
 
 #[test]
-fn ascii_toggle_preserves_the_exact_selected_head_row_subject() {
+fn stale_header_redraw_preserves_the_exact_selected_head_row_subject() {
     let (_fixture, mut app) = fixture();
     command(&mut app, "git-network");
     let text = app.active_buffer().line_string(1);
@@ -648,8 +643,9 @@ fn ascii_toggle_preserves_the_exact_selected_head_row_subject() {
             offset,
             offset + 5,
         )));
-    for _ in 0..2 {
-        command(&mut app, "toggle-git-network-ascii");
+    for stale in [true, false] {
+        app.network.pages[0].stale = stale;
+        app.show_network_page(false);
         let row = app.active_buffer().line_string(1);
         let actual_column = app.active().head() - app.active_buffer().line_to_offset(1);
         assert_eq!(actual_column, column + 5);
@@ -657,6 +653,59 @@ fn ascii_toggle_preserves_the_exact_selected_head_row_subject() {
             row.chars().skip(column).take(5).collect::<String>(),
             "first"
         );
-        assert_eq!(app.active().selection.primary().anchor, offset);
+        assert_eq!(
+            app.active().selection.primary().anchor,
+            app.active_buffer().line_to_offset(1) + column
+        );
+    }
+}
+
+#[test]
+fn branch_labels_match_commit_path_colors_on_every_row() {
+    let (_fixture, mut app) = merge_fixture();
+    command(&mut app, "git-network");
+    let buffer = app.active().buffer;
+    let mut labels = std::collections::BTreeSet::new();
+    for (index, row) in app.network.pages[0].rows.iter().enumerate() {
+        let text = app.active_buffer().line_string(index + 1);
+        assert_eq!(
+            text.split_whitespace().next().unwrap(),
+            &row.commit.oid[..6]
+        );
+        let label = row.branch_label();
+        labels.insert(row.branch.as_deref().unwrap());
+        let column = text[..text.find(&label).unwrap()].chars().count();
+        let offset = app.active_buffer().line_to_offset(index + 1);
+        let node = row.metadata_prefix().chars().count() + row.lane.unwrap() * 2;
+        let role = app.network_role_at(buffer, offset + node);
+        for i in 0..label.chars().count() {
+            assert_eq!(app.network_role_at(buffer, offset + column + i), role);
+        }
+    }
+    assert_eq!(labels, std::collections::BTreeSet::from(["main", "side"]));
+}
+
+#[test]
+fn six_character_hash_collisions_keep_full_commit_selection_identity() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network");
+    let mut first = app.network.pages[0].rows[0].clone();
+    let mut second = first.clone();
+    first.commit.oid = format!("abcdef{}", "0".repeat(34));
+    second.commit.oid = format!("abcdef{}", "1".repeat(34));
+    app.network.pages[0].rows = vec![first.clone(), second.clone()];
+    app.show_network_page(true);
+    for (index, row) in [first, second].iter().enumerate() {
+        assert!(
+            app.active_buffer()
+                .line_string(index + 1)
+                .starts_with("abcdef  ")
+        );
+        let offset = app.active_buffer().line_to_offset(index + 1);
+        app.active_mut().replace_selection(Selection::point(offset));
+        assert_eq!(
+            app.selected_network_oid().as_deref(),
+            Some(row.commit.oid.as_str())
+        );
     }
 }

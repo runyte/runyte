@@ -4657,7 +4657,6 @@ impl App {
             Command::RemoveWorktree => self.remove_selected_worktree(),
             Command::NextGitNetworkPage => self.next_git_network_page(),
             Command::PreviousGitNetworkPage => self.previous_git_network_page(),
-            Command::ToggleGitNetworkAscii => self.toggle_git_network_ascii(),
             Command::NextGitLogPage => self.next_git_log_page(),
             Command::PreviousGitLogPage => self.previous_git_log_page(),
             Command::OpenGitCommit => self.open_selected_git_commit(),

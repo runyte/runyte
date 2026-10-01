@@ -2,17 +2,17 @@
 
 //! Captured multi-root history and bounded path routing.
 //!
-//! Captured pages contain commit blocks with independently colored paths and
-//! connector rows. Cursor state preserves lane order and colors across pages.
+//! Each commit occupies one rectangular graph row. Cursor state preserves
+//! pending path columns and colors across pages.
 
 mod routing;
-pub use routing::{GraphCell, GraphLine, MAX_CONNECTOR_ROWS};
+pub use routing::{GraphCell, GraphLine};
 
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::CommitSummary;
 
-pub const HASH_COLUMNS: usize = 12;
+pub const HASH_COLUMNS: usize = 6;
 const INITIALS_COLUMNS: usize = 4;
 const COLUMN_GAP: &str = "  ";
 pub const GRAPH_COLUMN: usize = HASH_COLUMNS + INITIALS_COLUMNS + 2 * COLUMN_GAP.len();
@@ -54,6 +54,8 @@ pub struct GraphLanes {
     pub pending: Vec<Option<String>>,
     /// Colors travel with pending paths, independently of column positions.
     pub colors: Vec<u8>,
+    /// Captured branch-tip names carried along first-parent paths.
+    pub branches: Vec<Option<String>>,
     pub next_color: u8,
 }
 
@@ -76,31 +78,25 @@ pub struct NetworkRequest {
 pub struct GraphRow {
     pub commit: CommitSummary,
     pub lane: Option<usize>,
-    /// Parent-to-lane mapping at block exit, after compaction. These are not
-    /// column annotations for the commit row. `None` means an undrawn route,
-    /// never that the parent disappeared.
+    /// Parent columns on this row. `None` means an undrawn route, never that
+    /// the parent disappeared.
     pub edges: Vec<(String, Option<usize>)>,
     pub shallow: bool,
     pub node: GraphLine,
-    pub connectors: Vec<GraphLine>,
+    pub branch: Option<String>,
 }
 
 impl GraphRow {
     pub fn width(&self) -> usize {
-        std::iter::once(&self.node)
-            .chain(&self.connectors)
-            .map(|line| line.cells.len().div_ceil(2))
-            .max()
-            .unwrap_or(1)
-            .max(1)
+        self.node.cells.len().div_ceil(2).max(1)
     }
 
-    pub fn graph(&self, ascii: bool) -> String {
-        self.graph_with_width(ascii, self.width())
+    pub fn graph(&self) -> String {
+        self.graph_with_width(self.width())
     }
 
-    pub fn graph_with_width(&self, ascii: bool, width: usize) -> String {
-        self.node.text(ascii, width.max(self.width()))
+    pub fn graph_with_width(&self, width: usize) -> String {
+        self.node.text(width.max(self.width()))
     }
 
     pub fn route_note(&self) -> String {
@@ -127,28 +123,32 @@ impl GraphRow {
         note
     }
 
-    pub fn text(&self, ascii: bool) -> String {
-        self.text_with_width(ascii, self.width())
+    pub fn text(&self) -> String {
+        self.text_with_width(self.width())
     }
 
-    pub fn text_with_width(&self, ascii: bool, width: usize) -> String {
-        let labels = if self.commit.decorations.is_empty() {
+    pub fn branch_label(&self) -> String {
+        format!("[{}] ", self.branch.as_deref().unwrap_or("unlabelled"))
+    }
+
+    pub fn text_with_width(&self, width: usize) -> String {
+        let labels = self
+            .commit
+            .decorations
+            .iter()
+            .filter(|label| Some(label.as_str()) != self.branch.as_deref())
+            .map(|label| display_label(label))
+            .collect::<Vec<_>>();
+        let labels = if labels.is_empty() {
             String::new()
         } else {
-            format!(
-                "[{}] ",
-                self.commit
-                    .decorations
-                    .iter()
-                    .map(|label| display_label(label))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            format!("[{}] ", labels.join(", "))
         };
         format!(
-            "{}{}{COLUMN_GAP}{}{}{}",
+            "{}{}{COLUMN_GAP}{}{}{}{}",
             self.metadata_prefix(),
-            self.graph_with_width(ascii, width),
+            self.graph_with_width(width),
+            self.branch_label(),
             labels,
             self.commit.subject,
             self.route_note()
@@ -169,12 +169,7 @@ impl GraphRow {
     }
 }
 
-pub fn connector_text(line: &GraphLine, ascii: bool, width: usize) -> String {
-    format!("{}{}", " ".repeat(GRAPH_COLUMN), line.text(ascii, width))
-}
-
-/// Labels are metadata, not graph glyphs. Keep their spelling and coordinates
-/// identical while toggling the graph between Unicode and ASCII.
+/// Use an ASCII HEAD marker while preserving captured ref names.
 pub fn display_label(label: &str) -> String {
     label.replace("HEAD → ", "HEAD -> ")
 }

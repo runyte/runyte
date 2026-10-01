@@ -213,7 +213,7 @@ impl HelpTopic {
                 "Close a patch buffer to return to the file list. Closing either split side or :diff-off collapses the comparison and restores the list at the same file.",
             ],
             Self::GitNetwork => &[
-                "Read the cached commit network with colored paths and connector rows. Enter on a commit row opens full commit detail; connector rows have no commit action. Page commands retain roots, routes and colors; explicit refresh captures moved refs. Diagonals route forks and joins, and crossing marks do not join paths. Overflow notes identify undrawn parent commits. Narrow scope when a graph limit is reached. Generated text supports ordinary navigation, search and copying and does not wrap.",
+                "Read one commit per row in the cached ASCII network. Stars mark commits, plus signs mark parent connections, and straight lines cross without joining. Branch labels share their path's color and follow captured tips, not historical branch ownership. Enter opens full detail using the full commit identity behind the six-character hash. Paging retains roots, columns, colors and labels; refresh captures moved refs. Overflow notes identify undrawn parents. Narrow scope at a graph limit. Ordinary navigation, search and copying remain available; rows do not wrap.",
             ],
             Self::GitLog => GIT_LOG_OVERVIEW,
             Self::GitBlame => GIT_BLAME_OVERVIEW,

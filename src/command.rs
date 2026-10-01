@@ -845,7 +845,6 @@ editor_commands! {
     RemoveWorktree => ("remove-worktree", "Remove the worktree on this row, leaving its branch"),
     NextGitNetworkPage => ("next-git-network-page", "Show the next commit network page"),
     PreviousGitNetworkPage => ("previous-git-network-page", "Show the previous commit network page"),
-    ToggleGitNetworkAscii => ("toggle-git-network-ascii", "Toggle ASCII commit network glyphs"),
     NextGitLogPage => ("next-git-log-page", "Show the next page of the Git log"),
     PreviousGitLogPage => ("previous-git-log-page", "Show the previous page of the Git log"),
     OpenGitCommit => ("open-git-commit", "Open the commit on this log, network or blame row"),
@@ -1429,7 +1428,6 @@ impl EditorCommand {
             | Self::RemoveWorktree => CommandCategory::Git,
             Self::NextGitNetworkPage
             | Self::PreviousGitNetworkPage
-            | Self::ToggleGitNetworkAscii
             | Self::NextGitLogPage
             | Self::PreviousGitLogPage
             | Self::OpenGitCommit => CommandCategory::Git,
@@ -2231,13 +2229,6 @@ pub const COMMANDS: &[CommandSpec] = &[
         "previous-git-network-page",
         [],
         "previous-git-network-page",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::ToggleGitNetworkAscii,
-        "toggle-git-network-ascii",
-        [],
-        "toggle-git-network-ascii",
         NoArguments
     ),
     spec!(
@@ -3235,7 +3226,6 @@ fn invocation_from_parts(
             | (EditorCommand::FetchBranch, ParsedArgument::None)
             | (EditorCommand::NextGitNetworkPage, ParsedArgument::None)
             | (EditorCommand::PreviousGitNetworkPage, ParsedArgument::None)
-            | (EditorCommand::ToggleGitNetworkAscii, ParsedArgument::None)
             | (EditorCommand::CloseWindow, ParsedArgument::None)
             | (EditorCommand::OpenFilePicker, ParsedArgument::None)
             | (EditorCommand::OpenAllFilesPicker, ParsedArgument::None)

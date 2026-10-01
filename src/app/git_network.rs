@@ -12,11 +12,7 @@ pub(super) struct NetworkState {
     page: usize,
     buffer: Option<usize>,
     pending: Option<PendingNetwork>,
-    ascii: bool,
     selected: Option<String>,
-    selected_relative: usize,
-    /// Header has no identity; connector rows carry only restoration ownership.
-    document_rows: Vec<Option<(usize, usize)>>,
     generation: u64,
     roots_check: Option<(GitRequestId, u64)>,
     roots_dirty: bool,
@@ -35,7 +31,7 @@ pub(super) struct NetworkReturnOrigin {
 }
 type RowColumn = (usize, usize);
 
-/// Document coordinates survive ASCII label changes without losing ranges.
+/// Document coordinates preserve ranges when the network header changes.
 struct NetworkSelection {
     ranges: Vec<(RowColumn, RowColumn)>,
     primary: usize,
@@ -104,8 +100,7 @@ impl App {
         let identity = (scope == self.network.scope)
             .then(|| self.network_row_identity())
             .flatten();
-        self.network.selected_relative = identity.map_or(0, |(_, relative)| relative);
-        let anchor = identity.and_then(|(index, _)| {
+        let anchor = identity.and_then(|index| {
             self.network
                 .pages
                 .get(self.network.page)?
@@ -236,19 +231,17 @@ impl App {
         self.show_network_page(true);
     }
 
-    fn network_row_identity(&self) -> Option<(usize, usize)> {
+    fn network_row_identity(&self) -> Option<usize> {
         if !self.active_buffer().is_git_network() {
             return None;
         }
         let line = self.active_buffer().offset_to_row(self.active().head());
-        self.network.document_rows.get(line).copied().flatten()
+        let index = line.checked_sub(1)?;
+        (index < self.network.pages.get(self.network.page)?.rows.len()).then_some(index)
     }
 
     pub(super) fn selected_network_oid(&self) -> Option<String> {
-        let (index, relative) = self.network_row_identity()?;
-        if relative != 0 {
-            return None;
-        }
+        let index = self.network_row_identity()?;
         self.network
             .pages
             .get(self.network.page)?
@@ -287,25 +280,28 @@ impl App {
             .max()
             .unwrap_or(1);
         let mut spans = Vec::new();
-        let mut document_rows = vec![None];
-        let mut commit_lines = Vec::new();
         let mut offset = text.chars().count() + 1;
-        for (index, row) in page.rows.iter().enumerate() {
-            commit_lines.push(document_rows.len());
-            document_rows.push(Some((index, 0)));
-            use crate::git::network::{GRAPH_COLUMN, HASH_COLUMNS, connector_text, display_label};
+        for row in &page.rows {
+            use crate::git::network::{HASH_COLUMNS, display_label};
             use crate::snapshot::TextRole;
-            let line = row.text_with_width(self.network.ascii, graph_width);
+            let line = row.text_with_width(graph_width);
             spans.push((offset..offset + HASH_COLUMNS, TextRole::GitHash));
             let graph = offset + row.metadata_prefix().chars().count();
             graph_spans(&mut spans, &row.node, graph);
+            let branch_start = graph + graph_width * 2 + 1;
+            if let Some(lane) = row.lane {
+                spans.push((
+                    branch_start..branch_start + row.branch_label().chars().count(),
+                    lane_role(row.node.cells[lane * 2].color),
+                ));
+            }
             if let Some(label) = row
                 .commit
                 .decorations
                 .first()
                 .filter(|label| label.starts_with("HEAD"))
             {
-                let start = graph + graph_width * 2 + 2;
+                let start = branch_start + row.branch_label().chars().count() + 1;
                 let displayed_label = display_label(label);
                 spans.push((
                     start..start + displayed_label.chars().count(),
@@ -315,14 +311,6 @@ impl App {
             text.push('\n');
             text.push_str(&line);
             offset += line.chars().count() + 1;
-            for (relative, connector) in row.connectors.iter().enumerate() {
-                let line = connector_text(connector, self.network.ascii, graph_width);
-                graph_spans(&mut spans, connector, offset + GRAPH_COLUMN);
-                document_rows.push(Some((index, relative + 1)));
-                text.push('\n');
-                text.push_str(&line);
-                offset += line.chars().count() + 1;
-            }
         }
         if page.rows.is_empty() {
             text.push_str("\nNo commits (unborn HEAD or empty scope)");
@@ -331,17 +319,7 @@ impl App {
             .then(|| self.network.selected.take())
             .flatten()
             .and_then(|oid| page.rows.iter().position(|row| row.commit.oid == oid))
-            .map_or(1, |index| {
-                commit_lines[index]
-                    + self
-                        .network
-                        .selected_relative
-                        .min(page.rows[index].connectors.len())
-            });
-        if activate {
-            self.network.selected_relative = 0;
-        }
-        self.network.document_rows = document_rows;
+            .map_or(1, |index| index + 1);
         let buffer = self
             .network
             .buffer
@@ -639,15 +617,6 @@ impl App {
             self.show_network_page(true);
         }
     }
-
-    pub(super) fn toggle_git_network_ascii(&mut self) {
-        if !self.active_buffer().is_git_network() {
-            self.action_failed("glyph selection requires the Git network");
-            return;
-        }
-        self.network.ascii = !self.network.ascii;
-        self.show_network_page(false);
-    }
 }
 
 fn graph_spans(
@@ -655,6 +624,14 @@ fn graph_spans(
     line: &crate::git::network::GraphLine,
     offset: usize,
 ) {
+    for (column, cell) in line.cells.iter().enumerate() {
+        if cell.character() != ' ' {
+            spans.push((offset + column..offset + column + 1, lane_role(cell.color)));
+        }
+    }
+}
+
+fn lane_role(color: u8) -> crate::snapshot::TextRole {
     use crate::snapshot::TextRole;
     let roles = [
         TextRole::GitLane0,
@@ -662,21 +639,7 @@ fn graph_spans(
         TextRole::GitLane2,
         TextRole::GitLane3,
     ];
-    for (column, cell) in line.cells.iter().enumerate() {
-        if cell.character(false) == ' ' {
-            continue;
-        }
-        let role = roles[usize::from(cell.color)];
-        let start = offset + column;
-        if let Some((range, previous)) = spans.last_mut()
-            && *previous == role
-            && range.end == start
-        {
-            range.end += 1;
-        } else {
-            spans.push((start..start + 1, role));
-        }
-    }
+    roles[usize::from(color)]
 }
 
 #[cfg(test)]

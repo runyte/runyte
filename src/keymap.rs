@@ -2900,12 +2900,6 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             "ref",
             ColonCommand::GitNetworkChooseRef,
         ),
-        ContextAction::buffer(
-            BindingScope::GitNetwork,
-            Key::char('g'),
-            "glyphs",
-            EditorCommand::ToggleGitNetworkAscii,
-        ),
         ContextAction::row(
             BindingScope::GitComparison,
             Key::char('d'),
@@ -3734,7 +3728,6 @@ mod tests {
                 ("a".to_owned(), "all"),
                 ("h".to_owned(), "head"),
                 ("r".to_owned(), "ref"),
-                ("g".to_owned(), "glyphs"),
             ]
         );
         assert_eq!(

@@ -696,37 +696,36 @@ approve. The overlay consumes Enter; the terminal receives no submit key.
 ## Commit network
 
 `[git network]` is a retained read-only special buffer, opened with `Space g n`.
-Its header identifies the captured scope and graph page. Each commit row
-contains the hash, grapheme-aware author initials, colored paths, ref labels,
-and subject. Connector rows route forks, joins, crossings, and compaction in
-ordinary document text. Explicit row identities distinguish commit metadata
-from connectors: Enter acts only on a commit row, while ordinary movement,
-search, selection, copying, and line numbers include connector rows. Graph rows
-never wrap; horizontal scrolling reaches the full text. Hashes are muted and
-HEAD has its own emphasis. ASCII glyphs are a Tab action with identical row
-identities. The `HEAD ->` label uses identical metadata text in both modes.
-Page activation follows the new caret; redraws and detail return preserve the
-viewport.
+Its header identifies the captured scope and graph page. Each commit occupies
+one row with a six-character hash, grapheme-aware initials, rectangular ASCII
+paths, a branch label, captured refs, and subject. Branch labels share the
+commit path's color. HEAD keeps its separate emphasis. Rows never wrap.
 
-Colors follow paths when lanes expand or compact. Existing parent paths retain
-their colors when joined. The four existing lane theme roles are selected by
-path color rather than column. Diagonal routes use `╱` and `╲` (`/` and `\` in
-ASCII); `╳` (`x`) crosses without joining. The shared crossing cell uses the
-moving path's color; both paths retain their colors on either side. Shapes
-remain meaningful without color. A root leaves a separating connector row so
-an unrelated root reusing its column does not appear connected.
+`*` marks a commit and `+` marks a parent connection. Horizontal `-` segments
+cross unrelated vertical `|` paths without joining; vertical strokes keep their
+path colors. Horizontal segments use the destination path's color, with the
+nearest endpoint supplying the color of shared segments. Four repeating theme
+roles color paths independently of column number. Surviving paths never shift
+columns; completed paths leave reusable holes.
 
-Each commit block has at most 64 connector rows within 16 lanes. Existing
-parents need no free lane: at capacity a dedicated horizontal connector uses
-`<` or `>` to name its destination, with `╫` (`x`) crossing intermediate paths.
-Routes beyond lane or row budgets list undrawn parent commit IDs in an overflow
-note, with full IDs in commit detail; notes do not name shifting lane numbers. Shallow boundaries and graph limits remain explicit. Pages count
-200 commits, and cached geometry and colors replay identically. Closing detail
-restores the originating page, caret and viewport. Refresh preserves the commit
-OID and, from a connector, its owning block and relative row where possible.
-Captured roots and labels remain fixed until explicit refresh; stale generations
-say so. Tab actions select all cached refs, HEAD or an exact captured full ref.
-Graph work runs on demand rather than on an idle timer.
+Branch names are captured-tip labels propagated along first-parent paths, not
+historical branch ownership. Symbolic HEAD is preferred over local branches,
+then cached remote branches; tags do not name paths. Shared history keeps the
+existing destination path's name and color. Unknown names display `[unlabelled]`.
+Names, geometry, and colors survive page continuation and cached replay.
+
+Every row after the header names a commit, and Enter opens full detail using its
+full object ID even when six-character hashes collide. Closing detail restores
+the original page, selection, and viewport. Refresh preserves the selected OID;
+page activation follows the new caret, while redraws preserve viewport positions.
+Tab actions select all cached refs, HEAD, or an exact captured ref. ASCII is the
+only graph rendering; no glyph toggle is registered.
+
+The graph retains 200 commits per page, at most 50 pages and 16 lanes. Existing
+parent paths still connect at lane capacity; omitted new parents are identified
+by abbreviated IDs in overflow notes. Unplaced commits, shallow boundaries,
+stale generations, and graph limits remain explicit. Work runs on demand rather
+than on an idle timer.
 
 Commit detail shared by the log and network displays `Author-time:` as
 `YYYY-MM-DD HH:MM` in the commit author's original timezone.

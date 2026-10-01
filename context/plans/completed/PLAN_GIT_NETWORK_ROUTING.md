@@ -2,6 +2,16 @@
 
 Status: completed, 2026-10-01.
 
+## Rectangular ASCII follow-up
+
+The network now uses one rectangular ASCII row per commit, with fixed columns
+for surviving paths and persistent path colors. Branch labels follow captured
+branch tips along first-parent paths and use the commit path's color; unknown
+names remain explicit. Hashes display six characters while navigation retains
+full OIDs. The Unicode renderer, glyph toggle, diagonal routing, and connector
+rows were removed. The implementation record below describes the original
+design; current behavior is documented in the user guide and UI vocabulary.
+
 ## Implementation record
 
 The router lives in `src/git/network/routing.rs`. Each commit retains its node

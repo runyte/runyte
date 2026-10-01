@@ -5003,7 +5003,10 @@ fn network_roots_cover_tags_cached_remotes_disconnected_history_and_merge_parent
                 .collect::<Vec<_>>(),
             row.commit.parents
         );
-        assert_eq!(lanes.row(row.commit.clone(), false), *row);
+        assert_eq!(
+            lanes.row_with_roots(row.commit.clone(), false, &page.roots),
+            *row
+        );
         for parent in &row.commit.parents {
             assert!(order[parent] > order[&row.commit.oid]);
         }
@@ -5074,7 +5077,10 @@ fn network_pages_keep_root_objects_labels_and_lanes_when_refs_move() {
     assert_eq!(actual, expected);
     let mut lanes = continuation.cursor.unwrap().lanes;
     for row in &second.rows {
-        assert_eq!(lanes.row(row.commit.clone(), row.shallow), *row);
+        assert_eq!(
+            lanes.row_with_roots(row.commit.clone(), row.shallow, &first.roots),
+            *row
+        );
     }
     assert_eq!(
         first.rows,
@@ -5295,7 +5301,10 @@ fn network_octopus_and_criss_cross_ancestry_match_full_parent_graph() {
     assert!(page.rows.iter().any(|row| row.commit.parents.len() == 3));
     let mut lanes = runyte::git::network::GraphLanes::default();
     for row in &page.rows {
-        assert_eq!(lanes.row(row.commit.clone(), false), *row);
+        assert_eq!(
+            lanes.row_with_roots(row.commit.clone(), false, &page.roots),
+            *row
+        );
         let actual = git_output(&fixture, &["show", "-s", "--format=%P", &row.commit.oid]);
         assert_eq!(
             row.edges
@@ -5362,12 +5371,8 @@ fn network_sha256_object_ids_and_long_unicode_subjects_remain_explicit() {
         "李小"
     );
     assert_eq!(
-        page.rows[0]
-            .text(false)
-            .chars()
-            .take(12)
-            .collect::<String>(),
-        page.rows[0].commit.oid[..12]
+        page.rows[0].text().chars().take(6).collect::<String>(),
+        page.rows[0].commit.oid[..6]
     );
 }
 
@@ -5393,17 +5398,21 @@ fn network_page_boundary_completes_merge_routes_and_retains_path_colors() {
         .network_page(&fixture.repository(), &NetworkRequest::default())
         .unwrap();
     assert_eq!(first.rows.last().unwrap().commit.oid, merge.trim());
-    assert!(!first.rows.last().unwrap().connectors.is_empty());
+    assert_eq!(first.rows.last().unwrap().graph(), "*-+");
     let cursor = first.next.clone().unwrap();
     assert_eq!(cursor.lanes.colors.len(), 2);
-    for invalid in 0..3 {
+    for invalid in 0..5 {
         let mut bad = cursor.clone();
         match invalid {
             0 => {
                 bad.lanes.colors.pop();
             }
             1 => bad.lanes.colors[0] = 4,
-            _ => bad.lanes.next_color = 4,
+            2 => bad.lanes.next_color = 4,
+            3 => {
+                bad.lanes.branches.pop();
+            }
+            _ => bad.lanes.branches[0] = Some("invalid\nbranch".into()),
         }
         assert!(
             provider
@@ -5428,7 +5437,10 @@ fn network_page_boundary_completes_merge_routes_and_retains_path_colors() {
         .unwrap();
     let mut lanes = GraphLanes::default();
     for row in first.rows.iter().chain(&second.rows) {
-        assert_eq!(lanes.row(row.commit.clone(), row.shallow), *row);
+        assert_eq!(
+            lanes.row_with_roots(row.commit.clone(), row.shallow, &first.roots),
+            *row
+        );
     }
     assert!(lanes.pending.is_empty());
 }
