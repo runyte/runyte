@@ -242,6 +242,9 @@ pub enum CommandExposure {
     /// Reached only through one grammar's own parser, never through the shared
     /// keymap.
     GrammarOnly,
+    /// No default key and no palette spelling; reached only through a binding
+    /// the person configures under `keys`.
+    ConfigurableOnly,
     Internal,
 }
 
@@ -1645,82 +1648,10 @@ use EditorCommand as Editor;
 
 pub const COMMANDS: &[CommandSpec] = &[
     editor_spec!(
-        Editor::ExtendLineAbove,
-        "extend-line-above",
-        [],
-        "extend-line-above",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::ExtendLineBelow,
-        "extend-line-below",
-        [],
-        "extend-line-below",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::SelectLineUp,
-        "select-line-up",
-        [],
-        "select-line-up",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::SelectionUndo,
-        "selection-undo",
-        [],
-        "selection-undo",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::SelectionRedo,
-        "selection-redo",
-        [],
-        "selection-redo",
-        NoArguments
-    ),
-    editor_spec!(
         Editor::OpenNavigator,
         "navigator",
         [],
         "navigator",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::PreviousDestination,
-        "previous-destination",
-        [],
-        "previous-destination",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::PreviousSession,
-        "previous-session",
-        [],
-        "previous-session",
-        NoArguments
-    ),
-    editor_spec!(Editor::Session1, "session-1", [], "session-1", NoArguments),
-    editor_spec!(Editor::Session2, "session-2", [], "session-2", NoArguments),
-    editor_spec!(Editor::Session3, "session-3", [], "session-3", NoArguments),
-    editor_spec!(Editor::Session4, "session-4", [], "session-4", NoArguments),
-    editor_spec!(Editor::Session5, "session-5", [], "session-5", NoArguments),
-    editor_spec!(Editor::Session6, "session-6", [], "session-6", NoArguments),
-    editor_spec!(Editor::Session7, "session-7", [], "session-7", NoArguments),
-    editor_spec!(Editor::Session8, "session-8", [], "session-8", NoArguments),
-    editor_spec!(Editor::Session9, "session-9", [], "session-9", NoArguments),
-    editor_spec!(
-        Editor::NextRunningSession,
-        "next-running-session",
-        [],
-        "next-running-session",
-        NoArguments
-    ),
-    editor_spec!(
-        Editor::PreviousRunningSession,
-        "previous-running-session",
-        [],
-        "previous-running-session",
         NoArguments
     ),
     editor_spec!(
@@ -3729,6 +3660,45 @@ mod tests {
         assert_eq!(registered.len(), registered_commands.len());
         assert_eq!(identities, registered);
         assert!(identities.contains(&ColonCommand::Path));
+    }
+
+    /// Selection editing and keystroke navigation stay on their keys rather
+    /// than in the palette. Their action names remain bindable, because
+    /// `keys` resolves actions from `EditorCommand::ALL`, not this registry.
+    #[test]
+    fn keystroke_only_actions_have_no_palette_spelling() {
+        for command in [
+            EditorCommand::ExtendLineAbove,
+            EditorCommand::ExtendLineBelow,
+            EditorCommand::SelectLineUp,
+            EditorCommand::SelectionUndo,
+            EditorCommand::SelectionRedo,
+            EditorCommand::PreviousDestination,
+            EditorCommand::PreviousSession,
+            EditorCommand::Session1,
+            EditorCommand::Session2,
+            EditorCommand::Session3,
+            EditorCommand::Session4,
+            EditorCommand::Session5,
+            EditorCommand::Session6,
+            EditorCommand::Session7,
+            EditorCommand::Session8,
+            EditorCommand::Session9,
+            EditorCommand::NextRunningSession,
+            EditorCommand::PreviousRunningSession,
+        ] {
+            let name = command.metadata().name;
+            assert!(
+                COMMANDS
+                    .iter()
+                    .all(|spec| spec.id != CommandId::Editor(command)),
+                "{name} is back in the palette"
+            );
+            assert_eq!(
+                parse_colon_command(name),
+                Err(CommandParseError::Unknown(name.to_owned()))
+            );
+        }
     }
 
     #[test]

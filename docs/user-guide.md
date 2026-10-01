@@ -866,9 +866,10 @@ support counts and multiple selections.
 
 #### Selection history
 
-`Alt-u` (`:selection-undo`) brings back a selection lost to a motion, Escape,
+`Alt-u` (`selection-undo`) brings back a selection lost to a motion, Escape,
 a collapse, or removing extra cursors. `Alt-U` (`Alt-Shift-u`,
-`:selection-redo`) reapplies it. `Space s u` and `Space s U` are the same
+`selection-redo`) reapplies it. `Space s u` and `Space s U` are the same
+commands. Like the other selection commands, they are keys rather than `:`
 commands.
 
 - Every range, its direction, the primary range, and the selection mode come
@@ -4272,9 +4273,9 @@ connections can still manage the host.
 | Key or command | Action |
 | --- | --- |
 | `Space Space`, `:session-list` (`:sl`) | Open the session manager |
-| `Space 1`–`Space 9`, `:session-1`…`:session-9` | Attach directly to the numbered running session |
+| `Space 1`–`Space 9` | Attach directly to the numbered running session |
 | `Shift-Left` / `Shift-Right` | Visit the previous / next running session in manager order |
-| `Ctrl-w a`, `:previous-session` | Alternate between the last two attachments |
+| `Ctrl-w a` | Alternate between the last two attachments |
 | `:session-attach WORKSPACE` (`:attach`) | Attach, starting a stopped session. Any existing directory becomes a workspace if needed. |
 | `:session-stop [WORKSPACE]` | Stop a session without switching |
 | `:session-rename WORKSPACE NAME` | Rename a session |
@@ -4553,7 +4554,7 @@ buffers, or the terminals including exited ones — with the same columns:
 - Visiting a destination already visible focuses its pane. **Bring into
   active pane** places it here instead. A PTY always has one live view.
 
-**Previous destination.** `Ctrl-w p` (`:previous-destination`) returns to the
+**Previous destination.** `Ctrl-w p` (`previous-destination`) returns to the
 previous open destination in this pane, skipping closed resources and exited
 terminals.
 
@@ -4565,7 +4566,7 @@ terminals.
   to open overlays and confirmations. They never start a stopped session or
   force an occupied attachment. If an outer tmux takes Shift-Left/Right,
   release or change those tmux bindings.
-- **`Ctrl-w a`** (`:previous-session`) alternates between the last two
+- **`Ctrl-w a`** (`previous-session`) alternates between the last two
   successful attachments. Failed switches leave that history alone.
 - Every attachment refreshes the session list in the background, including
   when returning to a host whose cached list predates a newly started session.
@@ -5107,13 +5108,10 @@ The working directory starts where Runyte was launched.
 | `:write-quit` | `wq` | Save, then close the pane or quit from the last one |
 | `:detach` | | Disconnect this persistent TUI while keeping all editor state |
 | `:session-list` | `sl` | Open the session manager (Unix persistent mode or Windows native controls) |
-| `:session-1` … `:session-9` | | Attach directly to the numbered running persistent session |
 | `:session-attach WORKSPACE` | `attach` | Attach to another workspace's persistent session |
 | `:session-stop [WORKSPACE]` | | Stop a clean persistent session |
 | `:session-rename WORKSPACE NAME` | | Rename a persistent session |
 | `:session-clean` | | Clean verified stopped session history (Windows) |
-| `:previous-session` | | Return to the previously visited persistent session |
-| `:previous-destination` | | Return to the previous destination in this pane |
 
 #### Terminal commands
 
