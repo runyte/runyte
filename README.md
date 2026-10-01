@@ -149,13 +149,24 @@ Switch between sessions with `Space Space`, or with `Shift-Left` and `Shift-Righ
 
 ## Plugins
 
+Much of what Neovim users assemble from plugins comes built into Runyte:
+language servers, Tree-sitter highlighting, Git integration, fuzzy finding,
+a file manager, terminals, and completion. Plugins therefore have a different
+job. They don't change how the editor behaves; they connect separate programs
+that integrate closely with it, adding their own commands, panes, prompts, and
+documents. A database browser, an SFTP client, or a task tracker, for example.
+
+That makes Runyte plugins narrower than Neovim's. They currently can't draw
+highlights or inline text in your buffers, react to what you type, provide
+completions or language-server features, or run built-in commands.
+
+Plugins can be written in **any programming language**. Each one is a program
+you enable, and it talks to Runyte in JSON over stdin/stdout.
+
 Official Runyte plugins are in development:
 
 - [**ru-time**](https://github.com/runyte/ru-time) — a task list and time tracker with task notes.
 - [**ru-dbviewer**](https://github.com/runyte/ru-dbviewer) — browse SQLite and PostgreSQL databases and run SQL from editor buffers.
-
-Plugins can be written in **any programming language**. Each plugin is a
-separate program you enable. It talks to Runyte in JSON over stdin/stdout.
 
 Plugin commands start with `::` so they don't clash with built-in `:` commands,
 for example `::time` in ru-time.
