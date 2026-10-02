@@ -436,6 +436,12 @@ projection; keyboard overlays retain input ownership while open.
 
 ## Insert, picker, and prompt
 
+The `:` command palette ranks exact canonical names and aliases equally, ahead
+of name or alias prefixes and then metadata matches. Thus `:t` and `:term`
+offer `:terminal` first, while `:tu` offers `:tutorial`. Each command appears
+once; a matching canonical prefix keeps its canonical display spelling, and a
+prefix matching only an alias displays that alias.
+
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |
 | Insert `Escape` | normal mode | `enter-normal-mode` | Implemented | Commits the Insert action as one undo checkpoint and clamps the cursor to Normal semantics. |
