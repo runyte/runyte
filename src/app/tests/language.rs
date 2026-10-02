@@ -943,6 +943,31 @@ fn reload_resynchronizes_the_whole_document() {
 }
 
 #[test]
+fn background_file_refresh_resynchronizes_the_whole_document() {
+    let (mut app, path, mut queue) = rust_app("old\n");
+    ready(&mut app, Encoding::Utf8);
+    let buffer = app.active().buffer;
+    app.open_scratch_buffer();
+    drain(&mut queue);
+    fs::write(&path, "new from disk\n").unwrap();
+    let observation = app.buffers[buffer].observe_now(buffer).unwrap();
+    app.apply_file_observation(observation);
+
+    app.switch_buffer(buffer);
+
+    let changes = drain(&mut queue)
+        .into_iter()
+        .find_map(|command| match command {
+            LspCommand::Change { changes, .. } => Some(changes),
+            _ => None,
+        })
+        .expect("background refresh must resynchronize the language server");
+    assert!(changes[0].range.is_none());
+    assert_eq!(changes[0].text, "new from disk\n");
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn reload_retires_an_extensionless_document_when_its_shebang_disappears() {
     let path = temporary("reload-script");
     fs::write(&path, "#!/bin/bash\necho old\n").unwrap();

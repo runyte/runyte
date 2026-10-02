@@ -2113,6 +2113,9 @@ gains `[STALE]`.
 
 - The listing is left alone: rows, selections, unsaved renames, and undo
   history survive, since replacing them would discard edits not yet written.
+- A clean explorer attached to no pane refreshes automatically when brought
+  back into a pane. Unapplied edits are preserved and still require an explicit
+  refresh.
 - `Space r` or `:reload` re-reads the directory and clears the marker. So does
   navigating elsewhere or writing a plan.
 - Entries hidden by the dotfile filter are not compared, so their changes go
@@ -2276,6 +2279,13 @@ reload, or refresh:**
 - Text, selections, undo, and language-server state are kept.
 - The first observation of each disk revision creates one WARNING
   notification.
+
+When a stale file or explorer is attached to no pane, bringing it back into a
+pane automatically refreshes it from disk if it has no unsaved edits. A buffer
+shown in any pane keeps the behavior above, including when another pane is
+maximized. A terminal covering a buffer puts that buffer in the background.
+Deleted, unreadable, or binary replacements leave the retained contents and
+stale marker intact.
 
 **What you can do:**
 

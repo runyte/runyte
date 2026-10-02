@@ -6369,6 +6369,7 @@ impl App {
         else {
             return;
         };
+        self.refresh_background_buffer(origin);
         // The list is rebuilt around what the commit took, so its caret goes
         // to the first remaining file rather than to a heading. Any other
         // buffer keeps its own caret, clamped in case it moved.

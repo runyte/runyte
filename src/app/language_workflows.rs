@@ -3676,6 +3676,9 @@ impl App {
         }
         let mut uncover = Vec::new();
         for (pane_id, fallback) in replacements {
+            let refreshed = self.panes[&pane_id].terminal.is_none()
+                && self.covered_terminal(pane_id, buffer).is_none()
+                && self.refresh_background_buffer(fallback);
             let saved_position = self.panes[&pane_id]
                 .saved_view_positions
                 .get(&fallback)
@@ -3692,6 +3695,9 @@ impl App {
             pane.preserve_scroll = false;
             if let Some(position) = saved_position {
                 position.restore(pane);
+            }
+            if refreshed {
+                self.normalize_buffer(fallback);
             }
             uncover.push(pane_id);
         }

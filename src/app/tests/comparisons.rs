@@ -317,6 +317,46 @@ fn marking_two_buffers_opens_them_side_by_side() {
     assert!(app.status.contains("identical"), "{}", app.status);
 }
 
+#[test]
+fn comparing_refreshes_a_stale_background_file_before_checking_its_size() {
+    for oversized in [false, true] {
+        let directory = temporary("diff-refresh-background-file");
+        fs::create_dir_all(&directory).unwrap();
+        let one = directory.join("one.txt");
+        let two = directory.join("two.txt");
+        fs::write(&one, "before\n").unwrap();
+        fs::write(&two, "after\n").unwrap();
+        let mut app = App::new(Config::default(), Some(one.clone())).unwrap();
+        let marked = app.active().buffer;
+        app.diff_this();
+        app.open_file(two).unwrap();
+        let updated = if oversized {
+            "x".repeat(MAX_DIFF_BYTES + 1)
+        } else {
+            "after\n".to_owned()
+        };
+        fs::write(&one, &updated).unwrap();
+        let observation = app.buffers[marked].observe_now(marked).unwrap();
+        app.apply_file_observation(observation);
+
+        app.diff_this();
+
+        assert_eq!(app.buffers[marked].to_string(), updated);
+        assert!(!app.buffers[marked].external_file_status().is_stale());
+        assert!(app.pending_diff.is_none());
+        if oversized {
+            assert!(app.diffs.is_empty());
+            assert_eq!(app.panes.len(), 1);
+            assert!(app.status.contains("too large to compare"));
+        } else {
+            assert_eq!(app.diffs.len(), 1);
+            assert!(app.diffs[0].alignment().is_equal());
+            assert_eq!(app.panes.len(), 2);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
 /// Equal lines sit level, and a line only one side has holds the other
 /// side open rather than pushing everything below it out of step.
 #[test]

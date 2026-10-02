@@ -169,6 +169,220 @@ fn explorer_status(app: &App, buffer: usize) -> crate::buffer::ExternalFileStatu
 }
 
 #[test]
+fn stale_background_files_refresh_through_each_return_path() {
+    for return_path in ["switch", "open", "jump", "close"] {
+        let directory = temporary(&format!("background-refresh-{return_path}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original document\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+        let buffer = app.active().buffer;
+        app.active_mut().replace_selection(Selection::point(12));
+        fs::write(&path, "observed revision\n").unwrap();
+        observe(&mut app, buffer);
+        assert_eq!(app.buffers[buffer].to_string(), "original document\n");
+
+        app.open_scratch_buffer();
+        let scratch = app.active().buffer;
+        // The monitor's observation must not win over a newer disk revision.
+        fs::write(&path, "new\n").unwrap();
+        match return_path {
+            "switch" => app.switch_buffer(buffer),
+            "open" => app.open_file(path).unwrap(),
+            "jump" => app.jump(true),
+            "close" => app.close_buffer(scratch),
+            _ => unreachable!(),
+        }
+        assert_eq!(app.active().buffer, buffer, "{return_path}");
+        assert_eq!(app.buffers[buffer].to_string(), "new\n", "{return_path}");
+        assert!(!app.buffers[buffer].external_file_status().is_stale());
+        assert!(!app.buffers[buffer].dirty);
+        assert!(app.active().head() <= app.buffers[buffer].len_chars());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn a_stale_explorer_refreshes_when_selected_from_the_background() {
+    let directory = temporary("background-explorer-refresh");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("old.txt"), "old\n").unwrap();
+    let mut app = App::new(Config::default(), Some(directory.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.open_scratch_buffer();
+    fs::rename(directory.join("old.txt"), directory.join("new.txt")).unwrap();
+    observe(&mut app, buffer);
+    assert!(app.buffers[buffer].to_string().contains("old.txt"));
+
+    app.switch_buffer(buffer);
+
+    assert!(app.buffers[buffer].to_string().contains("new.txt"));
+    assert!(!app.buffers[buffer].to_string().contains("old.txt"));
+    assert!(!app.buffers[buffer].external_file_status().is_stale());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stale_buffers_attached_to_another_pane_do_not_auto_refresh() {
+    for explorer in [false, true] {
+        let directory = temporary("attached-buffer-refresh");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original\n").unwrap();
+        let target = if explorer {
+            directory.clone()
+        } else {
+            path.clone()
+        };
+        let mut app = App::new(Config::default(), Some(target)).unwrap();
+        let buffer = app.active().buffer;
+        let original = app.buffers[buffer].to_string();
+        app.split(Axis::Horizontal, None).unwrap();
+        app.open_scratch_buffer();
+        app.toggle_maximized(MaximizedView::Zen);
+        fs::write(&path, "changed\n").unwrap();
+        fs::write(directory.join("new.txt"), "new\n").unwrap();
+        observe(&mut app, buffer);
+
+        app.switch_buffer(buffer);
+
+        assert_eq!(app.buffers[buffer].to_string(), original);
+        assert!(app.buffers[buffer].external_file_status().is_stale());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn stale_background_buffers_keep_unsaved_edits_and_undo() {
+    for explorer in [false, true] {
+        let directory = temporary("dirty-background-refresh");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original\n").unwrap();
+        let target = if explorer {
+            directory.clone()
+        } else {
+            path.clone()
+        };
+        let mut app = App::new(Config::default(), Some(target)).unwrap();
+        let buffer = app.active().buffer;
+        app.apply_to_buffer(buffer, &Transaction::insert(0, "local"));
+        let edited = app.buffers[buffer].to_string();
+        let history = app.buffers[buffer].history_len();
+        app.open_scratch_buffer();
+        fs::write(&path, "changed\n").unwrap();
+        fs::write(directory.join("new.txt"), "new\n").unwrap();
+        observe(&mut app, buffer);
+
+        app.switch_buffer(buffer);
+
+        assert_eq!(app.buffers[buffer].to_string(), edited);
+        assert_eq!(app.buffers[buffer].history_len(), history);
+        assert!(app.buffers[buffer].dirty);
+        assert!(app.buffers[buffer].external_file_status().is_stale());
+        assert!(app.file_reload_confirmation.is_none());
+        assert!(app.directory_reload_confirmation.is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn unusable_background_replacements_keep_the_retained_text() {
+    for replacement in ["deleted", "binary", "directory"] {
+        let directory = temporary(&format!("unusable-background-{replacement}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+        let buffer = app.active().buffer;
+        app.open_scratch_buffer();
+        fs::write(&path, "changed\n").unwrap();
+        observe(&mut app, buffer);
+        fs::remove_file(&path).unwrap();
+        match replacement {
+            "binary" => fs::write(&path, b"binary\0content").unwrap(),
+            "directory" => fs::create_dir(&path).unwrap(),
+            _ => {}
+        }
+
+        app.switch_buffer(buffer);
+
+        assert_eq!(app.buffers[buffer].to_string(), "original\n");
+        assert!(app.buffers[buffer].external_file_status().is_stale());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn stale_background_files_wait_for_pending_writes() {
+    let directory = temporary("pending-background-refresh");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("notes.txt");
+    fs::write(&path, "original\n").unwrap();
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    let buffer = app.active().buffer;
+    app.open_scratch_buffer();
+    let scratch = app.active().buffer;
+    fs::write(&path, "changed\n").unwrap();
+    observe(&mut app, buffer);
+    app.plugins.document_saves.insert(buffer);
+
+    app.switch_buffer(buffer);
+
+    assert_eq!(app.buffers[buffer].to_string(), "original\n");
+    assert!(app.buffers[buffer].external_file_status().is_stale());
+    app.plugins.document_saves.remove(&buffer);
+    app.switch_buffer(scratch);
+    app.switch_buffer(buffer);
+    assert_eq!(app.buffers[buffer].to_string(), "changed\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stale_background_files_covered_by_terminals_refresh_when_revealed() {
+    for reveal in ["leave", "switch", "split", "close", "move"] {
+        let directory = temporary(&format!("terminal-background-refresh-{reveal}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original\n").unwrap();
+        let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+        let buffer = app.active().buffer;
+        let original_pane = app.active_pane;
+        let destination = if reveal == "move" {
+            app.split(Axis::Horizontal, None).unwrap();
+            app.open_scratch_buffer();
+            let destination = app.active_pane;
+            app.activate_pane(original_pane);
+            Some(destination)
+        } else {
+            None
+        };
+        app.open_terminal_at(Some(terminal_fixture_command()), directory.clone());
+        let terminal = app.active_terminal().unwrap();
+        fs::write(&path, "changed\n").unwrap();
+        observe(&mut app, buffer);
+
+        match reveal {
+            "leave" => app.leave_terminal(),
+            "switch" => app.switch_buffer(buffer),
+            "split" => app.split(Axis::Horizontal, None).unwrap(),
+            "close" => app.close_terminal_id(terminal),
+            "move" => {
+                assert!(app.move_terminal_to_pane(terminal, destination.unwrap()));
+            }
+            _ => unreachable!(),
+        }
+
+        assert!(app.active_terminal().is_none());
+        assert_eq!(app.active().buffer, buffer);
+        assert_eq!(app.buffers[buffer].to_string(), "changed\n");
+        assert!(!app.buffers[buffer].external_file_status().is_stale());
+        drop(app);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
 fn external_children_make_an_explorer_listing_stale_until_it_is_refreshed() {
     let directory = temporary("explorer-stale-listing");
     fs::create_dir_all(&directory).unwrap();

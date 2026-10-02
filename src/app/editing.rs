@@ -535,6 +535,13 @@ impl App {
             });
             return;
         };
+        let terminal = target
+            .terminal
+            .map(TerminalId::from_raw)
+            .filter(|id| self.terminals.get(*id).is_some());
+        if terminal.is_none() {
+            self.refresh_background_buffer(target.buffer);
+        }
         // Remembered selections are mapped through every transaction, but a
         // buffer can also be replaced wholesale, so clamp before trusting them.
         let Some(buffer) = self.buffers.get(target.buffer) else {
@@ -547,10 +554,6 @@ impl App {
                 buffer.clamp_offset(range.head, false),
             )
         });
-        let terminal = target
-            .terminal
-            .map(TerminalId::from_raw)
-            .filter(|id| self.terminals.get(*id).is_some());
         {
             let pane = self.panes.get_mut(&pane_id).unwrap();
             pane.retarget(target.buffer);

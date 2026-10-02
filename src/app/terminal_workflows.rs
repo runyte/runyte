@@ -249,11 +249,7 @@ impl App {
         if self.terminals.get(id).is_none() || !self.panes.contains_key(&pane_id) {
             return false;
         }
-        for (other_id, pane) in &mut self.panes {
-            if *other_id != pane_id && pane.terminal == Some(id) {
-                pane.terminal = None;
-            }
-        }
+        self.reveal_terminal_buffers(id, Some(pane_id));
         let (columns, rows) = self.pane_cells(pane_id);
         let pane = self.panes.get_mut(&pane_id).unwrap();
         pane.remember_destination(super::OpenDestination::Terminal(id));
@@ -270,6 +266,20 @@ impl App {
             self.note_terminal_focused(id);
         }
         true
+    }
+
+    /// Reveal the documents covered by a terminal being moved or closed.
+    fn reveal_terminal_buffers(&mut self, id: TerminalId, except: Option<usize>) {
+        let covered = self
+            .panes
+            .iter()
+            .filter(|(pane_id, pane)| Some(**pane_id) != except && pane.terminal == Some(id))
+            .map(|(pane_id, pane)| (*pane_id, pane.buffer))
+            .collect::<Vec<_>>();
+        for (pane_id, buffer) in covered {
+            self.refresh_background_buffer(buffer);
+            self.panes.get_mut(&pane_id).unwrap().terminal = None;
+        }
     }
 
     /// Records that `id` now holds focus, making it the first answer to a
@@ -298,6 +308,7 @@ impl App {
             self.action_failed("this pane is not showing a terminal");
             return;
         };
+        self.refresh_background_buffer(self.active().buffer);
         self.push_jump();
         if let Some(pane) = self.panes.get_mut(&self.active_pane) {
             pane.remember_destination(super::OpenDestination::Buffer(pane.buffer));
@@ -425,11 +436,7 @@ impl App {
             .get(id)
             .map_or_else(|| "terminal".to_owned(), TerminalSession::name);
         self.terminals.close(id);
-        for pane in self.panes.values_mut() {
-            if pane.terminal == Some(id) {
-                pane.terminal = None;
-            }
-        }
+        self.reveal_terminal_buffers(id, None);
         self.focused_terminals.retain(|other| *other != id);
         self.mode = Mode::Normal;
         self.status(format!("{name} ended"));
@@ -621,11 +628,7 @@ impl App {
             _ => crate::log_debug!("terminal", "terminal child exited"; "session" => id),
         }
         let was_active = self.active_terminal() == Some(id);
-        for pane in self.panes.values_mut() {
-            if pane.terminal == Some(id) {
-                pane.terminal = None;
-            }
-        }
+        self.reveal_terminal_buffers(id, None);
         if was_active {
             if self.mode == Mode::Command {
                 self.close_prompt();

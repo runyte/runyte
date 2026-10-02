@@ -976,6 +976,7 @@ impl App {
         if buffer_id != was_showing || !self.buffers[buffer_id].is_directory() {
             self.push_jump();
         }
+        self.refresh_background_buffer(buffer_id);
         let directory_view = self.directory_views.get(&path).cloned();
         let launch_selection = self.take_pending_launch_selection(buffer_id);
         let pane = self.active_mut();
@@ -1394,6 +1395,53 @@ impl App {
         self.closed_buffers.contains(&buffer)
     }
 
+    /// Accept fresh disk contents when a clean, stale document returns from
+    /// the background. Pane membership matters even behind a maximized pane;
+    /// a terminal covering a document, however, is not displaying it.
+    pub(super) fn refresh_background_buffer(&mut self, buffer: usize) -> bool {
+        let Some(value) = self.buffers.get(buffer) else {
+            return false;
+        };
+        if self.closed_buffers.contains(&buffer)
+            || value.dirty
+            || !value.external_file_status().is_stale()
+            || self.document_mutation_pending(buffer)
+            || self
+                .panes
+                .values()
+                .any(|pane| pane.terminal.is_none() && pane.buffer == buffer)
+        {
+            return false;
+        }
+        // Re-read instead of installing a retained observation: the path may
+        // have changed again since the monitor marked this buffer stale.
+        let Some(event) = value.observe_now(buffer) else {
+            return false;
+        };
+        self.apply_file_observation(event.clone());
+        if !self.buffers[buffer].external_file_status().is_stale() {
+            return false;
+        }
+        let result = match (&self.buffers[buffer].kind, &event.observation) {
+            (BufferKind::File, FileObservation::Text { .. }) => {
+                self.install_file_reload(buffer, &event.observation)
+            }
+            (BufferKind::Directory, FileObservation::Directory { .. }) => {
+                self.reload_directory_buffer(buffer)
+            }
+            // Deleted, binary, or unreadable paths keep their last usable
+            // contents and the monitor's ordinary stale warning.
+            _ => return false,
+        };
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                self.action_warning("Refresh failed", error.to_string());
+                false
+            }
+        }
+    }
+
     pub(super) fn switch_buffer(&mut self, buffer_id: usize) {
         if buffer_id >= self.buffers.len() || self.closed_buffers.contains(&buffer_id) {
             return;
@@ -1407,6 +1455,7 @@ impl App {
             }
             return;
         }
+        let refreshed = self.refresh_background_buffer(buffer_id);
         self.dismiss_popups();
         self.push_jump();
         // A pane must not walk away still reserving the explorer it left, or
@@ -1445,6 +1494,9 @@ impl App {
         {
             pane.saved_view_positions
                 .insert(buffer_id, super::view_position::ViewPosition::capture(pane));
+        }
+        if refreshed {
+            self.normalize_buffer(buffer_id);
         }
         self.lsp_touch(buffer_id);
         self.status(format!("buffer {}", self.buffers[buffer_id].display_name()));
@@ -2048,6 +2100,7 @@ impl App {
             .into());
         }
         let old = self.active_pane;
+        self.refresh_background_buffer(self.panes[&old].buffer);
         let new = self.next_pane;
         self.next_pane += 1;
         let mut pane = self.panes[&old].clone();
@@ -2161,8 +2214,9 @@ impl App {
             self.status(format!("{name} is no longer marked for comparison"));
             return;
         }
+        self.refresh_background_buffer(marked);
         // Checked again here rather than only when it was marked, because the
-        // buffer has been editable in the meantime.
+        // buffer may have been edited or refreshed in the meantime.
         if self.buffers[marked].len_bytes() > MAX_DIFF_BYTES {
             let marked = self.buffers[marked].display_name();
             self.pending_diff = None;
