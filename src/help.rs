@@ -214,6 +214,7 @@ impl HelpTopic {
             ],
             Self::GitNetwork => &[
                 "Read the cached commit network one commit per row. Enter opens full commit detail. Page commands retain roots and lanes; explicit refresh captures moved refs. Forks and joins are drawn as routes to each parent lane, crossing lanes without connecting; numbered parent lanes explain overflow. Narrow scope when a graph limit is reached. Generated text supports ordinary navigation, search and copying and does not wrap.",
+                "A label such as [dev] names a branch on the displayed history. Branch path names follow first-parent history; they do not say where a commit was created. When a path has no name, [in exp] means the commit is reachable from that one local branch, and [in exp, ...] means other local branches also contain it. The current branch is preferred when it contains the commit; otherwise the branch with the newest tip is shown. Remote branches and tags do not count toward this fallback. [?] means no path name or local branch containment is known. Labels are captured until refresh.",
             ],
             Self::GitLog => GIT_LOG_OVERVIEW,
             Self::GitBlame => GIT_BLAME_OVERVIEW,

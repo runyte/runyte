@@ -82,6 +82,25 @@ fn command(app: &mut App, input: &str) {
 }
 
 #[test]
+fn contextual_help_explains_branch_and_containment_labels() {
+    let (_fixture, mut app) = fixture();
+    command(&mut app, "git-network");
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('?'), Modifiers::NONE);
+
+    let help = app.active_buffer().to_string();
+    assert!(help.starts_with("Help · RUNYTE · GIT NETWORK"));
+    for explanation in [
+        "[dev] names a branch",
+        "[in exp] means the commit is reachable from that one local branch",
+        "[in exp, ...] means other local branches also contain it",
+        "they do not say where a commit was created",
+    ] {
+        assert!(help.contains(explanation), "missing {explanation}: {help}");
+    }
+}
+
+#[test]
 fn commands_tab_scopes_ascii_and_commit_detail_return_use_native_navigation() {
     let (_fixture, mut app) = fixture();
     for c in [' ', 'g', 'n'] {
