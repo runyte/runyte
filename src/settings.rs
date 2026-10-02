@@ -142,7 +142,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorTabWidth,
         key: "editor.tab_width",
         title: "Tab width",
-        description: "Display and indentation width of a tab",
+        description: "Display and indentation width of a tab (press Tab to add language overrides)",
         value_type: SettingType::Integer {
             minimum: 1,
             maximum: 16,
@@ -154,7 +154,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorIndent,
         key: "editor.indent",
         title: "Indent style",
-        description: "Use spaces or tabs for new indentation",
+        description: "Use spaces or tabs for new indentation (press Tab to add language overrides)",
         value_type: SettingType::Indent,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
