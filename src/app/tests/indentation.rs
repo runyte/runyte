@@ -36,6 +36,79 @@ fn backspace_aligns_leading_whitespace_and_preserves_ordinary_deletion() {
 }
 
 #[test]
+fn alt_backspace_clears_indentation_without_leaving_the_line() {
+    for ending in ["\n", "\r\n"] {
+        for (line, column, expected) in [
+            ("        text", 8, "text"),
+            ("\t\ttext", 2, "text"),
+            (" \t  text", 4, "text"),
+            ("        ", 8, ""),
+            ("    text", 2, "  text"),
+        ] {
+            let mut app = App::new(Config::default(), None).unwrap();
+            let before = format!("α previous{ending}{ending}{line}{ending}next");
+            seed(&mut app, &before);
+            app.mode = Mode::Insert;
+            set_cursor(&mut app, 2, column);
+
+            key(&mut app, KeyCode::Backspace, Modifiers::ALT);
+
+            assert_eq!(
+                text(&app),
+                format!("α previous{ending}{ending}{expected}{ending}next")
+            );
+            assert_eq!(cursor(&app), Position::new(2, 0));
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            press(&mut app, 'u');
+            assert_eq!(text(&app), before);
+        }
+    }
+}
+
+#[test]
+fn alt_backspace_preserves_word_deletion_and_explicit_line_joining() {
+    for (before, row, column, expected, after) in [
+        ("    βeta!  ", 0, 11, "    βeta", Position::new(0, 8)),
+        ("    βeta  ", 0, 10, "    ", Position::new(0, 4)),
+        ("    text", 0, 4, "text", Position::new(0, 0)),
+        ("α beta\ntext", 1, 0, "α text", Position::new(0, 2)),
+        ("α beta\r\ntext", 1, 0, "α text", Position::new(0, 2)),
+        ("text", 0, 0, "text", Position::new(0, 0)),
+    ] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        seed(&mut app, before);
+        app.mode = Mode::Insert;
+        set_cursor(&mut app, row, column);
+        key(&mut app, KeyCode::Backspace, Modifiers::ALT);
+        assert_eq!(text(&app), expected, "{before:?}");
+        assert_eq!(cursor(&app), after);
+    }
+}
+
+#[test]
+fn alt_backspace_merges_indentation_deletions_and_undo_restores_indentation() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let before = "prior\r\n      a\r\n\t\tb";
+    seed(&mut app, before);
+    app.mode = Mode::Insert;
+    app.replace_active_selection(Selection::new(
+        vec![Range::point(11), Range::point(13), Range::point(18)],
+        0,
+    ));
+
+    key(&mut app, KeyCode::Backspace, Modifiers::ALT);
+
+    assert_eq!(text(&app), "prior\r\na\r\nb");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(7), Range::point(10)]
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, 'u');
+    assert_eq!(text(&app), before);
+}
+
+#[test]
 fn backspace_merges_overlapping_carets_and_undo_restores_indentation() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "      a\r\n    b");

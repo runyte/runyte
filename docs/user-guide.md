@@ -1034,6 +1034,10 @@ The keys shared by Insert and Replace modes:
 | `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
+In Insert mode, `Alt-Backspace` (Option-Backspace on macOS) removes all leading
+indentation before the caret in one press and stops at the start of the current
+line. Pressing it at column zero can delete across the preceding line break.
+
 **Deleting in Replace mode.** Backspace or Shift-Backspace retraces the current
 overwrite run: overwritten characters come back, and characters appended past
 line end are removed. Alt-Backspace and `Ctrl-u` restore by word and to the
