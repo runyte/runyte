@@ -18,6 +18,7 @@ mod everforest;
 mod nightfox;
 mod one_off;
 mod paths;
+mod terminal_palette;
 mod zenbones;
 
 pub use paths::default_config_root;
@@ -454,6 +455,8 @@ pub struct EditorConfig {
     /// keeps every pane at its ordinary colours, which is what someone
     /// reading a pane while composing a command wants.
     pub command_mode_dim: bool,
+    /// Resolve terminal ANSI indices 0–15 through the active theme.
+    pub terminal_theme_colors: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -580,6 +583,8 @@ pub struct ThemeDefinition {
     /// Unlisted scopes fall back to the theme foreground.
     #[serde(default)]
     pub syntax: HashMap<String, String>,
+    /// Optional ANSI slot overrides; unknown names are rejected on resolution.
+    pub terminal: HashMap<String, String>,
 }
 
 /// A resolved presentation color independent of any frontend toolkit.
@@ -731,6 +736,8 @@ pub struct Theme {
     pub diff_changed: Option<Color>,
     /// Indexed by `syntax::Scope::index`; `None` means "use the foreground".
     pub syntax: Vec<Option<Color>>,
+    /// ANSI colours in index order, resolved before client colour-depth adaptation.
+    pub terminal: [Color; 16],
 }
 
 impl Theme {
@@ -866,7 +873,8 @@ fn built_in_themes() -> HashMap<String, ThemeDefinition> {
         .chain(one_off::themes())
         .chain(nightfox::themes())
         .chain(zenbones::themes());
-    for (name, theme) in registered {
+    for (name, mut theme) in registered {
+        terminal_palette::apply_builtin(&name, &mut theme);
         assert!(
             themes.insert(name.clone(), theme).is_none(),
             "built-in theme '{name}' is registered by more than one family"
@@ -970,6 +978,7 @@ impl Default for EditorConfig {
             fast_pane_keys: false,
             selecting_motions: true,
             command_mode_dim: true,
+            terminal_theme_colors: true,
         }
     }
 }
@@ -1014,6 +1023,7 @@ impl Default for ThemeDefinition {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#f7ca88"),
                 ("comment", "#585858"),
@@ -1298,7 +1308,8 @@ impl TryFrom<&ThemeDefinition> for Theme {
         let foreground = parse_color(&value.foreground)?;
         let directory = optional_color(value.directory.as_deref(), accent)?;
         let change_added = optional_color(value.change_added.as_deref(), Color::Green)?;
-        Ok(Self {
+        let mut theme = Self {
+            terminal: [Color::Reset; 16],
             background,
             foreground,
             muted,
@@ -1379,7 +1390,9 @@ impl TryFrom<&ThemeDefinition> for Theme {
                 }
                 colors
             },
-        })
+        };
+        theme.terminal = terminal_palette::resolve(&theme, &value.terminal)?;
+        Ok(theme)
     }
 }
 
@@ -2928,6 +2941,9 @@ mod tests {
             }
         }
 
+        for (name, theme) in &mut registered {
+            terminal_palette::apply_builtin(name, theme);
+        }
         assert_eq!(registered, Config::default().themes);
     }
 

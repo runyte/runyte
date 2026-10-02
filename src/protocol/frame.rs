@@ -202,6 +202,7 @@ impl EditorDamageFrame {
             || base.overlays != next.overlays
             || base.editor.geometry != next.editor.geometry
             || base.editor.theme != next.editor.theme
+            || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.directory_tree != next.editor.directory_tree
@@ -346,6 +347,7 @@ impl TerminalDamageFrame {
             || base.overlays != next.overlays
             || base.editor.geometry != next.editor.geometry
             || base.editor.theme != next.editor.theme
+            || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.directory_tree != next.editor.directory_tree
@@ -564,6 +566,7 @@ impl TryFrom<SessionStripSnapshot> for core::SessionStripSnapshot {
 pub struct EditorSnapshot {
     pub geometry: FrameGeometry,
     pub theme: Theme,
+    pub terminal_theme_colors: bool,
     pub mode: Mode,
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
@@ -576,6 +579,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
         Self {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            terminal_theme_colors: value.terminal_theme_colors,
             mode: value.mode.into(),
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
@@ -591,6 +595,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
         Ok(Self {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            terminal_theme_colors: value.terminal_theme_colors,
             mode: value.mode.into(),
             directory_tree: value.directory_tree.map(TryInto::try_into).transpose()?,
             panes: value
@@ -993,6 +998,7 @@ mod tests {
                 session_strip: None,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
+                terminal_theme_colors: true,
                 mode: Mode::Normal,
                 panes: vec![PaneSnapshot {
                     pane_id: 1,
@@ -1045,6 +1051,38 @@ mod tests {
             },
             overlays: Vec::new(),
         }
+    }
+
+    #[test]
+    fn terminal_palette_changes_require_complete_frames_and_round_trip_indices() {
+        let mut base = terminal_frame(1, 1, 'x');
+        let cell = &mut base.editor.panes[0].terminal.as_mut().unwrap().rows[0][0];
+        cell.foreground = TerminalColor::Indexed(1);
+        cell.background = TerminalColor::Indexed(14);
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.terminal_theme_colors = false;
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        let wire = serde_json::to_vec(&next).unwrap();
+        let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
+        let core: crate::workspace::HostFrame = decoded.try_into().unwrap();
+        assert!(!core.editor.terminal_theme_colors);
+        let cell = core.editor.panes[0].terminal.as_ref().unwrap().rows[0][0];
+        assert_eq!(cell.foreground, crate::terminal::Color::Indexed(1));
+        assert_eq!(cell.background, crate::terminal::Color::Indexed(14));
+        assert_eq!(
+            core.editor.theme.terminal,
+            crate::config::Config::default()
+                .startup_theme()
+                .unwrap()
+                .1
+                .terminal
+        );
+        next.editor.terminal_theme_colors = true;
+        next.editor.theme.terminal[1] = Color::Rgb(1, 2, 3);
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
     }
 
     fn path_frame(bytes: Vec<u8>) -> HostFrame {
@@ -2292,11 +2330,13 @@ pub struct Theme {
     pub diff_removed: Option<Color>,
     pub diff_changed: Option<Color>,
     pub syntax: Vec<Option<Color>>,
+    pub terminal: [Color; 16],
 }
 
 macro_rules! theme {
     ($value:ident, $map:expr) => {
         Self {
+            terminal: $value.terminal.map($map),
             background: $map($value.background),
             foreground: $map($value.foreground),
             muted: $map($value.muted),

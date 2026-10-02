@@ -2869,6 +2869,8 @@ when the child has not asked for the pointer.
 **Colour queries.** Read-only `OSC 10;?` and `OSC 11;?` queries get the theme's
 default foreground and background, so light- and dark-aware programs pick
 fitting colours. A theme colour set to `reset` is unknown and gets no reply.
+`OSC 4` palette queries and setters remain ignored even with theme ANSI colours
+enabled: colour depth and palette rendering belong to each attached client.
 
 **Known limitations:**
 
@@ -6032,6 +6034,7 @@ file-only.
 | `editor.word_completion_minimum` | `3` | 1–32 | Prefix length before word suggestions appear. |
 | `editor.fast_pane_keys` | `false` | boolean | `Ctrl-h/j/k/l` move between panes without the `Ctrl-w` prefix. |
 | `editor.selecting_motions` | `true` | boolean | `w/b/e/W/B/E` and `f/t/F/T` select what they cross, as in Helix. `false` moves a caret instead. |
+| `editor.terminal_theme_colors` | `true` | boolean | Use the active theme for terminal ANSI colours 0–15. Applies immediately, including existing output. |
 | `editor.command_mode_dim` | `true` | boolean | Gray out pane text while a command prompt is open. |
 
 #### Workspace settings
@@ -7179,6 +7182,46 @@ drawing:
 - A persistent session host keeps the exact theme. Each attached client adapts
   it to its own terminal, so attaching from a lower-colour terminal does not
   change the workspace theme.
+
+### Terminal ANSI colours
+
+Terminal panes, frozen review and terminal previews use the active theme's
+sixteen ANSI colours by default. Switching themes or toggling
+`editor.terminal_theme_colors` in `Space o o` recolours existing output
+immediately. Set it to `false` to use the outer terminal's palette instead.
+Only indices 0–15 are remapped; indices 16–255 and explicit RGB retain the
+program's colours, subject to the client's colour depth.
+
+Custom themes can override any of these slots under `terminal`:
+`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, and each
+name prefixed with `bright_`. Unknown names and invalid colours are errors.
+For example, inside a theme definition:
+
+```yaml
+terminal:
+  red: "#e65c57"
+  bright_red: "#f08a92"
+```
+
+Omitted normal slots use `muted`, `error`, `change_added`, `warning`,
+`directory`, `change_modified`, `accent`, and `foreground`, respectively.
+Omitted bright slots take those roles a further 12% toward white on dark
+grounds or black on light grounds. Derived colours are moved toward the higher-contrast
+black or white extreme to reach at least 3:1 on the theme ground; explicit overrides are used exactly.
+An override of a normal slot does not change an omitted bright slot.
+
+Bundled third-party themes start from their upstream terminal palettes;
+Atom One Light uses its official syntax hues. Low-contrast entries are moved
+toward white or black to reach 3:1 on the theme background, including neutral
+slots upstream intended as backgrounds. Runyte's original themes derive their
+palettes from the roles above. Upstream hues are retained, while Runyte's
+shared Git roles remain unchanged; ANSI green and Git added marks need not
+have identical RGB values.
+
+A `reset` background still uses the theme palette. Its actual ground is
+unknown, so contrast cannot be guaranteed; disable the setting to defer to
+the outer terminal's palette. Named colour and `reset` overrides retain their
+normal terminal-owned meaning. OSC 4 palette queries and setters are ignored.
 
 ### Theme colour reference
 

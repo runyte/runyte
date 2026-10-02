@@ -42,6 +42,8 @@ use crate::notification::{NotificationCounts, NotificationSeverity};
 /// frontend-independent values.
 struct TuiTheme {
     color_depth: TerminalColorDepth,
+    terminal: [ratatui::style::Color; 16],
+    terminal_theme_colors: bool,
     background: ratatui::style::Color,
     /// The ground behind panes that do not own input, halfway toward the
     /// overlay ground so the three layers remain visually ordered.
@@ -113,6 +115,8 @@ impl TuiTheme {
         );
         let mut resolved = Self {
             color_depth,
+            terminal: theme.terminal.map(color),
+            terminal_theme_colors: true,
             background,
             inactive_background,
             overlay_background,
@@ -837,7 +841,8 @@ fn render_editor_frame(
     } else {
         None
     };
-    let app = TuiApp::with_color_depth(app, &snapshot.theme, color_depth);
+    let mut app = TuiApp::with_color_depth(app, &snapshot.theme, color_depth);
+    app.theme.terminal_theme_colors = snapshot.terminal_theme_colors;
     let editor_area = snapshot.geometry.editor;
     let global_status_line_area = to_tui_rect(snapshot.geometry.status);
     let interaction_line_area = to_tui_rect(snapshot.geometry.message);
@@ -1059,7 +1064,8 @@ fn render_attached_frame(
     snapshot: &HostFrame,
     color_depth: TerminalColorDepth,
 ) {
-    let theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
+    let mut theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
+    theme.terminal_theme_colors = snapshot.editor.terminal_theme_colors;
     draw_session_strip(frame, &theme, &snapshot.editor);
     if let Some(tree) = &snapshot.editor.directory_tree {
         draw_directory_tree(frame, &theme, tree);
@@ -2477,6 +2483,9 @@ fn terminal_color(
 ) -> ratatui::style::Color {
     match color {
         crate::terminal::Color::Default => fallback,
+        crate::terminal::Color::Indexed(index) if index < 16 && theme.terminal_theme_colors => {
+            theme.terminal[usize::from(index)]
+        }
         crate::terminal::Color::Indexed(index)
             if theme.color_depth != TerminalColorDepth::Basic =>
         {
@@ -10395,3 +10404,7 @@ mod plugin_prompt_tests {
         assert_eq!(prompt_query_window("", 0, 0), (String::new(), 0));
     }
 }
+
+#[cfg(test)]
+#[path = "ui/tests/terminal_palette.rs"]
+mod terminal_palette_tests;

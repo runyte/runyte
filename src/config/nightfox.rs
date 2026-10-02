@@ -52,6 +52,7 @@ fn nordfox_theme() -> ThemeDefinition {
         diff_added: Some(DIFF_ADDED_DARK.into()),
         diff_removed: Some(DIFF_REMOVED_DARK.into()),
         diff_changed: Some(DIFF_CHANGED_DARK.into()),
+        terminal: std::collections::HashMap::new(),
         syntax: syntax_theme(&[
             ("attribute", "#d092ce"),
             ("comment", "#60728a"),
@@ -150,6 +151,7 @@ fn terafox_theme() -> ThemeDefinition {
         diff_added: Some(DIFF_ADDED_DARK.into()),
         diff_removed: Some(DIFF_REMOVED_DARK.into()),
         diff_changed: Some(DIFF_CHANGED_DARK.into()),
+        terminal: std::collections::HashMap::new(),
         syntax: syntax_theme(&[
             ("attribute", "#d38d97"),
             ("comment", "#6d7f8b"),

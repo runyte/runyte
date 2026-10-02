@@ -11,6 +11,15 @@ themes defined in `src/config.rs`. Runyte maps those values onto its own editor,
 syntax, selection, Git, and diff roles; it does not embed or execute the
 upstream theme implementations.
 
+`src/config/terminal_palette.rs` also incorporates terminal palettes from the
+same revisions: Zenbones `extras/alacritty/*.toml`, Nightfox
+`extra/{nordfox,terafox}/alacritty.toml`, Everforest's terminal mapping in
+`colors/everforest.vim`, GitHub Light's `black` through `cyan` base/bright
+roles, Gruvbox's normal/bright terminal colours, and Base16's standard ANSI
+mapping. Runyte adjusts entries below 3:1 contrast on its theme background;
+custom overrides bypass this adjustment. Runyte variants reuse their parent
+palette. These values are data only; no upstream implementation runs at startup.
+
 The `dark`, `light`, and `paper` built-in themes are Runyte-authored palettes.
 The audit found no third-party source material requiring a notice for those
 three themes.
@@ -110,6 +119,17 @@ Runyte's `latte`, `frappe`, `macchiato`, and `mocha` themes use Catppuccin's
 canonical palette values. Runyte shares one role mapping across the four
 flavours and adds palette-local selection and diff-background tints. The exact
 upstream license text is preserved in `licenses/Catppuccin-MIT.txt`.
+
+The ANSI tables additionally follow the [Alacritty port](https://github.com/catppuccin/alacritty/tree/f6cb5a5c2b404cdaceaff193b9c52317f62c62f7),
+under the same Catppuccin MIT notice.
+
+### Atom One Light
+
+The ANSI hues use Atom's [One Light syntax palette](https://github.com/atom/one-light-syntax/blob/d84579027410c576086dfca14d934c4bd74b0438/styles/colors.less),
+revision `d84579027410c576086dfca14d934c4bd74b0438`. Atom publishes syntax
+colours rather than a sixteen-slot terminal table; Runyte maps its monochrome
+and syntax hues into normal and bright slots. The MIT notice, copyright (c)
+2016 GitHub Inc., is preserved in `licenses/Atom-One-Light-MIT.txt`.
 
 ### Nightfox: Nordfox and Terafox
 

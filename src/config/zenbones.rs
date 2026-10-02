@@ -426,6 +426,7 @@ impl Palette {
             diff_removed: Some(self.diff_removed.into()),
             diff_changed: Some(self.diff_changed.into()),
             syntax,
+            terminal: std::collections::HashMap::new(),
         }
     }
 }

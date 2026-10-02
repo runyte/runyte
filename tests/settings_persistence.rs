@@ -137,3 +137,23 @@ fn an_unclosed_brace_in_a_plain_theme_name_cannot_consume_other_fields() {
     );
     assert_eq!(file.text(), source);
 }
+
+#[test]
+fn terminal_theme_colors_persist_without_changing_custom_palette() {
+    let source = "themes:\n  custom:\n    terminal: {red: '#123456'}\n";
+    let file = ConfigFile::new(source);
+    for enabled in [false, true] {
+        let config = persist_setting(
+            &file.0,
+            SettingId::EditorTerminalThemeColors,
+            &SettingValue::Boolean(enabled),
+        )
+        .unwrap();
+        assert_eq!(config.editor.terminal_theme_colors, enabled);
+        assert!(file.text().starts_with(source));
+        assert_eq!(
+            config.resolve_theme("custom").unwrap().terminal[1],
+            runyte::config::Color::Rgb(0x12, 0x34, 0x56)
+        );
+    }
+}

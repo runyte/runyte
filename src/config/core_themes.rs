@@ -138,6 +138,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            terminal: std::collections::HashMap::new(),
             syntax: ember_dark_syntax,
         },
     );
@@ -214,6 +215,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+            terminal: std::collections::HashMap::new(),
             syntax: ember_light_syntax,
         },
     );
@@ -262,6 +264,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#d2a8ff"),
                 ("comment", "#6b7280"),
@@ -324,6 +327,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#8250df"),
                 ("comment", "#6e7781"),
@@ -386,6 +390,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_LIGHT.into()),
             diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#8700af"),
                 ("comment", "#808080"),
@@ -448,6 +453,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_added: Some(DIFF_ADDED_DARK.into()),
             diff_removed: Some(DIFF_REMOVED_DARK.into()),
             diff_changed: Some(DIFF_CHANGED_DARK.into()),
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#fabd2f"),
                 ("comment", "#928374"),
@@ -553,6 +559,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // code and link URLs through `syntax_theme`'s derived roles;
             // headings follow `function` into azure, and bold and list text
             // follow `keyword` into the accent green.
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#25f5b0"),
                 ("comment", "#4e8161"),
@@ -674,6 +681,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // derived roles that puts Markdown's inline code and link URLs on
             // the wave green, headings on the sky, and bold and list text on
             // the accent.
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#00b6a2"),
                 ("comment", "#5b7f90"),
@@ -759,6 +767,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
             // The dark variant's six, role for role, at the same distance from
             // this ground as they sit from the other.
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#00594c"),
                 ("comment", "#517584"),
@@ -880,6 +889,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // `syntax_theme`'s derived roles that puts Markdown headings on
             // the cyan, inline code and link URLs on the acid green, and bold
             // and list text on the red.
+            terminal: HashMap::new(),
             syntax: syntax_theme(&[
                 ("attribute", "#ff4de0"),
                 ("comment", "#5c7783"),

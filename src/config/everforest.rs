@@ -156,6 +156,7 @@ fn everforest_theme(
         diff_added: Some(diff_added.into()),
         diff_removed: Some(diff_removed.into()),
         diff_changed: Some(diff_changed.into()),
+        terminal: std::collections::HashMap::new(),
         syntax: syntax_theme(&[
             ("attribute", foreground.purple),
             ("comment", foreground.muted),

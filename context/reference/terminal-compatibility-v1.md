@@ -204,6 +204,19 @@ and overlay grounds onto one indexed entry, the later surface is advanced in
 the theme's existing light or dark direction until the three roles remain
 distinct.
 
+ANSI indices 0–15 resolve through the active theme by default, controlled by
+`editor.terminal_theme_colors`. The live setting also covers review and terminal
+previews. Indices 16–255 and explicit RGB retain their existing depth adaptation;
+disabling the setting restores indexed pass-through (and the existing basic
+colour fallback). A `reset` theme background does not disable remapping.
+OSC 4 palette queries and setters remain ignored; no client-dependent palette
+answer is invented by the host.
+
+Private bundled-client protocol 72 carries sixteen exact theme colours and the
+live setting. Both terminal and editor damage paths require a complete frame
+when the setting changes. Stored terminal cells and their wire values retain
+indices through theme switches, frozen review and attachment.
+
 The adaptation is client-owned. A persistent session host keeps exact RGB in
 its semantic snapshots and local protocol frames, so clients attached through
 different terminals render the same workspace at their own supported depth.

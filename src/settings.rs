@@ -58,6 +58,7 @@ pub enum SettingId {
     EditorFastPaneKeys,
     EditorSelectingMotions,
     EditorCommandModeDim,
+    EditorTerminalThemeColors,
     WorkspaceMode,
     SessionStrip,
     WorkspaceIdleRetirementMinutes,
@@ -358,6 +359,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorTerminalThemeColors,
+        key: "editor.terminal_theme_colors",
+        title: "Terminal theme colors",
+        description: "Use the active theme for terminal ANSI colours",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::WorkspaceMode,
         key: "workspace.mode",
         title: "Workspace mode",
@@ -459,6 +469,7 @@ impl SettingId {
         Self::EditorFastPaneKeys,
         Self::EditorSelectingMotions,
         Self::EditorCommandModeDim,
+        Self::EditorTerminalThemeColors,
         Self::WorkspaceMode,
         Self::SessionStrip,
         Self::WorkspaceIdleRetirementMinutes,
@@ -523,6 +534,9 @@ impl SettingId {
             }
             Self::EditorFastPaneKeys => SettingValue::Boolean(config.editor.fast_pane_keys),
             Self::EditorSelectingMotions => SettingValue::Boolean(config.editor.selecting_motions),
+            Self::EditorTerminalThemeColors => {
+                SettingValue::Boolean(config.editor.terminal_theme_colors)
+            }
             Self::EditorCommandModeDim => SettingValue::Boolean(config.editor.command_mode_dim),
             Self::Theme => SettingValue::Text(
                 config
@@ -678,6 +692,9 @@ impl SettingId {
             }
             (Self::EditorCommandModeDim, SettingValue::Boolean(value)) => {
                 config.editor.command_mode_dim = *value;
+            }
+            (Self::EditorTerminalThemeColors, SettingValue::Boolean(value)) => {
+                config.editor.terminal_theme_colors = *value;
             }
             (Self::Theme, SettingValue::Text(value)) => config.theme = Some(value.clone()),
             (Self::LspEnable, SettingValue::Boolean(value)) => config.lsp.enable = *value,

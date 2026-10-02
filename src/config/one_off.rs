@@ -53,6 +53,7 @@ fn github_light_theme() -> ThemeDefinition {
         diff_added: Some(DIFF_ADDED_LIGHT.into()),
         diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
         diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
+        terminal: std::collections::HashMap::new(),
         syntax: syntax_theme(&[
             ("attribute", "#0550ae"),
             ("comment", "#57606a"),
@@ -157,6 +158,7 @@ fn atom_one_light_theme() -> ThemeDefinition {
         diff_removed: Some(DIFF_REMOVED_LIGHT.into()),
         diff_changed: Some(DIFF_CHANGED_LIGHT.into()),
         syntax,
+        terminal: std::collections::HashMap::new(),
     }
 }
 
