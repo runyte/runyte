@@ -13,6 +13,148 @@ fn markdown(text_value: &str) -> App {
 }
 
 #[test]
+fn markdown_tab_aligns_new_lines_with_list_content() {
+    for (before, indent) in [
+        ("1. First\n   Second\n   Third\n", "   "),
+        ("- item\n", "  "),
+        ("* item\n", "  "),
+        ("+ item\n", "  "),
+        ("10285. item\n", "       "),
+        ("a. item\n", "   "),
+        ("II. item\n", "    "),
+        ("- [x] task\n", "      "),
+        ("1. parent\n   - child\n     continued\n", "     "),
+        (
+            "- parent\n  10. child\n      + grandchild\n        continued\n",
+            "        ",
+        ),
+        ("- parent\n  - child\n    continued\n  parent again\n", "  "),
+        ("\t-\titem\n", "        "),
+        ("1. α\r\n   β\r\n", "   "),
+    ] {
+        let mut app = markdown(before);
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(text(&app), format!("{before}{indent}"), "{before:?}");
+        assert_eq!(cursor(&app).col, indent.len());
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        press(&mut app, 'u');
+        assert_eq!(text(&app), before);
+    }
+}
+
+#[test]
+fn markdown_tab_finishes_alignment_then_uses_normal_stops() {
+    for style in [
+        crate::config::IndentStyle::Spaces,
+        crate::config::IndentStyle::Tabs,
+    ] {
+        let mut app = markdown("1. item\n ");
+        app.config.editor.indent = style;
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(text(&app), "1. item\n   ");
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(
+            text(&app),
+            match style {
+                crate::config::IndentStyle::Spaces => "1. item\n    ",
+                crate::config::IndentStyle::Tabs => "1. item\n   \t",
+            }
+        );
+    }
+}
+
+#[test]
+fn markdown_tab_scope_respects_file_language_scratch_mode_and_smart_setting() {
+    let root = crate::test_support::TestRuntimeRoot::new("markdown-list-tab").unwrap();
+    for (extension, scratch_markdown, smart, expected) in [
+        (None, true, true, 3),
+        (None, false, true, 4),
+        (None, true, false, 4),
+        (Some("md"), false, true, 3),
+        (Some("md"), true, false, 4),
+        (Some("txt"), true, true, 4),
+        (Some("rs"), true, true, 4),
+    ] {
+        let path = extension.map(|extension| root.path().join(format!("notes.{extension}")));
+        if let Some(path) = &path {
+            fs::write(path, "1. item\n").unwrap();
+        }
+        let mut config = Config::default();
+        config.editor.scratch_markdown = scratch_markdown;
+        config.editor.smart_newline = smart;
+        let mut app = App::new(config, path.clone()).unwrap();
+        if path.is_none() {
+            seed(&mut app, "1. item\n");
+        }
+        app.mode = Mode::Insert;
+        app.replace_active_selection(Selection::point(app.active_buffer().len_chars()));
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(
+            text(&app),
+            format!("1. item\n{}", " ".repeat(expected)),
+            "{extension:?}, scratch={scratch_markdown}, smart={smart}"
+        );
+    }
+}
+
+#[test]
+fn markdown_tab_keeps_literal_tabs_and_unrelated_indentation() {
+    for before in [
+        "plain prose\n",
+        "    indented prose\n",
+        "1. item\n\n",
+        "1. item\nprose\n",
+        "1. item\n  underindented\n",
+        "1. \n",
+        "1. item\n   ```\n",
+        "1. item\n   ~~~\n",
+    ] {
+        let mut app = markdown(before);
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(text(&app), format!("{before}    "), "{before:?}");
+    }
+    let mut app = markdown("1. item\n");
+    key(&mut app, KeyCode::BackTab, Modifiers::SHIFT);
+    assert_eq!(text(&app), "1. item\n\t");
+
+    let mut app = markdown("1. item\ntext");
+    set_cursor(&mut app, 1, 0);
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(text(&app), "1. item\n    text");
+}
+
+#[test]
+fn markdown_tab_bounds_lookback_and_long_rows() {
+    for before in [
+        format!("1. item\n{}", "   continuation\n".repeat(256)),
+        format!("1. {}\n", "x".repeat(4096)),
+    ] {
+        let mut app = markdown(&before);
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(text(&app), format!("{before}    "));
+    }
+}
+
+#[test]
+fn markdown_tab_aligns_multiple_carets_in_one_undo_step() {
+    let before = "1. first\n\n- parent\n  - child\n";
+    let mut app = markdown(before);
+    app.replace_active_selection(Selection::new(
+        vec![Range::point(9), Range::point(before.len())],
+        0,
+    ));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(text(&app), "1. first\n   \n- parent\n  - child\n    ");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(12), Range::point(before.len() + 7)]
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, 'u');
+    assert_eq!(text(&app), before);
+}
+
+#[test]
 fn markdown_enter_continues_bullets_numbers_letters_roman_and_tasks() {
     for (before, after) in [
         ("- item", "- item\n- "),

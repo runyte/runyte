@@ -9,7 +9,7 @@ editor:
   line_numbers: true
   tab_width: 4
   indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
-  smart_newline: true # adds syntax indentation and continues Markdown lists; false keeps only leading indent
+  smart_newline: true # adds syntax indentation, continues Markdown lists, and aligns Tab below lists; false keeps only leading indent on Enter
   auto_close: false # pair typed brackets and quotes in Insert mode
   scroll_offset: 3
   # Cursor motions per held-key repeat event. Set to 1 for terminal-native speed.

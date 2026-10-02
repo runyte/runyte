@@ -151,6 +151,41 @@ fn parse_list_item(line: &str) -> Option<ListItem<'_>> {
     })
 }
 
+/// Finds the content column of the list immediately above a new line. Only
+/// contiguous, indented continuation rows connect that line to its marker.
+/// Bound both the lookback and each row read so Tab stays cheap in large notes.
+fn preceding_list_column(buffer: &Buffer, row: usize, width: usize) -> Option<usize> {
+    let mut continuation_column = usize::MAX;
+    for previous in (row.saturating_sub(256)..row).rev() {
+        if buffer.line_len(previous) > 4096 {
+            return None;
+        }
+        let line = buffer.line_string(previous);
+        let body = line.trim_start_matches([' ', '\t']);
+        if body.is_empty() || body.starts_with("```") || body.starts_with("~~~") {
+            return None;
+        }
+        if let Some(item) = parse_list_item(&line) {
+            let indent = item.hanging_indent(true);
+            let column = visual_column(&indent, indent.len(), width);
+            let marker_column = visual_column(item.indent, item.indent.len(), width);
+            if marker_column >= continuation_column {
+                // The rows below have returned to a parent item. Walk past
+                // this nested item to find that parent's marker.
+                continue;
+            }
+            return (item.content_start < line.len() && column <= continuation_column)
+                .then_some(column);
+        }
+        let leading = line.len() - body.len();
+        if leading == 0 {
+            return None;
+        }
+        continuation_column = continuation_column.min(visual_column(&line, leading, width));
+    }
+    None
+}
+
 fn roman_value(marker: &str) -> usize {
     let value = |character| match character {
         'I' => 1,
@@ -1722,11 +1757,11 @@ impl App {
     }
 
     pub(super) fn insert_indentation(&mut self, style: crate::config::IndentStyle) {
-        if style == crate::config::IndentStyle::Tabs {
-            self.insert_char('\t');
-            return;
-        }
         let width = self.active_indentation().tab_width.max(1);
+        // Shift-Tab requests the other style explicitly and stays literal.
+        let markdown = style == self.active_indentation().style
+            && self.config.editor.smart_newline
+            && self.is_markdown_document(self.active().buffer);
         let buffer = self.active_buffer();
         let selection = self.active().selection.clone();
         let indents: Vec<String> = selection
@@ -1734,8 +1769,25 @@ impl App {
             .iter()
             .map(|range| {
                 let position = buffer.position_of(range.head);
-                let column = visual_column(&buffer.line_string(position.row), position.col, width);
-                " ".repeat(width - column % width)
+                let line = buffer.line_string(position.row);
+                let column = visual_column(&line, position.col, width);
+                if markdown
+                    && range.is_empty()
+                    && position.col == line.len()
+                    && line
+                        .chars()
+                        .all(|character| matches!(character, ' ' | '\t'))
+                    && let Some(target) = preceding_list_column(buffer, position.row, width)
+                    && target > column
+                {
+                    // Alignment can fall between tab stops even with tabs as
+                    // the configured style, so use spaces to reach it exactly.
+                    return " ".repeat(target - column);
+                }
+                match style {
+                    crate::config::IndentStyle::Spaces => " ".repeat(width - column % width),
+                    crate::config::IndentStyle::Tabs => "\t".to_owned(),
+                }
             })
             .collect();
         let mut index = 0;

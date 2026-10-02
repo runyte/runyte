@@ -174,7 +174,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::EditorSmartNewline,
         key: "editor.smart_newline",
         title: "Smart newline",
-        description: "Add syntax indentation and continue Markdown lists",
+        description: "Add syntax indentation, continue Markdown lists, and align Tab below lists",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,

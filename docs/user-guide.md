@@ -1092,7 +1092,7 @@ buffer language's line comment.
 
 #### New lines and indentation
 
-In Insert mode, Tab advances to the next visual tab stop. Backspace within
+In Insert mode, Tab normally advances to the next visual tab stop. Backspace within
 leading spaces and tabs removes indentation to the previous stop. With width 4,
 Backspace moves columns 8 → 4, 6 → 4, and 4 → 0 (columns counted from zero).
 Mixed spaces and tabs use their displayed columns. After text, Backspace deletes
@@ -1119,9 +1119,15 @@ default):
 - bullets keep their marker, numbered and lettered items advance, and task
   items start unchecked;
 - Enter on an empty item ends the list;
+- Tab on a whitespace-only line immediately below a list aligns with the item's
+  content, including through continuation lines and nested lists. It fills the
+  remaining distance with spaces even when the configured indent style is tabs.
+  Once aligned, further Tab presses use the configured style and tab stops.
+  This also applies to scratchpads with `editor.scratch_markdown` enabled;
+  Shift-Tab keeps its ordinary other-style behavior;
 - Backspace right after a marker turns it into a continuation indent, whether
   or not text follows; another Backspace removes that alignment in one press;
-- each of these edits renumbers the following numbered or lettered items that
+- Enter and Backspace renumber the following numbered or lettered items that
   were in sequence, skipping nested items, continuation lines, and blank
   lines. A list numbered `1.` throughout, or one with a gap, keeps its numbers
   from that point on;
@@ -1130,7 +1136,10 @@ default):
 
 In other file types, smart newline keeps the alignment under a list item's
 content. With `editor.smart_newline: false`, Enter keeps only the row's
-leading indentation.
+leading indentation and Tab uses ordinary indentation stops. List alignment
+looks back through at most 256 rows of at most 4096 characters each, stopping
+at a blank line or unrelated text; beyond those bounds Tab uses ordinary
+indentation.
 
 Unsupported, malformed, oversized, and unterminated-final-line cases keep the
 exact prefix and never block the newline.
