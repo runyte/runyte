@@ -26,6 +26,7 @@ editor:
   scratch_markdown: true
   # Gray out every pane's text while a command prompt is open.
   command_mode_dim: true
+  auto_close_terminal: true # forget terminal output when its program exits
   terminal_theme_colors: true # use the theme for terminal ANSI colours 0–15
 
 # Refresh visible Git views and tracked-file gutters automatically;

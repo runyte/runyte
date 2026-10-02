@@ -810,7 +810,18 @@ impl App {
     /// in the list once an interval for the whole time a child is writing.
     fn refresh_terminal_finder_item(&mut self, terminal: crate::terminal::TerminalId) -> bool {
         let Some(session) = self.terminals.get(terminal) else {
-            return false;
+            let Some((finder, picker)) = self.finder.as_mut().zip(self.picker.as_mut()) else {
+                return false;
+            };
+            if !finder.remove_terminal(terminal, picker) {
+                return false;
+            }
+            if self.file_scanner.is_some() {
+                picker.ranking = true;
+            }
+            self.update_background_finder_context();
+            self.refresh_finder_preview();
+            return true;
         };
         let shown = self
             .panes

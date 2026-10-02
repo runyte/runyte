@@ -3851,6 +3851,7 @@ fn sending_without_a_target_skips_a_focused_terminal_that_has_exited() {
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
     seed(&mut app, "echo composed\n");
     let document = app.active_pane;
     app.split(Axis::Horizontal, None).unwrap();
@@ -4006,6 +4007,7 @@ fn the_terminal_list_describes_each_session_and_says_so_when_there_are_none() {
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
 
     app.open_terminal_list();
     assert!(app.list.is_none());
@@ -4088,6 +4090,7 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
     fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
 
     let mut opened = Vec::new();
     for _ in 0..4 {

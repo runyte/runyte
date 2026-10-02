@@ -457,6 +457,8 @@ pub struct EditorConfig {
     pub command_mode_dim: bool,
     /// Resolve terminal ANSI indices 0–15 through the active theme.
     pub terminal_theme_colors: bool,
+    /// Forget terminal sessions and their output when the child exits.
+    pub auto_close_terminal: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -979,6 +981,7 @@ impl Default for EditorConfig {
             selecting_motions: true,
             command_mode_dim: true,
             terminal_theme_colors: true,
+            auto_close_terminal: true,
         }
     }
 }

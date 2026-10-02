@@ -3117,6 +3117,7 @@ mod tests {
         use std::ffi::OsString;
 
         let mut host = host();
+        host.app_mut().config.editor.auto_close_terminal = false;
         let id = host
             .app_mut()
             .terminals

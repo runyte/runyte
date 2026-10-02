@@ -2698,7 +2698,7 @@ it.
 | Key | Action |
 | --- | --- |
 | `Space t n` or `Ctrl-w t` | Run `$SHELL` in this pane (`:terminal`, `:term`, `:t`; `:terminal <command>` runs something else) |
-| `Space t t` | List the running and exited terminals and visit the chosen one (`:terminals`) |
+| `Space t t` | List the running and retained exited terminals and visit the chosen one (`:terminals`) |
 | `Space t r` | Rename this pane's terminal (`:terminal-rename <name>`) |
 | `Space t q` | Show this pane's buffer again, leaving the program running |
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
@@ -2760,15 +2760,18 @@ A session outlives the pane showing it.
 - `Space t q` shows the pane's buffer again and leaves the program running.
   Opening a file in the pane, or closing the split, does the same.
 - When the program exits, a pane showing it returns to its most recently used
-  buffer (or a scratch buffer) without closing. The exited session and its
-  bounded output stay in `:terminals` for review, search, or Close.
+  buffer (or a scratch buffer) without closing. By default, the terminal
+  session and its output are forgotten and disappear from the Finder and
+  `Space t t`. Set `editor.auto_close_terminal` to `false` in `Space o o` to
+  retain future exited sessions for review, search, or Close. Changing this
+  setting does not discard sessions already retained.
 
 #### The terminal list
 
 `Space t t` (`:terminals`) lists sessions in the Navigator's columns (see
 [Session and destination navigation](#session-and-destination-navigation)):
 
-- running sessions first, then exited ones, dimmed; each group most recently
+- running sessions first, then retained exited ones, dimmed; each group most recently
   activated first;
 - `exited`, `unread`, and `bell` in the STATE column;
 - the program, number, and directory in the preview.
@@ -2811,7 +2814,7 @@ A pane title reads `[terminal #<number>] <name>`.
 - Because a number can pass to a new terminal, it identifies what is running
   now. Do not record one in a macro or script expecting the same terminal
   later.
-- An exited terminal has no number: its title is `[terminal] <name>`, and it
+- A retained exited terminal has no number: its title is `[terminal] <name>`, and it
   is reached from `:terminals` or the Finder by name. Action menu titles use
   the `[terminal] <name>` form too.
 - The name is the one you assigned, otherwise what the program calls itself:
@@ -4521,12 +4524,13 @@ buffers and running terminal sessions.
 - `Ctrl-w n` works in editor modes and Terminal Insert and follows
   `keys.window`. `Space n` is child input in Terminal Insert.
 - No filesystem scan or content search runs here; `Space f` is the Finder.
-- Exited terminals are in `Space t t`, whose Tab menu offers **Close all
+- With `editor.auto_close_terminal: false`, exited terminals stay in
+  `Space t t`, whose Tab menu offers **Close all
   exited terminals** without touching live children.
 
 The Navigator, the buffer list (`Space b b`), and the terminal list
 (`Space t t`) are one list over three scopes — every open destination, the
-buffers, or the terminals including exited ones — with the same columns:
+buffers, or the terminals including retained exited ones — with the same columns:
 
 ```text
     TYPE        NAME                           STATE
@@ -6034,6 +6038,7 @@ file-only.
 | `editor.word_completion_minimum` | `3` | 1–32 | Prefix length before word suggestions appear. |
 | `editor.fast_pane_keys` | `false` | boolean | `Ctrl-h/j/k/l` move between panes without the `Ctrl-w` prefix. |
 | `editor.selecting_motions` | `true` | boolean | `w/b/e/W/B/E` and `f/t/F/T` select what they cross, as in Helix. `false` moves a caret instead. |
+| `editor.auto_close_terminal` | `true` | boolean | Forget terminal sessions and their output when the program exits. `false` retains future exited sessions for review in the Finder and `Space t t`. |
 | `editor.terminal_theme_colors` | `true` | boolean | Use the active theme for terminal ANSI colours 0–15. Applies immediately, including existing output. |
 | `editor.command_mode_dim` | `true` | boolean | Gray out pane text while a command prompt is open. |
 

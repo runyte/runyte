@@ -570,3 +570,49 @@ fn action_bindings_reload_and_cancel_pending_sequences() {
     assert_eq!(cursor(&app).col, 2);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn auto_close_terminal_setting_previews_rolls_back_persists_and_reloads() {
+    let (mut app, path) = editor(
+        "terminal-retention.yaml",
+        "# kept\neditor:\n  auto_close_terminal: false\n",
+    );
+    assert!(!app.config.editor.auto_close_terminal);
+    for commit in [false, true] {
+        app.open_setting_values(SettingId::EditorAutoCloseTerminal);
+        let yes = app
+            .list_actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    ListAction::SettingValue {
+                        setting: SettingId::EditorAutoCloseTerminal,
+                        value: SettingValue::Boolean(true)
+                    }
+                )
+            })
+            .unwrap();
+        app.list.as_mut().unwrap().selected = yes;
+        app.preview_selected_setting_value();
+        assert!(app.config.editor.auto_close_terminal);
+        key(
+            &mut app,
+            if commit {
+                KeyCode::Enter
+            } else {
+                KeyCode::Escape
+            },
+            Modifiers::NONE,
+        );
+        assert_eq!(app.config.editor.auto_close_terminal, commit);
+    }
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# kept\neditor:\n  auto_close_terminal: true\n"
+    );
+    fs::write(&path, "editor:\n  auto_close_terminal: false\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(!app.config.editor.auto_close_terminal);
+    fs::remove_file(path).unwrap();
+}
