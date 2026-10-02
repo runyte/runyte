@@ -4957,6 +4957,10 @@ from your PowerShell profile:
 `:` opens the command palette: every command with its aliases, usage, and a
 short description, grouped by category.
 
+Exact names and aliases rank first, followed by name or alias prefixes, then
+matches in descriptions and other metadata. For example, `:t` and `:term`
+offer `:terminal` first, while `:tu` offers `:tutorial` first.
+
 | Key | Action |
 | --- | --- |
 | Type | Filter by name, alias, description, or category |

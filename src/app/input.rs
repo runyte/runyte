@@ -432,10 +432,16 @@ impl App {
                 )
             })
             .collect::<Vec<_>>();
-        // Direct canonical/alias prefixes remain the first completion even
-        // when the same short query also occurs in several descriptions.
+        // Exact names and aliases outrank prefixes, even when the displayed
+        // spelling is canonical (e.g. `t` displays `terminal`). Prefixes in
+        // turn outrank matches found only in descriptions or other metadata.
         matches.extend(self.plugin_command_matches(trimmed));
-        matches.sort_by_key(|matched| usize::from(!matched.name.starts_with(query)));
+        matches.sort_by_key(|matched| {
+            let exact = matched.name == query
+                || matched.spec.name == query
+                || matched.spec.aliases.contains(&query);
+            (!exact, !matched.name.starts_with(query))
+        });
         matches
     }
 

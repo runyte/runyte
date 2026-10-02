@@ -2858,6 +2858,43 @@ fn a_program_that_cannot_run_is_reported_and_not_remembered() {
 }
 
 #[test]
+fn command_hints_rank_exact_names_and_aliases_before_prefixes() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    for (query, expected) in [
+        ("t", "terminal"),
+        ("term", "terminal"),
+        ("tu", "tutorial"),
+        ("terminal", "terminal"),
+        ("tutorial", "tutorial"),
+        ("w", "write"),
+        ("save", "save"),
+        ("sp", "split"),
+    ] {
+        press(&mut app, ':');
+        type_text(&mut app, query);
+        let matches = app.matching_commands();
+        assert_eq!(
+            matches.first().map(|matched| matched.name),
+            Some(expected),
+            "first hint for :{query}"
+        );
+        let first_id = matches[0].spec.id;
+        assert_eq!(
+            matches
+                .iter()
+                .filter(|matched| matched.spec.id == first_id)
+                .count(),
+            1,
+            "aliases must not duplicate the command row"
+        );
+        assert_eq!(app.command_selection, 0);
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        assert_eq!(app.command, format!("{expected} "));
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    }
+}
+
+#[test]
 fn command_hints_list_the_alias_that_matched() {
     let mut app = App::new(Config::default(), None).unwrap();
     press(&mut app, ':');
