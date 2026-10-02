@@ -1,4 +1,81 @@
-# Terminal sessions draw ANSI colours from the outer terminal's palette
+---
+title: "Terminal sessions draw ANSI colours from the outer terminal's palette"
+status: resolved
+reported: 2026-10-02
+resolved: 2026-10-02
+commit: ad4973c
+---
+
+## Resolution
+
+Commit ad4973c (`Use theme palettes for terminal ANSI colours`) resolves the
+issue. `terminal_color` in `src/ui.rs` previously passed ANSI indices through
+unchanged whenever the outer terminal advertised at least 256 colours. Only
+default cells used the theme, leaving ANSI text tuned for a different ground.
+It now resolves indices 0–15 through the theme before the client's existing
+colour-depth conversion. Default colours, explicit RGB and indices 16–255
+keep their previous behavior. Terminal storage, frozen review and protocol
+cells retain the original indices.
+
+`editor.terminal_theme_colors` defaults to true and is an immediately applied,
+persisted setting in `Space o o`. Both standalone and attached renderers use
+it for panes and previews. Protocol 72 carries the setting and sixteen theme
+colours; both damage-frame paths require a complete frame when the setting
+changes, so a quiet terminal also redraws without new child output.
+
+Custom themes accept an optional `terminal` map with sixteen named ANSI slots.
+Unknown names and invalid colours fail theme resolution. Omitted entries use
+semantic theme roles, with bright entries stepped away from the ground.
+Contrast adjustment chooses the viable black or white extreme, including
+medium-gray custom grounds. Explicit custom choices remain exact. Themes with
+`background: reset` still remap ANSI colours; the toggle provides an explicit
+opt-out. OSC 4 queries and setters remain ignored because palette presentation
+and colour depth belong to the client, while OSC 10/11 retain their existing
+behavior.
+
+Third-party built-ins start from their published terminal palettes, with Atom
+One Light mapped from its official syntax hues. Low-contrast entries, including
+upstream background-like neutral slots, are adjusted to at least 3:1 on the
+theme ground. This deliberately favors readable terminal text over exact
+upstream RGB values. Runyte's shared Git roles are unchanged, so matching ANSI
+and Git meanings can still have different RGB values within their palette hue.
+Runyte-authored themes derive their palettes from their semantic roles.
+
+Regression coverage:
+
+- `terminal_palette_defaults_and_partial_overrides_follow_roles`,
+  `terminal_palette_rejects_unknown_names_and_invalid_colours`,
+  `bundled_terminal_palettes_are_legible_on_their_own_ground`, and
+  `derived_terminal_colours_contrast_even_on_mid_gray_custom_grounds` in
+  `src/config/tests/terminal_palette.rs` cover palette derivation, exact
+  overrides, reset backgrounds, validation, upstream entries and contrast.
+- `terminal_palette_resolves_all_sgr_forms_before_client_depth_adaptation` and
+  `terminal_palette_live_setting_and_theme_switch_repaint_both_frontends` in
+  `src/ui/tests/terminal_palette.rs` cover all ANSI SGR forms, unchanged
+  explicit colours, three client colour depths, toggling, theme changes,
+  frozen review, previews and standalone/attached rendering.
+- `terminal_palette_changes_require_complete_frames_and_round_trip_indices`
+  in `src/protocol/frame.rs` covers complete-frame invalidation and preservation
+  of exact palette colours and terminal indices across the wire.
+- `terminal_theme_colors_persist_without_changing_custom_palette` in
+  `tests/settings_persistence.rs` covers both setting values and preservation
+  of custom palette YAML. The exhaustive registry tests in
+  `tests/settings_registry.rs` cover setting discovery and typed application.
+
+Local Linux validation: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test` (4,387 passed), and `cargo llvm-cov --locked --workspace`
+(91.84% line coverage, above the 89% floor) passed. Independent review was clean
+after correcting custom gray-background contrast and the protocol-version test.
+The new regression tests are platform-independent and run in Linux, macOS and
+Windows CI; native macOS and Windows results are recorded by the push's CI run.
+
+Known limitation: contrast is measured against the theme background at exact
+RGB depth. Explicit foreground/background combinations chosen by child
+programs, custom overrides, unknown `reset` grounds and low-colour terminal
+quantization can still produce low contrast. OSC 4 palette queries remain
+unsupported.
+
+## Report
 
 Editor panes and terminal panes take their colours from two unrelated
 palettes.
