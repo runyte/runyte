@@ -845,6 +845,71 @@ impl ResourceFinder {
         self.restore_selection(picker, selected.as_ref());
     }
 
+    /// Removes a terminal name while preserving surviving result identities.
+    pub(crate) fn remove_terminal(&mut self, terminal: TerminalId, picker: &FilePicker) -> bool {
+        let Some(index) = self
+            .items
+            .iter()
+            .position(|item| matches!(item.target, ResourceTarget::Terminal(id) if id == terminal))
+        else {
+            return false;
+        };
+        let selected = self.preserved_selection(picker);
+        let remap = (0..self.items.len())
+            .map(|old| match old.cmp(&index) {
+                std::cmp::Ordering::Less => Some(old),
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Greater => Some(old - 1),
+            })
+            .collect::<Vec<_>>();
+        self.items.remove(index);
+        self.resource_matches.retain_mut(|found| {
+            if found.item == index {
+                return false;
+            }
+            if found.item > index {
+                found.item -= 1;
+            }
+            true
+        });
+        self.matches.retain_mut(|found| {
+            if let FinderMatchSource::Resource(item) = &mut found.source {
+                if *item == index {
+                    return false;
+                }
+                if *item > index {
+                    *item -= 1;
+                }
+            }
+            true
+        });
+        if selected == Some(FinderTarget::Resource(ResourceTarget::Terminal(terminal))) {
+            self.selection_user_owned = false;
+            self.claimed_selection = None;
+            self.claimed_match_source = None;
+            self.selected = 0;
+            self.selected_preview = None;
+        } else {
+            self.restore_selection(picker, selected.as_ref());
+        }
+        // The worker owns already-published resource matches. Remap its
+        // indices together with any changes still waiting to be published.
+        self.note_file_rank_change();
+        self.file_rank_removed_resources = self
+            .file_rank_removed_resources
+            .drain(..)
+            .filter_map(|old| remap[old])
+            .collect();
+        if let Some(previous) = &mut self.file_rank_remap_resources {
+            for item in previous {
+                *item = item.and_then(|old| remap[old]);
+            }
+        } else {
+            self.file_rank_remap_resources = Some(remap);
+        }
+        true
+    }
+
     /// Whether `item` says anything the finder does not already hold about
     /// the terminal it describes.
     ///

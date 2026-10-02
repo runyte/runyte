@@ -372,6 +372,7 @@ fn navigator_refreshes_terminal_names_and_searchable_titles() {
 #[test]
 fn navigator_removes_exited_terminal_without_changing_surviving_selection_identity() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
     seed(&mut app, "retained document");
     let buffer = app.active().buffer;
     app.open_terminal(Some("/bin/cat".to_owned()));
@@ -576,6 +577,7 @@ fn parent_wait_shared_dirty_buffer_refuses_forced_cancellation() {
 #[test]
 fn terminal_manager_bulk_cleanup_uses_current_identities_beyond_the_filter() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
     seed(&mut app, "underlying document");
     app.open_terminal(Some("/bin/cat".to_owned()));
     let exited = app.active_terminal().unwrap();
@@ -638,6 +640,7 @@ fn terminal_manager_bulk_cleanup_uses_current_identities_beyond_the_filter() {
 #[test]
 fn terminal_manager_cleaning_last_exited_entry_keeps_empty_manager_and_disabled_action() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
     app.apply_terminal_output(TerminalOutput::Exited {
@@ -865,6 +868,7 @@ fn every_destination_list_orders_by_recent_activation_and_names_its_keys() {
         fs::write(directory.join(name), name).unwrap();
     }
     let mut app = App::new(Config::default(), Some(directory.join("alpha.txt"))).unwrap();
+    app.config.editor.auto_close_terminal = false;
     let alpha = app.active().buffer;
     app.open_file(directory.join("beta.txt")).unwrap();
     let beta = app.active().buffer;
@@ -993,6 +997,7 @@ fn the_buffer_list_visits_a_buffer_where_a_pane_already_shows_it() {
 #[test]
 fn the_terminal_list_finds_running_terminals_by_number_and_exited_ones_by_name() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.auto_close_terminal = false;
     app.open_terminal(Some("/bin/cat".to_owned()));
     let exited = app.active_terminal().unwrap();
     app.leave_terminal();
@@ -1069,5 +1074,28 @@ fn the_terminal_list_finds_running_terminals_by_number_and_exited_ones_by_name()
     let view = app.prepare_view(geometry);
     let title = app.snapshot(&view).panes[0].title.name.clone();
     assert!(title.starts_with("[terminal #1] cat"), "{title}");
+    close_test_terminals(&mut app);
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_exit_removes_open_manager_row_and_preserves_other_terminal_input() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let hidden = app.active_terminal().unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let shown = app.active_terminal().unwrap();
+    app.open_terminal_list();
+    let cleanup = terminal_cleanup(&app, hidden);
+    app.apply_terminal_output(TerminalOutput::Exited {
+        id: hidden,
+        code: Some(0),
+    });
+    cleanup();
+    assert!(app.terminals.get(hidden).is_none());
+    assert_eq!(app.active_terminal(), Some(shown));
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.list.as_ref().unwrap().items.len(), 1);
+    assert_eq!(selected_destination(&app), OpenDestination::Terminal(shown));
     close_test_terminals(&mut app);
 }

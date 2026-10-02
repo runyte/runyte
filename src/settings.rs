@@ -59,6 +59,7 @@ pub enum SettingId {
     EditorSelectingMotions,
     EditorCommandModeDim,
     EditorTerminalThemeColors,
+    EditorAutoCloseTerminal,
     WorkspaceMode,
     SessionStrip,
     WorkspaceIdleRetirementMinutes,
@@ -368,6 +369,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorAutoCloseTerminal,
+        key: "editor.auto_close_terminal",
+        title: "Auto close terminal",
+        description: "Forget terminal output on future program exits",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::WorkspaceMode,
         key: "workspace.mode",
         title: "Workspace mode",
@@ -470,6 +480,7 @@ impl SettingId {
         Self::EditorSelectingMotions,
         Self::EditorCommandModeDim,
         Self::EditorTerminalThemeColors,
+        Self::EditorAutoCloseTerminal,
         Self::WorkspaceMode,
         Self::SessionStrip,
         Self::WorkspaceIdleRetirementMinutes,
@@ -534,6 +545,9 @@ impl SettingId {
             }
             Self::EditorFastPaneKeys => SettingValue::Boolean(config.editor.fast_pane_keys),
             Self::EditorSelectingMotions => SettingValue::Boolean(config.editor.selecting_motions),
+            Self::EditorAutoCloseTerminal => {
+                SettingValue::Boolean(config.editor.auto_close_terminal)
+            }
             Self::EditorTerminalThemeColors => {
                 SettingValue::Boolean(config.editor.terminal_theme_colors)
             }
@@ -692,6 +706,9 @@ impl SettingId {
             }
             (Self::EditorCommandModeDim, SettingValue::Boolean(value)) => {
                 config.editor.command_mode_dim = *value;
+            }
+            (Self::EditorAutoCloseTerminal, SettingValue::Boolean(value)) => {
+                config.editor.auto_close_terminal = *value;
             }
             (Self::EditorTerminalThemeColors, SettingValue::Boolean(value)) => {
                 config.editor.terminal_theme_colors = *value;

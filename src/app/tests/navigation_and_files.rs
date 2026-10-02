@@ -359,6 +359,7 @@ fn stale_background_files_covered_by_terminals_refresh_when_revealed() {
         };
         app.open_terminal_at(Some(terminal_fixture_command()), directory.clone());
         let terminal = app.active_terminal().unwrap();
+        let cleanup = terminal_cleanup(&app, terminal);
         fs::write(&path, "changed\n").unwrap();
         observe(&mut app, buffer);
 
@@ -378,6 +379,42 @@ fn stale_background_files_covered_by_terminals_refresh_when_revealed() {
         assert_eq!(app.buffers[buffer].to_string(), "changed\n");
         assert!(!app.buffers[buffer].external_file_status().is_stale());
         drop(app);
+        cleanup();
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn terminal_exit_refreshes_its_stale_background_file_with_either_retention_setting() {
+    for auto_close in [false, true] {
+        let directory = temporary("terminal-exit-background-refresh");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.txt");
+        fs::write(&path, "original\n").unwrap();
+        let mut config = Config::default();
+        config.editor.auto_close_terminal = auto_close;
+        let mut app = App::new(config, Some(path.clone())).unwrap();
+        let buffer = app.active().buffer;
+        app.open_terminal_at(Some(terminal_fixture_command()), directory.clone());
+        let terminal = app.active_terminal().unwrap();
+        let cleanup = terminal_cleanup(&app, terminal);
+        fs::write(&path, "changed\n").unwrap();
+        observe(&mut app, buffer);
+
+        app.apply_terminal_output(TerminalOutput::Exited {
+            id: terminal,
+            code: Some(7),
+        });
+
+        assert!(app.active_terminal().is_none());
+        assert_eq!(app.active().buffer, buffer);
+        assert_eq!(app.buffers[buffer].to_string(), "changed\n");
+        assert!(!app.buffers[buffer].external_file_status().is_stale());
+        assert_eq!(app.terminals.get(terminal).is_none(), auto_close);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.ends_with("exited with 7"), "{}", app.status);
+        drop(app);
+        cleanup();
         fs::remove_dir_all(directory).unwrap();
     }
 }

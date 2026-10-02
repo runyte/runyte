@@ -601,10 +601,7 @@ impl App {
         self.note_terminal_finder_change(id);
     }
 
-    /// Retains a child's last decoded screen after it ends.
-    ///
-    /// An exited terminal remains a terminal session until explicitly closed:
-    /// its last screen and scrollback are still reviewable and searchable.
+    /// Reveals the covered buffer and applies the configured exit retention.
     fn finish_terminal(&mut self, id: TerminalId) {
         let Some(session) = self.terminals.get(id) else {
             return;
@@ -615,9 +612,8 @@ impl App {
             Some(Some(code)) if code != 0 => format!("{name} exited with {code}"),
             _ => format!("{name} exited"),
         };
-        // A child that ended without being asked to is the case worth keeping:
-        // the pane it was in reveals its buffer again and the reason would
-        // otherwise survive only in the interaction line.
+        // Keep the exit reason in the diagnostic log: the pane reveals its
+        // buffer again, and the interaction-line status is transient.
         match exit_code {
             Some(Some(code)) if code != 0 => crate::log_warn!(
                 "terminal",
@@ -635,9 +631,13 @@ impl App {
             }
             self.mode = Mode::Normal;
         }
-        // An open destination list says the terminal exited, in place.
-        self.refresh_navigator();
+        if self.config.editor.auto_close_terminal {
+            self.terminals.close(id);
+            self.focused_terminals.retain(|other| *other != id);
+        }
         self.note_terminal_finder_change(id);
+        self.refresh_finder_terminals();
+        self.refresh_navigator();
         self.status(message);
     }
 

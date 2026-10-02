@@ -566,7 +566,8 @@ open resource identities, including scratch and retained special buffers and
 running terminals. Its opening recent-activation order remains stable until
 closed. Terminal output does not reorder it, and the picker does not extend
 special-buffer lifetime. The buffer list (`Space b b`) and the terminal list
-(`Space t t`, which also holds exited terminals) are the same list over a
+(`Space t t`, which also holds exited terminals retained with
+`editor.auto_close_terminal: false`) are the same list over a
 narrower scope. All three draw `*` for a destination some pane shows, a TYPE
 cell coloured by kind from the `destination_*` theme keys, a NAME that is
 shortened in the middle when too long, and a pinned STATE run holding `[+]`,
@@ -582,8 +583,11 @@ Terminal previews in the Navigator, terminal list and name-mode Finder read
 the selected terminal's current styled screen at frame time, independently of
 pane review or scroll position. They never focus, resize or mark the terminal
 viewed. Output updates the preview without reordering the list. Content-mode
-Finder previews remain static numbered match snippets. Exited terminals retain
-their final screen in the terminal list and name-mode Finder.
+Finder previews remain static numbered match snippets. By default, exited
+terminals and their output are forgotten. With `editor.auto_close_terminal:
+false`, future exited terminals retain their final screen in the terminal list
+and name-mode Finder. Changing the setting does not discard already retained
+terminal sessions.
 
 Enter focuses an already-visible destination, preferring the active pane then
 the most recently activated pane. Otherwise it uses the active pane. A Tab

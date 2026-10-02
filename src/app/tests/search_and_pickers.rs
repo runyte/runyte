@@ -1540,6 +1540,7 @@ fn project_finder_indexes_terminal_names_and_content_and_reveals_the_matching_ro
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.config.editor.auto_close_terminal = false;
     let note = root.join("note.txt");
     fs::write(&note, "kept behind the terminal").unwrap();
     app.open_file(note).unwrap();
@@ -1647,6 +1648,7 @@ fn project_finder_matches_the_number_a_terminal_shows() {
         String::new(),
     )))));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.config.editor.auto_close_terminal = false;
     app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let exited = app.active_terminal().unwrap();
     app.leave_terminal();
@@ -5222,4 +5224,160 @@ fn the_explorer_finder_refuses_a_view_that_is_not_an_explorer() {
     );
     assert!(app.status_error);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn exited_terminals_are_forgotten_from_open_finder_names_and_contents() {
+    for contents in [false, true] {
+        let root = temporary("finder-auto-close-terminal");
+        fs::create_dir_all(&root).unwrap();
+        let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        )))));
+        let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+        assert!(app.config.editor.auto_close_terminal);
+        app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+        let id = app.active_terminal().unwrap();
+        app.rename_terminal_id(id, "unique-exiting-job");
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id,
+            bytes: b"unique-exiting-job output\r\n".to_vec(),
+        });
+        app.leave_terminal();
+        if contents {
+            app.open_project_grep().unwrap();
+        } else {
+            app.open_project_picker().unwrap();
+        }
+        type_text(&mut app, "unique-exiting-job");
+        settle_finder(&mut app);
+        assert!(
+            app.finder
+                .as_ref()
+                .unwrap()
+                .selected_target(app.picker.as_ref().unwrap())
+                .is_some()
+        );
+        let cleanup = terminal_cleanup(&app, id);
+        app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(7) });
+        cleanup();
+        assert!(app.terminals.get(id).is_none());
+        assert!(!app.focused_terminals.contains(&id));
+        assert!(app.status.contains("unique-exiting-job exited with 7"));
+        settle_finder(&mut app);
+        assert!(
+            app.finder
+                .as_ref()
+                .unwrap()
+                .selected_target(app.picker.as_ref().unwrap())
+                .is_none()
+        );
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        app.open_terminal_list();
+        assert!(app.list.is_none());
+        assert!(app.status.contains("no terminals"));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn background_finder_keeps_selected_surviving_result_when_a_terminal_exits() {
+    fn settle(app: &mut App, events: &mut tokio::sync::mpsc::Receiver<FilePickerEvent>) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            pacing_tick(app);
+            while app.resource_finder_scan_pending() {
+                app.advance_resource_finder_scan();
+            }
+            app.refresh_finder_terminals();
+            while let Ok(event) = events.try_recv() {
+                deliver(app, event);
+            }
+            if !app.resource_finder_scan_pending()
+                && !app.finder_terminals_dirty()
+                && app
+                    .picker
+                    .as_ref()
+                    .is_some_and(|picker| !picker.loading && !picker.ranking)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "finder did not settle"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    for contents in [false, true] {
+        let root = temporary("background-finder-terminal-exit-selection");
+        fs::create_dir_all(&root).unwrap();
+        let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        )))));
+        let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+        seed(&mut app, "needle first buffer\n");
+        app.execute_command("buffer-new").unwrap();
+        let buffer = app.active().buffer;
+        app.buffers[buffer].apply(&Transaction::insert(0, "needle surviving buffer\n"));
+        app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
+        let id = app.active_terminal().unwrap();
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id,
+            bytes: b"needle retiring terminal\r\n".to_vec(),
+        });
+        app.leave_terminal();
+        let (scanner, mut events) = crate::file_picker::scanner();
+        app.attach_file_scanner(scanner);
+        if contents {
+            app.open_project_grep().unwrap();
+            type_text(&mut app, "needle");
+        } else {
+            app.open_project_picker().unwrap();
+        }
+        settle(&mut app, &mut events);
+        let finder = app.finder.as_mut().unwrap();
+        let survivor = finder
+            .matches
+            .iter()
+            .position(|found| {
+                let FinderMatchSource::Resource(index) = found.source else {
+                    return false;
+                };
+                matches!(finder.items[index].target,
+                ResourceTarget::Buffer(id) | ResourceTarget::BufferLocation { buffer: id, .. }
+                if id == buffer)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing survivor, contents={contents}, items={:?}, matches={:?}",
+                    finder.items, finder.matches
+                )
+            });
+        assert!(
+            survivor > 0,
+            "the claimed survivor must not be the default row"
+        );
+        finder.first();
+        finder.page_down(survivor);
+        let selected = finder.selected_target(app.picker.as_ref().unwrap());
+        assert!(selected.is_some());
+        let cleanup = terminal_cleanup(&app, id);
+        app.apply_terminal_output(TerminalOutput::Exited { id, code: Some(0) });
+        cleanup();
+        settle(&mut app, &mut events);
+        assert_eq!(
+            app.finder
+                .as_ref()
+                .unwrap()
+                .selected_target(app.picker.as_ref().unwrap()),
+            selected
+        );
+        assert!(!app.finder.as_ref().unwrap().items.iter().any(|item| matches!(item.target,
+            ResourceTarget::Terminal(terminal) | ResourceTarget::TerminalLocation { terminal, .. } if terminal == id)));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

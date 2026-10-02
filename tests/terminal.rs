@@ -1592,12 +1592,8 @@ fn exiting_the_last_terminal_reveals_its_buffer_without_quitting_runyte() {
     session.type_text("exit");
     session.press(KeyCode::Enter);
 
-    assert!(session.settle(|app| {
-        app.terminals
-            .get(terminal)
-            .is_some_and(|terminal| terminal.exit_code().is_some())
-    }));
-    assert_eq!(session.app.terminals.len(), 1);
+    assert!(session.settle(|app| { app.terminals.get(terminal).is_none() }));
+    assert_eq!(session.app.terminals.len(), 0);
     assert_eq!(session.app.panes.len(), 1);
     assert_eq!(session.app.active_terminal(), None);
     assert_eq!(session.app.active().buffer, underlying);
@@ -1605,7 +1601,7 @@ fn exiting_the_last_terminal_reveals_its_buffer_without_quitting_runyte() {
 
     session.type_text(" tt");
     assert!(
-        session
+        !session
             .app
             .overlay_snapshots()
             .iter()
@@ -1630,12 +1626,8 @@ fn exiting_a_terminal_preserves_its_pane_when_another_pane_exists() {
     session.type_text("exit");
     session.press(KeyCode::Enter);
 
-    assert!(session.settle(|app| {
-        app.terminals
-            .get(terminal)
-            .is_some_and(|terminal| terminal.exit_code().is_some())
-    }));
-    assert_eq!(session.app.terminals.len(), 1);
+    assert!(session.settle(|app| { app.terminals.get(terminal).is_none() }));
+    assert_eq!(session.app.terminals.len(), 0);
     assert_eq!(session.app.panes.len(), 2);
     assert_eq!(session.app.active_terminal(), None);
     assert!(!session.app.should_quit);
@@ -1954,6 +1946,7 @@ fn force_kill_cancellation_and_navigation_require_fresh_confirmation() {
 #[test]
 fn force_kill_rechecks_the_selected_terminal_after_exit() {
     let mut session = Session::start("/bin/cat");
+    session.app.config.editor.auto_close_terminal = false;
     let id = session.app.active_terminal().unwrap();
     session.colon("terminal /bin/cat");
     let other = session.app.active_terminal().unwrap();
