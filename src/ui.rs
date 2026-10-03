@@ -4117,17 +4117,23 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     } else {
         0
     };
+    let selected = (!report).then(|| picker.selected_display_index()).flatten();
+    // Match a fresh ListState's viewport: the selection enters at the bottom
+    // when it is beyond the first page. Only these rows need styled text.
+    let row_offset = if report {
+        report_offset
+    } else {
+        selected
+            .unwrap_or_default()
+            .saturating_sub(usize::from(list_area.height).saturating_sub(1))
+    };
     let displayed = picker
         .display_rows()
         .into_iter()
-        .skip(report_offset)
-        .take(if report {
-            usize::from(list_area.height).max(1)
-        } else {
-            usize::MAX
-        })
+        .skip(row_offset)
+        .take(usize::from(list_area.height))
         .collect::<Vec<_>>();
-    let selected = (!report).then(|| picker.selected_display_index()).flatten();
+    let selected = selected.map(|selected| selected - row_offset);
     let items = if visible.is_empty() {
         vec![
             ListItem::new(if report {
@@ -4358,8 +4364,13 @@ fn draw_completion(
     let Some(area) = anchored(app, snapshot, editor_area, width, rows as u16 + 2) else {
         return;
     };
+    let selected = state.selected.min(visible.len() - 1);
+    let visible_rows = usize::from(area.height.saturating_sub(2));
+    let row_offset = selected.saturating_sub(visible_rows.saturating_sub(1));
     let items = visible
         .iter()
+        .skip(row_offset)
+        .take(visible_rows)
         .filter_map(|index| state.items.get(*index))
         .map(|item| {
             ListItem::new(Line::from(vec![
@@ -4400,8 +4411,7 @@ fn draw_completion(
                 .bg(app.theme.overlay_background),
         )
         .highlight_style(selection_style(&app.theme));
-    let mut list_state =
-        ListState::default().with_selected(Some(state.selected.min(visible.len() - 1)));
+    let mut list_state = ListState::default().with_selected(Some(selected - row_offset));
     frame.render_widget(Clear, area);
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
@@ -7819,6 +7829,36 @@ mod tests {
             "the category label stays muted on the selected row"
         );
         assert_eq!(buffer[(category, row)].bg, theme.selection);
+    }
+
+    #[test]
+    fn large_list_viewport_preserves_the_selected_row_and_its_following_section() {
+        use crate::picker::{ListPicker, PickerItem};
+        let mut app = App::new(Config::default(), None).unwrap();
+        let mut picker = ListPicker::new(
+            "Large list",
+            (0..1_500)
+                .map(|index| {
+                    PickerItem::new(format!("item-{index:04}"), "detail", index)
+                        .with_section(if index < 750 { "First" } else { "Second" })
+                })
+                .collect(),
+        );
+        picker.selected = 750;
+        app.list = Some(picker);
+        let mut terminal = Terminal::new(TestBackend::new(100, 16)).unwrap();
+        terminal
+            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (column, row) = find_text(buffer, "item-0750").unwrap();
+        assert_eq!(buffer[(column, row)].bg, to_tui_color(app.theme.selection));
+        assert!(find_text(buffer, "Second").is_some());
+        assert!(find_text(buffer, "item-0000").is_none());
+        assert!(
+            find_text(buffer, "item-0751").is_none(),
+            "fresh viewport ends at selection"
+        );
     }
 
     /// The persistent frontend receives the category and command name as one

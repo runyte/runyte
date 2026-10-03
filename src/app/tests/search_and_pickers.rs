@@ -3754,6 +3754,97 @@ fn attached_finder_snapshot_materializes_only_its_selected_window() {
 }
 
 #[test]
+fn large_list_snapshots_preserve_sections_selection_and_report_offsets() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let mut picker = ListPicker::new(
+        "Large list",
+        (0..1_500)
+            .map(|index| {
+                PickerItem::new(format!("row-{index:04}"), "detail", index)
+                    .with_section(if index < 750 { "First" } else { "Second" })
+            })
+            .collect(),
+    );
+    picker.selected = 749;
+    app.list = Some(picker);
+    let capture = |app: &App| {
+        app.overlay_snapshots()
+            .into_iter()
+            .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::ResultList)
+            .unwrap()
+    };
+    let snapshot = capture(&app);
+    assert_eq!(snapshot.rows.len(), 512);
+    assert_eq!(snapshot.total_rows, 1_502);
+    assert_eq!(snapshot.row_offset, 494);
+    assert_eq!(snapshot.selected, Some(256));
+    assert_eq!(snapshot.scroll_anchor, Some(750));
+    assert_eq!(snapshot.omitted_rows, 990);
+    assert_eq!(snapshot.rows[256].label, "row-0749");
+    assert_eq!(snapshot.rows[257].label, "Second");
+    assert!(snapshot.rows[257].heading);
+    assert_eq!(snapshot.rows[258].label, "row-0750");
+
+    app.list = Some(
+        ListPicker::new(
+            "Report",
+            (0..1_500)
+                .map(|index| PickerItem::new(format!("row-{index:04}"), "detail", index))
+                .collect(),
+        )
+        .as_report(),
+    );
+    app.list.as_mut().unwrap().report_offset = 1_490;
+    let snapshot = capture(&app);
+    assert_eq!(snapshot.rows.len(), 10);
+    assert_eq!(snapshot.total_rows, 1_500);
+    assert_eq!(snapshot.row_offset, 1_490);
+    assert_eq!(snapshot.selected, None);
+    assert_eq!(snapshot.scroll_anchor, Some(1_490));
+    assert_eq!(snapshot.omitted_rows, 1_490);
+    assert_eq!(snapshot.rows[0].label, "row-1490");
+}
+
+#[test]
+fn large_completion_snapshot_keeps_sorted_selection_in_the_bounded_window() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.completion = Some(CompletionState {
+        items: (0..1_500)
+            .rev()
+            .map(|index| Completion {
+                label: format!("item-{index:04}"),
+                filter_text: None,
+                sort_text: None,
+                detail: "detail".into(),
+                kind: "text",
+                insert: "replacement".into(),
+                edit: None,
+                additional: Vec::new(),
+            })
+            .collect(),
+        selected: 1_499,
+        buffer: 0,
+        anchor: 0,
+        filter: String::new(),
+        source: CompletionSource::Language,
+        explicit_session: None,
+    });
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::Completion)
+        .unwrap();
+    assert_eq!(snapshot.rows.len(), 512);
+    assert_eq!(snapshot.total_rows, 1_500);
+    assert_eq!(snapshot.row_offset, 988);
+    assert_eq!(snapshot.selected, Some(511));
+    assert_eq!(snapshot.scroll_anchor, Some(1_499));
+    assert_eq!(snapshot.omitted_rows, 988);
+    assert_eq!(snapshot.rows[0].label, "item-0988");
+    assert_eq!(snapshot.rows[511].label, "item-1499");
+}
+
+#[test]
 fn fuzzy_grep_searches_contents_at_both_roots_and_enter_jumps_to_the_match() {
     let root = temporary("fuzzy-grep");
     let nested = root.join("nested");
