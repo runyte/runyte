@@ -1,3 +1,28 @@
+---
+title: "Unsaved buffer changes can hide workspace search results"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: ec5150a
+---
+
+## Resolution
+
+Commit `ec5150a` (`fix(search): exclude stale disk matches before limiting results`)
+builds the set of captured open-buffer paths before disk traversal and excludes
+those paths from disk matching. `perform` previously removed their stale disk
+matches only after traversal could already exhaust its result budget, losing
+matches from unopened files that traversal never reached. Captured ropes now
+supply those files' only matches, retaining the existing result limit, sorting,
+and cancellation semantics.
+
+`stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search` and
+`workspace_search_combines_live_and_unopened_matches_without_duplicates` in
+`src/workspace_search/tests/mod.rs` cover the 10,000-stale-match reproduction
+and correct combined live/disk positions. All six workspace-search tests pass.
+
+## Report
+
 Workspace search can omit valid results when an open file has unsaved changes
 that remove matches. The disk traversal applies the 10,000-result cap before
 the worker replaces matches from open files with their captured buffer text.
