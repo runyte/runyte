@@ -17,10 +17,24 @@ aborts all owned tasks, including the Unix stderr drain. Explicit shutdown
 keeps the existing bounded graceful child-exit interval before destruction;
 Windows native process ownership is unchanged.
 
+Final integration exposed a shutdown regression in generic stream connections:
+`stop` returned immediately without an owned child, so destruction aborted the
+writer before it sent a queued `exit` notification. The follow-up retains the
+writer's join handle and drains the closed outgoing queue before cancellation.
+Writer draining and child exit share the existing absolute 500 ms deadline;
+backpressure cannot extend shutdown indefinitely, and cancellation of the stop
+future still runs the connection's task-aborting destructor. Windows native
+ownership retains the same abort handles.
+
 `dropping_connection_cancels_idle_reader_and_blocked_writer` and
 `stopping_connection_cancels_idle_reader_and_blocked_writer` in
 `src/lsp/transport.rs` exercise actual stream closure with idle and blocked
-peers. Both failed before the repair; all ten transport tests pass afterward.
+peers. Both failed before the original repair. The follow-up's
+`stopping_connection_flushes_queued_messages_before_cancelling_tasks` in the
+same file queues complete shutdown/exit frames before the writer can first run,
+checks their order and stream closure, and confirms cancellation of the idle
+reader. `shutdown_stops_the_manager` in `tests/lsp_client.rs` covers the complete
+manager shutdown handshake.
 
 ## Report
 

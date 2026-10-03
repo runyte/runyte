@@ -66,6 +66,7 @@ pub struct Connection {
     #[cfg(windows)]
     native: Option<windows::Native>,
     tasks: Vec<tokio::task::AbortHandle>,
+    writer: tokio::task::JoinHandle<()>,
 }
 
 impl Connection {
@@ -84,17 +85,27 @@ impl Connection {
             .unwrap_or_default()
     }
 
-    /// Drops the write half and kills the child if it does not leave on its
+    async fn drain_writer(&mut self) -> tokio::time::Instant {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+        let (closed, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.outgoing, closed));
+        // Closing the queue lets the writer flush the final `exit` notification.
+        // Retain Drop's cancellation route if this wait is cancelled or times
+        // out, and share this deadline with the remaining child-exit grace.
+        let _ = tokio::time::timeout_at(deadline, &mut self.writer).await;
+        deadline
+    }
+
+    /// Drains the write half and kills the child if it does not leave on its
     /// own. Killing is deliberate: a language server that ignores `exit` must
     /// not outlive the editor.
     #[cfg(not(windows))]
     pub async fn stop(mut self) {
-        let (closed, _) = mpsc::channel(1);
-        drop(std::mem::replace(&mut self.outgoing, closed));
+        let deadline = self.drain_writer().await;
         let Some(mut child) = self.child.take() else {
             return;
         };
-        if tokio::time::timeout(std::time::Duration::from_millis(500), child.wait())
+        if tokio::time::timeout_at(deadline, child.wait())
             .await
             .is_ok()
         {
@@ -106,10 +117,8 @@ impl Connection {
 
     #[cfg(windows)]
     pub async fn stop(mut self) {
-        let (closed, _) = mpsc::channel(1);
-        drop(std::mem::replace(&mut self.outgoing, closed));
+        let deadline = self.drain_writer().await;
         if let Some(native) = &self.native {
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
             while !native.finished() && tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -159,6 +168,7 @@ where
         #[cfg(windows)]
         native: None,
         tasks: vec![reader_task.abort_handle(), writer_task.abort_handle()],
+        writer: writer_task,
     }
 }
 
@@ -481,6 +491,37 @@ mod tests {
         drop(server_writer);
     }
 
+    #[tokio::test]
+    async fn stopping_connection_flushes_queued_messages_before_cancelling_tasks() {
+        let (client_reader, mut server_writer) = tokio::io::duplex(1024);
+        let (server_reader, client_writer) = tokio::io::duplex(1024);
+        let (inbox, mut events) = mpsc::channel(4);
+        let connection = connect("rust".to_owned(), 7, client_reader, client_writer, inbox);
+        let messages = [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "shutdown"}),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ];
+        // No task has yielded on this current-thread runtime. stop must let
+        // the writer drain both queued frames before Drop cancels ownership.
+        for message in &messages {
+            assert!(connection.send(message.clone()));
+        }
+        connection.stop().await;
+
+        let mut reader = tokio::io::BufReader::new(server_reader);
+        for message in messages {
+            assert_eq!(read_framed(&mut reader).await, Some(message));
+        }
+        assert_eq!(read_framed(&mut reader).await, None);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), events.recv())
+                .await
+                .expect("idle reader retained its inbox sender after graceful stop")
+                .is_none()
+        );
+        assert!(server_writer.write_all(b"x").await.is_err());
+    }
+
     async fn assert_connection_teardown_closes_streams(stop: bool) {
         let (client_reader, mut server_writer) = tokio::io::duplex(16);
         let (mut server_reader, client_writer) = tokio::io::duplex(16);
@@ -493,7 +534,9 @@ mod tests {
         server_reader.read_exact(&mut first).await.unwrap();
 
         if stop {
-            connection.stop().await;
+            tokio::time::timeout(Duration::from_secs(1), connection.stop())
+                .await
+                .expect("backpressured writer prevented bounded stop");
         } else {
             drop(connection);
         }
