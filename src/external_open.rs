@@ -904,6 +904,23 @@ mod tests {
             "printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\" > \"$0.args\"\nwhile [ ! -f \"$2\" ]; do sleep 0.01; done\n",
         );
         let active = Arc::new(AtomicUsize::new(0));
+        struct ReleaseOnDrop {
+            path: PathBuf,
+            active: Arc<AtomicUsize>,
+        }
+        impl Drop for ReleaseOnDrop {
+            fn drop(&mut self) {
+                let _ = fs::write(&self.path, []);
+                let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                while self.active.load(Ordering::Acquire) != 0 && Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
+        let _release_on_drop = ReleaseOnDrop {
+            path: release.clone(),
+            active: active.clone(),
+        };
         let mut slots = Vec::new();
         while let Ok(slot) = system::Slot::reserve(active.clone()) {
             slots.push(slot);
