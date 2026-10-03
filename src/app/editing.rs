@@ -3730,10 +3730,12 @@ impl App {
                     // and drops the later one; every original selection must
                     // then point at that retained replacement, not at the
                     // mapped end of it.
-                    transaction
-                        .changes()
-                        .iter()
-                        .find(|change| {
+                    let changes = transaction.changes();
+                    let index =
+                        changes.partition_point(|change| change.to <= from && change.from < from);
+                    changes
+                        .get(index)
+                        .filter(|change| {
                             (change.from < change.to && change.from <= from && from < change.to)
                                 || (change.from == change.to && change.from == from)
                         })
