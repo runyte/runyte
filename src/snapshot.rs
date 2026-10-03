@@ -1660,6 +1660,7 @@ impl App {
         // full `line_string` allocation here made merely paging onto such a
         // row block the input loop.
         let line_len = buffer.line_len(context.row);
+        let mut drawn_end = start_col.min(line_len);
         let end_col = segment.map_or_else(
             || {
                 visible_character_end(
@@ -1724,6 +1725,7 @@ impl App {
                     kind: TextRunKind::JumpLabel(part),
                 });
                 visual_col += 1;
+                drawn_end = col + 1;
                 if visual_col >= visible_end {
                     break;
                 }
@@ -1781,6 +1783,7 @@ impl App {
                 current.push(if whitespace { '·' } else { character });
                 visual_col += width;
             }
+            drawn_end = col + 1;
         }
         push_text_run(
             &mut runs,
@@ -1802,15 +1805,16 @@ impl App {
             .segment
             .is_none_or(|segment| segment.end == buffer.line_len(context.row));
         let has_terminator = buffer.text().line(context.row).len_chars() > line_len;
-        if self.config.editor.render_whitespace
+        let ending_marker = self.config.editor.render_whitespace
             && final_segment
+            && drawn_end == line_len
             && has_terminator
             && runs
                 .iter()
                 .map(|run| display_cells(&run.text))
                 .sum::<usize>()
-                < context.text_width
-        {
+                < context.text_width;
+        if ending_marker {
             let end = row_start + line_len;
             runs.push(TextRun {
                 text: "¬".to_owned(),
@@ -1828,6 +1832,8 @@ impl App {
         // A caret parked past the last character of a row still needs a cell,
         // but only when that cell belongs to this segment and fits on screen.
         if active
+            && !ending_marker
+            && drawn_end == line_len
             && context
                 .segment
                 .is_none_or(|segment| segment.end == buffer.line_len(context.row))
@@ -2390,6 +2396,61 @@ mod tests {
         let snapshot = prepared_snapshot(&mut app, 80, 24);
         assert_eq!(snapshot.status.interaction_line, "search: needle");
         assert_eq!(snapshot.status.prompt_cursor_column, Some(14));
+    }
+
+    #[test]
+    fn clipped_rows_do_not_invent_line_endings_or_duplicate_end_carets() {
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        config.editor.render_whitespace = true;
+        let mut app = App::new(config, None).unwrap();
+        let width = prepared_snapshot(&mut app, 10, 8)
+            .pane(0)
+            .unwrap()
+            .text_width;
+        for tail in ["界", "\t"] {
+            app.buffers[0] = Buffer::scratch();
+            app.buffers[0].apply(&Transaction::insert(
+                0,
+                format!("{}{tail}\n", "a".repeat(width - 1)),
+            ));
+            let snapshot = prepared_snapshot(&mut app, 10, 8);
+            let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+                panic!("text row")
+            };
+            assert!(
+                !row.runs.iter().any(|run| run.text.contains('¬')),
+                "offscreen ending after {tail:?}: {:?}",
+                row.runs
+            );
+        }
+
+        app.buffers[0] = Buffer::scratch();
+        app.buffers[0].apply(&Transaction::insert(0, "a\n"));
+        app.panes.get_mut(&0).unwrap().selection = Selection::point(1);
+        let snapshot = prepared_snapshot(&mut app, 10, 8);
+        let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+            panic!("text row")
+        };
+        let caret_runs: Vec<_> = row
+            .runs
+            .iter()
+            .filter(|run| {
+                matches!(
+                    run.kind,
+                    TextRunKind::Text {
+                        role: TextRole::Caret,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(
+            caret_runs.len(),
+            1,
+            "one cell represents the line-end caret"
+        );
+        assert_eq!(caret_runs[0].text, "¬");
     }
 
     #[test]
