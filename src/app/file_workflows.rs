@@ -3,6 +3,9 @@
 //! File, directory-buffer, pane, and side-by-side comparison workflows.
 
 #[cfg(all(test, unix))]
+#[path = "tests/host_directory_identity.rs"]
+mod host_directory_identity;
+#[cfg(all(test, unix))]
 #[path = "tests/host_open_atomicity.rs"]
 mod host_open_atomicity;
 
@@ -851,10 +854,19 @@ impl App {
     /// directory, having asked whether to discard them; the navigation
     /// resumes from `handle_directory_reload_confirmation` if it is confirmed.
     fn retarget_pane_directory(&mut self, path: &Path) -> Result<Option<usize>> {
+        let directory = self.pane_directory_buffer(path)?;
+        self.enter_pane_directory(path, directory)
+    }
+
+    fn enter_pane_directory(
+        &mut self,
+        path: &Path,
+        directory: PaneDirectory,
+    ) -> Result<Option<usize>> {
         // Every listing this reads is read before the pane commits to it, so a
         // directory that cannot be listed leaves the pane pointing where it
         // already was and adds no buffer to the editor.
-        let buffer_id = match self.pane_directory_buffer(path)? {
+        let buffer_id = match directory {
             PaneDirectory::Existing(buffer_id) => buffer_id,
             PaneDirectory::New(mut buffer) => {
                 // The re-read the entering branch below would have done, taken
@@ -1291,7 +1303,8 @@ impl App {
         before_publish();
         let activated_directory = if activate && first_is_directory {
             let path = &paths[0];
-            if let Some(buffer_id) = self.reusable_pane_directory_buffer() {
+            let reusable = self.reusable_pane_directory_buffer();
+            if let Some(buffer_id) = reusable {
                 ensure!(
                     self.buffers[buffer_id].path.as_deref() == Some(path)
                         || !self.buffers[buffer_id].dirty
@@ -1308,9 +1321,45 @@ impl App {
             // Preserve the prepared directory intent. Dispatching through
             // open_file again could instead publish an ordinary file if the
             // directory was replaced after preparation.
+            let requested_elsewhere = reusable.is_some_and(|buffer| {
+                prepared
+                    .iter()
+                    .zip(&identities)
+                    .any(|(prepared, identity)| {
+                        matches!(prepared, Prepared::Live(index) if *index == buffer)
+                            && identity != &identities[0]
+                    })
+            });
+            // A request owns every buffer identity it prepared. Reusing an
+            // explorer requested for another directory would silently change
+            // that later result, so this activation needs another explorer.
+            // Prefer its existing unclaimed target to avoid duplicate
+            // listings and extra reads when alternating requested directories.
+            let directory = if requested_elsewhere {
+                let available_target = match prepared.first() {
+                    Some(Prepared::Live(index))
+                        if !self.claimed_by_another_pane(*index)
+                            && (self.buffers[*index].path.as_deref() == Some(path)
+                                || !self.buffers[*index].dirty
+                                || self.contains_only_pending_cut(*index)) =>
+                    {
+                        Some(*index)
+                    }
+                    _ => None,
+                };
+                match available_target {
+                    Some(index) => PaneDirectory::Existing(index),
+                    None => PaneDirectory::New(Box::new(Buffer::open_directory(
+                        path,
+                        self.listing_view(),
+                    )?)),
+                }
+            } else {
+                self.pane_directory_buffer(path)?
+            };
             let was_showing = self.active().buffer;
             self.remember_active_directory_view();
-            let buffer_id = self.retarget_pane_directory(path)?.ok_or_else(|| {
+            let buffer_id = self.enter_pane_directory(path, directory)?.ok_or_else(|| {
                 anyhow::anyhow!("directory activation did not enter {}", path.display())
             })?;
             self.activate_opened_path(buffer_id, path, was_showing);
@@ -1360,9 +1409,9 @@ impl App {
             })
             .collect::<Vec<_>>();
         if let Some(buffer_id) = activated_directory {
-            let first = &paths[0];
-            for (path, opened) in paths.iter().zip(&mut opened) {
-                if path == first {
+            let first = &identities[0];
+            for (identity, opened) in identities.iter().zip(&mut opened) {
+                if identity == first {
                     *opened = buffer_id;
                 }
             }
