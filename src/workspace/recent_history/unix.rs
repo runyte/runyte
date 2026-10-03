@@ -116,7 +116,7 @@ pub(super) fn prepare_parent(parent: &Path) -> Result<()> {
 }
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<u8>> {
-    let file = fs::File::open(path)?;
+    let file = crate::path_safety::open_regular_file(path, false)?;
     let mut bytes = Vec::new();
     file.take(MAX_RECENTS_BYTES.saturating_add(1) as u64)
         .read_to_end(&mut bytes)?;
