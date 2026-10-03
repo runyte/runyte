@@ -829,6 +829,9 @@ impl App {
             },
             refresh,
         });
+        if let Some(id) = self.merge_ui.commit_request {
+            self.note_commit_message_request(id, buffer);
+        }
         true
     }
 

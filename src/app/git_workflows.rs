@@ -35,6 +35,14 @@ struct FilesystemReconciliation {
     spec: RefreshSpec,
 }
 
+struct CommitMessageRequest {
+    buffer: usize,
+    revision: u64,
+    pane: usize,
+    binding: u64,
+    origin: Option<usize>,
+}
+
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
@@ -90,6 +98,8 @@ pub(super) struct GitWorkflowState {
     /// message. Commit availability comes from the refreshed index, never the
     /// status cache that happened to exist when the command was entered.
     commit_open_request: Option<GitRequestId>,
+    /// Only this unchanged message may be retired by the matching commit.
+    commit_messages: HashMap<GitRequestId, CommitMessageRequest>,
     /// Which file each row of the changed-file list stands for, indexed by
     /// document row. Replaced whenever the list's text is.
     status_entries: Vec<Option<crate::git::StatusEntry>>,
@@ -150,6 +160,7 @@ impl Default for GitWorkflowState {
             index_buffer: None,
             index_open_requests: HashSet::new(),
             commit_open_request: None,
+            commit_messages: HashMap::new(),
             status_entries: Vec::new(),
             status_counts: Vec::new(),
             branch_rows: Vec::new(),
@@ -836,6 +847,7 @@ impl App {
                         );
                     }
                     Err(error) => {
+                        self.git_state.commit_messages.remove(&id);
                         self.network_request_failed(id);
                         self.merge_request_failed(id);
                         // The one boundary that has the operation, the request
@@ -1347,8 +1359,7 @@ impl App {
         action: Option<u64>,
     ) {
         let (request, state) = completion;
-        #[cfg(not(unix))]
-        let _ = request;
+        let commit_message = request.and_then(|id| self.git_state.commit_messages.remove(&id));
         let created_worktree = match &mutation {
             GitMutation::CreateWorktree(request) => Some(request.destination.clone()),
             _ => None,
@@ -1420,24 +1431,32 @@ impl App {
         if matches!(mutation, GitMutation::Discard(_)) {
             self.reload_git_paths(&applied_paths);
         }
+        let newer_message_edits = failure.is_none()
+            && commit_message.as_ref().is_some_and(|message| {
+                !self.closed_buffers.contains(&message.buffer)
+                    && self.buffers[message.buffer].revision() != message.revision
+            });
+        if matches!(mutation, GitMutation::CommitMerge { .. }) && failure.is_none() {
+            self.merge_ui.commit = None;
+            self.merge_ui.commit_buffer = None;
+        }
         if matches!(
             mutation,
             GitMutation::Commit { .. } | GitMutation::CommitMerge { .. }
         ) && failure.is_none()
-            && let Some(buffer) = if matches!(mutation, GitMutation::CommitMerge { .. }) {
-                self.merge_ui.commit_buffer
-            } else {
-                self.buffers.iter().enumerate().find_map(|(index, buffer)| {
-                    (!self.closed_buffers.contains(&index) && buffer.is_commit_message())
-                        .then_some(index)
-                })
-            }
+            && let Some(message) = commit_message
+            && !self.closed_buffers.contains(&message.buffer)
+            && self.buffers[message.buffer].revision() == message.revision
         {
-            self.merge_ui.commit = None;
-            self.merge_ui.commit_buffer = None;
-            let _ = self.buffers[buffer].discard_changes_to("");
-            self.close_buffer(buffer);
-            self.return_from_commit();
+            let return_to_origin = self.active_pane == message.pane
+                && self.active().buffer == message.buffer
+                && self.active().binding_generation == message.binding;
+            let _ = self.buffers[message.buffer].discard_changes_to("");
+            self.close_buffer(message.buffer);
+            if return_to_origin {
+                self.commit_origin = message.origin;
+                self.return_from_commit();
+            }
         }
         let uncertain = state == GitServiceState::CompletedWithUncertainState;
         // A pull that found commits on both sides is an offer rather than a
@@ -1548,7 +1567,7 @@ impl App {
         let producer_summary = summary
             .map(|summary| summary.trim().to_owned())
             .filter(|summary| !summary.is_empty());
-        let message = branch_cascade_summary
+        let mut message = branch_cascade_summary
             .or_else(|| {
                 producer_summary
                     .as_deref()
@@ -1605,6 +1624,9 @@ impl App {
                 }
                 GitMutation::PartialStage(_) => "hunk staged".to_owned(),
             });
+        if newer_message_edits {
+            message.push_str("; newer edits were kept in the commit-message buffer");
+        }
         let updated_echo = self.update_action_feedback(action, &message);
         if let Some(summary) = producer_summary
             && (!updated_echo || summary.lines().count() > 1)
@@ -6296,11 +6318,13 @@ impl App {
         }
         if self.ports.git_service.is_some() {
             let refresh = self.git_refresh_spec(&repository);
-            let _ = self.request_git(GitOperation::Mutate {
+            if let Some(id) = self.request_git(GitOperation::Mutate {
                 repository,
                 mutation: GitMutation::Commit { message },
                 refresh,
-            });
+            }) {
+                self.note_commit_message_request(id, buffer_id);
+            }
             return;
         }
         let Some(provider) = self.ports.git.as_deref() else {
@@ -6336,6 +6360,19 @@ impl App {
                 .unwrap_or("committed")
                 .trim()
                 .to_owned(),
+        );
+    }
+
+    pub(super) fn note_commit_message_request(&mut self, id: GitRequestId, buffer: usize) {
+        self.git_state.commit_messages.insert(
+            id,
+            CommitMessageRequest {
+                buffer,
+                revision: self.buffers[buffer].revision(),
+                pane: self.active_pane,
+                binding: self.active().binding_generation,
+                origin: self.commit_origin,
+            },
         );
     }
 

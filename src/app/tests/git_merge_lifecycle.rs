@@ -103,12 +103,12 @@ fn merge_lifecycle_external_clean_and_empty_tree_merges_require_review_and_expli
             .provider()
             .commit_merge(&fixture.repository(), plan, message)
             .unwrap();
-        app.apply_git_mutation_result(
+        app.apply_git_mutation_result_for_request(
             mutation,
             Vec::new(),
             Some(summary),
             None,
-            GitServiceState::Completed,
+            (app.merge_ui.commit_request, GitServiceState::Completed),
             None,
         );
         assert!(app.closed_buffers.contains(&buffer));
@@ -149,12 +149,12 @@ fn merge_lifecycle_only_its_owned_message_can_save_and_success_closes_that_messa
         .provider()
         .commit_merge(&fixture.repository(), plan, message)
         .unwrap();
-    app.apply_git_mutation_result(
+    app.apply_git_mutation_result_for_request(
         mutation,
         Vec::new(),
         Some(summary),
         None,
-        GitServiceState::Completed,
+        (app.merge_ui.commit_request, GitServiceState::Completed),
         None,
     );
     assert!(app.closed_buffers.contains(&buffer));
@@ -215,12 +215,12 @@ fn merge_lifecycle_failed_hook_retains_exact_message_and_review_for_successful_r
         .provider()
         .commit_merge(&fixture.repository(), plan, message)
         .unwrap_err();
-    app.apply_git_mutation_result(
+    app.apply_git_mutation_result_for_request(
         mutation,
         Vec::new(),
         None,
         Some(error),
-        GitServiceState::Completed,
+        (app.merge_ui.commit_request, GitServiceState::Completed),
         None,
     );
     assert_eq!(app.merge_ui.commit_buffer, Some(buffer));
@@ -245,12 +245,12 @@ fn merge_lifecycle_failed_hook_retains_exact_message_and_review_for_successful_r
         .provider()
         .commit_merge(&fixture.repository(), plan, message)
         .unwrap();
-    app.apply_git_mutation_result(
+    app.apply_git_mutation_result_for_request(
         mutation,
         Vec::new(),
         Some(summary),
         None,
-        GitServiceState::Completed,
+        (app.merge_ui.commit_request, GitServiceState::Completed),
         None,
     );
     assert!(app.closed_buffers.contains(&buffer));
