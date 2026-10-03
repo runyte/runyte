@@ -1151,7 +1151,7 @@ impl App {
                 .saturating_sub(1)
             });
             let last_row = self.buffers[buffer_id].last_row();
-            let pane = self.active_mut();
+            let pane = self.panes.get_mut(&pane_id).unwrap();
             if direction < 0 {
                 if segment > 0 {
                     pane.scroll_wrap -= 1;
