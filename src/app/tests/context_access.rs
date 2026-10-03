@@ -316,6 +316,42 @@ fn arrows_move_between_the_choices_without_paging() {
 }
 
 #[test]
+fn mcp_permission_shortcuts_highlight_only_the_action_keys() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.context_ui.surface = Some(Surface::new(
+        Kind::Grant {
+            identity: "agent".into(),
+            scopes: BTreeSet::new(),
+            remember: false,
+        },
+        "MCP permissions".into(),
+        vec![],
+        "",
+        app.plugins.attachment_generation,
+    ));
+    for checked in [false, true] {
+        let overlay = app.context_overlay().unwrap();
+        let row = overlay
+            .rows
+            .iter()
+            .find(|row| row.label.contains("Remember for this workspace"))
+            .unwrap();
+        assert!(
+            row.label
+                .starts_with(if checked { "r [x]" } else { "r [ ]" })
+        );
+        let highlighted = row
+            .label
+            .chars()
+            .enumerate()
+            .filter_map(|(index, character)| row.emphasis.contains(&index).then_some(character))
+            .collect::<String>();
+        assert_eq!(highlighted, "rxn");
+        press(&mut app, KeyCode::Char('r'));
+    }
+}
+
+#[test]
 fn mcp_scope_toggles_keep_prerequisites_and_cycle_identity_without_granting() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.context_ui.identities = vec!["agent".into(), "codex".into()];

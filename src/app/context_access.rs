@@ -472,7 +472,7 @@ impl App {
                     if *remember { "x" } else { " " }
                 ),
                 Vec::new(),
-                vec![0, 16],
+                vec![0, 35, 45],
             ));
             rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         }
