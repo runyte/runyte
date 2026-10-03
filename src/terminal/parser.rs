@@ -369,12 +369,9 @@ impl Parser {
     }
 
     fn csi_ignore(&mut self, byte: u8) {
-        match byte {
-            0x40..=0x7e => {
-                self.reset_sequence();
-                self.state = State::Ground;
-            }
-            _ => {}
+        if let 0x40..=0x7e = byte {
+            self.reset_sequence();
+            self.state = State::Ground;
         }
     }
 
