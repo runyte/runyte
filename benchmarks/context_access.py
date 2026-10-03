@@ -54,6 +54,7 @@ def seed_grant(storage, project):
 
 class Session(plugins.Session):
     def __init__(self, binary, root, enabled):
+        plugins.require_cleanup_support()
         self.binary, self.root = binary, root
         self.env = plugins.environment(root)
         self.env.pop('RUNYTE_INPUT_TRACE', None)
@@ -287,6 +288,10 @@ def main():
     parser.add_argument('--latency-count', type=int, default=40)
     parser.add_argument('--json', type=Path, required=True)
     options = parser.parse_args()
+    try:
+        plugins.require_cleanup_support()
+    except RuntimeError as error:
+        parser.error(str(error))
     if options.runs < 3 or not 10 <= options.window <= 30 or not 10 <= options.latency_count <= 80:
         parser.error('Require at least 3 runs, 10..30-second windows, and 10..80 latency samples')
     if not Path('/proc').is_dir():

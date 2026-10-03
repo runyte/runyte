@@ -173,6 +173,15 @@ def process_children(pid):
     return children
 
 
+def require_cleanup_support():
+    missing = [name for module, name in ((os, 'pidfd_open'), (signal, 'pidfd_send_signal'))
+               if not callable(getattr(module, name, None))]
+    if missing:
+        raise RuntimeError('Benchmark cleanup requires a Linux Python build exposing '
+                           'os.pidfd_open and signal.pidfd_send_signal; unavailable: '
+                           + ', '.join(missing))
+
+
 class OwnedProcesses:
     """Pin verified process identities before cleanup; never signal numeric PIDs."""
     def __init__(self):
@@ -239,6 +248,7 @@ class OwnedProcesses:
 
 class Session:
     def __init__(self, binary, root, fixture, enabled=False, persistent=False, quiet=False, uppercase=False):
+        require_cleanup_support()
         self.binary, self.root = binary, root
         self.env = environment(root)
         self.project = root / 'project'
@@ -653,6 +663,10 @@ def main():
     parser.add_argument('--fixtures', default='short.txt,medium.lua,long.lua')
     parser.add_argument('--json', type=Path, required=True)
     args = parser.parse_args()
+    try:
+        require_cleanup_support()
+    except RuntimeError as error:
+        parser.error(str(error))
     if args.runs < 10 or args.idle_runs < 3 or not math.isfinite(args.window) or args.window < 10 or not 20 <= args.latency_samples <= 60:
         parser.error('Require >=10 startups, >=3 idle windows of >=10 seconds, and 20–60 latency samples')
     before, after = args.before.resolve(), args.after.resolve()
