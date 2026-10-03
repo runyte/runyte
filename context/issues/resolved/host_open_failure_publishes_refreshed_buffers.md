@@ -1,3 +1,21 @@
+---
+title: "Host open errors can publish partial buffer changes"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 214f74a
+---
+
+## Resolution
+
+Commit `214f74a` (`fix(workspace): activate prepared host opens without fallible reopening`).
+
+Host opens previously called the generic path opener after publishing staged and refreshed buffers. A changed path could then reject activation, or reinterpret a prepared directory as a file. The request now rejects known activation refusal before preparation, activates captured file buffer identities through the shared infallible presentation helper, and preserves directory intent through the existing read-before-mutation directory operation. Native opening retains the same activation side effects.
+
+Tests: `host_open_activates_prepared_buffers_without_reopening_changed_paths` and `directory_host_open_refuses_replacement_before_publishing_any_buffer` in `src/app/tests/host_open_atomicity.rs` deterministically replace paths at the preparation boundary. The existing navigation/file tests and protocol atomicity regression also pass.
+
+## Report
+
 An activated host open can fail after changing live buffers. In
 `App::host_open_files_with_refresh`, refreshed buffers and newly staged buffers
 are published before `open_file` activates the first requested path. That call
