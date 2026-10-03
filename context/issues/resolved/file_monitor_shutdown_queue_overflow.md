@@ -1,3 +1,28 @@
+---
+title: "File monitor can retain its worker after shutdown"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 9671138
+---
+
+## Resolution
+
+Commit `9671138` (`fix(files): retain monitor shutdown across queue overflow`)
+adds a shared atomic stop flag to `FileMonitorHandle` and its worker.
+Previously `drop` depended on inserting a stop message into a bounded queue,
+while the worker's own watcher retained a sender that prevented disconnection.
+Dropping the handle now publishes termination independently of queue capacity;
+the message remains a nonblocking wakeup for an idle worker. The periodic
+reconciliation schedule and observation behavior are unchanged.
+
+`dropping_monitor_stops_worker_when_command_queue_is_full` in
+`src/file_monitor.rs` fills the command channel, retains the callback sender
+and event receiver, and verifies bounded worker completion. All seven tests in
+that module pass.
+
+## Report
+
 # File monitor can retain its worker after shutdown
 
 `FileMonitorHandle::drop` sends `WorkerMessage::Stop` with `try_send` and
