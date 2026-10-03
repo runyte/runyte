@@ -74,6 +74,33 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-10-03 — exp reliability and performance review
+
+Measured natively on `x86_64-unknown-linux-gnu` at implementation commit
+`e97ee3d`, with Rust 1.97.1 and cargo-llvm-cov 0.9.0, using the canonical
+`cargo llvm-cov --locked --workspace` command and unrestricted local
+socket/process access for integration fixtures.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 145,756 | 158,528 | 91.94% |
+| Functions | 13,137 | 14,294 | 91.91% |
+| Regions | 222,532 | 243,242 | 91.49% |
+
+The ordinary and instrumented suites each passed 4,538 tests with 54 ignored.
+Formatting and all-target Clippy with warnings denied passed. The branch review
+added behavior coverage for resource teardown, non-regular file boundaries,
+editor and host state consistency, bounded search and presentation, terminal
+emulation, and the repaired performance paths. The final run includes bounded
+LSP shutdown-frame draining before cancellation; the integration failure that
+exposed that follow-up was repaired without excluding its test.
+
+The enforced floor remains 89%; the CI threshold and README badge are unchanged.
+Native macOS and Windows validation was not performed locally and remains
+subject to the existing CI gates. The branch review and its issue-by-issue
+implementation index are in
+[`exp_reliability_review_2026_10_03.md`](../reviews/exp_reliability_review_2026_10_03.md).
+
 ## 2026-09-30 — reviewed Git workflows and commit network
 
 Measured natively on `x86_64-unknown-linux-gnu` at implementation commit

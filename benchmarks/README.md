@@ -70,6 +70,20 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   hashes, compiler and platform. These adversarial rows expose algorithmic
   scaling; they do not represent ordinary navigation or rendering latency.
 
+- **`transaction_mapping.py`** — actual transaction offset mapping at 2,000,
+  10,000 and 20,000 cursors. Run
+  `python3 benchmarks/transaction_mapping.py --runs 5 --json /tmp/transaction-mapping.json`
+  after `cargo build --locked --lib`. Each cursor checks both offset
+  associations; transaction construction is outside the timed interval.
+- **`scoped_search.py`** — actual scoped-search functions at 2,000, 10,000 and
+  20,000 selection regions, with two matches per region. Run
+  `python3 benchmarks/scoped_search.py --runs 5 --json /tmp/scoped-search.json`
+  after `cargo build --locked --lib`. Both versions must return identical
+  ranges. These two harnesses compile the measured source with `rustc -O`, use
+  existing debug dependency artifacts, discard one warm-up and alternate
+  measurement order. JSON retains samples, source hashes, compiler and platform.
+  They isolate mapping and search costs rather than end-to-end input latency.
+
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
 
