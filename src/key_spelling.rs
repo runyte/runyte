@@ -75,17 +75,19 @@ pub(crate) fn resolve_with_map(
     let mut offsets = vec![0; template.chars().count() + 1];
     let mut at = 0;
     let mut source_character = 0;
+    let mut output_character = 0;
     while at < template.len() {
-        offsets[source_character] = text.chars().count();
+        offsets[source_character] = output_character;
         let rest = &template[at..];
         if ["{{key:", "{{binding:", "{{prefix:", "{{literal-key:"]
             .iter()
             .any(|prefix| rest.starts_with(prefix))
         {
             text.push('{');
+            output_character += 1;
             source_character += 2;
-            offsets[source_character - 1] = text.chars().count() - 1;
-            offsets[source_character] = text.chars().count();
+            offsets[source_character - 1] = output_character - 1;
+            offsets[source_character] = output_character;
             at += 2;
             continue;
         }
@@ -105,15 +107,16 @@ pub(crate) fn resolve_with_map(
                 "literal-key:" => KeyStroke::parse(body)?.label(),
                 _ => unreachable!(),
             };
-            let start = text.chars().count();
+            let start = output_character;
             text.push_str(&spelling);
-            substitutions.push(start..start + spelling.chars().count());
+            output_character += spelling.chars().count();
+            substitutions.push(start..output_character);
             let consumed = rest[..=close].chars().count();
             for item in &mut offsets[source_character..source_character + consumed] {
                 *item = start;
             }
             source_character += consumed;
-            offsets[source_character] = text.chars().count();
+            offsets[source_character] = output_character;
             at += close + 1;
             continue;
         }
@@ -121,7 +124,8 @@ pub(crate) fn resolve_with_map(
         text.push(character);
         at += character.len_utf8();
         source_character += 1;
-        offsets[source_character] = text.chars().count();
+        output_character += 1;
+        offsets[source_character] = output_character;
     }
     Ok((
         ResolvedText {
@@ -322,6 +326,34 @@ mod tests {
     use serde_yaml::Value;
 
     use super::*;
+
+    #[test]
+    fn unicode_marker_offsets_and_escaped_boundaries_stay_exact() {
+        let marker = "{literal-key:界}";
+        let template = format!("λ{marker}e\u{301}{{{{key:nope}}");
+        let (resolved, map) = resolve_with_map(&template, default_keymap()).unwrap();
+        assert_eq!(resolved.text, "λ界e\u{301}{key:nope}");
+        assert_eq!(resolved.substitutions, [1..2]);
+        let after_marker = 1 + marker.chars().count();
+        assert_eq!(map[0], 0);
+        assert!(map[1..after_marker].iter().all(|offset| *offset == 1));
+        assert_eq!(&map[after_marker..after_marker + 5], &[2, 3, 4, 4, 5]);
+        assert_eq!(*map.last().unwrap(), resolved.text.chars().count());
+    }
+
+    #[test]
+    fn large_unmarked_page_has_identity_character_offsets() {
+        let template = "λe\u{301} literal prose\n".repeat(8192);
+        let (resolved, map) = resolve_with_map(&template, default_keymap()).unwrap();
+        assert_eq!(resolved.text, template);
+        assert!(resolved.substitutions.is_empty());
+        assert_eq!(map.len(), template.chars().count() + 1);
+        assert!(
+            map.iter()
+                .enumerate()
+                .all(|(index, mapped)| index == *mapped)
+        );
+    }
 
     #[test]
     fn actionable_message_inventory_has_only_resolvable_marked_keys() {
