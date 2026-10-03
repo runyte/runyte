@@ -1,3 +1,29 @@
+---
+title: "Markdown reflow can alter code after an invalid closing fence"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: f9587dc
+---
+
+## Resolution
+
+Commit `f9587dc` (`fix(editing): preserve nested Markdown fences during reflow`)
+changes `wrap::markdown_fence` to return the marker and its length. Reflow
+previously tracked only the marker character, allowing a shorter inner fence
+or a fence with trailing text to close a larger code block and exposing its
+remaining contents to prose wrapping. Closure now requires the same marker,
+at least the opening length, and whitespace alone after the marker run.
+Code contents remain unchanged and ordinary prose resumes after valid closure.
+
+`markdown_reflow_keeps_shorter_nested_fences_inside_code`,
+`markdown_reflow_requires_a_bare_closing_fence`, and
+`markdown_reflow_resumes_prose_after_a_longer_closing_fence` in
+`src/wrap/tests/mod.rs` cover backticks and tildes, nesting, trailing content,
+and valid longer closers. All 24 wrap tests pass.
+
+## Report
+
 Markdown reflow identifies an open fenced block by its marker character only.
 A later line beginning with three matching markers closes the block even when
 the opener had more markers, or when text follows the would-be closing marker.
