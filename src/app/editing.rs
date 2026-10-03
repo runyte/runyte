@@ -812,11 +812,22 @@ impl App {
             let Some(row) = visual.document_row else {
                 continue;
             };
-            let columns = visual
-                .segment
-                .map_or(scroll_col..usize::MAX, |segment| segment.start..segment.end);
             let start = buffer.line_to_offset(row);
             let line_string = buffer.line_string(row);
+            let columns = visual.segment.map_or_else(
+                || {
+                    // Reject offscreen word starts before measuring their
+                    // prefixes. The relative tab origin matches rendering.
+                    scroll_col
+                        ..crate::wrap::column_for_scrolled_cell(
+                            &line_string,
+                            scroll_col,
+                            wrap_width,
+                            tab_width,
+                        )
+                },
+                |segment| segment.start..segment.end,
+            );
             let line: Vec<char> = line_string.chars().collect();
             let mut word_start = None;
             // One past the end closes a word that runs to the end of the row.

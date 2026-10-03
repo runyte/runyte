@@ -194,6 +194,7 @@ mod git_discovery;
 mod git_merge_lifecycle;
 mod git_merges;
 mod indentation;
+mod jump_word_viewport;
 mod language;
 mod markdown_list_continuation;
 mod markdown_positions;
