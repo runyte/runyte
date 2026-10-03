@@ -373,6 +373,43 @@ fn review_eviction_is_not_live_history_loss_but_workspace_eviction_is() {
 }
 
 #[test]
+fn alternate_screen_history_remains_charged_and_evictable() {
+    let mut terminals = TerminalSessions::new();
+    let mut older = session(10, 2);
+    older.feed(b"one\r\ntwo\r\nthree\r\nfour");
+    older.feed(b"\x1b[?1049hfull screen");
+    older.last_activity = std::time::UNIX_EPOCH;
+    let older_id = older.id();
+    let alternate = capture(&older, Region::Screen);
+    let revision = older.read_revision();
+    terminals.sessions.insert(older_id, older);
+    assert_eq!(terminals.retained_payload_bytes(), 20 * size_of::<Cell>());
+
+    let mut newer = session(10, 1);
+    newer.id = TerminalId(2);
+    newer.feed(b"fresh\r\n");
+    newer.last_activity = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+    terminals.sessions.insert(newer.id(), newer);
+    terminals.set_memory_budget_for_test(20);
+    terminals.enforce_memory_budget();
+    assert_eq!(terminals.retained_payload_bytes(), 20 * size_of::<Cell>());
+    let older = terminals.get_mut(older_id).unwrap();
+    let after = capture(older, Region::Screen);
+    assert_eq!(after.rows, alternate.rows);
+    assert!(after.alternate_screen);
+    assert_eq!(after.lost_history_rows, 0);
+    assert_ne!(after.revision, revision);
+    assert!(older.history_truncated());
+
+    older.feed(b"\x1b[?1049l");
+    let primary = capture(older, Region::Tail);
+    assert_eq!(texts(&primary), ["two", "three", "four"]);
+    assert_eq!(primary.history_rows, 1);
+    assert_eq!(primary.lost_history_rows, 1);
+    assert_eq!(terminals.get(TerminalId(2)).unwrap().scrollback_rows(), 1);
+}
+
+#[test]
 fn exited_retained_terminal_remains_readable_with_a_new_revision() {
     let mut terminals = TerminalSessions::new();
     let mut terminal = session(8, 1);

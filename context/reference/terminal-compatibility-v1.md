@@ -44,6 +44,12 @@ non-string sequences. The regressions are
 `escape_restarts_interrupted_control_sequences` in
 `tests/terminal_sequences.rs`.
 
+The shared retention budget counts primary-screen scrollback even while its
+alternate screen is visible. Oldest-history eviction leaves both live screens
+intact and reports the lost primary rows when that screen is restored. The
+regression is `alternate_screen_history_remains_charged_and_evictable` in
+`src/terminal/tests/read.rs`.
+
 ## Unix PTY descriptor ownership
 
 Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`

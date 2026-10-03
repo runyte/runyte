@@ -118,6 +118,21 @@ impl Emulator {
         }
     }
 
+    pub(super) fn retained_scrollback_cells(&self) -> usize {
+        self.primary.scrollback_cells()
+    }
+
+    pub(super) fn has_scrollback(&self) -> bool {
+        self.primary.scrollback_len() > 0
+    }
+
+    /// Primary history remains retained while the alternate screen is active.
+    pub(super) fn drop_oldest_scrollback(&mut self) -> Option<usize> {
+        self.primary
+            .drop_oldest_scrollback()
+            .then_some(self.primary.columns())
+    }
+
     pub fn alternate_screen(&self) -> bool {
         self.alternate_active
     }

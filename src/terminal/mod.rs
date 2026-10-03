@@ -2970,7 +2970,7 @@ impl TerminalSessions {
     pub fn retained_payload_bytes(&self) -> usize {
         self.sessions
             .values()
-            .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
+            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
             .sum::<usize>()
             .saturating_mul(std::mem::size_of::<Cell>())
     }
@@ -2989,7 +2989,7 @@ impl TerminalSessions {
         let mut cells = self
             .sessions
             .values()
-            .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
+            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
             .sum::<usize>();
         let available_cells = self.cell_budget.saturating_sub(
             self.external_retained_bytes
@@ -3015,15 +3015,14 @@ impl TerminalSessions {
             let candidate = self
                 .sessions
                 .iter()
-                .filter(|(_, session)| session.emulator.grid().scrollback_len() > 0)
+                .filter(|(_, session)| session.emulator.has_scrollback())
                 .min_by_key(|(id, session)| (session.last_activity, **id))
                 .map(|(id, _)| *id);
             let Some(id) = candidate else {
                 break;
             };
             let session = self.sessions.get_mut(&id).expect("candidate is live");
-            let width = session.emulator.grid().columns();
-            if session.emulator.grid_mut().drop_oldest_scrollback() {
+            if let Some(width) = session.emulator.drop_oldest_scrollback() {
                 session.read_revision = session.read_revision.wrapping_add(1);
                 cells = cells.saturating_sub(width);
                 session.scroll = session.scroll.min(session.emulator.grid().scrollback_len());
