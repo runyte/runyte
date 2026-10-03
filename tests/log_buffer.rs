@@ -105,3 +105,89 @@ fn the_log_page_reports_what_this_process_can_actually_read() {
     runyte::log::shutdown();
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn log_open_refuses_a_replaced_fifo_without_waiting_for_a_writer() {
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let root = temporary("special-file");
+    fs::create_dir_all(&root).unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "special_log_file_fixture",
+            "--nocapture",
+        ])
+        .env("RUNYTE_LOG_FILE_FIXTURE_ROOT", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    fs::remove_dir_all(&root).unwrap();
+    assert!(
+        status.is_some_and(|status| status.success()),
+        "log-open blocked or the fixture failed: {status:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "owned by the bounded log-file parent fixture"]
+fn special_log_file_fixture() {
+    use runyte::{app::CommandOutcome, headless::HeadlessEditor};
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+    let root = PathBuf::from(std::env::var_os("RUNYTE_LOG_FILE_FIXTURE_ROOT").unwrap());
+    let path = root.join("standalone.log");
+    runyte::log::install(
+        Logger::start(
+            Settings::new(Level::Info, Role::Standalone),
+            Sink::file(&path),
+        )
+        .unwrap(),
+    );
+    runyte::log::flush(Duration::from_secs(1));
+    fs::remove_file(&path).unwrap();
+    let encoded = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: encoded is a live NUL-terminated pathname; the mode is owner-only.
+    assert_eq!(unsafe { libc::mkfifo(encoded.as_ptr(), 0o600) }, 0);
+
+    let mut editor = HeadlessEditor::with_text_in(&root, "unsaved document").unwrap();
+    let outcome = editor
+        .execute(parse_colon_command("log-open").unwrap())
+        .unwrap();
+    assert!(
+        matches!(outcome, CommandOutcome::UserError(ref message) if message.contains("regular file")),
+        "{outcome:?}"
+    );
+    assert_eq!(editor.active_text(), "unsaved document");
+
+    fs::remove_file(&path).unwrap();
+    let target = root.join("regular.log");
+    fs::write(&target, "retained regular log\n").unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let outcome = editor
+        .execute(parse_colon_command("log-open").unwrap())
+        .unwrap();
+    assert!(
+        !matches!(outcome, CommandOutcome::UserError(_)),
+        "{outcome:?}"
+    );
+    assert!(editor.active_text().contains("retained regular log"));
+    runyte::log::shutdown();
+}
