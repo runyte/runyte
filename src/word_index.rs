@@ -21,7 +21,8 @@ use crate::text::Text;
 /// Mirrors the non-configurable backstops in `notification.rs`
 /// (`MAX_NOTIFICATION_BYTES`, `MAX_HISTORY_BYTES`): a bound that exists so a
 /// pathological buffer cannot grow the index without limit, not a setting
-/// anyone is expected to tune.
+/// anyone is expected to tune. Exact counting temporarily holds every distinct
+/// word in the buffer being rebuilt; only its capped result survives that scan.
 const MAX_WORDS_PER_BUFFER: usize = 20_000;
 
 /// Cap on distinct buffers tracked at once. Closing a buffer removes it
@@ -82,10 +83,23 @@ pub struct BufferWords {
 }
 
 impl BufferWords {
+    fn from_text(text: &Text) -> Self {
+        let mut counts: HashMap<String, u32> = HashMap::new();
+        for_each_word(text, |word| {
+            if let Some(count) = counts.get_mut(word) {
+                *count = count.saturating_add(1);
+            } else {
+                counts.insert(word.to_owned(), 1);
+            }
+        });
+        Self::from_counts(counts)
+    }
+
     fn from_counts(counts: HashMap<String, u32>) -> Self {
         let mut entries: Vec<(String, u32)> = counts.into_iter().collect();
         entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         entries.truncate(MAX_WORDS_PER_BUFFER);
+        entries.shrink_to_fit();
         Self { entries }
     }
 
@@ -97,19 +111,19 @@ impl BufferWords {
 /// The latest published state of the index: one word list per buffer.
 #[derive(Clone, Debug, Default)]
 pub struct WordIndexSnapshot {
-    buffers: HashMap<usize, BufferWords>,
+    buffers: HashMap<usize, Arc<BufferWords>>,
 }
 
 impl WordIndexSnapshot {
     pub fn buffer_words(&self, buffer_id: usize) -> Option<&BufferWords> {
-        self.buffers.get(&buffer_id)
+        self.buffers.get(&buffer_id).map(Arc::as_ref)
     }
 
     pub fn other_buffers(&self, buffer_id: usize) -> impl Iterator<Item = (usize, &BufferWords)> {
         self.buffers
             .iter()
             .filter(move |(id, _)| **id != buffer_id)
-            .map(|(id, words)| (*id, words))
+            .map(|(id, words)| (*id, words.as_ref()))
     }
 }
 
@@ -185,7 +199,7 @@ fn run(
     pending: Arc<Mutex<PendingState>>,
     snapshot: Arc<Mutex<Arc<WordIndexSnapshot>>>,
 ) {
-    let mut counts: HashMap<usize, HashMap<String, u32>> = HashMap::new();
+    let mut buffers: HashMap<usize, Arc<BufferWords>> = HashMap::new();
     // Recency order for the `MAX_INDEXED_BUFFERS` backstop: touched buffers
     // move to the back, so the front is the least recently updated.
     let mut recency: Vec<usize> = Vec::new();
@@ -208,23 +222,19 @@ fn run(
             for (buffer_id, action) in actions {
                 match action {
                     PendingAction::Update(text) => {
-                        let mut buffer_counts: HashMap<String, u32> = HashMap::new();
-                        for word in words_in(&text) {
-                            *buffer_counts.entry(word).or_insert(0) += 1;
-                        }
-                        counts.insert(buffer_id, buffer_counts);
+                        buffers.insert(buffer_id, Arc::new(BufferWords::from_text(&text)));
                         touch(&mut recency, buffer_id);
-                        while counts.len() > MAX_INDEXED_BUFFERS {
+                        while buffers.len() > MAX_INDEXED_BUFFERS {
                             if recency.is_empty() {
                                 break;
                             }
                             let oldest = recency.remove(0);
-                            counts.remove(&oldest);
+                            buffers.remove(&oldest);
                         }
                         changed = true;
                     }
                     PendingAction::Remove => {
-                        counts.remove(&buffer_id);
+                        buffers.remove(&buffer_id);
                         recency.retain(|id| *id != buffer_id);
                         changed = true;
                     }
@@ -233,7 +243,7 @@ fn run(
         }
 
         if changed {
-            publish(&snapshot, &counts);
+            publish(&snapshot, &buffers);
         }
         if let Some(reply) = flush_reply {
             let _ = reply.send(());
@@ -248,12 +258,9 @@ fn touch(recency: &mut Vec<usize>, buffer_id: usize) {
 
 fn publish(
     snapshot: &Arc<Mutex<Arc<WordIndexSnapshot>>>,
-    counts: &HashMap<usize, HashMap<String, u32>>,
+    buffers: &HashMap<usize, Arc<BufferWords>>,
 ) {
-    let buffers = counts
-        .iter()
-        .map(|(id, buffer_counts)| (*id, BufferWords::from_counts(buffer_counts.clone())))
-        .collect();
+    let buffers = buffers.clone();
     if let Ok(mut guard) = snapshot.lock() {
         *guard = Arc::new(WordIndexSnapshot { buffers });
     }
@@ -265,13 +272,8 @@ fn publish(
 /// Every other character is a boundary. This keeps prose such as
 /// `up-to-date` whole without putting surrounding or source punctuation in
 /// the completion list.
-fn words_in(text: &Text) -> Vec<String> {
-    text.lines().flat_map(|line| words_in_line(&line)).collect()
-}
-
-fn words_in_line(line: &str) -> Vec<String> {
-    let mut characters = line.chars().peekable();
-    let mut words = Vec::new();
+fn for_each_word(text: &Text, mut visit: impl FnMut(&str)) {
+    let mut characters = text.rope().chars().peekable();
     let mut word = String::new();
 
     while let Some(character) = characters.next() {
@@ -282,18 +284,24 @@ fn words_in_line(line: &str) -> Vec<String> {
         if belongs_to_word {
             word.push(character);
         } else if !word.is_empty() {
-            words.push(std::mem::take(&mut word));
+            visit(&word);
+            word.clear();
         }
     }
     if !word.is_empty() {
-        words.push(word);
+        visit(&word);
     }
-    words
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn words_in(text: &Text) -> Vec<String> {
+        let mut words = Vec::new();
+        for_each_word(text, |word| words.push(word.to_owned()));
+        words
+    }
 
     fn text_of(content: &str) -> Text {
         let mut text = Text::new();
@@ -453,3 +461,7 @@ mod tests {
         assert!(snapshot.buffer_words(MAX_INDEXED_BUFFERS).is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "word_index/tests.rs"]
+mod regression_tests;
