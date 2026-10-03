@@ -408,3 +408,5 @@ mod key_actions;
 mod pointer_scrolled_tabs;
 
 mod finder_disk_budget;
+
+mod pasted_completion;
