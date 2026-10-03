@@ -1258,7 +1258,7 @@ fn read_endpoint_metadata(path: &Path, description: &str) -> Result<EndpointMeta
 }
 
 fn read_bounded_file(path: &Path, maximum: usize, description: &str) -> Result<Vec<u8>> {
-    let file = fs::File::open(path)
+    let file = crate::path_safety::open_regular_file(path, false)
         .with_context(|| format!("cannot read {description} {}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(maximum.saturating_add(1) as u64)
@@ -2271,6 +2271,73 @@ mod tests {
         let workspace = root.join(".runyte");
         let _endpoint = LocalEndpoint::new(&workspace, &root).unwrap();
         assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn special_file_endpoint_reads_refuse_without_blocking() {
+        use std::process::{Command, Stdio};
+
+        let root = temporary_root();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "workspace::transport::tests::special_file_endpoint_fixture",
+                "--nocapture",
+            ])
+            .env("RUNYTE_ENDPOINT_SPECIAL_FILE_TEST_ROOT", root.as_ref())
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "endpoint special-file fixture failed: {status}"
+                );
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("persistent-session metadata I/O blocked on a special file");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    #[ignore = "owned by the bounded endpoint special-file parent fixture"]
+    fn special_file_endpoint_fixture() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+        let root =
+            PathBuf::from(std::env::var_os("RUNYTE_ENDPOINT_SPECIAL_FILE_TEST_ROOT").unwrap());
+        let endpoint = LocalEndpoint::new(&root.join(".runyte"), &root).unwrap();
+        endpoint.prepare_directory().unwrap();
+        let name = endpoint.name_file.as_ref().unwrap();
+        prepare_private_directory(name.parent().unwrap()).unwrap();
+        for path in [endpoint.metadata(), name.as_path()] {
+            let native = CString::new(path.as_os_str().as_bytes()).unwrap();
+            // SAFETY: native is NUL-terminated and the FIFO is fixture-owned.
+            assert_eq!(unsafe { libc::mkfifo(native.as_ptr(), 0o600) }, 0);
+            verify_private(path, false).unwrap();
+        }
+        assert!(endpoint.recorded_host_is_alive().is_err());
+        assert!(endpoint.load_stored_name().is_err());
+        assert!(read_bounded_file(Path::new("/dev/null"), 10, "test metadata").is_err());
+
+        fs::remove_file(endpoint.metadata()).unwrap();
+        fs::remove_file(name).unwrap();
+        assert!(!endpoint.recorded_host_is_alive().unwrap());
+        assert_eq!(endpoint.load_stored_name().unwrap(), None);
+        endpoint.write_stored_name("fixture").unwrap();
+        assert_eq!(
+            endpoint.load_stored_name().unwrap().as_deref(),
+            Some("fixture")
+        );
     }
 
     #[test]
