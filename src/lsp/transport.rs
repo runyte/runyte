@@ -65,7 +65,6 @@ pub struct Connection {
     child: Option<Child>,
     #[cfg(windows)]
     native: Option<windows::Native>,
-    #[cfg(windows)]
     tasks: Vec<tokio::task::AbortHandle>,
 }
 
@@ -90,7 +89,8 @@ impl Connection {
     /// not outlive the editor.
     #[cfg(not(windows))]
     pub async fn stop(mut self) {
-        drop(self.outgoing);
+        let (closed, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.outgoing, closed));
         let Some(mut child) = self.child.take() else {
             return;
         };
@@ -118,12 +118,12 @@ impl Connection {
     }
 }
 
-#[cfg(windows)]
 impl Drop for Connection {
     fn drop(&mut self) {
         for task in &self.tasks {
             task.abort();
         }
+        #[cfg(windows)]
         drop(self.native.take());
     }
 }
@@ -151,8 +151,6 @@ where
         inbox.clone(),
     ));
     let writer_task = tokio::spawn(write_loop(key, generation, writer, queue, inbox));
-    #[cfg(not(windows))]
-    let _ = (reader_task, writer_task);
     Connection {
         outgoing,
         stderr: Arc::new(Mutex::new(String::new())),
@@ -160,7 +158,6 @@ where
         child: None,
         #[cfg(windows)]
         native: None,
-        #[cfg(windows)]
         tasks: vec![reader_task.abort_handle(), writer_task.abort_handle()],
     }
 }
@@ -192,7 +189,8 @@ pub fn spawn(
 
         let mut connection = connect(key, generation, stdout, stdin, inbox);
         let tail = Arc::clone(&connection.stderr);
-        tokio::spawn(drain_stderr(stderr, tail));
+        let stderr_task = tokio::spawn(drain_stderr(stderr, tail));
+        connection.tasks.push(stderr_task.abort_handle());
         connection.child = Some(child);
         Ok(connection)
     }
@@ -481,6 +479,53 @@ mod tests {
                 if language == "rust" && reason.contains("cannot write")
         ));
         drop(server_writer);
+    }
+
+    async fn assert_connection_teardown_closes_streams(stop: bool) {
+        let (client_reader, mut server_writer) = tokio::io::duplex(16);
+        let (mut server_reader, client_writer) = tokio::io::duplex(16);
+        let (inbox, mut events) = mpsc::channel(1);
+        let connection = connect("rust".to_owned(), 7, client_reader, client_writer, inbox);
+        // Fill the output stream, so dropping the queue alone cannot wake the
+        // writer that is waiting for the server to read its first frame.
+        assert!(connection.send(json!({"payload": "x".repeat(1024)})));
+        let mut first = [0; 1];
+        server_reader.read_exact(&mut first).await.unwrap();
+
+        if stop {
+            connection.stop().await;
+        } else {
+            drop(connection);
+        }
+
+        // Neither stream is closed by this test: teardown must release both
+        // tasks even while their peer is silent or supplies backpressure.
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), events.recv())
+                .await
+                .expect("connection tasks retained their inbox senders")
+                .is_none()
+        );
+        assert!(server_writer.write_all(b"x").await.is_err());
+        let mut remaining = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            server_reader.read_to_end(&mut remaining),
+        )
+        .await
+        .expect("connection writer retained its output stream")
+        .unwrap();
+        assert!(remaining.len() < 1024, "blocked frame was not cancelled");
+    }
+
+    #[tokio::test]
+    async fn dropping_connection_cancels_idle_reader_and_blocked_writer() {
+        assert_connection_teardown_closes_streams(false).await;
+    }
+
+    #[tokio::test]
+    async fn stopping_connection_cancels_idle_reader_and_blocked_writer() {
+        assert_connection_teardown_closes_streams(true).await;
     }
 
     #[tokio::test]
