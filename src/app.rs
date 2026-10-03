@@ -41,7 +41,7 @@ use crate::{
     external_open::{self, ProgramCache},
     file_picker::{
         CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview, FileScanner,
-        PickerTarget, scan_content, scan_files,
+        PickerTarget, scan_files,
     },
     finder::{
         FinderMatchSource, FinderMode, FinderTarget, ResourceFinder, ResourceItem, ResourceKind,

@@ -8,7 +8,7 @@
 //! editor remains the sole owner of picker state.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{self, BufRead, BufReader, Read},
     num::NonZero,
@@ -2903,6 +2903,29 @@ impl FileScanner {
         show_hidden: bool,
         query: String,
     ) {
+        self.scan_content_excluding(
+            scan_id,
+            root,
+            scope,
+            state_root,
+            show_hidden,
+            query,
+            HashSet::new(),
+        );
+    }
+
+    /// Open buffers own their paths before the disk scan spends its result budget.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn scan_content_excluding(
+        &self,
+        scan_id: u64,
+        root: PathBuf,
+        scope: ScanScope,
+        state_root: PathBuf,
+        show_hidden: bool,
+        query: String,
+        excluded: HashSet<PathBuf>,
+    ) {
         self.reset_ranker(scan_id, FilePickerKind::Contents);
         self.active.store(scan_id, Ordering::Release);
         let active = self.active.clone();
@@ -2935,6 +2958,9 @@ impl FileScanner {
                         for path in paths {
                             if active.load(Ordering::Acquire) != scan_id {
                                 return false;
+                            }
+                            if excluded.contains(&path.path) {
+                                continue;
                             }
                             let Some(mut hits) = content_entries(&path.path, &query) else {
                                 continue;
@@ -3073,6 +3099,17 @@ pub fn scan_content(
     show_hidden: bool,
     query: &str,
 ) -> Result<(Vec<FileHits>, usize, bool)> {
+    scan_content_excluding(root, scope, state_root, show_hidden, query, &HashSet::new())
+}
+
+pub(crate) fn scan_content_excluding(
+    root: &Path,
+    scope: &ScanScope,
+    state_root: &Path,
+    show_hidden: bool,
+    query: &str,
+    excluded: &HashSet<PathBuf>,
+) -> Result<(Vec<FileHits>, usize, bool)> {
     let mut files = Vec::new();
     let mut lines = 0;
     let mut limited = false;
@@ -3085,6 +3122,9 @@ pub fn scan_content(
         || false,
         |paths| {
             for path in paths {
+                if excluded.contains(&path.path) {
+                    continue;
+                }
                 let Some(mut hits) = content_entries(&path.path, query) else {
                     continue;
                 };
