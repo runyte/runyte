@@ -1724,16 +1724,17 @@ impl App {
     pub(super) fn delete_to_line_start(&mut self) {
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
-        let changes = self
+        let spans = self
             .active()
             .selection
             .ranges()
             .iter()
             .filter_map(|range| {
                 let start = buffer.line_to_offset(buffer.offset_to_row(range.head));
-                (start < range.head).then(|| Change::new(start, range.head, ""))
+                (start < range.head).then_some((start, range.head))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let changes = crlf_safe_deletions(buffer, spans);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
     }

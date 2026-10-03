@@ -2,6 +2,31 @@
 
 use super::*;
 
+#[test]
+fn delete_to_line_start_unions_same_line_carets_and_undoes_once() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abcdef\r\nghijkl");
+    app.active_mut().replace_selection(Selection::new(
+        vec![
+            Range::point(2),
+            Range::point(5),
+            Range::point(10),
+            Range::point(12),
+        ],
+        1,
+    ));
+    app.mode = Mode::Insert;
+    key(&mut app, KeyCode::Char('u'), Modifiers::CONTROL);
+    assert_eq!(text(&app), "f\r\nkl");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::point(0), Range::point(3)]
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "abcdef\r\nghijkl");
+}
+
 /// A configuration with `editor.selecting_motions` off, so word and find
 /// motions move a caret.
 fn caret_motions() -> Config {
