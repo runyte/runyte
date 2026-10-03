@@ -184,6 +184,10 @@ use runyte::workspace::{
 };
 
 fn main() -> Result<()> {
+    #[cfg(any(unix, windows))]
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp") {
+        return runyte::mcp::run(std::env::args_os().skip(2));
+    }
     let mut startup = StartupTrace::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -7164,6 +7168,10 @@ MODES:
                          directory a workspace when none is found
 
 AGENT CONTEXT:
+        mcp [--identity NAME] [--timeout SECONDS]
+                         Run the built-in MCP stdio server. Grant permissions
+                         in the editor with :mcp [identity].
+                         Use runyte -- mcp to open a file named mcp.
         --context-list --json
                          List live context-enabled workspaces as versioned JSON
                          without attaching; --include-hidden includes isolated

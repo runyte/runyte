@@ -109,9 +109,12 @@ pub async fn discover(
     Ok(result)
 }
 
-async fn probe(registration: &Registration) -> io::Result<()> {
+/// Connect only after checking the private endpoint and its live process owner.
+pub(crate) async fn connect(
+    registration: &Registration,
+) -> io::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + use<>> {
     #[cfg(unix)]
-    let mut socket = {
+    let socket = {
         let metadata = std::fs::symlink_metadata(&registration.endpoint)?;
         // SAFETY: geteuid has no preconditions.
         let owner = unsafe { libc::geteuid() };
@@ -135,7 +138,7 @@ async fn probe(registration: &Registration) -> io::Result<()> {
         socket
     };
     #[cfg(windows)]
-    let mut socket = {
+    let socket = {
         use crate::workspace::windows_process_identity::ProcessIdentity;
         let expected = ProcessIdentity {
             pid: registration.pid,
@@ -156,6 +159,11 @@ async fn probe(registration: &Registration) -> io::Result<()> {
         }
         socket
     };
+    Ok(socket)
+}
+
+async fn probe(registration: &Registration) -> io::Result<()> {
+    let mut socket = connect(registration).await?;
     socket.write_all(b"{\"type\":\"probe\"}\n").await?;
     let mut bytes = Vec::new();
     BufReader::new(socket)

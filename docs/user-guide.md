@@ -5236,7 +5236,7 @@ The working directory starts where Runyte was launched.
 | `:notifications` | `not` | Open retained notification history |
 | `:service-health` | `health` | Inspect syntax, LSP, providers, and helper health |
 | `:log-open` | | Open the diagnostic log owned by the process that holds this workspace |
-| `:context-access [identity]` | | Review, grant, inspect, or revoke agent context access |
+| `:mcp [identity]` | | Review, grant, inspect, or revoke agent context access |
 
 #### Plugin commands
 
@@ -5440,56 +5440,59 @@ prerequisites and YouTube browser playback separately.
 
 ## Agent access to workspace context
 
-The optional [Runyte context bridge](../bridges/runyte-context/README.md) lets
-AI agents read integrated terminals, unsaved buffers, selections, and pane
-viewports in workspaces you authorize. It runs as a separate local MCP
-process, outside the editor.
+Runyte includes an MCP server for agents to find and read integrated terminals,
+unsaved buffers, edit buffers, and propose terminal text. Start
+it with `runyte mcp --identity agent`. It uses stdio and private local workspace
+connections, with no Python installation. See the [MCP setup guide](mcp.md).
 
 ### Setting it up
 
-1. Install the bridge and configure each agent, following the bridge's
-   instructions.
-2. In each workspace the agent should see, run `:context-access`.
-3. Choose the scopes to grant and apply them.
+1. Configure the agent to launch your Runyte binary with arguments
+   `["mcp", "--identity", "agent"]`.
+2. In each workspace to share, run `:mcp agent` using that same identity.
+3. Choose permissions and select **Apply permissions** with Tab then Enter.
 
-`:context-access codex` (an optional identity name) gives separate bridge
-installations separate grants and revocation.
+You may grant permissions before **or after** starting the agent. The built-in
+server always offers the same tools; each call checks the workspace grant.
+After changing permissions, have the agent run `find_resources` again to get
+fresh handles. Restart the agent once when changing its MCP configuration or
+upgrading from the Python bridge; permission changes do not require a restart.
 
-**Platforms.** Context services start with normal workspace startup on Linux,
-macOS, and Windows.
+### Granting and checking access
 
-- On Windows, the bridge discovers workspaces with
-  `runyte.exe --context-list --json` and authenticates over private local
-  named pipes. No TCP listener is opened.
-- On Windows, direct `-a` attachment, the session strip, Explorer `Tab s`,
-  manager visits, numbered and cyclic navigation, and exact destination visits
-  are available. A foreground or detached Windows host can expose its
-  workspace while no TUI is attached.
+`:mcp` opens **MCP permissions**, selecting an existing granted identity when
+available. An explicit `:mcp codex` always selects that identity. The overlay
+shows the exact workspace, identity, whether access is enabled or not yet
+granted, whether it is remembered, and how many readers are connected. A
+connected reader identifies a local connection, not a verified agent process.
+`:context-access` remains an alias for existing configurations.
 
-### Granting access
-
-The **Agent context access** overlay starts on **Reject**.
-
-| Key | Scope or action |
+| Key | Permission or action |
 | --- | --- |
-| `1` | Terminal reads |
-| `2` | Editor context reads |
-| `3` | Buffer edits (needs editor reads) |
-| `4` | Terminal proposals (needs terminal reads) |
+| `1` | Read terminal output |
+| `2` | Read buffers and selections |
+| `3` | Edit and append to buffers; also enables buffer reads |
+| `4` | Propose terminal text; also enables terminal reads |
 | `r` | Remember this exact workspace's grant |
-| `j` / `k` | Page through the review |
-| `Tab` then Enter | Choose **Grant access** and apply |
-| `Esc` | Reject |
+| `n` | Next known identity; discards unapplied choices |
+| `x` | Revoke the selected identity immediately |
+| `j` / `k` | Page through longer reviews |
+| `Tab` then Enter | Select **Apply permissions** and apply |
+| `Esc` | Close without applying |
 
-- Without `r`, the grant lasts until the owning editor or persistent host
-  exits.
-- Run the command again to see active reader identities, scopes, and recent
-  request metadata. `x` revokes at once: the remembered grant is removed,
-  readers are disconnected, snapshots are released, and terminal text not yet
-  being written is cancelled.
-- Granting, changing, and revoking need physical input from the active Runyte
-  frontend. Repeated input, pasted text, protocol clients, and the bridge
-  cannot approve their own request.
+Turning off a read permission also turns off its dependent write permission.
+The remembered checkbox reflects the current grant when reopened. Without it,
+the grant lasts until the owning editor or persistent host exits. Applying a
+change disconnects existing readers, so agents must rediscover their targets.
+
+Granting, changing, and revoking need physical input from the active Runyte
+frontend. Repeated input, pasted text, macros, and MCP clients cannot approve
+access or terminal text. Each terminal proposal still needs its own native
+approval and inserts text **without Enter**.
+
+The server works with standalone and persistent workspaces on Linux, macOS,
+and Windows. Detached hosts support content reads and buffer edits, but cannot
+approve terminal insertion until a native frontend is attached.
 
 ### What a grant covers
 
@@ -6951,7 +6954,7 @@ with `{ command: name, argument: text }`.
 | `git-unstage` | `git-unstage` | Unstage the active file |
 | `git-refresh` | `git-refresh` | Refresh Git state or retry failed repository discovery |
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
-| `context-access` | `context-access [identity]` | Review workspace agent permissions |
+| `mcp` | `mcp [identity]` | Review workspace agent permissions |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |

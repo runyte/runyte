@@ -289,8 +289,8 @@ fn inventory(binary: &Path, context: &Path, config: &Path) -> Value {
 }
 
 fn grant_remembered_edit(editor: &mut Console) {
-    editor.until("Agent context access");
-    editor.until("Grant access");
+    editor.until("MCP permissions");
+    editor.until("Apply permissions");
     let first_page = editor.view();
     if let Some(page) = first_page
         .lines()
@@ -496,7 +496,7 @@ fn public_windows_context_fixture() {
     wait_file(&restart_ready, &mut bridge, &python_output);
 
     second.send(":context-access agent\r");
-    second.until("Agent context access");
+    second.until("MCP permissions");
     second.send("x");
     wait_inventory(binary, &context, &config_root, 0);
     std::fs::write(&revoke_continue, b"continue").unwrap();

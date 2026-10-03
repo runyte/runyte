@@ -287,6 +287,50 @@ async fn native_grants_default_to_reject_and_only_remembered_access_reopens() {
     assert_ne!(registration.host_incarnation, "");
 }
 
+#[test]
+fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
+    let root = TestRuntimeRoot::new("context-identities").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let context_root = root.path().join("context");
+    let location = StorageLocation::explicit(context_root).unwrap();
+    let store = Storage::open_location(location.clone()).unwrap();
+    let codex = store.identity("codex").unwrap();
+    let mut host = host(&project);
+    let _events = host
+        .start_context_windows(
+            HostMode::Standalone,
+            Some(location),
+            random_token().unwrap(),
+        )
+        .unwrap();
+    host.note_plugin_frontend(true);
+    host.app.context_ui.requested_identity = Some(String::new());
+    host.sync_context();
+    assert_eq!(host.app.context_ui.identities, ["codex"]);
+    assert!(matches!(
+        &host.app.context_ui.surface.as_ref().unwrap().kind,
+        Kind::Grant { identity, remember: false, .. } if identity == "codex"
+    ));
+    key(&mut host, KeyCode::Escape);
+
+    store.identity("agent").unwrap();
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    assert_eq!(host.app.context_ui.identities, ["agent", "codex"]);
+    key(&mut host, KeyCode::Char('n'));
+    host.sync_context();
+    assert!(matches!(
+        &host.app.context_ui.surface.as_ref().unwrap().kind,
+        Kind::Grant { identity, .. } if identity == "codex"
+    ));
+    assert!(host.context.storage.is_none());
+    assert!(host.context.grants.is_empty());
+    assert!(!host.context_enabled());
+    assert!(host.context_delay().is_none());
+    assert!(store.scopes(&project, &codex).unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
     let root = TestRuntimeRoot::new("context-host-approval-input").unwrap();

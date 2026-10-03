@@ -18,7 +18,7 @@ commands and their lifecycle controls, including managed helper processes, are
 available on Windows. Direct `-a` attachment, the session strip, Explorer and
 manager visits, and numbered and cyclic navigation are available in persistent
 mode.
-`:context-access` is available on Windows. Syntax
+`:mcp` is available on Windows. Syntax
 commands remain independent of LSP. Integrated Git is available when native
 Git is installed;
 missing Git disables its capabilities without starting a worker. Worktree
@@ -682,9 +682,9 @@ file. Paths are literal and relative to the workspace root unless absolute.
 
 ### Agent context permission command
 
-`:context-access [identity]` is Runyte-specific and opens native workspace
-permissions for the external context bridge. It adds no default editor key
-binding. Grant and terminal-text confirmation keys are owned by their overlay,
+`:mcp [identity]` is Runyte-specific and opens native workspace
+permissions for MCP access. `:context-access` remains an alias. It adds no
+default editor key binding. Grant and terminal-text confirmation keys are owned by their overlay,
 as described in the UI vocabulary; they do not change the Helix-derived
 selection-first editing keys.
 

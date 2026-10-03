@@ -307,9 +307,10 @@ class NativeEditor:
 
 
 class RealMCPClient(MCPClient):
-    def __init__(self, binary, root, env, identity):
-        self.process = subprocess.Popen([sys.executable, '-m', 'runyte_context', '--identity', identity,
-            '--runyte', str(binary), '--timeout', '2'], cwd=root, bufsize=0,
+    def __init__(self, binary, root, env, identity, native=False):
+        command = ([str(binary), "mcp", "--identity", identity, "--timeout", "2"] if native else [sys.executable, '-m', 'runyte_context', '--identity', identity,
+            '--runyte', str(binary), '--timeout', '2'])
+        self.process = subprocess.Popen(command, cwd=root, bufsize=0,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env={**env, 'PYTHONPATH': str(PACKAGE), 'PYTHONNOUSERSITE': '1'})
         self.counter = 0
@@ -607,7 +608,7 @@ class RealRunyteTests(unittest.TestCase):
 
         # Revoke only Codex in workspace one through genuine native overlay input.
         standalone.command('context-access codex')
-        standalone.wait_output('Agent context access')
+        standalone.wait_output('MCP permissions')
         os.write(standalone.fd, b'x')
         time.sleep(.2)
         denied = codex.tool('read_buffer', workspace=codex_workspaces['one'], buffer=original['buffer'],

@@ -22,7 +22,9 @@ fn ready() -> App {
 fn native_command_prompt_requests_named_and_default_context_identity() {
     for (command, identity) in [
         ("context-access codex", "codex"),
-        ("context-access", "agent"),
+        ("context-access", ""),
+        ("mcp codex", "codex"),
+        ("mcp", ""),
     ] {
         let mut app = App::new(Config::default(), None).unwrap();
         for character in format!(":{command}").chars() {
@@ -311,4 +313,37 @@ fn arrows_move_between_the_choices_without_paging() {
             ..
         })
     ));
+}
+
+#[test]
+fn mcp_scope_toggles_keep_prerequisites_and_cycle_identity_without_granting() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.context_ui.identities = vec!["agent".into(), "codex".into()];
+    app.context_ui.surface = Some(Surface::new(
+        Kind::Grant {
+            identity: "agent".into(),
+            scopes: BTreeSet::new(),
+            remember: false,
+        },
+        "MCP permissions".into(),
+        vec![],
+        "",
+        app.plugins.attachment_generation,
+    ));
+    press(&mut app, KeyCode::Char('3'));
+    press(&mut app, KeyCode::Char('4'));
+    let Kind::Grant { scopes, .. } = &app.context_ui.surface.as_ref().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(scopes.len(), 4);
+    press(&mut app, KeyCode::Char('1'));
+    press(&mut app, KeyCode::Char('2'));
+    let Kind::Grant { scopes, .. } = &app.context_ui.surface.as_ref().unwrap().kind else {
+        panic!()
+    };
+    assert!(scopes.is_empty());
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(app.context_ui.requested_identity.as_deref(), Some("codex"));
+    assert!(app.context_ui.surface.is_none());
+    assert!(app.context_ui.decision.is_none());
 }

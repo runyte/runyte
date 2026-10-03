@@ -676,11 +676,14 @@ Cancelled callbacks cannot reopen presentation without another foreground comman
 
 ## Agent context confirmations
 
-`:context-access [identity]` opens a native confirmation for one bridge identity
-and workspace. It shows read/edit/proposal scopes, active readers and recent
-metadata, with Reject selected. Scope keys `1`–`4`, remember key `r`, revoke
-key `x`, page keys `j`/`k`, `Up`/`Down` or `Tab` choice and `Enter` apply are
-local overlay input rather than new editor bindings. Esc rejects.
+`:mcp [identity]` opens **MCP permissions** for one identity and workspace;
+`:context-access` remains an alias. It shows grant lifetime, connected reader
+count and the most recent request metadata, with Reject selected. No-argument
+opening prefers an existing grant; `n` cycles known identities without applying
+pending choices. Scope keys `1`–`4` use plain-language labels and maintain read
+prerequisites automatically. Remember key `r` reflects the active grant; `x`
+revokes, `j`/`k` page, Up/Down or Tab choose, and Enter applies **Apply
+permissions**. Esc closes without applying. These are local overlay keys.
 
 A terminal proposal uses **Review terminal text**, an immutable paged native
 confirmation. The affirmative label is **Insert text (no Enter)**. The

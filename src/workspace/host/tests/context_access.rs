@@ -386,6 +386,24 @@ async fn native_grant_overlay_controls_listener_and_remembered_scope() {
     );
     host.app.context_ui.requested_identity = Some("agent".into());
     host.sync_context();
+    assert!(matches!(
+        host.app.context_ui.surface.as_ref().unwrap().kind,
+        Kind::Grant { remember: true, .. }
+    ));
+    assert_eq!(
+        host.app.context_ui.surface.as_ref().unwrap().title,
+        "MCP permissions"
+    );
+    assert!(
+        host.app
+            .context_ui
+            .surface
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .any(|line| line.value.contains("remembered"))
+    );
     key(&mut host, KeyCode::Char('x'));
     host.sync_context();
     assert!(!endpoint.exists());
@@ -399,6 +417,74 @@ async fn native_grant_overlay_controls_listener_and_remembered_scope() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
+    let root = TestRuntimeRoot::new("context-identities").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let app =
+        App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard))).unwrap();
+    let mut host = WorkspaceHost::new(app);
+    let store_root = root.path().join("ctx");
+    let store = Storage::new(store_root.clone()).unwrap();
+    let codex = store.identity("codex").unwrap();
+    let _events = host.start_context_with_root(HostMode::Standalone, Some(store_root));
+    host.note_plugin_frontend(true);
+
+    // No-argument opening selects a known identity even without local grants.
+    host.app.context_ui.requested_identity = Some(String::new());
+    host.sync_context();
+    assert_eq!(host.app.context_ui.identities, ["codex"]);
+    assert!(matches!(
+        &host.app.context_ui.surface.as_ref().unwrap().kind,
+        Kind::Grant { identity, remember: false, .. } if identity == "codex"
+    ));
+    key(&mut host, KeyCode::Escape);
+
+    // Pairing after startup is visible the next time the overlay opens.
+    store.identity("agent").unwrap();
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    assert_eq!(host.app.context_ui.identities, ["agent", "codex"]);
+    key(&mut host, KeyCode::Char('n'));
+    host.sync_context();
+    assert!(matches!(
+        &host.app.context_ui.surface.as_ref().unwrap().kind,
+        Kind::Grant { identity, .. } if identity == "codex"
+    ));
+    assert!(host.context.storage.is_none());
+    assert!(host.context.grants.is_empty());
+    assert!(!host.context_enabled());
+    assert!(host.context_delay().is_none());
+    assert!(store.scopes(&project, &codex).unwrap().is_empty());
+
+    // Applying the first grant still opens a writable store and enables access.
+    review_all(&mut host);
+    key(&mut host, KeyCode::Tab);
+    key(&mut host, KeyCode::Enter);
+    host.sync_context();
+    assert!(host.context_enabled());
+    assert!(host.context.grants.contains_key(&codex.fingerprint()));
+}
+
+#[test]
+fn opening_permissions_does_not_create_missing_private_storage() {
+    let root = TestRuntimeRoot::new("context-identities-absent").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let app =
+        App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard))).unwrap();
+    let mut host = WorkspaceHost::new(app);
+    let store_root = root.path().join("ctx");
+    let _events = host.start_context_with_root(HostMode::Standalone, Some(store_root.clone()));
+    host.note_plugin_frontend(true);
+    host.app.context_ui.requested_identity = Some(String::new());
+    host.sync_context();
+    assert_eq!(host.app.context_ui.identities, ["agent"]);
+    assert!(!store_root.exists());
+    assert!(!host.context_enabled());
 }
 
 #[tokio::test]

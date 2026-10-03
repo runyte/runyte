@@ -1,4 +1,12 @@
-# Runyte context MCP bridge
+# Runyte context MCP bridge (legacy)
+
+New installations should use the [built-in `runyte mcp` server](../../docs/mcp.md).
+It needs no Python package, provides combined fuzzy name/content discovery,
+and allows grants after agent startup with a stable tool catalog. This
+separately installed Python adapter retains its existing protocol and dynamic
+tool-list behavior for compatibility. Its startup-order limitations below do
+not apply to the native server. Both use the same native `:mcp` permissions.
+
 
 This separately versioned Python package connects a local MCP client to
 explicitly authorized Runyte workspaces. It reads live terminal screens,

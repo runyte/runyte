@@ -28,6 +28,8 @@ type FrameSource = (usize, u64, Option<(TerminalId, u64)>);
 pub(super) struct State {
     events: Option<mpsc::Sender<Event>>,
     storage: Option<Arc<Storage>>,
+    #[cfg(unix)]
+    storage_root: Option<std::path::PathBuf>,
     registration: Option<Registration>,
     server: Option<Server>,
     #[cfg(windows)]
@@ -45,6 +47,7 @@ pub(super) struct State {
     #[cfg(windows)]
     environment: Option<String>,
     grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
+    remembered: BTreeSet<String>,
     readers: BTreeMap<u64, Reader>,
     proposals: BTreeMap<String, Proposal>,
     recent: VecDeque<String>,
@@ -114,15 +117,26 @@ impl WorkspaceHost {
     }
     #[cfg(unix)]
     pub fn start_context(&mut self, mode: HostMode) -> mpsc::Receiver<Event> {
+        self.start_context_with_root(mode, Storage::default_root())
+    }
+
+    #[cfg(unix)]
+    fn start_context_with_root(
+        &mut self,
+        mode: HostMode,
+        root: Option<std::path::PathBuf>,
+    ) -> mpsc::Receiver<Event> {
         let (send, receive) = mpsc::channel(32);
         self.context.events = Some(send);
         self.context.mode = Some(mode);
-        if let Some(root) = Storage::default_root().filter(|root| root.exists()) {
+        self.context.storage_root = root.clone();
+        if let Some(root) = root.filter(|root| root.exists()) {
             let loaded = (|| -> anyhow::Result<()> {
                 let store = Storage::open_existing(root.clone())?;
                 for identity in store.identities()? {
                     let scopes = store.scopes(&self.app.project_root, &identity)?;
                     if !scopes.is_empty() {
+                        self.context.remembered.insert(identity.name().to_owned());
                         self.context
                             .grants
                             .insert(identity.fingerprint(), (identity, scopes));
@@ -184,6 +198,10 @@ impl WorkspaceHost {
             }
             if !grants.is_empty() {
                 self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+                self.context.remembered = grants
+                    .values()
+                    .map(|(id, _)| id.name().to_owned())
+                    .collect();
                 self.context.grants = grants;
                 self.context_enable()?;
             }
@@ -331,41 +349,87 @@ impl WorkspaceHost {
             && self.app.plugins.frontend_attached
             && !self.app.has_input_overlay()
         {
-            let scopes = self
+            let mut identities: BTreeSet<String> = self
                 .context
                 .grants
                 .values()
-                .find(|(id, _)| id.name() == identity)
+                .map(|(id, _)| id.name().to_owned())
+                .collect();
+            // Listing paired identities does not require a workspace grant or
+            // a writable store. Reopen on demand to include newly paired agents.
+            #[cfg(unix)]
+            let root = self.context.storage_root.clone();
+            #[cfg(windows)]
+            let root = self.context.location.as_ref().map(|l| l.root().to_owned());
+            let inventory = self.context.storage.clone().or_else(|| {
+                let root = root?;
+                self.context_validate_storage_root(&root).ok()?;
+                Storage::open_existing(root).ok().map(Arc::new)
+            });
+            if let Some(store) = inventory
+                && let Ok(known) = store.identities()
+            {
+                identities.extend(known.into_iter().map(|id| id.name().to_owned()));
+            }
+            let identity = if identity.is_empty() {
+                self.context
+                    .grants
+                    .values()
+                    .next()
+                    .map(|(id, _)| id.name().to_owned())
+                    .or_else(|| identities.first().cloned())
+                    .unwrap_or_else(|| "agent".into())
+            } else {
+                identity
+            };
+            identities.insert(identity.clone());
+            self.app.context_ui.identities = identities.into_iter().collect();
+            let granted = self
+                .context
+                .grants
+                .values()
+                .find(|(id, _)| id.name() == identity);
+            let scopes = granted
                 .map(|(_, scopes)| scopes.clone())
                 .unwrap_or_else(|| [Scope::TerminalRead, Scope::EditorContextRead].into());
+            let remember = self.context.remembered.contains(&identity);
+            let readers = self
+                .context
+                .readers
+                .values()
+                .filter(|r| r.identity == identity && r.registered)
+                .count();
+            let status = if granted.is_none() {
+                "Not granted; apply the selected permissions below"
+            } else if remember {
+                "Enabled; remembered for this workspace"
+            } else {
+                "Enabled until this editor or persistent host exits"
+            };
             let mut explanation = vec![
-                Detail::value("Identity", visible(&identity)),
+                Detail::value("Identity", label(&identity)),
                 Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
-                Detail::note("Read grants include unsaved text and sensitive terminal output."),
-                Detail::note("Terminal proposals always require a separate approval."),
-            ];
-            explanation.extend(self.context.readers.values().map(|reader| {
+                Detail::value("Status", status.into()),
                 Detail::value(
-                    "Reader",
-                    format!("{}; scopes: {:?}", visible(&reader.identity), reader.scopes),
-                )
-            }));
-            explanation.extend(
-                self.context
-                    .recent
-                    .iter()
-                    .rev()
-                    .take(4)
-                    .map(|recent| Detail::value("Recent", recent.clone())),
-            );
+                    "Connected",
+                    format!("{readers} reader(s) for this identity"),
+                ),
+                Detail::note(
+                    "Use the same --identity in runyte mcp. Agent start order is flexible.",
+                ),
+                Detail::note("Reads include unsaved text; terminal insertion needs approval."),
+            ];
+            if let Some(recent) = self.context.recent.back() {
+                explanation.push(Detail::excerpt("Last call", recent));
+            }
             self.app.plugins.presentation_dirty = true;
             self.app.context_ui.surface = Some(Surface::new(
                 Kind::Grant {
                     identity,
                     scopes,
-                    remember: false,
+                    remember,
                 },
-                "Agent context access".into(),
+                "MCP permissions".into(),
                 explanation,
                 "",
                 self.app.plugins.attachment_generation,
@@ -535,7 +599,7 @@ impl WorkspaceHost {
                 if self.context.storage.is_none() {
                     #[cfg(unix)]
                     self.context_open_storage(
-                        Storage::default_root().ok_or_else(|| {
+                        self.context.storage_root.clone().ok_or_else(|| {
                             anyhow::anyhow!("Private context storage unavailable")
                         })?,
                     )?;
@@ -556,6 +620,11 @@ impl WorkspaceHost {
                     store.revoke(&self.app.project_root, &identity)?;
                 }
                 self.context_revoke(identity.name());
+                if remember && !scopes.is_empty() {
+                    self.context.remembered.insert(identity.name().to_owned());
+                } else {
+                    self.context.remembered.remove(identity.name());
+                }
                 if !scopes.is_empty() {
                     self.context
                         .grants
@@ -576,6 +645,7 @@ impl WorkspaceHost {
                 }
             }
             Decision::Revoke(name) => {
+                self.context.remembered.remove(&name);
                 self.context_revoke(&name);
                 if let Some(store) = &self.context.storage
                     && let Some(identity) = store.load_identity(&name)?

@@ -16,6 +16,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Default)]
 pub(crate) struct ContextUi {
+    pub identities: Vec<String>,
     pub requested_identity: Option<String>,
     pub surface: Option<Surface>,
     pub decision: Option<Decision>,
@@ -302,7 +303,7 @@ impl App {
             self.status("Context access requires native input outside a macro");
             return;
         }
-        self.context_ui.requested_identity = Some(identity.unwrap_or_else(|| "agent".into()));
+        self.context_ui.requested_identity = Some(identity.unwrap_or_default());
     }
 
     pub(super) fn handle_context_input(&mut self, input: InputEvent, approval: bool) {
@@ -357,6 +358,21 @@ impl App {
                     *remember = !*remember;
                 }
             }
+            KeyCode::Char('n') => {
+                if let Kind::Grant { identity, .. } = &surface.kind
+                    && let Some(index) = self
+                        .context_ui
+                        .identities
+                        .iter()
+                        .position(|id| id == identity)
+                {
+                    self.context_ui.requested_identity = Some(
+                        self.context_ui.identities[(index + 1) % self.context_ui.identities.len()]
+                            .clone(),
+                    );
+                    return;
+                }
+            }
             KeyCode::Char(character @ '1'..='4') => {
                 if let Kind::Grant { scopes, .. } = &mut surface.kind {
                     let scope = [
@@ -367,6 +383,25 @@ impl App {
                     ][character as usize - '1' as usize];
                     if !scopes.remove(&scope) {
                         scopes.insert(scope);
+                        match scope {
+                            Scope::BufferEdit => {
+                                scopes.insert(Scope::EditorContextRead);
+                            }
+                            Scope::TerminalPropose => {
+                                scopes.insert(Scope::TerminalRead);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match scope {
+                            Scope::EditorContextRead => {
+                                scopes.remove(&Scope::BufferEdit);
+                            }
+                            Scope::TerminalRead => {
+                                scopes.remove(&Scope::TerminalPropose);
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -420,7 +455,12 @@ impl App {
                         "{} [{}] {}",
                         index + 1,
                         if scopes.contains(scope) { "x" } else { " " },
-                        scope.capability()
+                        match scope {
+                            Scope::TerminalRead => "Read terminal output",
+                            Scope::EditorContextRead => "Read buffers and selections",
+                            Scope::BufferEdit => "Edit and append to buffers",
+                            Scope::TerminalPropose => "Propose terminal text (approval each time)",
+                        }
                     ),
                     Vec::new(),
                     vec![0],
@@ -428,7 +468,7 @@ impl App {
             }
             rows.push(review_row(
                 format!(
-                    "r [{}] Remember; x Revoke",
+                    "r [{}] Remember for this workspace; x Revoke; n Next identity",
                     if *remember { "x" } else { " " }
                 ),
                 Vec::new(),
@@ -469,7 +509,7 @@ impl App {
         }
         rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         let action = match surface.kind {
-            Kind::Grant { .. } => "Grant access",
+            Kind::Grant { .. } => "Apply permissions",
             Kind::Proposal { .. } => "Insert text (no Enter)",
         };
         rows.push(review_row("Reject".into(), Vec::new(), Vec::new()));
@@ -490,7 +530,7 @@ impl App {
             None
         };
         let mut actions = vec![
-            OverlayAction::new("↑/↓ or Tab", "choose"),
+            OverlayAction::new("↑/↓/Tab", "choose"),
             OverlayAction::new("Enter", "apply choice"),
             OverlayAction::new("Esc", "reject"),
         ];

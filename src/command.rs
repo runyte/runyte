@@ -2433,10 +2433,10 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     spec!(
         ColonId(Colon::ContextAccess),
-        "context-access",
-        [],
-        "context-access [identity]",
-        "Review workspace agent permissions",
+        "mcp",
+        ["context-access"],
+        "mcp [identity]",
+        "Review MCP permissions and connected agents",
         Optional(FreeText)
     ),
     spec!(
