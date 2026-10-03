@@ -7,6 +7,7 @@
 //! text, returning one bounded, request-identified result to the host thread.
 
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -146,10 +147,16 @@ pub(crate) fn perform(
     request: WorkspaceSearchRequest,
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<(Vec<WorkspaceMatch>, bool)>> {
+    let open_paths = request
+        .open_buffers
+        .iter()
+        .map(|snapshot| snapshot.path.as_path())
+        .collect::<HashSet<_>>();
     let Some((mut matches, mut limited)) = workspace_matches(
         &request.root,
         &request.matcher,
         request.show_hidden,
+        &open_paths,
         &cancelled,
     )?
     else {
@@ -163,7 +170,6 @@ pub(crate) fn perform(
         if cancelled() {
             return Ok(None);
         }
-        matches.retain(|found| found.path != snapshot.path);
         let Some((live, live_limited)) =
             matches_in_rope(&snapshot.path, &snapshot.text, &request.matcher, &cancelled)
         else {
@@ -187,6 +193,7 @@ fn workspace_matches(
     root: &Path,
     matcher: &Regex,
     show_hidden: bool,
+    open_paths: &HashSet<&Path>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<Option<(Vec<WorkspaceMatch>, bool)>> {
     let mut pending = vec![root.to_path_buf()];
@@ -224,6 +231,11 @@ fn workspace_matches(
                 continue;
             }
             let path = entry.path();
+            // The captured rope is authoritative. Its stale disk contents
+            // must not consume the result budget and hide unopened files.
+            if open_paths.contains(path.as_path()) {
+                continue;
+            }
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -244,6 +256,10 @@ fn workspace_matches(
     }
     Ok(Some((matches, false)))
 }
+
+#[cfg(test)]
+#[path = "workspace_search/tests/mod.rs"]
+mod regression_tests;
 
 fn matches_in_rope(
     path: &Path,
