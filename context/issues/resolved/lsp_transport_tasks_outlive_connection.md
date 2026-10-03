@@ -1,3 +1,29 @@
+---
+title: "Language-server transport tasks survive connection teardown"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 277ee71
+---
+
+## Resolution
+
+Commit `277ee71` (`fix(lsp): cancel transport tasks when connections end`)
+makes `transport::Connection` retain cancellation handles for its framing tasks
+on every platform. Previously Unix dropped the task handles and detached the
+stderr drain, allowing silent readers and backpressured writers to retain
+streams after the manager retired their connection. Connection destruction now
+aborts all owned tasks, including the Unix stderr drain. Explicit shutdown
+keeps the existing bounded graceful child-exit interval before destruction;
+Windows native process ownership is unchanged.
+
+`dropping_connection_cancels_idle_reader_and_blocked_writer` and
+`stopping_connection_cancels_idle_reader_and_blocked_writer` in
+`src/lsp/transport.rs` exercise actual stream closure with idle and blocked
+peers. Both failed before the repair; all ten transport tests pass afterward.
+
+## Report
+
 On Unix, stopping or dropping a language-server connection does not cancel its
 framing or stderr tasks. `transport::connect` detaches the reader and writer
 tasks, and `transport::spawn` detaches the stderr drain. Only the Windows
