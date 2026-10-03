@@ -118,6 +118,17 @@ class ApplicationSchemaTests(unittest.TestCase):
             current = resource('resource.stat', 103, job='j:g:read', provider='memory', key='notes')['result']['value']
             self.assertEqual(current['bytes'], 5)
             self.assertNotEqual(current['version'], metadata['version'])
+            for number, (offset, limit) in enumerate(((0, 1), (1, 1), (2, 2), (3, 1)), 200):
+                refused = resource('resource.read', number, job='j:g:read', provider='memory',
+                                   key='notes', version=current['version'], offset=offset, limit=limit)
+                self.assertEqual(refused.get('error', {}).get('code'), 'invalid_argument', refused)
+            for number, (offset, limit, text, eof) in enumerate(((0, 2, 'é', False),
+                                                               (2, 3, '猫', True),
+                                                               (5, 1, '', True)), 210):
+                chunk = resource('resource.read', number, job='j:g:read', provider='memory',
+                                 key='notes', version=current['version'], offset=offset, limit=limit)
+                self.assertEqual(chunk['result']['value'], {'version': current['version'],
+                                 'offset': offset, 'text': text, 'eof': eof})
             rejected = resource('resource.write.begin', 104, job='j:g:stale', provider='memory', key='notes',
                                 expected_version=metadata['version'], mode=mode, bytes=0, encoding='utf-8')
             self.assertEqual(rejected['error']['code'], 'conflict')

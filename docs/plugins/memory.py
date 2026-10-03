@@ -101,8 +101,10 @@ def read(context):
         if not 0 <= offset <= len(TEXT) or not 1 <= limit <= 128 * 1024:
             raise PluginError('invalid_argument', 'Invalid resource range')
         end = min(offset + limit, len(TEXT))
-        while end < len(TEXT) and TEXT[end] & 0xc0 == 0x80:
+        while end < len(TEXT) and end > offset and TEXT[end] & 0xc0 == 0x80:
             end -= 1
+        if end == offset and offset < len(TEXT):
+            raise PluginError('invalid_argument', 'Read limit cannot hold the next UTF-8 scalar')
         try:
             text = TEXT[offset:end].decode('utf-8')
         except UnicodeDecodeError as error:
