@@ -14,6 +14,13 @@ Finder ignore rules, content searches, and previews now open descriptor-validate
 
 Coverage: finder_special_files_return_without_waiting_for_a_writer in tests/finder_special_files.rs owns bounded subprocess cases for ignore scans, previews, and snippets, including FIFO aliases, a special device, and a regular symlink. Its ignore case timed out before the fix. finder_text_reads_enforce_byte_limits_and_skip_oversized_ignore_files in src/file_picker.rs covers exact Unicode byte limits and oversized metadata/content. All 52 selected file-picker tests and the integration parent pass; the owned child fixture is ignored outside its parent.
 
+The subprocess fixture compares the returned ordinary-file path with its
+canonical path, matching `scan_with`'s root canonicalization. On macOS, a
+temporary root spelled through `/var` resolves under `/private/var`; comparing
+the original spelling caused a test failure after the special-file checks
+had passed. The macOS CI jobs set `TMPDIR=/private/tmp`, whose spelling is
+already canonical, so that configuration did not expose the mismatch.
+
 ## Report
 
 Finder workers read `.gitignore` and `.ignore` with `fs::read_to_string`

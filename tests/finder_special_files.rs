@@ -99,7 +99,12 @@ fn finder_special_file_child() {
             .unwrap();
             assert_eq!(skipped, 2);
             assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].path, root.join("ordinary.txt"));
+            // The scanner canonicalizes its root; macOS temporary paths can
+            // reach /private/var through the /var symlink.
+            assert_eq!(
+                entries[0].path,
+                root.join("ordinary.txt").canonicalize().unwrap()
+            );
         }
         "preview" => {
             for path in [&pipe, &alias, Path::new("/dev/null")] {
