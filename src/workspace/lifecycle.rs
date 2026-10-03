@@ -13,14 +13,16 @@
 
 use std::{
     ffi::OsString,
-    fmt, fs,
-    io::{self, Read},
+    fmt, fs, io,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
 };
 
 use anyhow::{Context, Result};
+
+#[path = "lifecycle/stderr.rs"]
+mod stderr;
 
 use crate::app::FrameGeometry;
 use crate::protocol::{ClientRequest, HostResponse, validate_welcome};
@@ -558,6 +560,9 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
             project_root.display()
         )
     };
+    // Reserve the wait owner before launch. Thread exhaustion must not leave a
+    // successfully spawned persistent host without anyone to reap it.
+    let reaper = ChildReaper::new().with_context(spawn_context)?;
     let child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -577,7 +582,7 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
             return Err(error).with_context(spawn_context);
         }
     };
-    let mut child = ReapedChild::new(child);
+    let mut child = ReapedChild::new(child, reaper)?;
 
     for _ in 0..READINESS_ATTEMPTS {
         // Connect first. Two clients may race the same workspace, and the
@@ -593,7 +598,7 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
             if connect_control(endpoint).await.is_ok() {
                 return Ok(());
             }
-            let detail = child.stderr_detail();
+            let detail = child.stderr_detail().await;
             let description = startup.description;
             if detail.is_empty() {
                 anyhow::bail!("{description} workspace host exited with {status}");
@@ -628,32 +633,48 @@ fn startup_executable_path(executable: &Path, working_directory: &Path) -> Optio
 /// alive whenever `kill(pid, 0)` succeeds, which it does for a zombie, so an
 /// unreaped dead host would keep its registration looking live and refuse the
 /// next start for that workspace.
-struct ReapedChild(Option<Child>);
+struct ReapedChild {
+    child: Option<Child>,
+    stderr: Option<stderr::Capture>,
+    reaper: ChildReaper,
+}
 
 impl ReapedChild {
-    fn new(child: Child) -> Self {
-        Self(Some(child))
+    fn new(mut child: Child, reaper: ChildReaper) -> io::Result<Self> {
+        let pipe = child.stderr.take();
+        let mut owner = Self {
+            child: Some(child),
+            stderr: None,
+            reaper,
+        };
+        if let Some(pipe) = pipe {
+            match stderr::Capture::new(pipe) {
+                Ok(capture) => owner.stderr = Some(capture),
+                Err(error) => {
+                    owner.kill();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(owner)
     }
 
     fn exited(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        let Some(child) = self.0.as_mut() else {
+        let Some(child) = self.child.as_mut() else {
             return Ok(None);
         };
         Ok(child.try_wait()?)
     }
 
-    fn stderr_detail(&mut self) -> String {
-        let mut detail = String::new();
-        if let Some(child) = self.0.as_mut()
-            && let Some(stderr) = child.stderr.as_mut()
-        {
-            let _ = stderr.read_to_string(&mut detail);
+    async fn stderr_detail(&mut self) -> String {
+        match self.stderr.take() {
+            Some(capture) => capture.finish().await,
+            None => String::new(),
         }
-        detail.trim().to_owned()
     }
 
     fn kill(&mut self) {
-        if let Some(child) = self.0.as_mut() {
+        if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
         }
     }
@@ -661,15 +682,41 @@ impl ReapedChild {
 
 impl Drop for ReapedChild {
     fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            // Nothing needs the exit status; the point is to keep a dead host
-            // from lingering in the process table of a long-lived editor.
-            std::thread::spawn(move || {
+        if let Some(mut child) = self.child.take() {
+            let stderr = self.stderr.take();
+            if let Err(undelivered) = self.reaper.0.send((child, stderr)) {
+                // The reserved worker normally cannot disappear before its
+                // only message. Retain cleanup even if it unexpectedly does.
+                child = undelivered.0.0;
+                let _ = child.kill();
                 let _ = child.wait();
-            });
+            }
         }
     }
 }
+
+struct ChildReaper(std::sync::mpsc::Sender<(Child, Option<stderr::Capture>)>);
+
+impl ChildReaper {
+    fn new() -> io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::channel::<(Child, Option<stderr::Capture>)>();
+        std::thread::Builder::new()
+            .name("workspace-host-reaper".to_owned())
+            .spawn(move || {
+                if let Ok((mut child, stderr)) = receiver.recv() {
+                    let _ = child.wait();
+                    // The async reader drains through the host's lifetime,
+                    // then stops even if a descendant retains the writer.
+                    drop(stderr);
+                }
+            })?;
+        Ok(Self(sender))
+    }
+}
+
+#[cfg(test)]
+#[path = "lifecycle/startup_stderr_tests.rs"]
+mod startup_stderr_tests;
 
 #[cfg(test)]
 mod tests {
