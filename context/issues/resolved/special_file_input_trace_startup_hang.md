@@ -14,6 +14,13 @@ open_input_trace now creates or opens the destination without truncating it firs
 
 Coverage: input_trace_refuses_special_files_without_blocking and its owned input_trace_fixture in src/tui/tests/input_trace.rs cover a FIFO, a symlink to it, absent-file creation, and ordinary truncation. The bounded subprocess timed out before the fix and passes afterward.
 
+The integration fixture `a_second_process_is_refused_when_an_explicit_log_is_owned`
+in `tests/diagnostic_log.rs` previously kept the first process alive by blocking
+its debug input trace on a FIFO. It now starts a persistent host with the explicit
+log destination and verifies a health response before launching the competing
+process. The test still checks the log-ownership refusal and that every shared
+log record belongs to the original process, and it also runs in release builds.
+
 ## Report
 
 Debug builds open the optional `RUNYTE_INPUT_TRACE` destination with a blocking,
