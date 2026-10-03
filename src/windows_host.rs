@@ -1042,7 +1042,7 @@ async fn run_loop(
                 }
                 else { note_ended_service(&mut ended, "terminals"); }
             }
-            event = super::receive_workspace_event(&mut services.workspace_events) => {
+            event = super::receive_optional_service_event(&mut services.workspace_events) => {
                 if let Some(event) = event { host.apply_event(event); changed = true; }
                 else { services.workspace_events = None; }
             }
