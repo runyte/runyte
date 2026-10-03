@@ -1228,6 +1228,46 @@ fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
 }
 
 #[test]
+fn pasted_image_links_preserve_reserved_characters_in_state_paths() {
+    let fixture = temporary("image-link-state-paths");
+    let names = [
+        "cache#scratch",
+        "cache%23scratch",
+        "cache (copy)#scratch",
+        #[cfg(unix)]
+        "cache\\scratch",
+    ];
+    for state_name in names {
+        let project = fixture.join(state_name);
+        fs::create_dir_all(&project).unwrap();
+        let notes = project.join("notes.md");
+        fs::write(&notes, "").unwrap();
+        let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+        app.state_root = project.join(state_name);
+        app.programs = external_open::ProgramCache::load(None);
+        let bytes = png("reserved path");
+        app.set_system_clipboard(Box::new(ImageClipboard::holding(&bytes)));
+        press(&mut app, 'i');
+        key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        let stored = crate::pasted_image::cache_directory(&app.state_root).join(
+            crate::pasted_image::file_name(&bytes, crate::pasted_image::ImageFormat::Png),
+        );
+        assert_eq!(fs::read(&stored).unwrap(), bytes);
+        set_cursor(&mut app, 0, 2);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(
+            app.external_target.as_ref(),
+            Some(&stored),
+            "{}",
+            text(&app)
+        );
+    }
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
 fn alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v() {
     let fixture = temporary("alternate-clipboard-image-paste");
     let project = fixture.join("project");

@@ -147,10 +147,11 @@ impl App {
         let path = stored
             .strip_prefix(&self.project_root)
             .unwrap_or(stored)
-            .to_string_lossy()
-            // Markdown separates path segments with `/` on every platform, and
-            // an absolute Windows destination is a path like any other.
-            .replace('\\', "/");
+            .to_string_lossy();
+        // Windows separators use Markdown's slash spelling; on Unix a
+        // backslash belongs to the filename and must survive link decoding.
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
         crate::pasted_image::destination(&path)
     }
 
