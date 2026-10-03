@@ -5885,6 +5885,7 @@ fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRo
                         if attached { "yes" } else { "no" }.to_owned()
                     }),
             ]
+            .map(|cell| display_session_table_cell(&cell))
         })
         .collect::<Vec<_>>();
     let headings = [
@@ -5913,6 +5914,19 @@ fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRo
         append_workspace_row(&mut output, &row, &widths);
     }
     output
+}
+
+#[cfg(any(unix, windows))]
+fn display_session_table_cell(text: &str) -> String {
+    let mut displayed = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            displayed.extend(character.escape_default());
+        } else {
+            displayed.push(character);
+        }
+    }
+    displayed
 }
 
 #[cfg(any(unix, windows))]
@@ -8756,3 +8770,7 @@ mod tests {
 #[cfg(all(test, unix, debug_assertions))]
 #[path = "tui/tests/input_trace.rs"]
 mod input_trace_tests;
+
+#[cfg(all(test, any(unix, windows)))]
+#[path = "tui/tests/session_table.rs"]
+mod session_table_tests;
