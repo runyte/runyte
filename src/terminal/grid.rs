@@ -752,10 +752,8 @@ impl Grid {
         }
         self.split_before(row, column, pen);
         self.split_before(row, column + count, pen);
-        for _ in 0..count {
-            self.lines[row].remove(column);
-            self.lines[row].push(Cell::blank(pen));
-        }
+        self.lines[row].copy_within(column + count..self.columns, column);
+        self.lines[row][self.columns - count..].fill(Cell::blank(pen));
     }
 
     /// Insert characters (ICH): shift the rest of the line right.
@@ -772,10 +770,8 @@ impl Grid {
             self.clear_row_wraps(row);
         }
         self.split_before(row, column, pen);
-        for _ in 0..count {
-            self.lines[row].insert(column, Cell::blank(pen));
-            self.lines[row].truncate(self.columns);
-        }
+        self.lines[row].copy_within(column..self.columns - count, column + count);
+        self.lines[row][column..column + count].fill(Cell::blank(pen));
         self.clear_trailing_lead(row, pen);
     }
 
@@ -1122,6 +1118,90 @@ mod tests {
         grid.move_to(0, 0);
         grid.insert_characters(1, Pen::default());
         assert!(grid.line(0).unwrap().iter().all(|cell| cell.width == 1));
+    }
+
+    #[test]
+    fn bulk_character_shifts_preserve_cells_and_paint_only_vacated_columns() {
+        let mut original = Grid::new(12, 1, false);
+        let content_pen = Pen {
+            foreground: Color::Indexed(3),
+            background: Color::Indexed(4),
+            attributes: Attributes::BOLD,
+        };
+        for character in "ab界c\u{301}defghij".chars() {
+            original.write(character, content_pen, true);
+        }
+        let erase_pen = Pen {
+            background: Color::Indexed(7),
+            ..Pen::default()
+        };
+
+        let mut inserted = original.clone();
+        inserted.move_to(0, 2);
+        inserted.insert_characters(3, erase_pen);
+        assert_eq!(row_text(&inserted, 0), "ab   界c\u{301}defg");
+        assert_eq!(&inserted.lines[0][5..], &original.lines[0][2..9]);
+        assert_eq!(&inserted.lines[0][2..5], &[Cell::blank(erase_pen); 3]);
+        assert_eq!(inserted.cursor.column, 2);
+
+        let mut deleted = original.clone();
+        deleted.move_to(0, 2);
+        deleted.delete_characters(3, erase_pen);
+        assert_eq!(row_text(&deleted, 0), "abdefghij");
+        assert_eq!(&deleted.lines[0][2..9], &original.lines[0][5..]);
+        assert_eq!(&deleted.lines[0][9..], &[Cell::blank(erase_pen); 3]);
+        assert_eq!(deleted.cursor.column, 2);
+
+        for insert in [false, true] {
+            let mut grid = original.clone();
+            grid.move_to(0, 2);
+            if insert {
+                grid.insert_characters(0, erase_pen);
+            } else {
+                grid.delete_characters(0, erase_pen);
+            }
+            assert_eq!(grid.lines, original.lines);
+            if insert {
+                grid.insert_characters(usize::MAX, erase_pen);
+            } else {
+                grid.delete_characters(usize::MAX, erase_pen);
+            }
+            assert_eq!(row_text(&grid, 0), "ab");
+            assert_eq!(grid.lines[0].len(), 12);
+            assert_eq!(&grid.lines[0][2..], &[Cell::blank(erase_pen); 10]);
+        }
+    }
+
+    #[test]
+    fn bulk_character_shifts_clear_split_wide_glyphs_at_both_edges() {
+        let mut deleted = Grid::new(12, 1, false);
+        write(&mut deleted, "a界bc界defgh");
+        deleted.move_to(0, 2);
+        deleted.delete_characters(4, Pen::default());
+        assert_eq!(row_text(&deleted, 0), "a  defgh");
+        assert!(deleted.lines[0].iter().all(|cell| cell.width == 1));
+
+        let mut inserted = Grid::new(12, 1, false);
+        write(&mut inserted, "a界bc界defgh");
+        inserted.move_to(0, 2);
+        inserted.insert_characters(6, Pen::default());
+        assert_eq!(row_text(&inserted, 0), "a        bc");
+        assert!(inserted.lines[0].iter().all(|cell| cell.width == 1));
+    }
+
+    #[test]
+    fn bulk_character_shifts_handle_a_maximum_width_short_screen() {
+        let width = 32768;
+        let mut grid = Grid::new(width, 1, false);
+        write(&mut grid, &"x".repeat(width));
+        grid.move_to(0, 0);
+        grid.insert_characters(width / 2, Pen::default());
+        assert_eq!(
+            row_text(&grid, 0),
+            " ".repeat(width / 2) + &"x".repeat(width / 2)
+        );
+        grid.delete_characters(width / 2, Pen::default());
+        assert_eq!(row_text(&grid, 0), "x".repeat(width / 2));
     }
 
     #[test]
