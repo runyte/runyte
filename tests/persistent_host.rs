@@ -396,7 +396,7 @@ async fn wait_for_process_exit(pid: u32) {
     while process_is_running(pid) {
         assert!(
             Instant::now() < deadline,
-            "host process {pid} remained live after its shutdown acknowledgement"
+            "host process {pid} did not exit before fixture cleanup"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -2019,22 +2019,75 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
         Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    let startup = || {
+    // Readiness belongs to the endpoint, not necessarily to the child that
+    // this caller spawned. Record both child identities before exec so even
+    // a caller whose child is still starting can be joined before teardown.
+    let executables = ["first-host", "second-host"].map(|name| {
+        let executable = sandbox.runtime_dir().join(name);
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+            &executable,
+        )
+        .unwrap();
+        fs::write(
+            executable.with_extension("behavior"),
+            "printf '%s\\n' \"$$\" > \"$0.pid\"\nexec \"$RUNYTE_RACED_HOST\" \"$@\"\n",
+        )
+        .unwrap();
+        executable
+    });
+    let startup = |executable: &Path| {
         sandbox
-            .host_startup(env!("CARGO_BIN_EXE_runyte"), "raced")
+            .host_startup(executable, "raced")
+            .with_env("RUNYTE_RACED_HOST", env!("CARGO_BIN_EXE_runyte"))
             .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
             .with_env("XDG_CONFIG_HOME", sandbox.cache_dir())
     };
 
     let (first, second) = tokio::join!(
-        start_detached_host(&endpoint, startup()),
-        start_detached_host(&endpoint, startup()),
+        start_detached_host(&endpoint, startup(&executables[0])),
+        start_detached_host(&endpoint, startup(&executables[1])),
     );
     let outcome = first.and(second);
+    let mut pids = Vec::new();
+    for executable in &executables {
+        let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+        loop {
+            if let Ok(text) = fs::read_to_string(executable.with_extension("pid"))
+                && let Some(pid) = text
+                    .strip_suffix('\n')
+                    .and_then(|value| value.parse::<u32>().ok())
+            {
+                pids.push(pid);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "racing host did not record its PID"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    if outcome.is_ok() {
+        let winner = endpoint.verify_for_connect().unwrap().pid;
+        assert!(pids.contains(&winner));
+        // Keep the winner serving until the other child has failed its bind.
+        // Otherwise a delayed child could publish a new host after the stop.
+        for &pid in &pids {
+            if pid != winner {
+                wait_for_process_exit(pid).await;
+            }
+        }
+    }
 
     // Shut the host down before asserting, so a failure cannot leave a stray
     // host holding this test's endpoint.
     let shutdown = sandbox.run_cli(&root, &["--session-stop"]);
+    // ShuttingDown acknowledges the request, not process exit. Both children
+    // must be reaped before their project or runtime storage is removed.
+    for pid in pids {
+        wait_for_process_exit(pid).await;
+    }
     if outcome
         .as_ref()
         .is_err_and(|error| error.to_string().contains("Operation not permitted"))
