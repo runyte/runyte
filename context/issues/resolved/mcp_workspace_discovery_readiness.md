@@ -23,15 +23,17 @@ and propagates RPC/tool errors immediately. Timeout diagnostics retain only
 bounded root, readability, unavailable-reason and truncation fields. Product
 startup ordering and service deadlines are unchanged.
 
-`bridges/runyte-context/tests/test_workspace_readiness.py` covers this contract
+`tests/mcp/test_workspace_readiness.py` covers this contract
 with a controlled clock: `test_delayed_discovery_requires_every_exact_root_and_readable_access`,
 `test_missing_workspace_expires_with_bounded_selected_diagnostics`,
 `test_discovery_errors_propagate_without_retry`, and
 `test_late_success_cannot_extend_the_startup_deadline`. All four pass locally.
-The real scenarios remain in `bridges/runyte-context/tests/test_runyte.py`:
+After removal of the Python adapter, the helper uses native MCP scopes and
+unavailability rather than the legacy readability flag. The real scenarios
+now exercise `runyte mcp` in `tests/mcp/test_runyte.py`:
 `test_concurrent_appends_from_two_agents_land_whole_without_a_revision` and
 `test_two_agent_clients_read_live_and_detached_workspaces_edit_unsaved_and_observe_revocation`.
-Both scenarios pass in the Linux plugin-conformance job in
+The original scenarios passed in the Linux plugin-conformance job in
 [run 35612547548](https://github.com/runyte/runyte/actions/runs/35612547548).
 
 ## Report

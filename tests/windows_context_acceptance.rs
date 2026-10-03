@@ -390,7 +390,7 @@ fn wait_file(path: &Path, child: &mut OwnedChild, output: &Path) {
     while !path.exists() {
         assert!(
             child.0.try_wait().unwrap().is_none(),
-            "Python bridge exited before {}:\n{}",
+            "MCP harness exited before {}:\n{}",
             path.display(),
             std::fs::read_to_string(output).unwrap()
         );
@@ -406,7 +406,7 @@ fn spawn_python(
     config: &Path,
     python: &Path,
 ) -> (OwnedChild, PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
-    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("bridges/runyte-context");
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mcp");
     let output = root.join("python-output");
     let stdout = std::fs::File::create(&output).unwrap();
     let phase_ready = root.join("phase-ready");
@@ -420,7 +420,7 @@ fn spawn_python(
                 "unittest",
                 "discover",
                 "-s",
-                "tests",
+                ".",
                 "-p",
                 "test_windows_native.py",
                 "-v",
@@ -470,7 +470,7 @@ fn public_windows_context_fixture() {
     let mut first = Console::spawn(binary, &project, &config, &file);
     first.until("a\u{00e7}\u{754c}\u{1f642}z");
     first.until("NOR");
-    first.send(":context-access agent\r");
+    first.send(":mcp agent\r");
     grant_remembered_edit(&mut first);
     let published = wait_inventory(binary, &context, &config_root, 1);
     assert_eq!(
@@ -495,7 +495,7 @@ fn public_windows_context_fixture() {
     std::fs::write(&phase_continue, b"continue").unwrap();
     wait_file(&restart_ready, &mut bridge, &python_output);
 
-    second.send(":context-access agent\r");
+    second.send(":mcp agent\r");
     second.until("MCP permissions");
     second.send("x");
     wait_inventory(binary, &context, &config_root, 0);
@@ -508,7 +508,7 @@ fn public_windows_context_fixture() {
         }
         assert!(
             Instant::now() < deadline,
-            "Python bridge timed out:\n{}",
+            "MCP harness timed out:\n{}",
             std::fs::read_to_string(&python_output).unwrap()
         );
         std::thread::sleep(Duration::from_millis(10));
@@ -518,8 +518,9 @@ fn public_windows_context_fixture() {
     assert!(
         python_output.contains(
             "test_public_executable_discovery_edit_reconnect_remember_restart_and_revoke"
-        ) && python_output.contains("OK"),
-        "required public bridge acceptance did not run:\n{python_output}"
+        ) && python_output.contains("OK")
+            && !python_output.contains("skipped"),
+        "required public MCP acceptance did not run:\n{python_output}"
     );
 
     second.send(":quit\r");

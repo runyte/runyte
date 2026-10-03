@@ -31,8 +31,10 @@ become inconsistent, with refusal deferred until submission.
 starts neither an editor nor its configuration/logging/terminal lifecycle.
 It uses the existing private discovery, credential storage and verified local
 transport directly. It has no new dependencies or Python runtime requirement.
-The Python adapter remains available for compatibility and advanced snapshot,
-selection and viewport tools.
+At the time of this review, the Python adapter remained available for
+compatibility and advanced snapshot, selection and viewport tools. It was
+subsequently removed; current setup is documented in `docs/mcp.md`, and retained
+acceptance tests now live in `tests/mcp/`.
 
 The native adapter advertises nine stable tools. Tool presence describes the
 API; authorization still belongs to the exact workspace host on every call.

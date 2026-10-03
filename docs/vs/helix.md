@@ -14,7 +14,7 @@ Runyte draws from Helix but is not keymap-compatible. Search and macros delibera
 
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide.md), [plugin contract](../plugins.md), and
-[optional context bridge](../../bridges/runyte-context/README.md).
+[built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 
 | Area | Runyte | Helix |
@@ -24,7 +24,7 @@ The bridge requires native grants; terminal-text proposals need approval and do 
 | Terminals | Built-in terminal panes with scrollback and modal review. | Use a surrounding terminal or multiplexer; no integrated terminal emulator is documented. |
 | Navigation and search | Finder searches files, unsaved buffers, and terminals together. | File and symbol pickers and project search. |
 | Persistence | Optional persistent host retains buffers and processes while detached; live state ends at host shutdown or reboot. | Use an external multiplexer to keep the editor running when detaching; no comparable built-in workspace host is documented. |
-| Agent integration | Run agents in terminals; optional MCP bridge grants access to buffers and terminal context. | Use agents alongside the editor through external tools; no equivalent built-in context bridge is documented. |
+| Agent integration | Run agents in terminals; built-in MCP adapter shares buffers and terminal context through native grants. | Use agents alongside the editor through external tools; no equivalent built-in context bridge is documented. |
 | Extensibility | Explicitly enabled external-process plugins, in any language, using the documented JSON protocol. | Configuration and shell commands; the official FAQ says a plugin system is not yet available. [FAQ](https://helix-editor.com/). |
 | Interaction model | Modal keys, contextual help and key hints, plus mouse selection and pane resizing. | Modal keys, command completion, and discoverable command menus. [Keymap](https://docs.helix-editor.com/keymap.html). |
 | Language tooling | Bundled Tree-sitter grammars and asynchronous LSP; language servers need workspace permission. | Built-in Tree-sitter and LSP integration; language-server executables are installed separately. [Overview](https://helix-editor.com/). |

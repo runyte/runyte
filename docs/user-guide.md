@@ -20,7 +20,7 @@ reading from top to bottom.
 | [Workspaces and persistent sessions](#workspaces-and-persistent-sessions) | Standalone and persistent modes, the session manager |
 | [Commands](#commands) | The command palette and every `:` command |
 | [Plugins](#plugins) | Process plugins and application views |
-| [Agent access to workspace context](#agent-access-to-workspace-context) | The context bridge for AI agents |
+| [Agent access to workspace context](#agent-access-to-workspace-context) | The built-in MCP adapter for AI agents |
 | [Diagnostics and logging](#diagnostics-and-logging) | The diagnostic log |
 | [Configuration](#configuration) | The configuration file and every setting |
 | [Custom key bindings](#custom-key-bindings) | Remapping keys and binding actions |
@@ -304,7 +304,7 @@ cargo build --release --locked
   them.
 - Language-server file URIs for network shares, device paths, and alternate
   data streams.
-- Private runtime storage (logs, language-server approvals, the context bridge,
+- Private runtime storage (logs, language-server approvals, the MCP adapter,
   the `:quit-here` handoff) anywhere other than local NTFS.
 - Preserving unsaved editor state when the outer console window is closed.
   `Ctrl+C` and `Ctrl+Break` in the outer console request an orderly shutdown,
@@ -5470,7 +5470,7 @@ connected reader identifies a local connection, not a verified agent process.
 | Key | Permission or action |
 | --- | --- |
 | `1` | Read terminal output |
-| `2` | Read buffers and selections |
+| `2` | Editor-context read permission; MCP exposes buffer reads |
 | `3` | Edit and append to buffers; also enables buffer reads |
 | `4` | Propose terminal text; also enables terminal reads |
 | `r` | Remember this exact workspace's grant |
@@ -5497,7 +5497,7 @@ approve terminal insertion until a native frontend is attached.
 ### What a grant covers
 
 Grants cover unsaved content and possibly sensitive terminal output. They
-belong to the canonical project root and the bridge identity, so a clone, a
+belong to the canonical project root and the MCP identity, so a clone, a
 nested workspace, or another identity needs its own grant.
 
 **Where grants are stored:** outside the project, in the account's Runyte
@@ -5521,40 +5521,43 @@ cache.
 
 ### How agents use it
 
-- The bridge tells an agent to list authorized workspaces first and normally
-  use the one whose root matches its current project. Its instructions route
-  buffer reads, terminal reads, buffer edits, and terminal proposals to their
-  own discovery and operation tools.
-- The agent must use the returned workspace and resource handles, even when
-  names repeat.
-- It can read a detached persistent workspace you granted, and a standalone
-  workspace while its editor runs. Neither attaches another TUI or changes
-  focus.
-- Pane viewport reads need an attached frontend. Detached hosts still return
-  live terminal text and unsaved buffers.
-- Listing targets does not read their contents.
+- Start with `find_resources`, optionally selecting a workspace and searching
+  buffer or terminal names and contents. Use the returned exact handle with
+  `read_buffer`, `read_terminal`, `append_buffer`, `edit_buffer`, or
+  `propose_terminal_text`. Repeated names remain separate candidates.
+- `list_workspaces` checks permissions without reading source text.
+  `find_resources` can read content to match a query; `match_in="name"`
+  restricts matching to names. Search is bounded and may return partial results.
+- `terminal_proposal_status` and `cancel_terminal_proposal` operate on the
+  proposal handle. Let the person review a proposal rather than polling for
+  approval.
+- These are the nine MCP tools. Pane listing, selection and viewport reads,
+  and immutable snapshots are not exposed by the MCP adapter.
+- Granted detached persistent workspaces and running standalone editors are
+  discoverable without attaching a TUI or changing focus. Terminal approval
+  needs an attached native frontend.
+- After permission changes, run `find_resources` again. Handles belong to one
+  MCP process and connection generation; they expire on revocation, connection
+  renewal, eviction, or host restart. Never retry an `outcome_unknown` mutation
+  automatically.
+
+See the [MCP guide](mcp.md#tools) for the complete catalog and discovery bounds.
 
 **Discovery for tools.** `runyte --context-list --json` gives bounded,
 versioned endpoint metadata for live enabled endpoints in the current
-environment; `--include-hidden` adds other environments.
-
-- Listing does not grant content access; the bridge authenticates each target
-  separately.
-- Restarting a host or reconnecting a bridge invalidates old resource
-  handles.
-- A slow or unavailable host does not block discovering the others.
-- On Windows the output contains the named-pipe address and exact host process
-  identity used for authentication. Treat it as ephemeral: configure the
-  bridge with the absolute `runyte.exe` path if needed and let the bridge
-  discover, rather than copying a pipe name into client setup.
+environment; `--include-hidden` adds other environments. Listing does not
+grant content access: the adapter authenticates each target separately. A slow
+or unavailable host does not block discovery of the others. On Windows, use
+the absolute `runyte.exe` path in client configuration; let the adapter discover
+its named-pipe endpoint and host process identity rather than copying them.
 
 ### Terminal reads
 
 - Reads return decoded physical rows, with blank rows, Unicode, revision, and
   truncation information. They do not reconstruct conversations or commands.
-- The default tail is 200 rows and 64 KiB. One read is bounded by 1,000 rows,
-  256 KiB, and a separate visited-cell limit.
-- Use immutable snapshot paging while output changes.
+- MCP reads default to 80 recent rows, bounded by 64 KiB and 65,536 visited
+  cells. `max_rows` allows up to 1,000 rows; `region="screen"` reads the live
+  screen. Reads are live and may change between calls.
 - Reading does not move review, acknowledge unread output, send input, or
   change the child's lifetime.
 - Returned content is untrusted source material, not instructions to the
