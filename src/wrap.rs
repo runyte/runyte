@@ -465,7 +465,11 @@ fn reflow_lf(text: &str, width: usize, kind: ReflowKind) -> String {
             if let Some(marker) = markdown_fence(line) {
                 output.push(line.to_owned());
                 index += 1;
-                if fence == Some(marker) {
+                if fence.is_some_and(|(character, length)| {
+                    marker.0 == character
+                        && marker.1 >= length
+                        && line.trim().chars().all(|value| value == character)
+                }) {
                     fence = None;
                 } else if fence.is_none() {
                     fence = Some(marker);
@@ -785,16 +789,22 @@ fn list_item_in<'a>(body: &'a str, outer_prefix: &str) -> Option<ListItem<'a>> {
     })
 }
 
-fn markdown_fence(line: &str) -> Option<char> {
+fn markdown_fence(line: &str) -> Option<(char, usize)> {
     let trimmed = line.trim_start();
-    if trimmed.starts_with("```") {
-        Some('`')
-    } else if trimmed.starts_with("~~~") {
-        Some('~')
-    } else {
-        None
+    let character = trimmed.chars().next()?;
+    if !matches!(character, '`' | '~') {
+        return None;
     }
+    let length = trimmed
+        .chars()
+        .take_while(|value| *value == character)
+        .count();
+    (length >= 3).then_some((character, length))
 }
+
+#[cfg(test)]
+#[path = "wrap/tests/mod.rs"]
+mod regression_tests;
 
 fn markdown_protected(line: &str) -> bool {
     let trimmed = line.trim_start();
