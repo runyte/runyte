@@ -62,6 +62,14 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   order. JSON retains samples, source hashes, compiler and platform. This
   measures planning, rather than file I/O or interactive editor latency.
 
+- **`navigation_target.py`** — actual URL inference with growing unmatched
+  punctuation suffixes and repeated URL prefixes under a punctuation caret.
+  Run `python3 benchmarks/navigation_target.py --runs 5 --json /tmp/navigation.json`.
+  Both source versions compile with `rustc -O`, return identical targets,
+  discard one warm-up and alternate order. JSON retains all samples, source
+  hashes, compiler and platform. These adversarial rows expose algorithmic
+  scaling; they do not represent ordinary navigation or rendering latency.
+
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
 

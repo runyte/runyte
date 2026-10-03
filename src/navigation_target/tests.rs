@@ -44,6 +44,95 @@ fn paths_and_empty_carets_preserve_the_path_token_grammar() {
 }
 
 #[test]
+fn inferred_links_trim_long_mixed_suffixes_and_preserve_balanced_delimiters() {
+    let target = "https://example.test/({nested[a_(b)]})";
+    let suffix = ").]!};?:".repeat(16_384);
+    let line = format!("界 <{target}{suffix}>");
+    let start = "界 <".chars().count();
+    assert_eq!(under_cursor(&line, start).as_deref(), Some(target));
+    assert_eq!(
+        under_cursor(&line, start + target.chars().count() - 1).as_deref(),
+        Some(target)
+    );
+    assert_eq!(under_cursor(&line, start + target.chars().count()), None);
+    assert_eq!(under_cursor(&line, start - 1), None);
+}
+
+#[test]
+fn punctuation_carets_try_later_prefixes_without_repeated_suffix_scans() {
+    let line = format!("{}{}", "https://a,".repeat(16_384), ")".repeat(16_384));
+    assert_eq!(under_cursor(&line, line.len() - 1), None);
+    // Earlier unmatched closers can make the first candidate trim a balanced
+    // closer belonging to a later candidate. That later candidate still wins.
+    let line = "https://a)))https://b()";
+    assert_eq!(
+        under_cursor(line, line.len() - 1).as_deref(),
+        Some("https://b()")
+    );
+}
+
+#[test]
+fn indexed_url_suffixes_match_character_by_character_trimming() {
+    fn reference(line: &str, caret: usize) -> Option<String> {
+        for (index, _) in line.char_indices() {
+            let mut link = &line[index..];
+            if !web_prefix(link)
+                || (index > 0 && !is_path_boundary(line[..index].chars().next_back().unwrap()))
+            {
+                continue;
+            }
+            while let Some(last) = link.chars().next_back() {
+                let unmatched = match last {
+                    ')' => Some(('(', ')')),
+                    ']' => Some(('[', ']')),
+                    '}' => Some(('{', '}')),
+                    _ => None,
+                }
+                .is_some_and(|(open, close)| {
+                    link.matches(close).count() > link.matches(open).count()
+                });
+                if matches!(last, '.' | ',' | ';' | ':' | '!' | '?') || unmatched {
+                    link = &link[..link.len() - last.len_utf8()];
+                } else {
+                    break;
+                }
+            }
+            if caret >= index && caret < index + link.len() && web_url(link).is_some() {
+                return Some(link.to_owned());
+            }
+        }
+        None
+    }
+    let alphabet = ['(', ')', '[', ']', '{', '}', ',', '.'];
+    for value in 0..8usize.pow(4) {
+        let mut value = value;
+        let mut middle = String::new();
+        for _ in 0..4 {
+            middle.push(alphabet[value % 8]);
+            value /= 8;
+        }
+        for prefix in ["https://a", "https://a)))https://b", "http:///,https://b"] {
+            let line = format!("{prefix}{middle})");
+            for caret in [0, line.len() - 1] {
+                if caret == 0 && prefix.starts_with("http:///") {
+                    continue;
+                }
+                assert_eq!(
+                    under_cursor(&line, caret),
+                    reference(&line, caret),
+                    "{line} at {caret}"
+                );
+            }
+        }
+    }
+    let controlled = "https://a\u{1b},https://b";
+    assert_eq!(
+        under_cursor(controlled, controlled.len() - 1).as_deref(),
+        Some("https://b")
+    );
+}
+
+#[test]
 fn terminal_path_punctuation_reaches_literal_first_resolution() {
     for (line, target) in [
         ("Changed src/file.rs, next", "src/file.rs,"),

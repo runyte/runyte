@@ -24,7 +24,7 @@ fn web_prefix(text: &str) -> bool {
 /// Only explicit web addresses are handed to the desktop opener. Bare www
 /// addresses use HTTPS; selected targets otherwise retain their exact spelling.
 pub(crate) fn web_url(text: &str) -> Option<String> {
-    if !web_prefix(text) || text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if !web_prefix(text) {
         return None;
     }
     let bare = text
@@ -36,7 +36,10 @@ pub(crate) fn web_url(text: &str) -> Option<String> {
         text.split_once("://")?.1
     };
     let host = authority.split(['/', '?', '#']).next()?;
-    if host.is_empty() || (bare && host.len() <= 4) {
+    if host.is_empty()
+        || (bare && host.len() <= 4)
+        || text.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
         return None;
     }
     Some(if bare {
@@ -62,30 +65,71 @@ pub(crate) fn under_cursor(line: &str, offset: usize) -> Option<String> {
         .find(|(_, c)| hard_boundary(*c))
         .map_or(line.len(), |(i, _)| caret + i);
     let chunk = &line[start..end];
-    for (index, _) in chunk.char_indices() {
+    // Count delimiters once for the whole token. As candidate prefixes are
+    // visited, subtract the characters to their left. The trailing run can
+    // then be trimmed with three indexed lookups, including when a caret on
+    // excluded punctuation makes us try many URL prefixes in the same token.
+    let mut opens = [0usize; 3];
+    let mut closes = [0usize; 3];
+    let mut last_control = None;
+    for (index, character) in chunk.char_indices() {
+        if character.is_control() {
+            last_control = Some(index);
+        }
+        match character {
+            '(' => opens[0] += 1,
+            '[' => opens[1] += 1,
+            '{' => opens[2] += 1,
+            ')' => closes[0] += 1,
+            ']' => closes[1] += 1,
+            '}' => closes[2] += 1,
+            _ => {}
+        }
+    }
+    let mut suffix_closers = [Vec::new(), Vec::new(), Vec::new()];
+    let mut suffix_start = chunk.len();
+    for (index, character) in chunk.char_indices().rev() {
+        match character {
+            ')' => suffix_closers[0].push(index),
+            ']' => suffix_closers[1].push(index),
+            '}' => suffix_closers[2].push(index),
+            '.' | ',' | ';' | ':' | '!' | '?' => {}
+            _ => break,
+        }
+        suffix_start = index;
+    }
+    for (index, character) in chunk.char_indices() {
+        match character {
+            '(' => opens[0] -= 1,
+            '[' => opens[1] -= 1,
+            '{' => opens[2] -= 1,
+            ')' => closes[0] -= 1,
+            ']' => closes[1] -= 1,
+            '}' => closes[2] -= 1,
+            _ => {}
+        }
         let candidate = &chunk[index..];
         if !web_prefix(candidate)
             || (index > 0 && !is_path_boundary(chunk[..index].chars().next_back()?))
         {
             continue;
         }
-        let mut link = candidate;
-        loop {
-            let last = link.chars().next_back()?;
-            let unmatched = match last {
-                ')' => Some(('(', ')')),
-                ']' => Some(('[', ']')),
-                '}' => Some(('{', '}')),
-                _ => None,
-            }
-            .is_some_and(|(open, close)| link.matches(close).count() > link.matches(open).count());
-            if matches!(last, '.' | ',' | ';' | ':' | '!' | '?') || unmatched {
-                link = &link[..link.len() - last.len_utf8()];
-            } else {
-                break;
+        // A closer can be discarded only while that kind has more closing
+        // than opening delimiters. The first closer beyond that excess stops
+        // trimming; the rightmost such stop wins across the three kinds.
+        let mut link_end = suffix_start;
+        for kind in 0..3 {
+            let excess = closes[kind].saturating_sub(opens[kind]);
+            if let Some(&position) = suffix_closers[kind].get(excess) {
+                link_end = link_end.max(position + 1);
             }
         }
-        if caret >= start + index && caret < start + index + link.len() && web_url(link).is_some() {
+        let link = &chunk[index..link_end];
+        if caret >= start + index
+            && caret < start + index + link.len()
+            && last_control.is_none_or(|control| control < index)
+            && web_url(link).is_some()
+        {
             return Some(link.to_owned());
         }
     }
