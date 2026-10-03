@@ -153,8 +153,8 @@ impl GitCliProvider {
                         });
                     }
 
-                    let mut file =
-                        std::fs::File::open(&absolute).map_err(|e| refusal(e.to_string()))?;
+                    let mut file = crate::path_safety::open_regular_file(&absolute, false)
+                        .map_err(|e| refusal(e.to_string()))?;
                     let mut buffer = [0u8; 65536];
                     let mut content_identity = String::new();
                     loop {

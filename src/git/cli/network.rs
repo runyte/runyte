@@ -170,7 +170,7 @@ impl GitCliProvider {
                 .map_err(|_| malformed("invalid shallow metadata path"))?,
         );
         let mut shallow = String::new();
-        match std::fs::File::open(&shallow_path) {
+        match crate::path_safety::open_regular_file(&shallow_path, false) {
             Ok(file) => {
                 file.take(MAX_NETWORK_BYTES as u64 + 1)
                     .read_to_string(&mut shallow)
