@@ -780,6 +780,8 @@ impl WorkspaceHost {
         Ok(BufferRevision::from_raw(self.app.buffers[index].revision()))
     }
 
+    /// Returns the revision only after an ordinary file write completes.
+    /// Refuses saves that need asynchronous work or native confirmation.
     pub fn save_buffer(&mut self, id: BufferId) -> Result<BufferRevision> {
         let index = self.live_buffer_index(id).map_err(anyhow::Error::from)?;
         self.app.host_save_buffer(index)?;
@@ -1791,6 +1793,8 @@ impl DerefMut for WorkspaceHost {
 
 #[cfg(test)]
 mod tests {
+    mod save_results;
+
     use super::*;
     use crate::{
         app::HostPorts,

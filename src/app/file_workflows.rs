@@ -18,6 +18,13 @@ use crate::{
     settings::{SettingId, SettingValue},
 };
 
+/// Whether a native save actually completed an ordinary file write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SaveDisposition {
+    Written,
+    NotWritten,
+}
+
 /// Bounds retained hook metadata before a native overwrite is approved.
 pub(crate) const PROVIDER_SAVE_HOOK_LIMIT: usize = 4096;
 
@@ -1362,8 +1369,19 @@ impl App {
             self.buffers[buffer].provider().is_none(),
             "provider documents require an asynchronous save request"
         );
+        ensure!(
+            !self.buffers[buffer].is_commit_message(),
+            "commit messages require an asynchronous Git commit request"
+        );
+        ensure!(
+            !self.buffers[buffer].is_directory(),
+            "directory buffers require a confirmed filesystem plan"
+        );
         self.buffers[buffer].commit_undo_group();
-        self.save_buffer(buffer, None, false)
+        match self.save_buffer_with_outcome(buffer, None, false)? {
+            SaveDisposition::Written => Ok(()),
+            SaveDisposition::NotWritten => bail!("{}", self.status),
+        }
     }
 
     pub(crate) fn host_close_buffer(&mut self, buffer: usize, discard: bool) -> Result<()> {
@@ -1642,6 +1660,16 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        self.save_buffer_with_outcome(buffer_id, path, replace)
+            .map(|_| ())
+    }
+
+    fn save_buffer_with_outcome(
+        &mut self,
+        buffer_id: usize,
+        path: Option<PathBuf>,
+        replace: bool,
+    ) -> Result<SaveDisposition> {
         if self.buffers[buffer_id].provider().is_some() {
             if path.is_some() || replace {
                 self.action_warning(
@@ -1651,31 +1679,31 @@ impl App {
             } else {
                 self.queue_provider_save(buffer_id, None);
             }
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
             self.action_warning(
                 "Save pending",
                 "A captured document revision is still being written",
             );
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if let Some(reason) = self.buffers[buffer_id].read_only_reason() {
             self.action_warning("Save refused", reason);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.buffers[buffer_id].is_commit_message() {
             if path.is_some() {
                 self.action_failed("a commit message cannot be written to a path");
-                return Ok(());
+                return Ok(SaveDisposition::NotWritten);
             }
             self.commit_staged(buffer_id);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.buffers[buffer_id].is_directory() {
             if path.is_some() {
                 self.action_failed("directory buffers cannot be written to another path");
-                return Ok(());
+                return Ok(SaveDisposition::NotWritten);
             }
             match self.buffers[buffer_id].directory_plan() {
                 Ok(plan) if plan.is_empty() => {
@@ -1703,7 +1731,7 @@ impl App {
                 }
                 Err(error) => self.action_warning("Save refused", error.to_string()),
             }
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         let path = path.map(|path| self.resolve_working_path(path));
         let saving_current_path = path.as_deref().map_or_else(
@@ -1718,7 +1746,7 @@ impl App {
         {
             let message = self.key_text(crate::key_spelling::actionable::STALE_SAVE);
             self.action_warning("Save refused", message);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
         let expected_identity = destination
@@ -1745,7 +1773,7 @@ impl App {
                     self.buffers[owner].display_name()
                 ),
             );
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.config.editor.trim_trailing_whitespace
             && (path.is_some() || self.buffers[buffer_id].path.is_some())
@@ -1801,7 +1829,7 @@ impl App {
                     }
                 }
                 self.report_new_registry_errors();
-                Ok(())
+                Ok(SaveDisposition::Written)
             }
             Err(error) => {
                 let save_conflict = crate::buffer::is_save_conflict(&error);
@@ -1820,7 +1848,7 @@ impl App {
                 } else {
                     self.error_from("Runyte", "Save failed", error.to_string());
                 }
-                Ok(())
+                Ok(SaveDisposition::NotWritten)
             }
         }
     }
