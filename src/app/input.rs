@@ -1675,7 +1675,12 @@ impl App {
             .segment
             .map(|segment| segment.start)
             .unwrap_or(pane.scroll_col);
-        let mut character = crate::wrap::column_for_cell_from(
+        let column_for_cell = if projected.segment.is_some() {
+            crate::wrap::column_for_cell_from
+        } else {
+            crate::wrap::column_for_scrolled_cell
+        };
+        let mut character = column_for_cell(
             &line,
             start,
             screen_cell,
