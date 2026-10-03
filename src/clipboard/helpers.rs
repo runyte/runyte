@@ -637,14 +637,21 @@ fn run_helper_with_environment(
             ));
         };
 
-        if let Some(written) = written
-            && let Err(error) = collect(written, deadline)
-            && status.success()
-        {
-            // A helper that took less than the whole value yet reported success
-            // would otherwise leave a silently truncated clipboard behind. When it
-            // reported failure, its own diagnostics explain more than this does.
-            return Err(error);
+        if let Some(written) = written {
+            let input_result = collect(written, deadline).and_then(|written| {
+                written.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("{program} did not consume the complete clipboard input"),
+                    )
+                })
+            });
+            // A successful exit does not establish that a descendant consumed
+            // all input. Require the writer's completion as well; failures still
+            // use the helper's own diagnostics.
+            if status.success() {
+                input_result?;
+            }
         }
 
         let grace = deadline.max(Instant::now() + HELPER_PIPE_GRACE);
@@ -860,6 +867,43 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("the write outlived the helper it spawned");
         assert!(outcome.is_ok(), "{outcome:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_exit_requires_all_clipboard_input_to_be_written() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-clipboard-stuck-input-{}-{:?}",
+            std::process::id(),
+            Instant::now()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let helper = root.join("clipboard-helper");
+        let marker = root.join("leaked");
+        fs::write(
+            root.join("clipboard-helper.behavior"),
+            "(sleep 0.6; printf leaked > \"$1\") <&0 &\nexit 0\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/fixtures/stand-in"),
+            &helper,
+        )
+        .unwrap();
+        let outcome = run_helper(
+            helper.to_str().unwrap(),
+            &[marker.as_os_str().to_owned()],
+            Some(&"x".repeat(1024 * 1024)),
+            None,
+            Duration::from_millis(150),
+        );
+        assert_eq!(outcome.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        thread::sleep(Duration::from_millis(700));
+        assert!(
+            !marker.exists(),
+            "the undrained input owner survived cleanup"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

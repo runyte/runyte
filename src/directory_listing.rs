@@ -117,13 +117,17 @@ struct Cached {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(not(windows))]
 struct DirectoryIdentity {
     device: u64,
     inode: u64,
 }
 
+#[cfg(windows)]
+type DirectoryIdentity = crate::windows_fs::Identity;
+
 #[cfg(unix)]
-fn directory_identity(metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
+fn directory_identity(_path: &Path, metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
     use std::os::unix::fs::MetadataExt;
 
     Some(DirectoryIdentity {
@@ -132,8 +136,13 @@ fn directory_identity(metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
     })
 }
 
-#[cfg(not(unix))]
-fn directory_identity(_metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
+#[cfg(windows)]
+fn directory_identity(path: &Path, _metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
+    crate::windows_fs::Identity::read(path).ok()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn directory_identity(_path: &Path, _metadata: &fs::Metadata) -> Option<DirectoryIdentity> {
     None
 }
 
@@ -163,7 +172,9 @@ impl DirectoryListings {
         let modified = metadata
             .as_ref()
             .and_then(|metadata| metadata.modified().ok());
-        let identity = metadata.as_ref().and_then(directory_identity);
+        let identity = metadata
+            .as_ref()
+            .and_then(|metadata| directory_identity(&directory, metadata));
         if let Some(index) = self
             .cached
             .iter()
@@ -210,8 +221,10 @@ impl DirectoryListings {
         }
         let entries: Arc<[Entry]> = Arc::from(entries);
 
-        let settled = modified
-            .is_some_and(|modified| now.duration_since(modified).is_ok_and(|age| age >= SETTLED));
+        let settled = identity.is_some()
+            && modified.is_some_and(|modified| {
+                now.duration_since(modified).is_ok_and(|age| age >= SETTLED)
+            });
         self.cached.push(Cached {
             directory,
             identity,
@@ -614,7 +627,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_replaced_directory_cannot_reuse_the_previous_objects_listing() {
         let root = temporary("replaced-directory");

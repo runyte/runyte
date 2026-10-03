@@ -55,6 +55,7 @@ pub enum PtyEvent {
 #[derive(Clone)]
 pub(super) struct PendingActivation {
     pub(super) wait: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+    pub(super) cancel: std::sync::Arc<dyn Fn() + Send + Sync>,
     pub(super) lifetime: std::sync::Arc<dyn Send + Sync>,
 }
 
@@ -109,35 +110,60 @@ impl Drop for Input {
 /// program exists, so ordinary `?` unwinding needs an owner that does both.
 struct SpawnedChild {
     child: Option<Child>,
-    unpublished: bool,
+    master: Option<OwnedFd>,
+    slave: Option<OwnedFd>,
+    activation: Option<PendingActivation>,
 }
 
 impl SpawnedChild {
-    fn new(child: Child, unpublished: bool) -> Self {
+    fn new(
+        child: Child,
+        master: OwnedFd,
+        slave: OwnedFd,
+        activation: Option<PendingActivation>,
+    ) -> Self {
         Self {
             child: Some(child),
-            unpublished,
+            master: Some(master),
+            slave: Some(slave),
+            activation,
         }
+    }
+
+    fn master(&self) -> RawFd {
+        self.master
+            .as_ref()
+            .expect("spawn guard is armed")
+            .as_raw_fd()
     }
 
     fn id(&self) -> u32 {
         self.child.as_ref().expect("spawn guard is armed").id()
     }
 
-    fn disarm(mut self) -> Child {
-        self.child.take().expect("spawn guard is armed")
+    fn disarm(mut self) -> (Child, OwnedFd) {
+        (
+            self.child.take().expect("spawn guard is armed"),
+            self.master.take().expect("spawn guard is armed"),
+        )
     }
 }
 
 impl Drop for SpawnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            if self.unpublished {
-                signal_unpublished(child);
-                let _ = child.wait();
-            } else {
-                terminate_child(child);
+            if let Some(activation) = &self.activation {
+                (activation.cancel)();
             }
+            // This guard has never reaped its child; preserve that group
+            // anchor through both signals before closing the controlling PTY.
+            signal_unpublished(child);
+            // A gated writer must release its duplicate, and the initial
+            // endpoints must close before waiting. Darwin can otherwise hold
+            // session-leader exit in terminal drain even after SIGKILL.
+            drop(self.master.take());
+            drop(self.slave.take());
+            let _ = child.wait();
         }
     }
 }
@@ -299,19 +325,19 @@ impl Pty {
             });
         }
         let child = command.spawn()?;
-        let child = SpawnedChild::new(child, activation.is_some());
+        let mut child = SpawnedChild::new(child, master, slave, activation.clone());
         checkpoint(SpawnCheckpoint::ChildOwned, child.id())?;
         // The child has duplicated this endpoint onto stdin/stdout/stderr.
         // Closing the parent's copy is what lets the reader observe EOF when
         // the child and all of its descendants finally close theirs.
-        drop(slave);
+        drop(child.slave.take());
 
         let (input, pending) = mpsc::channel::<Input>();
         let queued = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let writer_queued = queued.clone();
-        let reader = duplicate(master.as_raw_fd())?;
+        let reader = duplicate(child.master())?;
         checkpoint(SpawnCheckpoint::ReaderDuplicated, child.id())?;
-        let writer = duplicate(master.as_raw_fd())?;
+        let writer = duplicate(child.master())?;
         checkpoint(SpawnCheckpoint::WriterDuplicated, child.id())?;
 
         // Writing on the caller's thread would let a child that has stopped
@@ -379,11 +405,12 @@ impl Pty {
                 events(PtyEvent::Exited(None));
             })?;
 
+        let (child, master) = child.disarm();
         Ok(Self {
             master: Some(master),
             input,
             queued,
-            child: child.disarm(),
+            child,
         })
     }
 
@@ -848,6 +875,87 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_setup_failures_cancel_gates_and_release_accounting() {
+        for failed_at in [
+            SpawnCheckpoint::ChildOwned,
+            SpawnCheckpoint::ReaderDuplicated,
+            SpawnCheckpoint::WriterDuplicated,
+            SpawnCheckpoint::WriterStarted,
+        ] {
+            let directory = crate::test_support::TestRuntimeRoot::new("pty-setup-failure").unwrap();
+            let ready = directory.path().join("output-ready");
+            let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+            let wait_gate = Arc::clone(&gate);
+            let cancel_gate = Arc::clone(&gate);
+            let lifetime = Arc::new(());
+            let retained = Arc::downgrade(&lifetime);
+            let mut pid = None;
+            let error = Pty::spawn_with_checkpoints(
+                OsStr::new("/bin/sh"),
+                &[
+                    "-c".into(),
+                    "printf output; printf ready > \"$1\"; read line".into(),
+                    "runyte-fixture".into(),
+                    ready.to_string_lossy().into_owned(),
+                ],
+                Path::new("/"),
+                40,
+                10,
+                |_| panic!("unpublished setup must not publish output"),
+                None,
+                |checkpoint, child| {
+                    pid = Some(child);
+                    if checkpoint == failed_at {
+                        assert!(wait_until(Duration::from_secs(5), || ready.exists()));
+                        Err(io::Error::other("injected setup failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+                Some(PendingActivation {
+                    wait: Arc::new(move || {
+                        let (cancelled, changed) = &*wait_gate;
+                        let mut cancelled = cancelled.lock().unwrap();
+                        while !*cancelled {
+                            cancelled = changed.wait(cancelled).unwrap();
+                        }
+                        false
+                    }),
+                    cancel: Arc::new(move || {
+                        let (cancelled, changed) = &*cancel_gate;
+                        *cancelled.lock().unwrap() = true;
+                        changed.notify_all();
+                    }),
+                    lifetime,
+                }),
+            )
+            .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Other);
+            let cancelled = *gate.0.lock().unwrap();
+            // Release even a broken implementation's parked fixture thread.
+            *gate.0.lock().unwrap() = true;
+            gate.1.notify_all();
+            assert!(
+                cancelled,
+                "setup failure at {failed_at:?} left its gate pending"
+            );
+            assert!(wait_until(Duration::from_secs(1), || retained
+                .upgrade()
+                .is_none()));
+            let pid = pid.unwrap();
+            let mut status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+        }
+    }
+
+    #[test]
     fn completed_child_teardown_never_signals_a_reusable_process_group() {
         let mut running = collect("/bin/sh", &["-c", "exit 0"]);
         assert!(wait_until(Duration::from_secs(5), || running
@@ -945,6 +1053,7 @@ mod tests {
 
         fn activation(&self) -> PendingActivation {
             let gate = Arc::clone(&self.0);
+            let cancelled = Arc::clone(&self.0);
             PendingActivation {
                 wait: Arc::new(move || {
                     let (open, opened) = &*gate;
@@ -953,6 +1062,11 @@ mod tests {
                         open = opened.wait(open).unwrap();
                     }
                     true
+                }),
+                cancel: Arc::new(move || {
+                    let (open, opened) = &*cancelled;
+                    *open.lock().unwrap() = true;
+                    opened.notify_all();
                 }),
                 lifetime: Arc::new(()),
             }

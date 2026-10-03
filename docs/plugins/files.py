@@ -34,14 +34,23 @@ pending_inputs = {}
 
 def listing(destination):
     rows, offset, expected = [], 0, None
-    while True:
-        page = app.request('filesystem.list', path=destination, offset=offset,
-                           limit=128, expected_revision=expected)
-        expected = page['revision']
-        rows.extend(page['entries'])
-        if page['next'] is None:
-            return page['directory'], expected, rows
-        offset = page['next']
+    handle = None
+    try:
+        while True:
+            page = app.request('filesystem.list', path=destination, offset=offset,
+                               limit=128, expected_revision=expected)
+            handle, expected = page['directory'], page['revision']
+            rows.extend(page['entries'])
+            if page['next'] is None:
+                return handle, expected, rows
+            offset = page['next']
+    except PluginError:
+        if handle is not None and handle != directory:
+            try:
+                app.request('filesystem.release', directory=handle)
+            except PluginError:
+                pass
+        raise
 
 def refresh(destination):
     global view, revision, directory, directory_revision, path, entries

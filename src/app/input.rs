@@ -1675,7 +1675,12 @@ impl App {
             .segment
             .map(|segment| segment.start)
             .unwrap_or(pane.scroll_col);
-        let mut character = crate::wrap::column_for_cell_from(
+        let column_for_cell = if projected.segment.is_some() {
+            crate::wrap::column_for_cell_from
+        } else {
+            crate::wrap::column_for_scrolled_cell
+        };
+        let mut character = column_for_cell(
             &line,
             start,
             screen_cell,
@@ -2281,9 +2286,7 @@ impl App {
                 } else {
                     self.insert_text(&text);
                 }
-                for character in text.chars() {
-                    self.after_insert(character);
-                }
+                self.after_insert(&text);
             }
             EditorIntent::Range(RangeIntent::SelectLine { direction, count }) => {
                 let command = match direction {
@@ -3629,7 +3632,19 @@ impl App {
     /// Which characters those are is the server's own answer, read from the
     /// handshake, so a language whose calls are not written `f(a, b)` is asked
     /// where its own author said to ask. Both are `false` without a server.
-    fn after_insert(&mut self, character: char) {
+    fn after_insert(&mut self, text: &str) {
+        let Some(character) = text.chars().next_back() else {
+            return;
+        };
+        // A paste is already one completed edit. Its intermediate characters
+        // never had their own caret positions, so refresh only the final
+        // context instead of repeating filesystem work and LSP requests.
+        if text.len() > character.len_utf8() && text.contains(')') && character != ')' {
+            self.signature = None;
+        }
+        if self.explicit_completion_session().is_some() && text.chars().any(char::is_whitespace) {
+            self.completion = None;
+        }
         let showing_signature = self.signature.is_some();
         let (completion_trigger, signature_trigger) =
             self.active_server_capabilities()
@@ -3640,9 +3655,7 @@ impl App {
                     )
                 });
         if let Some(session) = self.explicit_completion_session() {
-            if character.is_whitespace() {
-                self.completion = None;
-            } else if completion_trigger {
+            if completion_trigger {
                 self.restart_explicit_lsp_completion(session);
             } else if is_word(character) {
                 self.refresh_explicit_completion_filter();
@@ -3659,13 +3672,13 @@ impl App {
         }
         let was_path_completion = self.path_completion_active();
         if let Some(source) = self.completion.as_ref().map(|state| state.source) {
-            let keeps_popup = match source {
+            let keeps_popup = text.chars().all(|character| match source {
                 CompletionSource::Language => character.is_alphanumeric() || character == '_',
                 CompletionSource::Path => {
                     !is_path_token_boundary(character) && !super::is_path_separator(character)
                 }
                 CompletionSource::Word => is_word_completion_character(character),
-            };
+            });
             // A path popup is rebuilt from the directory below rather than
             // narrowed in place. Its items are only the bounded best of a
             // listing collected for the shorter prefix, so filtering them
@@ -3674,7 +3687,7 @@ impl App {
             if !keeps_popup || source == CompletionSource::Path {
                 self.completion = None;
             } else if let Some(state) = self.completion.as_mut() {
-                state.filter.push(character);
+                state.filter.push_str(text);
                 state.selected = 0;
                 if state.visible_indices().is_empty() {
                     self.completion = None;

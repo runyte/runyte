@@ -1624,6 +1624,7 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
         ]),
     });
     let picker = app.list.as_ref().expect("several results open a picker");
+    assert_eq!(picker.title, "References");
     assert_eq!(picker.items.len(), 2);
 
     // Enter jumps to the selected row.
@@ -1631,6 +1632,37 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert!(app.list.is_none());
     assert_eq!(cursor(&app).row, 2);
+}
+
+#[test]
+fn lsp_location_picker_displays_maximum_protocol_row_without_overflow() {
+    let (mut app, path, _queue) = rust_app("one\ntwo");
+    ready(&mut app, Encoding::Utf8);
+    app.lsp_requests.insert(
+        99,
+        tracked(
+            &app,
+            PendingRequest::Goto {
+                label: "references",
+            },
+        ),
+    );
+    let location = crate::lsp::Location {
+        path,
+        range: LspRange::new(LspPosition::new(u32::MAX, 0), LspPosition::new(u32::MAX, 1)),
+        encoding: Encoding::Utf8,
+    };
+    app.apply_lsp_event(LspEvent::Response {
+        token: 99,
+        response: Response::Locations(vec![location.clone(), location]),
+    });
+    let picker = app.list.as_ref().expect("multiple locations open a picker");
+    assert!(picker.items[0].label.ends_with(":4294967296"));
+    assert!(picker.items[0].detail.is_empty());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(cursor(&app), Position::new(1, 0));
+    assert_eq!(app.active_buffer().to_string(), "one\ntwo");
 }
 
 #[test]

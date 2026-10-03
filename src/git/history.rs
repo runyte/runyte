@@ -10,6 +10,10 @@ pub const MAX_COMMIT_SEARCH_RESULTS: usize = 5_000;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct LogCursor {
+    /// Immutable starting point of the traversal, even if HEAD moves.
+    pub tip: String,
+    /// Commits already returned from that traversal, across all merge parents.
+    pub offset: usize,
     pub boundary: String,
 }
 
@@ -49,7 +53,7 @@ pub struct CommitSummary {
 pub struct LogPage {
     pub commits: Vec<CommitSummary>,
     pub next: Option<LogCursor>,
-    /// Total pages reachable from `HEAD` at the time this page was read.
+    /// Total pages reachable from the history tip captured by the first page.
     pub total_pages: usize,
 }
 

@@ -535,39 +535,29 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
     }
 }
 
-#[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_second_process_is_refused_when_an_explicit_log_is_owned() {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
     let root = project("explicit-owner");
     let destination = root.join("shared.log");
-    // Opening this FIFO for writing blocks after logger initialization. That
-    // gives the test one real Runyte process which demonstrably holds the
-    // explicit destination without needing a terminal or local socket.
-    let trace = root.join("hold-open.fifo");
-    let trace_bytes = CString::new(trace.as_os_str().as_bytes()).unwrap();
-    // SAFETY: `trace_bytes` is a live, NUL-terminated path and the mode is a
-    // conventional private FIFO mode.
-    assert_eq!(unsafe { libc::mkfifo(trace_bytes.as_ptr(), 0o600) }, 0);
-    let mut command = bundled_runyte(&root);
-    command
-        .args([
-            "--standalone",
-            "--project-root",
-            root.to_str().unwrap(),
-            "-v",
-            "--log",
-            destination.to_str().unwrap(),
-        ])
-        .current_dir(&root)
-        .env("XDG_RUNTIME_DIR", test_runtime_dir(&root))
-        .env("XDG_CACHE_HOME", test_cache_dir(&root))
-        .env("RUNYTE_INPUT_TRACE", &trace)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let mut owner = ChildGuard(Some(command.spawn().unwrap()));
+    // A ready persistent host retains the real logger throughout the competing
+    // launch. Its lifetime does not depend on a debug-only startup failure.
+    let mut owner = serve(&root, &["-v", "--log", destination.to_str().unwrap()]);
+    let endpoint = endpoint_for(&root);
+    if !wait_for_endpoint(&mut owner, &endpoint).await {
+        return;
+    }
+    let mut client = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    client.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Health { .. }
+    ));
     assert!(
         wait_until(|| destination.exists() && read_log(&destination).contains("runyte ")).await,
         "the first process must demonstrably own and write the destination"
@@ -588,15 +578,16 @@ async fn a_second_process_is_refused_when_an_explicit_log_is_owned() {
     let text = read_log(&destination);
     let owner_pid = owner.0.as_ref().unwrap().id();
     assert!(
-        text.contains(&format!("standalone[{owner_pid}]")),
+        text.contains(&format!("host[{owner_pid}]")),
         "the owning process left no record:\n{text}"
     );
     assert!(
         text.lines()
-            .all(|line| line.contains(&format!("standalone[{owner_pid}]"))),
+            .all(|line| line.contains(&format!("host[{owner_pid}]"))),
         "the refused process wrote to the shared destination:\n{text}"
     );
 
+    drop(client);
     drop(owner);
 }
 

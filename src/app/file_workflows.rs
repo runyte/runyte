@@ -2,6 +2,13 @@
 
 //! File, directory-buffer, pane, and side-by-side comparison workflows.
 
+#[cfg(all(test, unix))]
+#[path = "tests/host_directory_identity.rs"]
+mod host_directory_identity;
+#[cfg(all(test, unix))]
+#[path = "tests/host_open_atomicity.rs"]
+mod host_open_atomicity;
+
 // Application-module dependencies:
 use super::{
     App, Axis, Buffer, BufferKind, CommandRefusal, ContentAlignment, DiffSession, DiffSide,
@@ -17,6 +24,13 @@ use crate::{
     directory_buffer::ListingView,
     settings::{SettingId, SettingValue},
 };
+
+/// Whether a native save actually completed an ordinary file write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SaveDisposition {
+    Written,
+    NotWritten,
+}
 
 /// Bounds retained hook metadata before a native overwrite is approved.
 pub(crate) const PROVIDER_SAVE_HOOK_LIMIT: usize = 4096;
@@ -840,10 +854,19 @@ impl App {
     /// directory, having asked whether to discard them; the navigation
     /// resumes from `handle_directory_reload_confirmation` if it is confirmed.
     fn retarget_pane_directory(&mut self, path: &Path) -> Result<Option<usize>> {
+        let directory = self.pane_directory_buffer(path)?;
+        self.enter_pane_directory(path, directory)
+    }
+
+    fn enter_pane_directory(
+        &mut self,
+        path: &Path,
+        directory: PaneDirectory,
+    ) -> Result<Option<usize>> {
         // Every listing this reads is read before the pane commits to it, so a
         // directory that cannot be listed leaves the pane pointing where it
         // already was and adds no buffer to the editor.
-        let buffer_id = match self.pane_directory_buffer(path)? {
+        let buffer_id = match directory {
             PaneDirectory::Existing(buffer_id) => buffer_id,
             PaneDirectory::New(mut buffer) => {
                 // The re-read the entering branch below would have done, taken
@@ -969,6 +992,13 @@ impl App {
             self.track_in_git(&path);
             self.buffers.len() - 1
         };
+        self.activate_opened_path(buffer_id, &path, was_showing);
+        Ok(())
+    }
+
+    /// Presents an already accepted buffer without resolving or reopening its
+    /// pathname. Host requests cross their publication boundary before this.
+    fn activate_opened_path(&mut self, buffer_id: usize, path: &Path, was_showing: usize) {
         // Only once the buffer is known to exist, so a path that failed to
         // open leaves no jump to nowhere. Retargeting the explorer the pane
         // was already showing leaves nothing to jump back to: the listing the
@@ -977,7 +1007,7 @@ impl App {
             self.push_jump();
         }
         self.refresh_background_buffer(buffer_id);
-        let directory_view = self.directory_views.get(&path).cloned();
+        let directory_view = self.directory_views.get(path).cloned();
         let launch_selection = self.take_pending_launch_selection(buffer_id);
         let pane = self.active_mut();
         pane.retarget(buffer_id);
@@ -998,7 +1028,6 @@ impl App {
         self.lsp_touch(buffer_id);
         self.status(format!("opened {}", path.display()));
         self.report_new_registry_errors();
-        Ok(())
     }
 
     pub(crate) fn host_open_file(&mut self, path: PathBuf, activate: bool) -> Result<usize> {
@@ -1188,6 +1217,20 @@ impl App {
         activate: bool,
         pending_wait_buffers: Option<&HashSet<usize>>,
     ) -> Result<Vec<usize>> {
+        self.host_open_files_prepared(paths, activate, pending_wait_buffers, || {})
+    }
+
+    fn host_open_files_prepared(
+        &mut self,
+        paths: Vec<PathBuf>,
+        activate: bool,
+        pending_wait_buffers: Option<&HashSet<usize>>,
+        before_publish: impl FnOnce(),
+    ) -> Result<Vec<usize>> {
+        ensure!(
+            !activate || paths.is_empty() || !self.plugins.filesystem_applying,
+            "Wait for filesystem changes before opening a path"
+        );
         let covered_terminal = activate.then(|| self.active_terminal()).flatten();
         enum Prepared {
             /// Already open before this request, so nothing is staged for it.
@@ -1257,9 +1300,11 @@ impl App {
             Prepared::Live(index) => self.buffers[*index].is_directory(),
             Prepared::Staged(slot) => staged[*slot].2.is_directory(),
         });
+        before_publish();
         let activated_directory = if activate && first_is_directory {
             let path = &paths[0];
-            if let Some(buffer_id) = self.reusable_pane_directory_buffer() {
+            let reusable = self.reusable_pane_directory_buffer();
+            if let Some(buffer_id) = reusable {
                 ensure!(
                     self.buffers[buffer_id].path.as_deref() == Some(path)
                         || !self.buffers[buffer_id].dirty
@@ -1273,14 +1318,51 @@ impl App {
             // pane-owned id; the atomic explorer path leaves no pane or buffer
             // mutation behind if its final listing read loses a filesystem
             // race.
-            self.open_file(path.clone())?;
-            let buffer_id = self.active().buffer;
-            ensure!(
-                self.buffers[buffer_id].is_directory()
-                    && self.buffers[buffer_id].path.as_deref() == Some(path),
-                "directory activation did not enter {}",
-                path.display()
-            );
+            // Preserve the prepared directory intent. Dispatching through
+            // open_file again could instead publish an ordinary file if the
+            // directory was replaced after preparation.
+            let requested_elsewhere = reusable.is_some_and(|buffer| {
+                prepared
+                    .iter()
+                    .zip(&identities)
+                    .any(|(prepared, identity)| {
+                        matches!(prepared, Prepared::Live(index) if *index == buffer)
+                            && identity != &identities[0]
+                    })
+            });
+            // A request owns every buffer identity it prepared. Reusing an
+            // explorer requested for another directory would silently change
+            // that later result, so this activation needs another explorer.
+            // Prefer its existing unclaimed target to avoid duplicate
+            // listings and extra reads when alternating requested directories.
+            let directory = if requested_elsewhere {
+                let available_target = match prepared.first() {
+                    Some(Prepared::Live(index))
+                        if !self.claimed_by_another_pane(*index)
+                            && (self.buffers[*index].path.as_deref() == Some(path)
+                                || !self.buffers[*index].dirty
+                                || self.contains_only_pending_cut(*index)) =>
+                    {
+                        Some(*index)
+                    }
+                    _ => None,
+                };
+                match available_target {
+                    Some(index) => PaneDirectory::Existing(index),
+                    None => PaneDirectory::New(Box::new(Buffer::open_directory(
+                        path,
+                        self.listing_view(),
+                    )?)),
+                }
+            } else {
+                self.pane_directory_buffer(path)?
+            };
+            let was_showing = self.active().buffer;
+            self.remember_active_directory_view();
+            let buffer_id = self.enter_pane_directory(path, directory)?.ok_or_else(|| {
+                anyhow::anyhow!("directory activation did not enter {}", path.display())
+            })?;
+            self.activate_opened_path(buffer_id, path, was_showing);
             Some(buffer_id)
         } else {
             None
@@ -1327,16 +1409,18 @@ impl App {
             })
             .collect::<Vec<_>>();
         if let Some(buffer_id) = activated_directory {
-            let first = &paths[0];
-            for (path, opened) in paths.iter().zip(&mut opened) {
-                if path == first {
+            let first = &identities[0];
+            for (identity, opened) in identities.iter().zip(&mut opened) {
+                if identity == first {
                     *opened = buffer_id;
                 }
             }
         } else if activate && let Some(path) = paths.first() {
-            // The buffer exists by now, so this retargets the pane rather than
-            // reading the path again.
-            self.open_file(path.clone())?;
+            // The preparation owns this buffer identity. A renamed, replaced,
+            // or newly unreadable path cannot fail after publication or select
+            // a different buffer instead of the one returned to the caller.
+            self.remember_active_directory_view();
+            self.activate_opened_path(opened[0], path, self.active().buffer);
         }
         // Recorded after the activation, because retargeting the pane is what
         // took the terminal off it. Nobody in the editor asked this pane to
@@ -1362,8 +1446,19 @@ impl App {
             self.buffers[buffer].provider().is_none(),
             "provider documents require an asynchronous save request"
         );
+        ensure!(
+            !self.buffers[buffer].is_commit_message(),
+            "commit messages require an asynchronous Git commit request"
+        );
+        ensure!(
+            !self.buffers[buffer].is_directory(),
+            "directory buffers require a confirmed filesystem plan"
+        );
         self.buffers[buffer].commit_undo_group();
-        self.save_buffer(buffer, None, false)
+        match self.save_buffer_with_outcome(buffer, None, false)? {
+            SaveDisposition::Written => Ok(()),
+            SaveDisposition::NotWritten => bail!("{}", self.status),
+        }
     }
 
     pub(crate) fn host_close_buffer(&mut self, buffer: usize, discard: bool) -> Result<()> {
@@ -1642,6 +1737,16 @@ impl App {
         path: Option<PathBuf>,
         replace: bool,
     ) -> Result<()> {
+        self.save_buffer_with_outcome(buffer_id, path, replace)
+            .map(|_| ())
+    }
+
+    fn save_buffer_with_outcome(
+        &mut self,
+        buffer_id: usize,
+        path: Option<PathBuf>,
+        replace: bool,
+    ) -> Result<SaveDisposition> {
         if self.buffers[buffer_id].provider().is_some() {
             if path.is_some() || replace {
                 self.action_warning(
@@ -1651,31 +1756,31 @@ impl App {
             } else {
                 self.queue_provider_save(buffer_id, None);
             }
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.plugins.filesystem_applying || self.document_mutation_pending(buffer_id) {
             self.action_warning(
                 "Save pending",
                 "A captured document revision is still being written",
             );
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if let Some(reason) = self.buffers[buffer_id].read_only_reason() {
             self.action_warning("Save refused", reason);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.buffers[buffer_id].is_commit_message() {
             if path.is_some() {
                 self.action_failed("a commit message cannot be written to a path");
-                return Ok(());
+                return Ok(SaveDisposition::NotWritten);
             }
             self.commit_staged(buffer_id);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.buffers[buffer_id].is_directory() {
             if path.is_some() {
                 self.action_failed("directory buffers cannot be written to another path");
-                return Ok(());
+                return Ok(SaveDisposition::NotWritten);
             }
             match self.buffers[buffer_id].directory_plan() {
                 Ok(plan) if plan.is_empty() => {
@@ -1703,7 +1808,7 @@ impl App {
                 }
                 Err(error) => self.action_warning("Save refused", error.to_string()),
             }
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         let path = path.map(|path| self.resolve_working_path(path));
         let saving_current_path = path.as_deref().map_or_else(
@@ -1718,7 +1823,7 @@ impl App {
         {
             let message = self.key_text(crate::key_spelling::actionable::STALE_SAVE);
             self.action_warning("Save refused", message);
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         let destination = path.as_deref().or(self.buffers[buffer_id].path.as_deref());
         let expected_identity = destination
@@ -1745,7 +1850,7 @@ impl App {
                     self.buffers[owner].display_name()
                 ),
             );
-            return Ok(());
+            return Ok(SaveDisposition::NotWritten);
         }
         if self.config.editor.trim_trailing_whitespace
             && (path.is_some() || self.buffers[buffer_id].path.is_some())
@@ -1801,7 +1906,7 @@ impl App {
                     }
                 }
                 self.report_new_registry_errors();
-                Ok(())
+                Ok(SaveDisposition::Written)
             }
             Err(error) => {
                 let save_conflict = crate::buffer::is_save_conflict(&error);
@@ -1820,7 +1925,7 @@ impl App {
                 } else {
                     self.error_from("Runyte", "Save failed", error.to_string());
                 }
-                Ok(())
+                Ok(SaveDisposition::NotWritten)
             }
         }
     }

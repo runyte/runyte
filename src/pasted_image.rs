@@ -227,6 +227,15 @@ pub fn reference(number: usize, target: &str) -> String {
 /// wrapping every one of them would make the source harder to read for the
 /// sake of the rare one.
 pub fn destination(path: &str) -> String {
+    // Preserve literal percent spellings before introducing escapes. A hash
+    // otherwise starts a heading fragment, and a Unix backslash can be read
+    // as a Markdown escape rather than a filename character.
+    let escaped = path
+        .replace('%', "%25")
+        .replace('#', "%23")
+        .replace('\\', "%5C")
+        .replace('<', "%3C")
+        .replace('>', "%3E");
     if path.contains([' ', '\t', '(', ')', '<', '>']) {
         // Either bracket inside the path breaks the wrapper it sits in: `>`
         // would close it early, and a second `<` is what tells a reader the
@@ -234,9 +243,9 @@ pub fn destination(path: &str) -> String {
         // either in a destination, so both are percent-encoded, which every
         // reader of these links already resolves. Neither replacement can
         // introduce the other's character, so the order does not matter.
-        return format!("<{}>", path.replace('<', "%3C").replace('>', "%3E"));
+        return format!("<{escaped}>");
     }
-    path.to_owned()
+    escaped
 }
 
 /// The number the next image pasted into a document should carry.
@@ -526,6 +535,12 @@ mod tests {
         assert_eq!(destination("odd>name/a.png"), "<odd%3Ename/a.png>");
         assert_eq!(destination("odd<name/a.png"), "<odd%3Cname/a.png>");
         assert_eq!(destination("odd<>name/a.png"), "<odd%3C%3Ename/a.png>");
+        assert_eq!(destination("cache#scratch/a.png"), "cache%23scratch/a.png");
+        assert_eq!(destination("cache\\scratch/a.png"), "cache%5Cscratch/a.png");
+        assert_eq!(
+            destination("cache%23scratch/a.png"),
+            "cache%2523scratch/a.png"
+        );
     }
 
     #[test]

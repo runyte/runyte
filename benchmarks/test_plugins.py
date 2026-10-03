@@ -179,10 +179,25 @@ class WorkloadTests(unittest.TestCase):
 
 
 class CleanupTests(unittest.TestCase):
+    def test_missing_pidfd_support_refuses_session_before_subprocess_admission(self):
+        for module, attribute in [(plugins.os, 'pidfd_open'),
+                                  (plugins.signal, 'pidfd_send_signal')]:
+            with self.subTest(attribute=attribute), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(plugins.os, 'pidfd_open', Mock(), create=True), \
+                 patch.object(plugins.signal, 'pidfd_send_signal', Mock(), create=True), \
+                 patch.object(module, attribute, None), \
+                 patch.object(plugins.subprocess, 'run') as run, \
+                 patch.object(plugins, 'spawn', return_value=(123, 4)) as spawn:
+                with self.assertRaisesRegex(RuntimeError, attribute):
+                    plugins.Session(Path('/unused'), Path(directory), 'short.txt')
+                run.assert_not_called()
+                spawn.assert_not_called()
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_capture_rejects_pid_reuse_before_retaining_any_signal_target(self):
         owned = plugins.OwnedProcesses()
         with patch.object(plugins, 'process_identity', side_effect=[(0, 'old'), (0, 'new')]), \
-             patch.object(plugins.os, 'pidfd_open', return_value=91), \
+             patch.object(plugins.os, 'pidfd_open', return_value=91, create=True), \
              patch.object(plugins.os, 'close') as close, \
              patch.object(plugins.select, 'select', return_value=([], [], [])):
             owned.capture(10)
@@ -194,10 +209,10 @@ class CleanupTests(unittest.TestCase):
         identities = {10: (0, 'root'), 20: (10, 'child')}
         with patch.object(plugins, 'process_identity', side_effect=lambda pid: identities[pid]) as identity, \
              patch.object(plugins, 'process_children', side_effect=lambda pid: {20} if pid == 10 else set()), \
-             patch.object(plugins.os, 'pidfd_open', side_effect=lambda pid: pid + 100), \
+             patch.object(plugins.os, 'pidfd_open', side_effect=lambda pid: pid + 100, create=True), \
              patch.object(plugins.select, 'select', return_value=([], [], [])), \
              patch.object(plugins.os, 'close'), \
-             patch.object(plugins.signal, 'pidfd_send_signal') as signal:
+             patch.object(plugins.signal, 'pidfd_send_signal', create=True) as signal:
             owned.capture(10)
             self.assertEqual(owned.fds, {10: 110, 20: 120})
             # Reusing either numeric PID later cannot change our pinned target.
@@ -214,7 +229,7 @@ class CleanupTests(unittest.TestCase):
         owned = plugins.OwnedProcesses()
         owned.fds[10] = 110
         with patch.object(plugins, 'process_identity', return_value=(999, 'foreign')), \
-             patch.object(plugins.os, 'pidfd_open', return_value=120), \
+             patch.object(plugins.os, 'pidfd_open', return_value=120, create=True), \
              patch.object(plugins.os, 'close') as close, \
              patch.object(plugins.select, 'select', return_value=([], [], [])):
             owned.capture(20, parent=10)
@@ -251,6 +266,7 @@ class CleanupTests(unittest.TestCase):
 class WindowTests(unittest.TestCase):
     def test_uppercase_case_uses_stable_contract_without_workload_process(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(plugins, 'spawn', return_value=(123, 4)), \
+             patch.object(plugins, 'require_cleanup_support'), \
              patch.object(plugins.subprocess, 'run'):
             editor = plugins.Session(Path('/unused'), Path(directory), 'short.txt', uppercase=True)
             config = (Path(editor.env['XDG_CONFIG_HOME']) / 'runyte/config.yaml').read_text()

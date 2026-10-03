@@ -8,7 +8,8 @@ from pathlib import Path
 import unittest
 import threading
 import queue
-from application import Application
+from unittest.mock import patch
+from application import Application, PluginError
 from jsonschema import Draft202012Validator
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -16,6 +17,29 @@ SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
 FIXTURES = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
 
 class ApplicationSchemaTests(unittest.TestCase):
+    def test_file_manager_releases_new_directory_when_later_page_fails(self):
+        import files
+        for handle in ('new-directory', 'visible-directory'):
+            for cleanup_fails in (False, True):
+                with self.subTest(handle=handle, cleanup_fails=cleanup_fails):
+                    def request(method, **params):
+                        if method == 'filesystem.release':
+                            if cleanup_fails:
+                                raise PluginError('unavailable', 'Cleanup failed')
+                            return {}
+                        if params['offset'] == 0:
+                            return {'directory': handle, 'revision': 'd:1',
+                                    'entries': [], 'next': 128}
+                        raise PluginError('stale', 'Directory changed between pages')
+                    with patch.object(files, 'directory', 'visible-directory'), \
+                         patch.object(files.app, 'request', side_effect=request) as calls:
+                        with self.assertRaisesRegex(PluginError, 'Directory changed'):
+                            files.listing('destination')
+                        released = [call.kwargs for call in calls.call_args_list
+                                    if call.args[0] == 'filesystem.release']
+                        self.assertEqual(released, [{'directory': handle}]
+                                         if handle == 'new-directory' else [])
+
     def test_optional_alias_preserves_local_command_identity_and_bounds(self):
         schema = SCHEMA['$defs']['command']
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **schema})
@@ -118,6 +142,17 @@ class ApplicationSchemaTests(unittest.TestCase):
             current = resource('resource.stat', 103, job='j:g:read', provider='memory', key='notes')['result']['value']
             self.assertEqual(current['bytes'], 5)
             self.assertNotEqual(current['version'], metadata['version'])
+            for number, (offset, limit) in enumerate(((0, 1), (1, 1), (2, 2), (3, 1)), 200):
+                refused = resource('resource.read', number, job='j:g:read', provider='memory',
+                                   key='notes', version=current['version'], offset=offset, limit=limit)
+                self.assertEqual(refused.get('error', {}).get('code'), 'invalid_argument', refused)
+            for number, (offset, limit, text, eof) in enumerate(((0, 2, 'é', False),
+                                                               (2, 3, '猫', True),
+                                                               (5, 1, '', True)), 210):
+                chunk = resource('resource.read', number, job='j:g:read', provider='memory',
+                                 key='notes', version=current['version'], offset=offset, limit=limit)
+                self.assertEqual(chunk['result']['value'], {'version': current['version'],
+                                 'offset': offset, 'text': text, 'eof': eof})
             rejected = resource('resource.write.begin', 104, job='j:g:stale', provider='memory', key='notes',
                                 expected_version=metadata['version'], mode=mode, bytes=0, encoding='utf-8')
             self.assertEqual(rejected['error']['code'], 'conflict')

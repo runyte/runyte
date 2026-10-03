@@ -1892,10 +1892,24 @@ impl App {
             let visible = picker.visible_indices();
             let report = picker.purpose == ListPurpose::Report;
             let report_offset = picker.report_offset.min(visible.len().saturating_sub(1));
-            let all_rows = picker
-                .display_rows()
+            let displayed = picker.display_rows();
+            let total_rows = displayed.len();
+            let selected = (!report).then(|| picker.selected_display_index()).flatten();
+            let row_offset = if report {
+                report_offset
+            } else {
+                selected
+                    .unwrap_or_default()
+                    .saturating_sub(ROW_LIMIT / 2)
+                    .min(total_rows.saturating_sub(ROW_LIMIT))
+            };
+            // Select the window before cloning strings or calculating fuzzy
+            // emphasis: offscreen rows need only their lightweight identities.
+            let rows = displayed
                 .into_iter()
                 .enumerate()
+                .skip(row_offset)
+                .take(ROW_LIMIT)
                 .map(|(position, display)| {
                     let crate::picker::ListDisplayRow::Item(item) = display else {
                         let crate::picker::ListDisplayRow::Section(label) = display else {
@@ -1917,25 +1931,18 @@ impl App {
                     row
                 })
                 .collect::<Vec<_>>();
-            let total_rows = all_rows.len();
-            let rows = if report {
-                all_rows
-                    .into_iter()
-                    .skip(report_offset)
-                    .take(ROW_LIMIT)
-                    .collect()
-            } else {
-                all_rows
-            };
-            let selected = (!report).then(|| picker.selected_display_index()).flatten();
             let mut snapshot = bounded(
                 OverlayKind::ResultList,
                 picker.title.clone(),
                 picker.filter.clone(),
                 rows,
-                selected,
+                selected.map(|selected| selected - row_offset),
                 None,
             );
+            snapshot.row_offset = row_offset;
+            snapshot.total_rows = total_rows;
+            snapshot.omitted_rows = total_rows.saturating_sub(snapshot.rows.len());
+            snapshot.scroll_anchor = selected;
             if self
                 .list_actions
                 .iter()
@@ -2495,6 +2502,11 @@ impl App {
         if let Some(completion) = &self.completion {
             let visible = completion.visible_indices();
             if !visible.is_empty() {
+                let total_rows = visible.len();
+                let row_offset = completion
+                    .selected
+                    .saturating_sub(ROW_LIMIT / 2)
+                    .min(total_rows.saturating_sub(ROW_LIMIT));
                 let title = match completion.source {
                     CompletionSource::Language => "LSP Complete",
                     CompletionSource::Path | CompletionSource::Word => "Complete",
@@ -2505,6 +2517,8 @@ impl App {
                     completion.filter.clone(),
                     visible
                         .iter()
+                        .skip(row_offset)
+                        .take(ROW_LIMIT)
                         .filter_map(|index| completion.items.get(*index))
                         .map(|item| {
                             row(
@@ -2514,9 +2528,14 @@ impl App {
                             )
                         })
                         .collect(),
-                    Some(completion.selected),
+                    Some(completion.selected.saturating_sub(row_offset)),
                     None,
                 );
+                snapshot.row_offset = row_offset;
+                snapshot.total_rows = total_rows;
+                snapshot.omitted_rows = total_rows.saturating_sub(snapshot.rows.len());
+                snapshot.scroll_anchor =
+                    (completion.selected < total_rows).then_some(completion.selected);
                 // Every source can open on its own — Word for any
                 // three-character prefix, Language after `.`/`:`, Path after
                 // `/` — so only Tab accepts; Enter is reserved for its usual

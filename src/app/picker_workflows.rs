@@ -9,7 +9,7 @@ use super::{
     FinderTarget, Mode, PICKER_LIST_INTERVAL, PathBuf, Range, ResourceFinder, ResourceItem,
     ResourceKind, ResourceTarget, Result, Selection, TerminalContentMark,
     TerminalContentRetirement, TerminalSession, buffer_picker_columns, buffer_preview,
-    resource_path_fields, scan_content, scan_files, terminal_preview,
+    resource_path_fields, scan_files, terminal_preview,
 };
 
 use std::collections::HashSet;
@@ -18,6 +18,7 @@ use std::time::Instant;
 
 use crate::file_picker::{
     FileHits, FilePreviewRequest, PickerTarget, ScanScope, line_hit, line_hit_from_trimmed,
+    scan_content_excluding,
 };
 use crate::terminal::TerminalId;
 
@@ -273,55 +274,69 @@ impl App {
         }
         let query = picker.query.clone();
         if self.finder.is_none() {
-            let live = self
-                .buffers
-                .iter()
-                .enumerate()
-                .filter(|(index, buffer)| {
-                    !self.closed_buffers.contains(index)
-                        && !buffer.is_directory()
-                        && buffer
-                            .path
-                            .as_deref()
-                            .is_some_and(|path| path.starts_with(&root))
-                })
-                .filter_map(|(_, buffer)| {
-                    let path = buffer
+            let mut live = Vec::new();
+            let mut remaining = CONTENT_ENTRY_LIMIT;
+            for (_, buffer) in self.buffers.iter().enumerate().filter(|(index, buffer)| {
+                !self.closed_buffers.contains(index)
+                    && !buffer.is_directory()
+                    && buffer
                         .path
                         .as_deref()
-                        .expect("filtered file buffer has a path");
-                    let lines = crate::file_picker::line_hits(&buffer.to_string(), &query);
-                    (!lines.is_empty()).then(|| crate::file_picker::FileHits {
-                        path: path.to_path_buf(),
-                        lines,
-                    })
-                })
-                .scan(0usize, |held, hits| {
-                    if *held >= CONTENT_ENTRY_LIMIT {
-                        return None;
-                    }
-                    *held += hits.len();
-                    Some(hits)
-                })
-                .collect();
+                        .is_some_and(|path| path.starts_with(&root))
+            }) {
+                // One extra live match tells picker admission that narrowing
+                // must rescan, including when a later buffer exceeds an
+                // exactly filled budget.
+                let lines = crate::file_picker::line_hits_bounded(
+                    &buffer.to_string(),
+                    &query,
+                    remaining + 1,
+                );
+                if lines.is_empty() {
+                    continue;
+                }
+                let overflow = lines.len() > remaining;
+                remaining = remaining.saturating_sub(lines.len());
+                live.push(FileHits {
+                    path: buffer
+                        .path
+                        .clone()
+                        .expect("filtered file buffer has a path"),
+                    lines,
+                });
+                if overflow {
+                    break;
+                }
+            }
             self.picker.as_mut().unwrap().add_content(live);
         }
+        let excluded = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(index, buffer)| {
+                !self.closed_buffers.contains(index) && !buffer.is_directory()
+            })
+            .filter_map(|(_, buffer)| buffer.path.clone())
+            .collect::<HashSet<_>>();
         if let Some(scanner) = &self.file_scanner {
-            scanner.scan_content(
+            scanner.scan_content_excluding(
                 scan_id,
                 root,
                 scope,
                 self.state_root.clone(),
                 self.config.editor.show_hidden_files,
                 query,
+                excluded,
             );
         } else {
-            match scan_content(
+            match scan_content_excluding(
                 &root,
                 &scope,
                 &self.state_root,
                 self.config.editor.show_hidden_files,
                 &query,
+                &excluded,
             ) {
                 Ok((mut entries, skipped, limited)) => {
                     entries.retain(|hits| {

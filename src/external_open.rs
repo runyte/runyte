@@ -13,10 +13,10 @@
 //! is one process spawn.
 
 #[cfg(not(windows))]
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::{
     fs,
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::mpsc,
     time::Instant,
@@ -26,8 +26,6 @@ use anyhow::{Context, Result};
 pub mod system;
 #[cfg(windows)]
 mod windows;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 
 /// How much of a file is examined before calling it text.
 ///
@@ -41,6 +39,9 @@ const PREFIX_BYTES: usize = 8192;
 /// Long enough that the tools someone actually uses stay in it, short enough
 /// that the hint list stays readable.
 const MAX_PROGRAMS: usize = 16;
+
+/// Cache hints never justify reading an unbounded file during startup.
+const MAX_CACHE_BYTES: usize = 64 * 1024;
 
 const CACHE_FILE: &str = "recent-programs";
 const DEFAULT_FILE: &str = "default-program";
@@ -116,7 +117,7 @@ pub fn is_binary(prefix: &[u8], complete: bool) -> bool {
 /// A path that cannot be read is not binary: the caller's own open reports
 /// that failure with the message it wants.
 pub fn looks_binary(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else {
+    let Ok(mut file) = crate::path_safety::open_regular_file(path, false) else {
         return false;
     };
     // One byte past the prefix, which is what tells a file of exactly
@@ -219,7 +220,7 @@ impl ProgramCache {
     pub fn load(root: Option<PathBuf>) -> Self {
         let mut programs: Vec<String> = root
             .as_ref()
-            .and_then(|root| fs::read_to_string(root.join(CACHE_FILE)).ok())
+            .and_then(|root| read_cache_file(&root.join(CACHE_FILE)).ok())
             .map(|contents| {
                 contents
                     .lines()
@@ -232,7 +233,7 @@ impl ProgramCache {
             .unwrap_or_default();
         let default_program = root
             .as_ref()
-            .and_then(|root| fs::read_to_string(root.join(DEFAULT_FILE)).ok())
+            .and_then(|root| read_cache_file(&root.join(DEFAULT_FILE)).ok())
             .map(|program| program.trim().to_owned())
             .filter(|program| !program.is_empty());
         if let Some(program) = &default_program
@@ -321,7 +322,7 @@ impl ProgramCache {
             .with_context(|| format!("failed to create {}", root.display()))?;
         let mut contents = self.programs.join("\n");
         contents.push('\n');
-        fs::write(root.join(CACHE_FILE), contents)
+        write_cache_file(&root.join(CACHE_FILE), &contents)
             .with_context(|| format!("failed to write {}", root.join(CACHE_FILE).display()))?;
         Ok(())
     }
@@ -342,9 +343,50 @@ impl ProgramCache {
         };
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
-        fs::write(&path, format!("{program}\n"))
+        write_cache_file(&path, &format!("{program}\n"))
             .with_context(|| format!("failed to write {}", path.display()))
     }
+}
+
+fn read_cache_file(path: &Path) -> std::io::Result<String> {
+    let file = crate::path_safety::open_regular_file(path, false)?;
+    let mut contents = String::new();
+    file.take(MAX_CACHE_BYTES as u64 + 1)
+        .read_to_string(&mut contents)?;
+    if contents.len() > MAX_CACHE_BYTES {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "program cache exceeds its byte limit",
+        ));
+    }
+    Ok(contents)
+}
+
+fn write_cache_file(path: &Path, contents: &str) -> std::io::Result<()> {
+    if contents.len() > MAX_CACHE_BYTES {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "program cache exceeds its byte limit",
+        ));
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    // Inspect the opened object before truncating it. A pathname check cannot
+    // prevent replacement between inspection and a blocking or destructive open.
+    let mut file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "program cache requires a regular file",
+        ));
+    }
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())
 }
 
 /// Opens a web URL through the desktop's default handler, independent of the
@@ -464,32 +506,22 @@ pub fn launch(program: &str, path: &Path) -> Result<()> {
     #[cfg(windows)]
     return finish_dispatch(dispatch(program, path)?);
     #[cfg(not(windows))]
-    {
-        let program = launch_program_for(program, OpenPlatform::CURRENT)?;
-        let mut words = program.split_whitespace();
-        let executable = words.next().context("no program was given")?;
-        let mut command = Command::new(executable);
-        command
-            .args(words)
-            .arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        command.process_group(0);
-        let child = command
-            .spawn()
-            .with_context(|| format!("failed to run {executable}"))?;
-        // Reaped on a thread of its own. Nothing waits on the exit status — the
-        // whole point is not to block the editor — but a child nobody waits for
-        // stays in the process table until Runyte itself exits, and a session
-        // spent opening images should not accumulate one zombie per image.
-        std::thread::spawn(move || {
-            let mut child = child;
-            let _ = child.wait();
-        });
-        Ok(())
-    }
+    launch_with_openers(program, path, system::active_openers())
+}
+
+#[cfg(not(windows))]
+fn launch_with_openers(
+    program: &str,
+    path: &Path,
+    active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> Result<()> {
+    let program = launch_program_for(program, OpenPlatform::CURRENT)?;
+    let mut words = program.split_whitespace();
+    let executable = words.next().context("no program was given")?;
+    let mut command = Command::new(executable);
+    command.args(words).arg(path);
+    system::launch_command(command, active)
+        .map_err(|error| anyhow::anyhow!("failed to run {executable}: {error}"))
 }
 
 #[cfg(test)]
@@ -859,6 +891,82 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn manual_opens_share_bounded_admission_and_keep_literal_arguments() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let root = crate::test_support::TestRuntimeRoot::new("manual-open-admission").unwrap();
+        let helper = root.path().join("viewer");
+        let release = root.path().join("release");
+        install_stand_in(
+            &helper,
+            "printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\" > \"$0.args\"\nwhile [ ! -f \"$2\" ]; do sleep 0.01; done\n",
+        );
+        let active = Arc::new(AtomicUsize::new(0));
+        struct ReleaseOnDrop {
+            path: PathBuf,
+            active: Arc<AtomicUsize>,
+        }
+        impl Drop for ReleaseOnDrop {
+            fn drop(&mut self) {
+                let _ = fs::write(&self.path, []);
+                let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                while self.active.load(Ordering::Acquire) != 0 && Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
+        let _release_on_drop = ReleaseOnDrop {
+            path: release.clone(),
+            active: active.clone(),
+        };
+        let mut slots = Vec::new();
+        while let Ok(slot) = system::Slot::reserve(active.clone()) {
+            slots.push(slot);
+        }
+        let program = format!("{} literal {}", helper.display(), release.display());
+        let target = Path::new("file with spaces;$(literal).bin");
+        let error = launch_with_openers(&program, target, active.clone()).unwrap_err();
+        assert!(
+            error.to_string().contains("opener limit reached"),
+            "{error}"
+        );
+        assert!(
+            !root.path().join("viewer.args").exists(),
+            "rejected opener started a child"
+        );
+        drop(slots);
+        launch_with_openers(&program, target, active.clone()).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let arguments = loop {
+            if let Ok(text) = fs::read_to_string(root.path().join("viewer.args"))
+                && text.lines().count() == 4
+            {
+                break text;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(
+            arguments.lines().collect::<Vec<_>>(),
+            [
+                "3",
+                "literal",
+                release.to_str().unwrap(),
+                target.to_str().unwrap()
+            ]
+        );
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        fs::write(&release, []).unwrap();
+        while active.load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < deadline, "child was not reaped");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn launched_program_has_a_process_group_separate_from_the_editor() {
         let root = std::env::temp_dir().join(format!(
             "runyte-detached-open-{}-{}",
@@ -921,3 +1029,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "external_open/tests/cache_files.rs"]
+mod cache_file_tests;

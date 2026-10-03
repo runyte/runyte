@@ -1204,6 +1204,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
                 commit('4', "2026-08-10"),
             ],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: "1".repeat(40),
             }),
             total_pages: 2,
@@ -1273,6 +1275,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
     app.open_git_log_result(
         LogRequest {
             cursor: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: "1".repeat(40),
             }),
             ..LogRequest::default()
@@ -1302,6 +1306,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
     assert_eq!(
         app.git_state.log_cursors()[1],
         Some(LogCursor {
+            tip: "1".repeat(40),
+            offset: 2,
             boundary: "1".repeat(40)
         })
     );
@@ -1360,6 +1366,8 @@ fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
         LogPage {
             commits: vec![commit('1')],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: boundary.clone(),
             }),
             total_pages: 2,
@@ -1375,7 +1383,7 @@ fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
         GitOperation::Log {
             repository: requested,
             request: LogRequest {
-                cursor: Some(LogCursor { boundary: cursor }),
+                cursor: Some(LogCursor { boundary: cursor, .. }),
                 ..
             },
         } if requested == &repository && cursor == &boundary
@@ -1754,6 +1762,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         LogPage {
             commits: vec![first.clone(), selected.clone()],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: selected.oid.clone(),
             }),
             total_pages: 2,
@@ -1980,6 +1990,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
             repository: repository.clone(),
             request: LogRequest {
                 cursor: Some(LogCursor {
+                    tip: "1".repeat(40),
+                    offset: 2,
                     boundary: "4".repeat(40),
                 }),
                 limit: 100,
@@ -1988,6 +2000,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         result: Box::new(Ok(GitResponse::Log {
             request: LogRequest {
                 cursor: Some(LogCursor {
+                    tip: "1".repeat(40),
+                    offset: 2,
                     boundary: "4".repeat(40),
                 }),
                 limit: 100,
@@ -5670,6 +5684,117 @@ fn a_commit_message_opens_on_an_empty_first_line_above_what_it_will_record() {
     assert!(text.contains("#   M lorem.md"), "{text}");
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn asynchronous_commit_completion_preserves_later_message_edits_and_view_ownership() {
+    for scenario in [
+        "unchanged",
+        "edited",
+        "reopened",
+        "navigated",
+        "failed",
+        "worker-failed",
+    ] {
+        let (root, mut app, _) = staged_project("async-commit-message");
+        app.execute_command("git-status").unwrap();
+        let origin = app.active().buffer;
+        app.execute_command("git-commit").unwrap();
+        let submitted = app.active().buffer;
+        app.insert_text("Submitted message");
+        let repository = app.git.repository().unwrap().clone();
+        let (service, operations) = GitServiceHandle::recording_for_test();
+        app.attach_git_service(service);
+        assert!(matches!(
+            operations.recv_timeout(Duration::from_secs(1)).unwrap(),
+            GitOperation::Discover { .. }
+        ));
+        app.save(None, false).unwrap();
+        let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+        let GitOperation::Mutate { mutation, .. } = &operation else {
+            panic!("message save did not submit a mutation");
+        };
+        assert!(
+            matches!(mutation, GitMutation::Commit { message } if message == "Submitted message")
+        );
+        let mutation = mutation.clone();
+        let mut retained = submitted;
+        match scenario {
+            "edited" => app.insert_text(" plus unsubmitted edits"),
+            "reopened" => {
+                app.execute_command("bc!").unwrap();
+                assert!(app.closed_buffers.contains(&submitted));
+                // A newly opened message has a new arena identity. Reproduce
+                // its publication while the earlier worker is still pending.
+                app.buffers
+                    .push(Buffer::commit_message("New message after abandonment"));
+                app.syntax.push(None);
+                retained = app.buffers.len() - 1;
+                app.switch_buffer(retained);
+                app.commit_origin = Some(origin);
+            }
+            "navigated" => {
+                app.buffers.push(Buffer::scratch());
+                app.syntax.push(None);
+                retained = app.buffers.len() - 1;
+                app.switch_buffer(retained);
+                app.insert_text("Unrelated work");
+            }
+            _ => {}
+        }
+        let text_before = app.buffers[retained].to_string();
+        let error = crate::git::GitError::Unavailable {
+            detail: "fixture refused commit".into(),
+        };
+        let result = if scenario == "worker-failed" {
+            Err(error)
+        } else {
+            Ok(GitResponse::Mutation {
+                mutation,
+                applied_paths: vec![],
+                summary: Some("committed submitted message".into()),
+                failure: (scenario == "failed").then_some(error),
+                snapshot: Box::new(Ok(empty_repository_snapshot(
+                    repository,
+                    RepositoryGeneration::default(),
+                    RefreshSpec::default(),
+                ))),
+            })
+        };
+        app.apply_git_service_event(GitServiceEvent::Completed {
+            id: GitRequestId::from_raw(2),
+            operation,
+            result: Box::new(result),
+            state: GitServiceState::Completed,
+            coalesced: false,
+        });
+        if scenario == "unchanged" {
+            assert!(app.closed_buffers.contains(&submitted));
+            assert_eq!(app.active().buffer, origin);
+        } else {
+            assert!(
+                !app.closed_buffers.contains(&retained),
+                "{scenario}: completion closed newer work"
+            );
+            assert_eq!(app.buffers[retained].to_string(), text_before, "{scenario}");
+            assert_eq!(
+                app.active().buffer,
+                retained,
+                "{scenario}: completion stole focus"
+            );
+            if scenario == "navigated" {
+                assert!(app.closed_buffers.contains(&submitted));
+            }
+            if scenario == "edited" {
+                assert!(
+                    app.status.contains("newer edits were kept"),
+                    "{}",
+                    app.status
+                );
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]

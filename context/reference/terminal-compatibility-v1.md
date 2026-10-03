@@ -31,6 +31,31 @@ top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
 
+SGR mouse reports preserve the specific left, middle, or right button on both
+press and release, including modifier bits. Release uses the final `m` instead
+of the legacy button-3 marker. The regression is
+`sgr_mouse_encoding_preserves_coordinates_buttons_and_modifiers` in
+`src/terminal/mod.rs`.
+
+CAN and SUB cancel incomplete escape sequences, including ignored control
+strings, so following printable output is preserved. ESC restarts incomplete
+non-string sequences. The regressions are
+`cancelled_control_sequences_resume_printing_across_chunk_boundaries` and
+`escape_restarts_interrupted_control_sequences` in
+`tests/terminal_sequences.rs`.
+
+Unsupported CSI functions containing intermediate bytes are ignored as whole
+sequences; they never fall through to basic commands sharing their final byte.
+`unsupported_csi_intermediates_do_not_alias_basic_commands` in
+`tests/terminal_sequences.rs` covers screen cells, cursor, rendition, alternate
+screen state, and device replies.
+
+The shared retention budget counts primary-screen scrollback even while its
+alternate screen is visible. Oldest-history eviction leaves both live screens
+intact and reports the lost primary rows when that screen is restored. The
+regression is `alternate_screen_history_remains_charged_and_evictable` in
+`src/terminal/tests/read.rs`.
+
 ## Unix PTY descriptor ownership
 
 Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`
@@ -106,6 +131,13 @@ retaining an undrained master can therefore prevent cleanup from completing.
 in `src/terminal/pending/tests.rs` covers cancellation with unread output and
 an independently held slave. The exited-leader descendant test in that file
 keeps terminal output empty to establish its non-reaping zombie barrier.
+
+Partial Unix setup follows the same ordering: the child guard owns the initial
+master and slave, cancels any started unpublished worker, signals the still
+unreaped child group, closes its endpoints, and only then waits. The
+`unpublished_setup_failures_cancel_gates_and_release_accounting` test in
+`src/terminal/pty.rs` injects failure after child ownership, each descriptor
+duplication, and writer startup, with output queued before cleanup.
 
 Deliberate limits:
 

@@ -20,6 +20,75 @@ fn entry(path: PathBuf, number: Option<u8>) -> RecentEntry {
     RecentEntry::new(path, Some("workspace".into()), number, None)
 }
 
+#[cfg(unix)]
+#[test]
+fn special_file_history_reads_refuse_without_blocking() {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+
+    let (root, _) = fixture();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "workspace::recent_history::tests::special_file_history_fixture",
+            "--nocapture",
+        ])
+        .env("RUNYTE_HISTORY_SPECIAL_FILE_TEST_ROOT", root.as_ref())
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "history special-file fixture failed: {status}"
+            );
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("workspace history I/O blocked on a special file");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "owned by the bounded history special-file parent fixture"]
+fn special_file_history_fixture() {
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt, fs::FileTypeExt},
+    };
+
+    let root = PathBuf::from(std::env::var_os("RUNYTE_HISTORY_SPECIAL_FILE_TEST_ROOT").unwrap());
+    let path = root.join("workspaces.json");
+    let native = CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: native is NUL-terminated and the FIFO is fixture-owned.
+    assert_eq!(unsafe { libc::mkfifo(native.as_ptr(), 0o600) }, 0);
+    let alias = root.join("alias.json");
+    std::os::unix::fs::symlink(&path, &alias).unwrap();
+    for candidate in [&path, &alias] {
+        assert!(read_recents(Some(candidate)).is_err());
+        assert!(record_recent_workspace_name_in(candidate, &root).is_err());
+    }
+    assert!(fs::symlink_metadata(&path).unwrap().file_type().is_fifo());
+    fs::remove_file(&path).unwrap();
+    assert!(read_recents(Some(&path)).unwrap().is_empty());
+    record_recent_workspace_name_in(&path, &root).unwrap();
+    assert_eq!(
+        read_recents(Some(&alias)).unwrap()[0].project_root,
+        root.canonicalize().unwrap()
+    );
+}
+
 #[test]
 fn visits_keep_names_and_digits_but_lifecycle_ensure_does_not_reorder_or_activate() {
     let (root, path) = fixture();

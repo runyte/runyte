@@ -1358,6 +1358,11 @@ fn schedule<W: GitServiceWorker>(
                 continue;
             }
             if let Some(key) = &read_key
+                    // A queued mutation or reconciliation separates the
+                    // active read from this request's repository state.
+                    && queues.get(&repository).is_none_or(|queue| {
+                        queue.iter().all(|job| job.read_key.is_some())
+                    })
                     && let Some((waiters, execution_cancelled)) = active_reads.get(key)
                     && let Ok(mut waiters) = waiters.lock()
                     // Reading the flag under the same lock the monitor takes
@@ -1370,12 +1375,17 @@ fn schedule<W: GitServiceWorker>(
                 continue;
             }
             if let Some(key) = &read_key
-                && let Some(waiters) = queues
-                    .values_mut()
-                    .flat_map(|queue| queue.iter_mut())
-                    .find_map(|job| {
-                        (job.read_key.as_ref() == Some(key)).then(|| Arc::clone(&job.waiters))
-                    })
+                && let Some(waiters) = queues.get(&repository).and_then(|queue| {
+                    // Equivalent reads share work only within the final
+                    // read-only segment, after the most recent barrier.
+                    queue
+                        .iter()
+                        .rev()
+                        .take_while(|job| job.read_key.is_some())
+                        .find_map(|job| {
+                            (job.read_key.as_ref() == Some(key)).then(|| Arc::clone(&job.waiters))
+                        })
+                })
             {
                 if let Ok(mut waiters) = waiters.lock() {
                     waiters.push((request.id, request.cancelled));
@@ -2353,6 +2363,71 @@ mod tests {
                 }
             )
         ));
+    }
+
+    #[test]
+    fn read_coalescing_preserves_queued_mutation_and_reconciliation_barriers() {
+        for queued_read in [false, true] {
+            for reconcile in [false, true] {
+                let (worker, started, release, calls) = worker();
+                let (handle, mut events) = GitService::spawn_worker(worker);
+                let repository = Repository::new("/coalescing-barrier");
+                let read = GitOperation::Refresh {
+                    repository: repository.clone(),
+                    spec: RefreshSpec::default(),
+                };
+                let mut expected = Vec::new();
+                if queued_read {
+                    expected.push(
+                        handle
+                            .try_submit(GitOperation::Status {
+                                repository: repository.clone(),
+                            })
+                            .unwrap(),
+                    );
+                    started.recv_timeout(Duration::from_secs(1)).unwrap();
+                }
+                expected.push(handle.try_submit(read.clone()).unwrap());
+                if !queued_read {
+                    started.recv_timeout(Duration::from_secs(1)).unwrap();
+                }
+                let barrier = if reconcile {
+                    GitOperation::Reconcile {
+                        repository: repository.clone(),
+                        spec: RefreshSpec::default(),
+                    }
+                } else {
+                    mutation(&repository, "file")
+                };
+                expected.push(handle.try_submit(barrier).unwrap());
+                let last = handle.try_submit(read).unwrap();
+                expected.push(last);
+                // Admission progress precedes coalescing while the first
+                // worker is held, so all requests occupy one known queue.
+                while !matches!(events.blocking_recv(), Some(GitServiceEvent::Progress(progress)) if progress.id == last)
+                {
+                }
+                release.store(true, Ordering::Release);
+                for expected_id in &expected {
+                    let GitServiceEvent::Completed {
+                        id,
+                        state,
+                        coalesced,
+                        ..
+                    } = completed(&mut events)
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(
+                        id, *expected_id,
+                        "queued={queued_read}, reconcile={reconcile}"
+                    );
+                    assert_eq!(state, GitServiceState::Completed);
+                    assert!(!coalesced, "read crossed a queued repository barrier");
+                }
+                assert_eq!(calls.load(Ordering::Relaxed), expected.len() as u64);
+            }
+        }
     }
 
     #[test]

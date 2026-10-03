@@ -1034,6 +1034,62 @@ fn injected_indentation_uses_the_deepest_supported_language_and_folds_include_it
 }
 
 #[test]
+fn newline_indentation_retains_ancestor_captures_in_later_injections() {
+    let source = "<script>function first() {\n one();\n}</script>\n<main>\n<script>function second() {\n if (ready) {\n  go();\n }\n}</script>\n</main>\n";
+    for (language, source, depth) in [
+        ("html", source.to_owned(), 1),
+        ("markdown", format!("```html\n{source}\n```\n"), 2),
+        (
+            "php",
+            format!("<?php echo 1; ?>{source}<?php echo 2; ?>"),
+            2,
+        ),
+    ] {
+        let (registry, text, syntax) = parse(&source, language);
+        for (marker, levels) in [("second() {\n", 1), ("(ready) {\n", 2), ("go();\n", 2)] {
+            let newline = char_offset(&source, marker) + marker.chars().count() - 1;
+            let indent = syntax.newline_indent(&text, &registry, newline).unwrap();
+            assert_eq!(registry.language_name(indent.language), "javascript");
+            assert_eq!(indent.injection_depth, depth);
+            assert_eq!(
+                indent.always_levels, levels,
+                "{language} {marker}: {indent:?}"
+            );
+            assert_eq!((indent.begin_levels, indent.tab_levels), (0, 0));
+            assert!(indent.issues.is_empty(), "{indent:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual indentation scaling measurement; excludes parsing"]
+fn newline_indentation_scaling() {
+    let registry = Registry::new();
+    let rust = registry.language_for_name("rust").unwrap();
+    for count in [1_000, 10_000, 100_000] {
+        let text = Text::from_str(&"fn f() {\n    x();\n}\n".repeat(count));
+        let syntax = DocumentSyntax::new(&text, rust, &registry).unwrap();
+        let mut samples = Vec::new();
+        for _ in 0..4 {
+            let start = std::time::Instant::now();
+            let indent = std::hint::black_box(syntax.newline_indent(&text, &registry, 8).unwrap());
+            samples.push(start.elapsed());
+            assert_eq!(indent.always_levels, 1);
+            assert!(
+                !indent.issues.iter().any(|issue| matches!(
+                    issue,
+                    runyte::syntax::IndentIssue::IncompleteParse { .. }
+                ))
+            );
+        }
+        eprintln!(
+            "{count} functions, {} bytes: {samples:?}",
+            text.rope().len_bytes()
+        );
+    }
+}
+
+#[test]
 fn fold_ranges_keep_a_structural_closing_line_and_its_suffix_visible() {
     let source = "fn main() {\n    one();\n} // suffix must remain visible\n";
     let (registry, text, syntax) = parse(source, "rust");
@@ -3928,6 +3984,63 @@ fn match_bracket_ignores_brackets_inside_strings() {
 fn match_bracket_returns_none_off_a_bracket() {
     let (_, text, syntax) = parse("fn main() {}", "rust");
     assert_eq!(syntax.matching_bracket(&text, 0), None);
+}
+
+#[test]
+fn match_bracket_requires_a_present_partner_in_the_same_container() {
+    for (source, offset) in [
+        ("[123", 0),
+        ("{\"x\":1", 0),
+        ("123]", 3),
+        ("[[123]", 0),
+        ("[123]]", 5),
+        ("[123}", 0),
+    ] {
+        let (_, text, syntax) = parse(source, "json");
+        assert_eq!(syntax.matching_bracket(&text, offset), None, "{source}");
+    }
+    let (_, text, syntax) = parse("[[123]", "json");
+    assert_eq!(syntax.matching_bracket(&text, 1), Some(5));
+    assert_eq!(syntax.matching_bracket(&text, 5), Some(1));
+}
+
+#[test]
+fn match_bracket_ignores_a_caret_inside_strings_and_comments() {
+    for source in [
+        "fn main() { let s = \"界 { b\"; }",
+        "fn main() { /* 界 { } */ }",
+        "fn main() { // 界 { }\n}",
+    ] {
+        let (_, text, syntax) = parse(source, "rust");
+        let inside = char_offset(source, "界 ") + 2;
+        assert_eq!(syntax.matching_bracket(&text, inside), None, "{source}");
+        let open = char_offset(source, "{");
+        let close = source.chars().count() - 1;
+        assert_eq!(syntax.matching_bracket(&text, open), Some(close));
+        assert_eq!(syntax.matching_bracket(&text, close), Some(open));
+    }
+}
+
+#[test]
+fn match_bracket_preserves_pairs_in_nested_and_injected_syntax() {
+    for (language, source, opening, closing) in [
+        ("json", "{\"界\": [1, 2]}", '[', ']'),
+        ("rust", "fn main() { call(1); }", '{', '}'),
+        ("html", "<div>界</div>", '<', '>'),
+        ("markdown", "```rust\nfn main() { call(1); }\n```", '{', '}'),
+    ] {
+        let (_, text, syntax) = parse(source, language);
+        let from = source
+            .chars()
+            .position(|character| character == opening)
+            .unwrap();
+        let to = source
+            .chars()
+            .position(|character| character == closing)
+            .unwrap();
+        assert_eq!(syntax.matching_bracket(&text, from), Some(to), "{source}");
+        assert_eq!(syntax.matching_bracket(&text, to), Some(from), "{source}");
+    }
 }
 
 /// Markdown leaves ordinary prose punctuation as text, so a quoted phrase has

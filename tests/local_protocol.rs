@@ -1278,22 +1278,14 @@ async fn standalone_event_loop_drains_integrated_terminal_output_before_quitting
 }
 
 #[tokio::test]
-async fn a_blocked_document_open_presents_an_intentional_startup_screen() {
-    use std::ffi::CString;
-    use std::io::Write;
-
+async fn document_open_presents_startup_before_the_document_frame() {
     let root = project();
     let config = default_config(&root);
-    let fifo = root.join("blocking.lua");
-    let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode contains
-    // only ordinary owner permissions.
-    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
-    let (child, terminal) = spawn_in_pty(
+    let (child, mut terminal) = spawn_in_pty(
         bundled_runyte()
             .args(["--standalone", "--config"])
             .arg(config)
-            .arg("blocking.lua")
+            .arg("note.txt")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -1301,55 +1293,32 @@ async fn a_blocked_document_open_presents_an_intentional_startup_screen() {
     let mut child = ChildGuard(Some(child));
     let output = capture_terminal_output(&terminal);
 
-    wait_for_terminal_screen(&output, "Opening workspace…").await;
-    assert!(
-        child.0.as_mut().unwrap().try_wait().unwrap().is_none(),
-        "the editor exited instead of waiting for the startup target"
-    );
-    assert!(
-        output.raw.lock().unwrap().len() < 256,
-        "the document-free presentation alone crossed the benchmark's substantive-frame threshold"
-    );
-    // Startup probes once for binary data, then opens the same path for the
-    // authoritative text and disk state. Feed both reads without creating or
-    // executing a test program.
-    let writer_path = fifo.clone();
-    let writers = std::thread::spawn(move || {
-        for read in 0..2 {
-            let mut writer = fs::OpenOptions::new()
-                .write(true)
-                .open(&writer_path)
-                .unwrap();
-            writer.write_all(b"return 1\n").unwrap();
-            drop(writer);
-            if read == 0 {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-    });
-    wait_for_terminal_screen(&output, "blocking.lua").await;
-    writers.join().unwrap();
-
-    // SAFETY: `child.id()` names this test's live child process.
-    assert_eq!(
-        unsafe { libc::kill(child.0.as_ref().unwrap().id() as libc::pid_t, libc::SIGTERM,) },
-        0
-    );
-    assert_eq!(
-        wait_child(child.0.as_mut().unwrap()).await.code(),
-        Some(128 + libc::SIGTERM)
-    );
+    wait_for_terminal_screen(&output, "note.txt").await;
+    {
+        let raw = output.raw.lock().unwrap();
+        let presentation = String::from_utf8_lossy(&raw);
+        let startup = presentation
+            .find("Opening workspace…")
+            .expect("standalone startup has a document-free presentation");
+        let document = presentation.find("note.txt").unwrap();
+        assert!(
+            startup < document,
+            "startup must precede the document frame"
+        );
+    }
+    type_colon_command(&mut terminal, "quit-all!");
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
     child.0.take();
     fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
-async fn termination_during_a_blocked_startup_open_restores_the_terminal() {
+async fn named_pipe_startup_refuses_without_a_writer_and_restores_the_terminal() {
     use std::ffi::CString;
 
     let root = project();
     let config = default_config(&root);
-    let fifo = root.join("blocked-forever.lua");
+    let fifo = root.join("unsupported.lua");
     let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
     // SAFETY: `fifo_name` is a live NUL-terminated path and the mode contains
     // only ordinary owner permissions.
@@ -1358,7 +1327,7 @@ async fn termination_during_a_blocked_startup_open_restores_the_terminal() {
         bundled_runyte()
             .args(["--standalone", "--config"])
             .arg(config)
-            .arg("blocked-forever.lua")
+            .arg("unsupported.lua")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -1366,17 +1335,13 @@ async fn termination_during_a_blocked_startup_open_restores_the_terminal() {
     let mut child = ChildGuard(Some(child));
     let output = capture_terminal_output(&terminal);
 
-    wait_for_terminal_screen(&output, "Opening workspace…").await;
-    // SAFETY: `child.id()` names this test's live child process.
-    assert_eq!(
-        unsafe { libc::kill(child.0.as_ref().unwrap().id() as libc::pid_t, libc::SIGTERM) },
-        0
-    );
-    assert_eq!(
-        wait_child(child.0.as_mut().unwrap()).await.code(),
-        Some(128 + libc::SIGTERM)
+    let status = wait_child(child.0.as_mut().unwrap()).await;
+    assert!(
+        !status.success(),
+        "a named pipe cannot be an editable document"
     );
     child.0.take();
+    wait_for_terminal_screen(&output, "regular file").await;
 
     let restored = terminal_attributes(terminal.as_raw_fd());
     assert_eq!(restored.c_iflag, initial.c_iflag);

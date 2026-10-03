@@ -933,6 +933,13 @@ fn inline(source: &str, base: Option<Scope>, palette: Palette) -> Vec<Piece> {
 
     while index < characters.len() {
         let character = characters[index];
+        let literal = oversized_marker_prefix(&characters, index);
+        if literal > 0 {
+            plain.extend(&characters[index..index + literal]);
+            plain_origins.extend(index..index + literal);
+            index += literal;
+            continue;
+        }
         let consumed = match character {
             '\\' if index + 1 < characters.len() && is_escapable(characters[index + 1]) => {
                 plain.push(characters[index + 1]);
@@ -1105,6 +1112,21 @@ fn is_escapable(character: char) -> bool {
     "\\`*_{}[]()#+-.!|<>~".contains(character)
 }
 
+/// No span can start far enough inside a marker run that the rest of its
+/// opening alone exhausts the lookahead. Emit that prefix together instead
+/// of recounting every suffix; retain the bounded tail for ordinary parsing.
+fn oversized_marker_prefix(characters: &[char], index: usize) -> usize {
+    let marker = characters[index];
+    if !matches!(marker, '`' | '*' | '_' | '~') {
+        return 0;
+    }
+    characters[index..]
+        .iter()
+        .take_while(|value| **value == marker)
+        .count()
+        .saturating_sub(INLINE_SCAN_LIMIT)
+}
+
 /// The contents and source length of a code span starting at `index`.
 fn code_span(characters: &[char], index: usize) -> Option<(String, usize)> {
     let run = characters[index..]
@@ -1120,6 +1142,7 @@ fn code_span(characters: &[char], index: usize) -> Option<(String, usize)> {
         }
         let closing = characters[cursor..]
             .iter()
+            .take(INLINE_SCAN_LIMIT + 1)
             .take_while(|value| **value == '`')
             .count();
         if closing == run {
@@ -1150,6 +1173,7 @@ fn delimited(
 ) -> Option<(String, usize)> {
     let opening = characters[index..]
         .iter()
+        .take(count)
         .take_while(|value| **value == marker)
         .count();
     if opening < count {
@@ -1231,6 +1255,11 @@ pub(crate) fn link_under_cursor(line: &str, offset: usize) -> Option<String> {
                 continue;
             }
             '`' => {
+                let literal = oversized_marker_prefix(&characters, index);
+                if literal > 0 {
+                    index += literal;
+                    continue;
+                }
                 if let Some((_, length)) = code_span(&characters, index) {
                     index += length;
                     continue;
@@ -1545,6 +1574,42 @@ fn autolink(characters: &[char], index: usize) -> Option<(String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_inline_marker_runs_remain_literal_and_keep_trailing_spans() {
+        const LENGTH: usize = 32_768;
+        for marker in ['`', '*', '_', '~'] {
+            let prefix = format!("prefix {}", marker.to_string().repeat(LENGTH));
+            let source = format!("{prefix} suffix");
+            assert_eq!(render(&source).text(), format!("{source}\n"));
+
+            let source = format!("{prefix}word{marker}{marker}");
+            let rendered = render(&source);
+            let word_page = "prefix ".len() + LENGTH - 2;
+            assert_eq!(rendered.text(), format!("{}word\n", &prefix[..word_page]));
+            assert_eq!(
+                rendered.positions.to_source(word_page),
+                "prefix ".len() + LENGTH
+            );
+            assert_eq!(
+                rendered.positions.to_page("prefix ".len() + LENGTH),
+                word_page
+            );
+        }
+    }
+
+    #[test]
+    fn long_closing_backticks_do_not_hide_a_later_source_link() {
+        let source = format!("prefix `body{} [target](file.md)", "`".repeat(32_768));
+        assert_eq!(
+            render(&source).text(),
+            format!("prefix `body{} target (file.md)\n", "`".repeat(32_768))
+        );
+        assert_eq!(
+            link_under_cursor(&source, source.find("target").unwrap()).as_deref(),
+            Some("file.md")
+        );
+    }
 
     /// The text of every span with the given scope name, in order.
     fn scoped<'a>(rendered: &'a RenderedMarkdown, name: &str) -> Vec<&'a str> {

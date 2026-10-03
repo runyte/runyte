@@ -1,0 +1,47 @@
+---
+title: "Unsaved buffer changes can hide workspace search results"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: ec5150a
+---
+
+## Resolution
+
+Commit `ec5150a` (`fix(search): exclude stale disk matches before limiting results`)
+builds the set of captured open-buffer paths before disk traversal and excludes
+those paths from disk matching. `perform` previously removed their stale disk
+matches only after traversal could already exhaust its result budget, losing
+matches from unopened files that traversal never reached. Captured ropes now
+supply those files' only matches, retaining the existing result limit, sorting,
+and cancellation semantics.
+
+`stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search` and
+`workspace_search_combines_live_and_unopened_matches_without_duplicates` in
+`src/workspace_search/tests/mod.rs` cover the 10,000-stale-match reproduction
+and correct combined live/disk positions. All six workspace-search tests passed for the implementation. The follow-up
+`workspace_search_reports_only_limits_reached_by_authoritative_matches` in
+`src/app/tests/editing_and_buffers.rs` replaces the old regression's expectation
+that stale on-disk matches should trigger a limit warning. It checks both the
+two-result unsaved-buffer case and genuine truncation from an unopened file,
+including the generated result page and status text.
+
+## Report
+
+Workspace search can omit valid results when an open file has unsaved changes
+that remove matches. The disk traversal applies the 10,000-result cap before
+the worker replaces matches from open files with their captured buffer text.
+Matches that no longer exist in the buffer can exhaust the disk budget and
+stop traversal before unopened files are read. Removing those stale matches
+afterward does not resume the traversal.
+
+For example, create `a.txt` containing one `needle` line and `z.txt` containing
+10,000 `needle` lines. Open `z.txt`, remove all its text without saving, and
+run workspace search for `needle`. The reverse entry traversal fills its
+budget from the on-disk `z.txt`, then removes those matches because its open
+buffer is empty. The result contains no matches even though `a.txt` still
+matches.
+
+Captured open-buffer text must be authoritative before any result budget is
+spent. Unopened files must remain searchable up to the existing result limit;
+the limit, cancellation behavior, and generated result-buffer UX remain intact.

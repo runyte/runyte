@@ -14,6 +14,16 @@ import context_access
 
 
 class ContextAccessHarnessTests(unittest.TestCase):
+    def test_missing_cleanup_support_refuses_context_session_before_setup(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(context_access.plugins.os, 'pidfd_open', None, create=True), \
+             patch.object(context_access.plugins, 'spawn', return_value=(123, 456)) as spawn:
+            root = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, 'pidfd_open'):
+                context_access.Session(Path('/not-started'), root, True)
+            spawn.assert_not_called()
+            self.assertEqual(list(root.iterdir()), [])
+
     def test_noisy_command_fits_the_native_prompt(self):
         command = 'terminal /bin/sh -c ' + shlex.quote(context_access.NOISE)
         self.assertLessEqual(len(command.encode()), 100)
@@ -54,7 +64,8 @@ class ContextAccessHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch.dict(os.environ, {'RUNYTE_CONTEXT_HOME': '/must-not-write', 'RUNYTE_PARENT_CONTEXT': 'parent-context', 'RUNYTE_BENCH_EVENTS': '/must-not-log', 'RUNYTE_INPUT_TRACE': '/must-not-trace'}):
-                with patch.object(context_access.plugins, 'spawn', return_value=(123, 456)):
+                with patch.object(context_access.plugins, 'spawn', return_value=(123, 456)), \
+                     patch.object(context_access.plugins, 'require_cleanup_support'):
                     with patch.object(context_access.plugins, 'Terminal'):
                         editor = context_access.Session(Path('/not-started'), root, False)
                 self.assertEqual(editor.env['RUNYTE_CONTEXT_HOME'], str(root / 'ctx'))

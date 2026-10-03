@@ -336,6 +336,57 @@
               }
             },
             "method": {
+              "const": "buffer.append"
+            },
+            "params": {
+              "type": "object",
+              "properties": {
+                "buffer": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 524288
+                },
+                "expected_tail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "buffer",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9:_.-]"
+              }
+            },
+            "method": {
               "const": "buffer.snapshot.open"
             },
             "params": {

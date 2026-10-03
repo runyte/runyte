@@ -680,71 +680,87 @@ fn merge_ui_conflicted_preview_details_include_the_simulated_result() {
 
 #[test]
 fn merge_ui_submitted_commit_survives_close_attempts_and_detach_until_result() {
-    let fixture = MergeFixture::new(true, false);
-    fixture.git(&["merge", "--no-ff", "--no-commit", "feature"]);
-    let (mut app, operations) = fixture.app();
-    app.request_merge_completion(crate::app::git_merges::ReviewIntent::Continue);
-    let GitOperation::PrepareMergeCompletion { repository, guard } =
-        operations.recv_timeout(Duration::from_secs(1)).unwrap()
-    else {
-        panic!()
-    };
-    let plan = fixture
-        .provider()
-        .prepare_merge_completion(&repository, guard)
-        .unwrap();
-    let guard = plan.guard.clone();
-    let id = app.merge_ui.pending.as_ref().unwrap().id;
-    app.receive_merge_plan(
-        Some(id),
-        ReviewPlan::Completion(
-            Box::new(plan),
-            crate::app::git_merges::ReviewIntent::Continue,
-        ),
-    );
-    app.approve_merge_review();
-    let message = app.merge_ui.commit_buffer.unwrap();
-    app.commit_staged(message);
-    let GitOperation::Mutate { mutation, .. } =
-        operations.recv_timeout(Duration::from_secs(1)).unwrap()
-    else {
-        panic!()
-    };
-    assert!(app.merge_ui.commit_request.is_some());
-    app.commit_staged(message);
-    assert!(operations.try_recv().is_err());
-    app.close_buffer(message);
-    app.close_buffer_discarding(message);
-    app.close_buffer_returning_from_commit(message);
-    app.request_view_quit(true);
-    assert!(!app.closed_buffers.contains(&message));
-    assert!(!app.should_quit);
-    assert!(guard.is_valid());
-    app.persistent_session = true;
-    app.request_detach();
-    assert!(guard.is_valid());
-    let GitMutation::CommitMerge {
-        plan,
-        message: text,
-    } = &mutation
-    else {
-        panic!()
-    };
-    fixture
-        .provider()
-        .commit_merge(&repository, plan, text)
-        .unwrap();
-    app.apply_git_mutation_result(
-        mutation,
-        vec![],
-        Some("committed".into()),
-        None,
-        GitServiceState::Completed,
-        None,
-    );
-    assert!(app.closed_buffers.contains(&message));
-    assert!(app.merge_ui.commit_request.is_none());
-    assert!(app.merge_ui.commit.is_none());
+    for edit_message in [false, true] {
+        let fixture = MergeFixture::new(true, false);
+        fixture.git(&["merge", "--no-ff", "--no-commit", "feature"]);
+        let (mut app, operations) = fixture.app();
+        app.request_merge_completion(crate::app::git_merges::ReviewIntent::Continue);
+        let GitOperation::PrepareMergeCompletion { repository, guard } =
+            operations.recv_timeout(Duration::from_secs(1)).unwrap()
+        else {
+            panic!()
+        };
+        let plan = fixture
+            .provider()
+            .prepare_merge_completion(&repository, guard)
+            .unwrap();
+        let guard = plan.guard.clone();
+        let id = app.merge_ui.pending.as_ref().unwrap().id;
+        app.receive_merge_plan(
+            Some(id),
+            ReviewPlan::Completion(
+                Box::new(plan),
+                crate::app::git_merges::ReviewIntent::Continue,
+            ),
+        );
+        app.approve_merge_review();
+        let message = app.merge_ui.commit_buffer.unwrap();
+        app.commit_staged(message);
+        let GitOperation::Mutate { mutation, .. } =
+            operations.recv_timeout(Duration::from_secs(1)).unwrap()
+        else {
+            panic!()
+        };
+        assert!(app.merge_ui.commit_request.is_some());
+        app.commit_staged(message);
+        assert!(operations.try_recv().is_err());
+        app.close_buffer(message);
+        app.close_buffer_discarding(message);
+        app.close_buffer_returning_from_commit(message);
+        app.request_view_quit(true);
+        assert!(!app.closed_buffers.contains(&message));
+        assert!(!app.should_quit);
+        assert!(guard.is_valid());
+        app.persistent_session = true;
+        app.request_detach();
+        assert!(guard.is_valid());
+        let request = app.merge_ui.commit_request.unwrap();
+        if edit_message {
+            app.insert_text("New message edits while merge hook runs\n");
+            assert!(
+                app.buffers[message]
+                    .to_string()
+                    .contains("New message edits")
+            );
+        }
+        let message_before = app.buffers[message].to_string();
+        let GitMutation::CommitMerge {
+            plan,
+            message: text,
+        } = &mutation
+        else {
+            panic!()
+        };
+        fixture
+            .provider()
+            .commit_merge(&repository, plan, text)
+            .unwrap();
+        app.apply_git_mutation_result_for_request(
+            mutation,
+            vec![],
+            Some("committed".into()),
+            None,
+            (Some(request), GitServiceState::Completed),
+            None,
+        );
+        assert_eq!(app.closed_buffers.contains(&message), !edit_message);
+        if edit_message {
+            assert_eq!(app.buffers[message].to_string(), message_before);
+            assert!(app.status.contains("newer edits were kept"));
+        }
+        assert!(app.merge_ui.commit_request.is_none());
+        assert!(app.merge_ui.commit.is_none());
+    }
 }
 
 #[test]

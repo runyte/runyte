@@ -312,7 +312,7 @@ fn parse_remote_section(header: &str) -> Option<String> {
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Option<Vec<u8>> {
-    let file = fs::File::open(path).ok()?;
+    let file = crate::path_safety::open_regular_file(path, false).ok()?;
     if file.metadata().ok()?.len() > limit {
         return None;
     }

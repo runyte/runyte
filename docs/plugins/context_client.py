@@ -28,6 +28,7 @@ METHODS = {
     'buffer.list': ('editor_context_read', 'offset limit', ''),
     'buffer.read': ('editor_context_read', 'buffer expected_revision from to', ''),
     'buffer.edit': ('buffer_edit', 'buffer expected_revision changes', ''),
+    'buffer.append': ('buffer_edit', 'buffer text', 'expected_tail'),
     'buffer.snapshot.open': ('editor_context_read', 'buffer expected_revision', ''),
     'buffer.snapshot.read': ('editor_context_read', 'snapshot from to', ''),
     'buffer.snapshot.close': ('editor_context_read', 'snapshot', ''),
@@ -43,7 +44,7 @@ METHODS = {
     'terminal.input.status': ('terminal_propose', 'proposal', ''),
     'terminal.input.cancel': ('terminal_propose', 'proposal', ''),
 }
-MUTATIONS = frozenset(('buffer.edit', 'terminal.input.propose', 'terminal.input.cancel'))
+MUTATIONS = frozenset(('buffer.edit', 'buffer.append', 'terminal.input.propose', 'terminal.input.cancel'))
 
 
 class ContextError(Exception):
@@ -168,6 +169,12 @@ def validate_request(method, params):
             total += _utf8_len(text)
         if total > 524288:
             _fail('Buffer changes exceed replacement limit')
+    if method == 'buffer.append':
+        text, tail = params['text'], params.get('expected_tail')
+        if not isinstance(text, str) or not 1 <= _utf8_len(text) <= 524288:
+            _fail('Append text must be nonempty and within the replacement limit')
+        if tail is not None and (not isinstance(tail, str) or not 1 <= _utf8_len(tail) <= 4096):
+            _fail('Expected tail must be nonempty and within its byte limit')
     if method == 'terminal.input.propose':
         text, reason = params['text'], params.get('reason')
         if not _single_line(text) or not 1 <= _utf8_len(text) <= 4096:

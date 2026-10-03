@@ -467,34 +467,47 @@ impl Grid {
 
     /// Moves the region's lines up, retiring the top one to scrollback.
     pub fn scroll_up(&mut self, count: usize, pen: Pen) {
-        let count = count.min(self.scroll_bottom - self.scroll_top + 1);
-        for _ in 0..count {
-            let line = self.lines.remove(self.scroll_top);
-            let line_id = self.line_ids.remove(self.scroll_top);
-            // A region anchored at the first row still pushes its top line
-            // out of the terminal and into history. Inline TUIs use this to
-            // commit completed output while keeping a composer below it in
-            // place. A region starting farther down belongs to an application's
-            // internal layout, so retaining that would interleave status-area
-            // updates into the scrollback.
-            if self.keeps_history && self.scroll_top == 0 {
-                self.retire(line, line_id);
-            }
-            let new_line_id = self.allocate_line_id();
-            self.lines.insert(self.scroll_bottom, self.blank_line(pen));
-            self.line_ids.insert(self.scroll_bottom, new_line_id);
-        }
+        // A top-anchored region commits completed output to history while
+        // keeping a lower composer in place. Other regions are internal layout.
+        self.shift_lines_up(
+            self.scroll_top,
+            count,
+            pen,
+            self.keeps_history && self.scroll_top == 0,
+        );
     }
 
     /// Moves the region's lines down, discarding the ones pushed off its foot.
     pub fn scroll_down(&mut self, count: usize, pen: Pen) {
-        let count = count.min(self.scroll_bottom - self.scroll_top + 1);
-        for _ in 0..count {
-            self.lines.remove(self.scroll_bottom);
-            self.line_ids.remove(self.scroll_bottom);
-            let new_line_id = self.allocate_line_id();
-            self.lines.insert(self.scroll_top, self.blank_line(pen));
-            self.line_ids.insert(self.scroll_top, new_line_id);
+        self.shift_lines_down(self.scroll_top, count, pen);
+    }
+
+    fn shift_lines_up(&mut self, top: usize, count: usize, pen: Pen, retain_history: bool) {
+        let end = self.scroll_bottom + 1;
+        let count = count.min(end - top);
+        self.lines[top..end].rotate_left(count);
+        self.line_ids[top..end].rotate_left(count);
+        for row in end - count..end {
+            let blank = self.blank_line(pen);
+            let new_id = self.allocate_line_id();
+            let line = std::mem::replace(&mut self.lines[row], blank);
+            let line_id = std::mem::replace(&mut self.line_ids[row], new_id);
+            if retain_history {
+                self.retire(line, line_id);
+            }
+        }
+    }
+
+    fn shift_lines_down(&mut self, top: usize, count: usize, pen: Pen) {
+        let end = self.scroll_bottom + 1;
+        let count = count.min(end - top);
+        self.lines[top..end].rotate_right(count);
+        self.line_ids[top..end].rotate_right(count);
+        // Preserve the allocation order of repeated single-line inserts:
+        // the newest blank row occupies the beginning of the affected region.
+        for row in (top..top + count).rev() {
+            self.lines[row] = self.blank_line(pen);
+            self.line_ids[row] = self.allocate_line_id();
         }
     }
 
@@ -752,10 +765,8 @@ impl Grid {
         }
         self.split_before(row, column, pen);
         self.split_before(row, column + count, pen);
-        for _ in 0..count {
-            self.lines[row].remove(column);
-            self.lines[row].push(Cell::blank(pen));
-        }
+        self.lines[row].copy_within(column + count..self.columns, column);
+        self.lines[row][self.columns - count..].fill(Cell::blank(pen));
     }
 
     /// Insert characters (ICH): shift the rest of the line right.
@@ -772,10 +783,8 @@ impl Grid {
             self.clear_row_wraps(row);
         }
         self.split_before(row, column, pen);
-        for _ in 0..count {
-            self.lines[row].insert(column, Cell::blank(pen));
-            self.lines[row].truncate(self.columns);
-        }
+        self.lines[row].copy_within(column..self.columns - count, column + count);
+        self.lines[row][column..column + count].fill(Cell::blank(pen));
         self.clear_trailing_lead(row, pen);
     }
 
@@ -784,14 +793,7 @@ impl Grid {
         if self.cursor.row < self.scroll_top || self.cursor.row > self.scroll_bottom {
             return;
         }
-        let count = count.min(self.scroll_bottom - self.cursor.row + 1);
-        for _ in 0..count {
-            self.lines.remove(self.scroll_bottom);
-            self.line_ids.remove(self.scroll_bottom);
-            let new_line_id = self.allocate_line_id();
-            self.lines.insert(self.cursor.row, self.blank_line(pen));
-            self.line_ids.insert(self.cursor.row, new_line_id);
-        }
+        self.shift_lines_down(self.cursor.row, count, pen);
         self.cursor.pending_wrap = false;
     }
 
@@ -800,14 +802,7 @@ impl Grid {
         if self.cursor.row < self.scroll_top || self.cursor.row > self.scroll_bottom {
             return;
         }
-        let count = count.min(self.scroll_bottom - self.cursor.row + 1);
-        for _ in 0..count {
-            self.lines.remove(self.cursor.row);
-            self.line_ids.remove(self.cursor.row);
-            let new_line_id = self.allocate_line_id();
-            self.lines.insert(self.scroll_bottom, self.blank_line(pen));
-            self.line_ids.insert(self.scroll_bottom, new_line_id);
-        }
+        self.shift_lines_up(self.cursor.row, count, pen, false);
         self.cursor.pending_wrap = false;
     }
 
@@ -1122,6 +1117,181 @@ mod tests {
         grid.move_to(0, 0);
         grid.insert_characters(1, Pen::default());
         assert!(grid.line(0).unwrap().iter().all(|cell| cell.width == 1));
+    }
+
+    #[test]
+    fn bulk_character_shifts_preserve_cells_and_paint_only_vacated_columns() {
+        let mut original = Grid::new(12, 1, false);
+        let content_pen = Pen {
+            foreground: Color::Indexed(3),
+            background: Color::Indexed(4),
+            attributes: Attributes::BOLD,
+        };
+        for character in "ab界c\u{301}defghij".chars() {
+            original.write(character, content_pen, true);
+        }
+        let erase_pen = Pen {
+            background: Color::Indexed(7),
+            ..Pen::default()
+        };
+
+        let mut inserted = original.clone();
+        inserted.move_to(0, 2);
+        inserted.insert_characters(3, erase_pen);
+        assert_eq!(row_text(&inserted, 0), "ab   界c\u{301}defg");
+        assert_eq!(&inserted.lines[0][5..], &original.lines[0][2..9]);
+        assert_eq!(&inserted.lines[0][2..5], &[Cell::blank(erase_pen); 3]);
+        assert_eq!(inserted.cursor.column, 2);
+
+        let mut deleted = original.clone();
+        deleted.move_to(0, 2);
+        deleted.delete_characters(3, erase_pen);
+        assert_eq!(row_text(&deleted, 0), "abdefghij");
+        assert_eq!(&deleted.lines[0][2..9], &original.lines[0][5..]);
+        assert_eq!(&deleted.lines[0][9..], &[Cell::blank(erase_pen); 3]);
+        assert_eq!(deleted.cursor.column, 2);
+
+        for insert in [false, true] {
+            let mut grid = original.clone();
+            grid.move_to(0, 2);
+            if insert {
+                grid.insert_characters(0, erase_pen);
+            } else {
+                grid.delete_characters(0, erase_pen);
+            }
+            assert_eq!(grid.lines, original.lines);
+            if insert {
+                grid.insert_characters(usize::MAX, erase_pen);
+            } else {
+                grid.delete_characters(usize::MAX, erase_pen);
+            }
+            assert_eq!(row_text(&grid, 0), "ab");
+            assert_eq!(grid.lines[0].len(), 12);
+            assert_eq!(&grid.lines[0][2..], &[Cell::blank(erase_pen); 10]);
+        }
+    }
+
+    #[test]
+    fn bulk_character_shifts_clear_split_wide_glyphs_at_both_edges() {
+        let mut deleted = Grid::new(12, 1, false);
+        write(&mut deleted, "a界bc界defgh");
+        deleted.move_to(0, 2);
+        deleted.delete_characters(4, Pen::default());
+        assert_eq!(row_text(&deleted, 0), "a  defgh");
+        assert!(deleted.lines[0].iter().all(|cell| cell.width == 1));
+
+        let mut inserted = Grid::new(12, 1, false);
+        write(&mut inserted, "a界bc界defgh");
+        inserted.move_to(0, 2);
+        inserted.insert_characters(6, Pen::default());
+        assert_eq!(row_text(&inserted, 0), "a        bc");
+        assert!(inserted.lines[0].iter().all(|cell| cell.width == 1));
+    }
+
+    #[test]
+    fn bulk_character_shifts_handle_a_maximum_width_short_screen() {
+        let width = 32768;
+        let mut grid = Grid::new(width, 1, false);
+        write(&mut grid, &"x".repeat(width));
+        grid.move_to(0, 0);
+        grid.insert_characters(width / 2, Pen::default());
+        assert_eq!(
+            row_text(&grid, 0),
+            " ".repeat(width / 2) + &"x".repeat(width / 2)
+        );
+        grid.delete_characters(width / 2, Pen::default());
+        assert_eq!(row_text(&grid, 0), "x".repeat(width / 2));
+    }
+
+    #[test]
+    fn bulk_line_operations_preserve_single_line_semantics_and_provenance() {
+        let pen = Pen {
+            background: Color::Indexed(3),
+            ..Pen::default()
+        };
+        for history in [false, true] {
+            for top in [0, 2] {
+                for count in [0, 1, 3, usize::MAX] {
+                    for (operation, from_cursor) in [
+                        (Grid::scroll_up as fn(&mut Grid, usize, Pen), false),
+                        (Grid::scroll_down, false),
+                        (Grid::insert_lines, true),
+                        (Grid::delete_lines, true),
+                    ] {
+                        let mut bulk = Grid::new(4, 8, history);
+                        // Automatic wraps link the rows, so identity metadata
+                        // must move with the cells for review links to survive.
+                        write(&mut bulk, "abcdefghijklmnopqrstuvwxyz012345");
+                        bulk.set_scroll_region(top, 6);
+                        bulk.move_to(top + 1, 2);
+                        let mut singles = bulk.clone();
+                        operation(&mut bulk, count, pen);
+                        let start = if from_cursor { top + 1 } else { top };
+                        for _ in 0..count.min(7 - start) {
+                            operation(&mut singles, 1, pen);
+                        }
+                        assert_eq!(bulk.lines, singles.lines);
+                        assert_eq!(bulk.scrollback, singles.scrollback);
+                        let metadata = |grid: &Grid| {
+                            grid.scrollback_ids
+                                .iter()
+                                .chain(&grid.line_ids)
+                                .map(|line| (line.id, line.continuation))
+                                .collect::<Vec<_>>()
+                        };
+                        assert_eq!(metadata(&bulk), metadata(&singles));
+                        assert_eq!(bulk.retired, singles.retired);
+                        assert_eq!(bulk.next_local_line_id, singles.next_local_line_id);
+                        assert_eq!(bulk.cursor, singles.cursor);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bulk_scroll_retains_only_newest_history_and_delete_lines_retains_none() {
+        let rows = SCROLLBACK_LIMIT + 4;
+        let mut grid = Grid::new(1, rows, true);
+        write(&mut grid, &"x".repeat(rows));
+        let identities = grid.line_ids.iter().map(|line| line.id).collect::<Vec<_>>();
+        grid.scroll_up(rows, Pen::default());
+        assert_eq!(grid.retired(), rows as u64);
+        assert_eq!(grid.scrollback_len(), SCROLLBACK_LIMIT);
+        assert_eq!(grid.scrollback_ids.front().unwrap().id, identities[4]);
+        assert_eq!(grid.scrollback_ids.back().unwrap().id, identities[rows - 1]);
+        assert!(
+            grid.lines
+                .iter()
+                .flatten()
+                .all(|cell| cell.character == ' ')
+        );
+
+        let mut deleted = Grid::new(1, rows, true);
+        write(&mut deleted, &"x".repeat(rows));
+        deleted.move_to(0, 0);
+        deleted.delete_lines(rows, Pen::default());
+        assert_eq!(deleted.scrollback_len(), 0);
+        assert_eq!(deleted.retired(), 0);
+    }
+
+    #[test]
+    fn bulk_line_operations_handle_a_maximum_height_narrow_screen() {
+        let height = 32768;
+        let mut grid = Grid::new(1, height, false);
+        write(&mut grid, &"x".repeat(height));
+        grid.move_to(0, 0);
+        grid.insert_lines(height / 2, Pen::default());
+        assert_eq!(row_text(&grid, height / 2 - 1), "");
+        assert_eq!(row_text(&grid, height / 2), "x");
+        grid.delete_lines(height / 2, Pen::default());
+        assert_eq!(row_text(&grid, 0), "x");
+        assert_eq!(row_text(&grid, height / 2), "");
+        grid.scroll_down(height / 2, Pen::default());
+        assert_eq!(row_text(&grid, height - 1), "x");
+        grid.scroll_up(height / 2, Pen::default());
+        assert_eq!(row_text(&grid, 0), "x");
+        assert_eq!(row_text(&grid, height / 2), "");
     }
 
     #[test]

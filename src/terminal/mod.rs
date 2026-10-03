@@ -1562,10 +1562,12 @@ impl TerminalSession {
         use crate::input::{Modifiers, PointerButton, PointerEventKind};
 
         let mut code = match event.kind {
-            PointerEventKind::Down(PointerButton::Left) => 0,
-            PointerEventKind::Down(PointerButton::Middle) => 1,
-            PointerEventKind::Down(PointerButton::Right) => 2,
-            PointerEventKind::Up(_) => 3,
+            PointerEventKind::Down(PointerButton::Left)
+            | PointerEventKind::Up(PointerButton::Left) => 0,
+            PointerEventKind::Down(PointerButton::Middle)
+            | PointerEventKind::Up(PointerButton::Middle) => 1,
+            PointerEventKind::Down(PointerButton::Right)
+            | PointerEventKind::Up(PointerButton::Right) => 2,
             PointerEventKind::Drag(PointerButton::Left) => 32,
             PointerEventKind::Drag(PointerButton::Middle) => 33,
             PointerEventKind::Drag(PointerButton::Right) => 34,
@@ -2055,6 +2057,7 @@ impl TerminalSession {
         }
         // A pane taller than the whole session pads at the top, so the first
         // output stays where it was written rather than floating.
+        let top_padding = rows.saturating_sub(lines.len());
         while lines.len() < rows {
             lines.insert(0, vec![Cell::default(); columns]);
             line_ids.insert(0, None);
@@ -2064,7 +2067,7 @@ impl TerminalSession {
             let absolute = history + cursor.row;
             (absolute >= start && absolute < end).then(|| {
                 (
-                    absolute - start,
+                    top_padding + absolute - start,
                     cursor.column.min(columns.saturating_sub(1)),
                 )
             })
@@ -2318,7 +2321,7 @@ fn review_motion_target(
             .find(|offset| characters[*offset] != '\n')
             .unwrap_or(head),
         ReviewMotion::LineStart => line.map_or(0, |line| line.text_start),
-        ReviewMotion::LineEnd => line.map_or(0, |line| line.text_end.saturating_sub(1)),
+        ReviewMotion::LineEnd => line.map_or(0, review_line_last_offset),
         ReviewMotion::FirstNonWhitespace => line.map_or(0, |line| {
             let relative = review
                 .text
@@ -2968,7 +2971,7 @@ impl TerminalSessions {
     pub fn retained_payload_bytes(&self) -> usize {
         self.sessions
             .values()
-            .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
+            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
             .sum::<usize>()
             .saturating_mul(std::mem::size_of::<Cell>())
     }
@@ -2987,7 +2990,7 @@ impl TerminalSessions {
         let mut cells = self
             .sessions
             .values()
-            .map(|session| session.emulator.grid().scrollback_cells() + session.review_cells())
+            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
             .sum::<usize>();
         let available_cells = self.cell_budget.saturating_sub(
             self.external_retained_bytes
@@ -3013,15 +3016,14 @@ impl TerminalSessions {
             let candidate = self
                 .sessions
                 .iter()
-                .filter(|(_, session)| session.emulator.grid().scrollback_len() > 0)
+                .filter(|(_, session)| session.emulator.has_scrollback())
                 .min_by_key(|(id, session)| (session.last_activity, **id))
                 .map(|(id, _)| *id);
             let Some(id) = candidate else {
                 break;
             };
             let session = self.sessions.get_mut(&id).expect("candidate is live");
-            let width = session.emulator.grid().columns();
-            if session.emulator.grid_mut().drop_oldest_scrollback() {
+            if let Some(width) = session.emulator.drop_oldest_scrollback() {
                 session.read_revision = session.read_revision.wrapping_add(1);
                 cells = cells.saturating_sub(width);
                 session.scroll = session.scroll.min(session.emulator.grid().scrollback_len());
@@ -3197,6 +3199,26 @@ mod tests {
         assert_eq!(view_text(&view), vec!["two", "three"]);
         assert_eq!(view.cursor, Some((1, 5)));
         assert_eq!(view.scrollback, 0);
+    }
+
+    #[test]
+    fn padded_live_views_keep_the_cursor_with_its_terminal_row() {
+        let mut session = session(8, 2);
+        session.feed(b"one\r\ntwo");
+        let view = session.view(4);
+        assert_eq!(view_text(&view), ["", "", "one", "two"]);
+        assert_eq!(view.line_ids, [None, None, Some(0), Some(1)]);
+        assert_eq!(view.cursor, Some((3, 3)));
+        assert_eq!(session.view(2).cursor, Some((1, 3)));
+        assert_eq!(session.view(1).cursor, Some((0, 3)));
+        assert_eq!(session.cursor_row(), 1);
+
+        session.feed(b"\r\nthree");
+        let view = session.view(5);
+        assert_eq!(view_text(&view), ["", "", "one", "two", "three"]);
+        assert_eq!(view.cursor, Some((4, 5)));
+        session.feed(b"\x1b[?25l");
+        assert_eq!(session.view(5).cursor, None);
     }
 
     #[test]
@@ -3674,6 +3696,25 @@ mod tests {
     }
 
     #[test]
+    fn review_line_end_stays_on_empty_rows() {
+        for extend in [false, true] {
+            let mut session = session(12, 4);
+            session.feed(b"one\r\n\r\ntwo");
+            session.begin_review();
+            for row in [2, 4] {
+                session.goto_review_line(row, false);
+                assert!(session.move_review(ReviewMotion::LineEnd, extend));
+                assert_eq!(session.cursor_row(), row - 1);
+                assert_eq!(session.cursor_column(), 0);
+            }
+            session.goto_review_line(3, false);
+            assert!(session.move_review(ReviewMotion::LineEnd, false));
+            assert_eq!(session.cursor_row(), 2);
+            assert_eq!(session.review_selection_text(), "o");
+        }
+    }
+
+    #[test]
     fn extending_a_review_selection_scrolls_with_its_head() {
         let mut line_selection = session(12, 3);
         line_selection.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix");
@@ -3867,19 +3908,35 @@ mod tests {
             ),
             b"\x1b[<16;5;3M"
         );
-        assert_eq!(
-            TerminalSession::sgr_mouse_bytes(
-                PointerEvent {
-                    kind: PointerEventKind::Up(PointerButton::Left),
-                    column: 0,
-                    row: 0,
-                    modifiers: Modifiers::NONE,
-                },
-                4,
-                2,
-            ),
-            b"\x1b[<3;5;3m"
-        );
+        for (button, code) in [
+            (PointerButton::Left, 0),
+            (PointerButton::Middle, 1),
+            (PointerButton::Right, 2),
+        ] {
+            for (modifiers, modifier_bits) in [
+                (Modifiers::NONE, 0),
+                (Modifiers::SHIFT | Modifiers::ALT | Modifiers::CONTROL, 28),
+            ] {
+                for (kind, suffix) in [
+                    (PointerEventKind::Down(button), 'M'),
+                    (PointerEventKind::Up(button), 'm'),
+                ] {
+                    assert_eq!(
+                        TerminalSession::sgr_mouse_bytes(
+                            PointerEvent {
+                                kind,
+                                column: 0,
+                                row: 0,
+                                modifiers,
+                            },
+                            4,
+                            2,
+                        ),
+                        format!("\x1b[<{};5;3{suffix}", code + modifier_bits).as_bytes()
+                    );
+                }
+            }
+        }
         assert_eq!(
             TerminalSession::sgr_mouse_bytes_repeated(
                 PointerEvent {

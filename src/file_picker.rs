@@ -8,14 +8,14 @@
 //! editor remains the sole owner of picker state.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{self, BufRead, BufReader, Read},
     num::NonZero,
     ops::Range,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc as sync_mpsc,
     },
@@ -40,6 +40,7 @@ const PREVIEW_BYTES: u64 = 64 * 1024;
 const PREVIEW_CONTEXT_LINES: usize = 512;
 const PREVIEW_CONTEXT_BEFORE: usize = PREVIEW_CONTEXT_LINES / 2;
 const GREP_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const IGNORE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// How many ranking candidates a picker will hold.
 ///
 /// This is a budget on the rank pass a keystroke pays for, not on how much of
@@ -402,19 +403,19 @@ impl FilePreview {
     }
 
     pub fn snippet_from_path(path: &Path, focus_row: usize, emphasis: Vec<usize>) -> Self {
-        let metadata = match fs::metadata(path) {
+        let file = match crate::path_safety::open_regular_file(path, false) {
+            Ok(file) => file,
+            Err(error) => return Self::Unreadable(error.to_string()),
+        };
+        let metadata = match file.metadata() {
             Ok(metadata) => metadata,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
         if metadata.len() > GREP_FILE_BYTES {
             return Self::Unreadable("file is now too large for a content preview".to_owned());
         }
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) => return Self::Unreadable(error.to_string()),
-        };
         let rows = Self::snippet_rows(focus_row);
-        match BufReader::new(file)
+        match BufReader::new(file.take(GREP_FILE_BYTES))
             .lines()
             .skip(rows.start)
             .take(rows.len())
@@ -428,12 +429,12 @@ impl FilePreview {
     }
 
     pub fn from_path(path: &Path) -> Self {
-        let metadata = match fs::metadata(path) {
-            Ok(metadata) => metadata,
+        let mut file = match crate::path_safety::open_regular_file(path, false) {
+            Ok(file) => file,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
-        let mut file = match fs::File::open(path) {
-            Ok(file) => file,
+        let metadata = match file.metadata() {
+            Ok(metadata) => metadata,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
         let mut bytes = Vec::with_capacity(metadata.len().min(PREVIEW_BYTES) as usize);
@@ -2203,13 +2204,16 @@ fn close_file_rank_state(state: &mut FileRankState) {
 }
 
 fn file_rank_worker(
-    mailbox: Arc<FileRankMailbox>,
+    mailbox: Weak<FileRankMailbox>,
     wake: sync_mpsc::Receiver<()>,
     events: Sender<FilePickerEvent>,
     active_rank: Arc<AtomicU64>,
 ) {
     let mut state = FileRankState::default();
     while wake.recv().is_ok() {
+        let Some(mailbox) = mailbox.upgrade() else {
+            break;
+        };
         let mut pending = {
             let mut queued = mailbox
                 .pending
@@ -2217,6 +2221,9 @@ fn file_rank_worker(
                 .unwrap_or_else(|error| error.into_inner());
             std::mem::take(&mut *queued)
         };
+        // The mailbox owns the wake sender. Keeping it while waiting for the
+        // next wake would let this thread keep itself alive after teardown.
+        drop(mailbox);
         for discarded in pending.discarded.drain(..) {
             drop((
                 discarded.matches,
@@ -2349,18 +2356,22 @@ fn file_rank_worker(
 }
 
 fn file_preview_worker(
-    mailbox: Arc<FilePreviewMailbox>,
+    mailbox: Weak<FilePreviewMailbox>,
     wake: sync_mpsc::Receiver<()>,
     events: Sender<FilePickerEvent>,
     active: Arc<AtomicU64>,
 ) {
     while wake.recv().is_ok() {
-        let Some(request) = mailbox
+        let Some(mailbox) = mailbox.upgrade() else {
+            break;
+        };
+        let request = mailbox
             .pending
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .take()
-        else {
+            .take();
+        drop(mailbox);
+        let Some(request) = request else {
             continue;
         };
         let FilePreviewRequest {
@@ -2691,7 +2702,7 @@ impl FileScanner {
                 let events = self.events.clone();
                 let rank_events = self.events.clone();
                 let rank_cancellation = self.active_rank.clone();
-                let worker_mailbox = mailbox.clone();
+                let worker_mailbox = Arc::downgrade(&mailbox);
                 match thread::Builder::new()
                     .name("runyte-file-rank".to_owned())
                     .spawn(move || {
@@ -2808,7 +2819,7 @@ impl FileScanner {
             let events = self.events.clone();
             let preview_events = self.events.clone();
             let active = self.active_preview.clone();
-            let worker_mailbox = mailbox.clone();
+            let worker_mailbox = Arc::downgrade(&mailbox);
             match thread::Builder::new()
                 .name("runyte-file-preview".to_owned())
                 .spawn(move || {
@@ -2903,6 +2914,29 @@ impl FileScanner {
         show_hidden: bool,
         query: String,
     ) {
+        self.scan_content_excluding(
+            scan_id,
+            root,
+            scope,
+            state_root,
+            show_hidden,
+            query,
+            HashSet::new(),
+        );
+    }
+
+    /// Open buffers own their paths before the disk scan spends its result budget.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn scan_content_excluding(
+        &self,
+        scan_id: u64,
+        root: PathBuf,
+        scope: ScanScope,
+        state_root: PathBuf,
+        show_hidden: bool,
+        query: String,
+        excluded: HashSet<PathBuf>,
+    ) {
         self.reset_ranker(scan_id, FilePickerKind::Contents);
         self.active.store(scan_id, Ordering::Release);
         let active = self.active.clone();
@@ -2935,6 +2969,9 @@ impl FileScanner {
                         for path in paths {
                             if active.load(Ordering::Acquire) != scan_id {
                                 return false;
+                            }
+                            if excluded.contains(&path.path) {
+                                continue;
                             }
                             let Some(mut hits) = content_entries(&path.path, &query) else {
                                 continue;
@@ -3073,6 +3110,17 @@ pub fn scan_content(
     show_hidden: bool,
     query: &str,
 ) -> Result<(Vec<FileHits>, usize, bool)> {
+    scan_content_excluding(root, scope, state_root, show_hidden, query, &HashSet::new())
+}
+
+pub(crate) fn scan_content_excluding(
+    root: &Path,
+    scope: &ScanScope,
+    state_root: &Path,
+    show_hidden: bool,
+    query: &str,
+    excluded: &HashSet<PathBuf>,
+) -> Result<(Vec<FileHits>, usize, bool)> {
     let mut files = Vec::new();
     let mut lines = 0;
     let mut limited = false;
@@ -3085,6 +3133,9 @@ pub fn scan_content(
         || false,
         |paths| {
             for path in paths {
+                if excluded.contains(&path.path) {
+                    continue;
+                }
                 let Some(mut hits) = content_entries(&path.path, query) else {
                     continue;
                 };
@@ -3106,16 +3157,28 @@ pub fn scan_content(
 }
 
 fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
-    let metadata = fs::metadata(path).ok()?;
-    if metadata.len() > GREP_FILE_BYTES {
-        return None;
-    }
-    let text = fs::read_to_string(path).ok()?;
-    let lines = line_hits(&text, query);
+    let text = read_regular_text(path, GREP_FILE_BYTES).ok()?;
+    // Keep one overflow candidate so the shared scan budget can distinguish a
+    // complete file from one whose remaining matches require a future rescan.
+    let lines = line_hits_bounded(&text, query, CONTENT_ENTRY_LIMIT + 1);
     (!lines.is_empty()).then(|| FileHits {
         path: path.to_path_buf(),
         lines,
     })
+}
+
+fn read_regular_text(path: &Path, limit: u64) -> io::Result<String> {
+    let file = crate::path_safety::open_regular_file(path, false)?;
+    if file.metadata()?.len() > limit {
+        return Err(io::Error::other("file exceeds finder read limit"));
+    }
+    let mut text = String::new();
+    file.take(limit.saturating_add(1))
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > limit {
+        return Err(io::Error::other("file exceeds finder read limit"));
+    }
+    Ok(text)
 }
 
 /// Bounded matching lines from authoritative live text, holding only the lines
@@ -3126,10 +3189,14 @@ fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
 /// a line the query cannot match never becomes an entry, so the budget is
 /// spent on matches wherever in the project they live.
 pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
+    line_hits_bounded(text, query, CONTENT_ENTRY_LIMIT)
+}
+
+pub(crate) fn line_hits_bounded(text: &str, query: &str, limit: usize) -> Vec<LineHit> {
     text.lines()
         .enumerate()
         .filter_map(|(row, line)| line_hit(line, query).map(|hit| LineHit { row, ..hit }))
-        .take(CONTENT_ENTRY_LIMIT)
+        .take(limit)
         .collect()
 }
 
@@ -3323,7 +3390,7 @@ fn read_ignore_files(
 ) {
     for name in [".gitignore", ".ignore"] {
         let path = directory.join(name);
-        match fs::read_to_string(&path) {
+        match read_regular_text(&path, IGNORE_FILE_BYTES) {
             Ok(contents) => rules.extend(parse_ignore(relative_directory, &contents)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(_) => *skipped += 1,
@@ -3500,6 +3567,33 @@ mod tests {
                 std::process::id(),
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ))
+    }
+
+    #[test]
+    fn finder_text_reads_enforce_byte_limits_and_skip_oversized_ignore_files() {
+        let root = temporary("bounded-text-reads");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("ordinary.txt");
+        fs::write(&file, "éé").unwrap();
+        assert_eq!(read_regular_text(&file, 4).unwrap(), "éé");
+        assert!(read_regular_text(&file, 3).is_err());
+        let ignore = root.join(".ignore");
+        fs::write(&ignore, "x".repeat(IGNORE_FILE_BYTES as usize + 1)).unwrap();
+        let (entries, skipped) = scan_files(
+            &root,
+            &ScanScope::ignoring(&root),
+            &root.join(".runyte"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(skipped, 1);
+        assert_eq!(entries.len(), 1);
+        assert!(content_entries(&ignore, "x").is_none());
+        assert!(matches!(
+            FilePreview::snippet_from_path(&ignore, 0, vec![]),
+            FilePreview::Unreadable(_)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -4265,6 +4359,62 @@ mod tests {
         let (scanner, _events) = scanner();
         assert!(scanner.rank_commands.get().is_none());
         assert!(scanner.preview_commands.get().is_none());
+    }
+
+    #[test]
+    fn dropping_the_final_scanner_releases_idle_rank_and_preview_workers() {
+        let root = crate::test_support::TestRuntimeRoot::new("finder-worker-lifetime").unwrap();
+        let file = root.join("preview.txt");
+        fs::write(&file, "preview").unwrap();
+        let (scanner, mut receiver) = scanner();
+        let surviving = scanner.clone();
+        scanner.reset_ranker(1, FilePickerKind::Files);
+        scanner.preview(FilePreviewRequest {
+            scan_id: 1,
+            query_revision: 0,
+            request_id: 1,
+            path: file.clone(),
+            is_dir: false,
+            content_match: None,
+            show_hidden: false,
+        });
+        let rank = Arc::downgrade(scanner.rank_commands.get().unwrap().as_ref().unwrap());
+        let preview = Arc::downgrade(scanner.preview_commands.get().unwrap().as_ref().unwrap());
+        assert!(matches!(
+            receiver.blocking_recv(),
+            Some(FilePickerEvent::Preview { request_id: 1, .. })
+        ));
+        drop(scanner);
+        surviving.preview(FilePreviewRequest {
+            scan_id: 1,
+            query_revision: 0,
+            request_id: 2,
+            path: file,
+            is_dir: false,
+            content_match: None,
+            show_hidden: false,
+        });
+        assert!(matches!(
+            receiver.blocking_recv(),
+            Some(FilePickerEvent::Preview { request_id: 2, .. })
+        ));
+        drop(surviving);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "workers retained their event senders after the final scanner was dropped"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rank.upgrade().is_none());
+        assert!(preview.upgrade().is_none());
     }
 
     #[test]

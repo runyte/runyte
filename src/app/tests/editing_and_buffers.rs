@@ -1228,6 +1228,46 @@ fn ctrl_v_stores_a_clipboard_image_and_writes_a_numbered_link() {
 }
 
 #[test]
+fn pasted_image_links_preserve_reserved_characters_in_state_paths() {
+    let fixture = temporary("image-link-state-paths");
+    let names = [
+        "cache#scratch",
+        "cache%23scratch",
+        "cache (copy)#scratch",
+        #[cfg(unix)]
+        "cache\\scratch",
+    ];
+    for state_name in names {
+        let project = fixture.join(state_name);
+        fs::create_dir_all(&project).unwrap();
+        let notes = project.join("notes.md");
+        fs::write(&notes, "").unwrap();
+        let mut app = App::new_in_project(Config::default(), Some(notes), &project).unwrap();
+        app.state_root = project.join(state_name);
+        app.programs = external_open::ProgramCache::load(None);
+        let bytes = png("reserved path");
+        app.set_system_clipboard(Box::new(ImageClipboard::holding(&bytes)));
+        press(&mut app, 'i');
+        key(&mut app, KeyCode::Char('v'), Modifiers::CONTROL);
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        let stored = crate::pasted_image::cache_directory(&app.state_root).join(
+            crate::pasted_image::file_name(&bytes, crate::pasted_image::ImageFormat::Png),
+        );
+        assert_eq!(fs::read(&stored).unwrap(), bytes);
+        set_cursor(&mut app, 0, 2);
+        press(&mut app, 'g');
+        press(&mut app, 'f');
+        assert_eq!(
+            app.external_target.as_ref(),
+            Some(&stored),
+            "{}",
+            text(&app)
+        );
+    }
+    fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
 fn alt_v_pastes_an_image_when_the_outer_terminal_reserves_ctrl_v() {
     let fixture = temporary("alternate-clipboard-image-paste");
     let project = fixture.join("project");
@@ -2577,34 +2617,50 @@ fn workspace_search_escapes_line_breaks_without_losing_path_identity() {
 }
 
 #[test]
-fn workspace_search_retains_disk_scan_truncation_after_live_reconciliation() {
-    let directory = temporary("workspace-search-retained-limit");
-    fs::create_dir_all(&directory).unwrap();
-    let omitted = directory.join("a-omitted.txt");
-    let saturated = directory.join("z-saturated.txt");
-    fs::write(&omitted, "needle omitted\n").unwrap();
-    fs::write(
-        &saturated,
-        "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
-    )
-    .unwrap();
-    let mut app = App::new(Config::default(), Some(saturated.clone())).unwrap();
-    app.project_root = directory.clone();
-    let length = app.buffers[0].len_chars();
-    assert!(app.apply_to_buffer(
-        0,
-        &Transaction::new(vec![Change::new(0, length, "needle live\n")]),
-    ));
+fn workspace_search_reports_only_limits_reached_by_authoritative_matches() {
+    for disk_limited in [false, true] {
+        let directory = temporary("workspace-search-authoritative-limit");
+        fs::create_dir_all(&directory).unwrap();
+        let other = directory.join("a-other.txt");
+        let saturated = directory.join("z-saturated.txt");
+        fs::write(&other, "needle other\n").unwrap();
+        fs::write(
+            &saturated,
+            "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
+        )
+        .unwrap();
+        if disk_limited {
+            fs::write(
+                directory.join("y-unopened.txt"),
+                "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
+            )
+            .unwrap();
+        }
+        let mut app = App::new(Config::default(), Some(saturated.clone())).unwrap();
+        app.project_root = directory.clone();
+        let length = app.buffers[0].len_chars();
+        assert!(app.apply_to_buffer(
+            0,
+            &Transaction::new(vec![Change::new(0, length, "needle live\n")]),
+        ));
 
-    app.open_global_search("needle", SearchMode::Insensitive);
+        app.open_global_search("needle", SearchMode::Insensitive);
 
-    assert!(app.status.contains("limit reached"), "{}", app.status);
-    assert!(
-        app.active_buffer()
-            .to_string()
-            .contains("result limit reached")
-    );
-    fs::remove_dir_all(directory).unwrap();
+        let rendered = app.active_buffer().to_string();
+        assert_eq!(
+            app.status.contains("limit reached"),
+            disk_limited,
+            "{}",
+            app.status
+        );
+        assert_eq!(rendered.contains("result limit reached"), disk_limited);
+        if !disk_limited {
+            assert!(rendered.contains("needle live"), "{rendered}");
+            assert!(rendered.contains("needle other"), "{rendered}");
+            assert!(app.status.contains("2 results"), "{}", app.status);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[test]

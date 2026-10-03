@@ -2,6 +2,7 @@
 
 use super::*;
 use std::{io, sync::atomic::Ordering};
+mod indexed_planning;
 mod plugin_budget_review;
 mod recursive_limits;
 #[cfg(windows)]

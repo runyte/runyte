@@ -342,12 +342,40 @@ fn paths_overlap(left: &Path, right: &Path) -> bool {
 
 #[cfg(not(windows))]
 fn comparable_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| {
-        path.parent()
-            .and_then(|parent| parent.canonicalize().ok())
-            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
-            .unwrap_or_else(|| path.to_path_buf())
-    })
+    // A future state directory may have several absent parents. Resolve the
+    // existing ancestor before comparing it with per-user storage, otherwise
+    // a symlink above those parents hides their eventual containment.
+    for ancestor in path.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                // This is a comparison of prospective storage locations:
+                // create_dir_all makes an absent component traversable before
+                // a following `..`. Re-entering an existing directory can
+                // expose another symlink later in the suffix, so resolve each
+                // component instead of cancelling parents in the original path.
+                for component in path.strip_prefix(ancestor).unwrap().components() {
+                    match component {
+                        std::path::Component::ParentDir => {
+                            resolved.pop();
+                        }
+                        std::path::Component::CurDir => {}
+                        _ => {
+                            resolved.push(component);
+                            match resolved.canonicalize() {
+                                Ok(canonical) => resolved = canonical,
+                                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                                Err(_) => return path.to_path_buf(),
+                            }
+                        }
+                    }
+                }
+                return resolved;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => break,
+        }
+    }
+    path.to_path_buf()
 }
 
 fn is_git_root(candidate: &Path) -> io::Result<bool> {
@@ -755,6 +783,56 @@ mod tests {
         assert!(validate_state_root(&home.join(".runyte"), &[config]).is_ok());
 
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_root_overlap_resolves_aliases_above_missing_descendants() {
+        let root = tempfile();
+        let reserved = root.join("reserved");
+        let alias = root.join("alias");
+        fs::create_dir(&reserved).unwrap();
+        std::os::unix::fs::symlink(&reserved, &alias).unwrap();
+        let state = alias.join("not-created/yet");
+        assert!(initialize(&root, &state, std::slice::from_ref(&reserved)).is_err());
+        assert!(!reserved.join("not-created").exists());
+        assert!(validate_state_root(&reserved, &[state]).is_err());
+
+        let separate = root.join("separate/not-created/yet");
+        initialize(&root, &separate, std::slice::from_ref(&reserved)).unwrap();
+        assert!(separate.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_root_overlap_predicts_parent_components_after_directory_creation() {
+        let root = tempfile();
+        let reserved = root.join("reserved");
+        fs::create_dir_all(reserved.join("inside")).unwrap();
+        std::os::unix::fs::symlink(&reserved, root.join("alias")).unwrap();
+        std::os::unix::fs::symlink(reserved.join("inside"), root.join("nested-alias")).unwrap();
+        for configured in [
+            "missing/../reserved/runtime",
+            "missing/../alias/runtime",
+            "nested-alias/missing/../../runtime",
+        ] {
+            let state = root.join(configured);
+            assert!(
+                initialize(&root, &state, std::slice::from_ref(&reserved)).is_err(),
+                "future state root enters reserved storage: {configured}"
+            );
+            assert!(!root.join("missing").exists());
+            assert!(!reserved.join("inside/missing").exists());
+            assert!(!reserved.join("runtime").exists());
+            assert!(validate_state_root(&reserved, &[state]).is_err());
+        }
+
+        let separate = root.join("created/../separate/not-created/yet");
+        initialize(&root, &separate, std::slice::from_ref(&reserved)).unwrap();
+        assert!(root.join("created").is_dir());
+        assert!(root.join("separate/not-created/yet").is_dir());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]

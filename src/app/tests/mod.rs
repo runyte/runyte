@@ -194,12 +194,14 @@ mod git_discovery;
 mod git_merge_lifecycle;
 mod git_merges;
 mod indentation;
+mod jump_word_viewport;
 mod language;
 mod markdown_list_continuation;
 mod markdown_positions;
 mod markdown_tables;
 mod mouse_autoscroll;
 mod navigation_and_files;
+mod paste_many_selections;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;
 #[cfg(not(windows))]
@@ -219,6 +221,8 @@ mod presentation_and_settings;
 mod prompt_input;
 mod provider_documents;
 mod search_and_pickers;
+mod search_region_boundaries;
+mod search_region_cost;
 mod selection_history;
 mod session_navigation;
 mod terminal_previews;
@@ -403,3 +407,9 @@ fn configured_spellings_reach_about_manual_help_and_the_tutorial() {
 }
 
 mod key_actions;
+
+mod pointer_scrolled_tabs;
+
+mod finder_disk_budget;
+
+mod pasted_completion;

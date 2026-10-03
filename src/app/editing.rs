@@ -812,11 +812,22 @@ impl App {
             let Some(row) = visual.document_row else {
                 continue;
             };
-            let columns = visual
-                .segment
-                .map_or(scroll_col..usize::MAX, |segment| segment.start..segment.end);
             let start = buffer.line_to_offset(row);
             let line_string = buffer.line_string(row);
+            let columns = visual.segment.map_or_else(
+                || {
+                    // Reject offscreen word starts before measuring their
+                    // prefixes. The relative tab origin matches rendering.
+                    scroll_col
+                        ..crate::wrap::column_for_scrolled_cell(
+                            &line_string,
+                            scroll_col,
+                            wrap_width,
+                            tab_width,
+                        )
+                },
+                |segment| segment.start..segment.end,
+            );
             let line: Vec<char> = line_string.chars().collect();
             let mut word_start = None;
             // One past the end closes a word that runs to the end of the row.
@@ -1724,16 +1735,17 @@ impl App {
     pub(super) fn delete_to_line_start(&mut self) {
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
-        let changes = self
+        let spans = self
             .active()
             .selection
             .ranges()
             .iter()
             .filter_map(|range| {
                 let start = buffer.line_to_offset(buffer.offset_to_row(range.head));
-                (start < range.head).then(|| Change::new(start, range.head, ""))
+                (start < range.head).then_some((start, range.head))
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let changes = crlf_safe_deletions(buffer, spans);
         self.edit(Transaction::new(changes));
         self.normalize_buffer(buffer_id);
     }
@@ -3729,10 +3741,12 @@ impl App {
                     // and drops the later one; every original selection must
                     // then point at that retained replacement, not at the
                     // mapped end of it.
-                    transaction
-                        .changes()
-                        .iter()
-                        .find(|change| {
+                    let changes = transaction.changes();
+                    let index =
+                        changes.partition_point(|change| change.to <= from && change.from < from);
+                    changes
+                        .get(index)
+                        .filter(|change| {
                             (change.from < change.to && change.from <= from && from < change.to)
                                 || (change.from == change.to && change.from == from)
                         })

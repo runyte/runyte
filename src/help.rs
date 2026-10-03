@@ -602,13 +602,25 @@ pub(crate) fn render_document_with_descriptions(
             }
             let _ = writeln!(out, "  {label}");
             for entry in group {
-                let detail = match keymap.lookup_in(mode, scope, &KeySequence::from(entry.key)) {
-                    Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
-                        platform_description(binding.target, entry.description)
-                    }
-                    _ => std::borrow::Cow::Borrowed(entry.description),
+                let (detail, configured) =
+                    match keymap.lookup_in(mode, scope, &KeySequence::from(entry.key)) {
+                        Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => (
+                            platform_description(binding.target, entry.description),
+                            matches!(binding.target, BindingTarget::Plugin(_))
+                                || !binding.actions.is_empty(),
+                        ),
+                        _ => (std::borrow::Cow::Borrowed(entry.description), false),
+                    };
+                let detail = if configured {
+                    std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
+                } else {
+                    detail
                 };
                 key_cells.push(row(&mut out, &help_key_label(entry.key), &detail));
+                if configured {
+                    let end = out.chars().count() - 1;
+                    authored.push(end - detail.chars().count()..end);
+                }
             }
             out.push('\n');
         }
@@ -1117,6 +1129,29 @@ const GIT_BLAME_OVERVIEW: &[&str] = &[
 mod tests {
     use super::*;
     use crate::keymap::default_keymap;
+
+    #[test]
+    fn direct_configured_action_descriptions_remain_literal_prose() {
+        let argument = "echo {key:nope} {binding:Space e} `literal`";
+        let source =
+            format!("bind: {{normal: {{F12: {{command: pipe, argument: '{argument}'}}}}}}");
+        let compiled = crate::keymap::configured::compile(
+            &serde_yaml::from_str(&source).unwrap(),
+            default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let document = render_document(
+            HelpTopic::Text,
+            GrammarKind::Runyte,
+            BindingScope::Global,
+            &compiled.keymap,
+            false,
+        );
+        assert!(document.text().contains(argument));
+        assert!(roles_at(&document, "{binding:Space e}").is_empty());
+        assert_eq!(roles_at(&document, "literal"), ["markup.raw"]);
+        assert_eq!(roles_at(&document, "F12"), ["keyword"]);
+    }
 
     #[test]
     fn authored_key_markers_are_complete_and_resolve_in_both_variants() {

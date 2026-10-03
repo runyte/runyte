@@ -420,6 +420,27 @@ fn discovery_finds_the_working_tree_from_any_directory_inside_it() {
     assert_eq!(found.git_dir(), repository.path().join(".git"));
 }
 
+#[cfg(unix)]
+#[test]
+fn discovery_preserves_trailing_whitespace_and_non_utf8_path_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+
+    for suffix in [b" ".as_slice(), b"\t", b"\n", b"\xff"] {
+        let mut fixture = TempRepository::new("discovery-path-bytes");
+        let mut name = fixture.path().as_os_str().as_encoded_bytes().to_vec();
+        name.extend_from_slice(suffix);
+        let renamed = PathBuf::from(std::ffi::OsString::from_vec(name));
+        fs::rename(fixture.path(), &renamed).unwrap();
+        fixture.0 = renamed;
+
+        let repository = provider().discover(fixture.path()).unwrap().unwrap();
+
+        assert_eq!(repository.workdir(), fixture.path());
+        assert_eq!(repository.git_dir(), fixture.path().join(".git"));
+        assert_eq!(repository.common_dir(), repository.git_dir());
+    }
+}
+
 #[test]
 fn provider_refusals_validate_every_external_identity_before_mutating_git() {
     let fixture = TempRepository::new("invalid-identities");
@@ -445,6 +466,8 @@ fn provider_refusals_validate_every_external_identity_before_mutating_git() {
         },
         LogRequest {
             cursor: Some(LogCursor {
+                tip: "a".repeat(40),
+                offset: 1,
                 boundary: "not-an-object".to_owned(),
             }),
             limit: 1,
@@ -3218,6 +3241,50 @@ fn discarding_both_rename_endpoints_restores_the_original_path() {
 }
 
 #[test]
+fn history_pages_preserve_both_sides_of_merges() {
+    let fixture = TempRepository::new("history-merge-pages");
+    fixture.write("base.txt", "base\n");
+    fixture.commit("base");
+    fixture.git(&["checkout", "-qb", "left"]);
+    for index in 0..2 {
+        fixture.write("left.txt", &format!("left {index}\n"));
+        fixture.commit(&format!("left {index}"));
+    }
+    fixture.git(&["checkout", "-qb", "right", "HEAD~2"]);
+    for index in 0..2 {
+        fixture.write("right.txt", &format!("right {index}\n"));
+        fixture.commit(&format!("right {index}"));
+    }
+    fixture.git(&["merge", "--no-ff", "-m", "merge", "left"]);
+    let expected = git_output(
+        &fixture,
+        &["log", "--topo-order", "--date-order", "--format=%H", "HEAD"],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    let provider = provider();
+    let mut cursor = None;
+    let mut actual = Vec::new();
+    for _ in 0..expected.len() {
+        let page = provider
+            .log_page(&fixture.repository(), &LogRequest { cursor, limit: 2 })
+            .unwrap();
+        assert_eq!(page.total_pages, 3);
+        actual.extend(page.commits.into_iter().map(|commit| commit.oid));
+        cursor = page.next;
+        if cursor.is_none() {
+            break;
+        }
+        // An advanced HEAD must not shift the captured traversal.
+        fixture.write("new.txt", &format!("{}\n", actual.len()));
+        fixture.commit("new commit after page");
+    }
+    assert!(cursor.is_none(), "history pagination did not terminate");
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn history_pages_continue_by_object_identity_and_details_are_bounded_values() {
     let repository = TempRepository::new("history-pages");
     for (index, subject) in ["first", "second λ", "third\tfield"]
@@ -3329,7 +3396,7 @@ fn a_non_numeric_history_count_is_a_malformed_git_response() {
     let program = repository.path().join("git-malformed-history-count");
     install_stand_in(
         &program,
-        "case \" $* \" in\n  *\" rev-list \"*) printf 'not-a-count\\n'; exit 0 ;;\n  *) printf 'unexpected command: %s\\n' \"$*\" >&2; exit 71 ;;\nesac\n",
+        "case \" $* \" in\n  *\" rev-parse \"*) printf '1111111111111111111111111111111111111111\\n'; exit 0 ;;\n  *\" rev-list \"*) printf 'not-a-count\\n'; exit 0 ;;\n  *) printf 'unexpected command: %s\\n' \"$*\" >&2; exit 71 ;;\nesac\n",
     );
 
     let error = GitCliProvider::new(program)
@@ -3376,6 +3443,36 @@ fn commit_detail_reads_a_patch_past_the_default_output_bound() {
         .unwrap();
     assert!(detail.patch.len() > 16 * 1024 * 1024);
     assert!(detail.patch.contains("large.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn commit_detail_never_executes_configured_text_converters() {
+    let repository = TempRepository::new("commit-detail-textconv");
+    repository.write(".gitattributes", "note.txt diff=fixture\n");
+    repository.write("note.txt", "original text\n");
+    repository.commit("original");
+    repository.write("note.txt", "changed text\n");
+    repository.commit("change");
+    let converter = repository.path().join("textconv");
+    install_stand_in(
+        &converter,
+        "printf 'ran\\n' > textconv-ran\nprintf 'converted text\\n'\n",
+    );
+    repository.git(&[
+        "config",
+        "diff.fixture.textconv",
+        converter.to_str().unwrap(),
+    ]);
+    let oid = git_output(&repository, &["rev-parse", "HEAD"]);
+
+    let detail = provider()
+        .commit_detail(&repository.repository(), oid.trim())
+        .unwrap();
+
+    assert!(!repository.path().join("textconv-ran").exists());
+    assert!(detail.patch.contains("-original text"));
+    assert!(detail.patch.contains("+changed text"));
 }
 
 #[test]

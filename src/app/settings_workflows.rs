@@ -14,6 +14,7 @@ use super::{
 use crate::{
     buffer::GeneratedViewIdentity, config::ExplorerSort, content_alignment::ContentAlignment,
 };
+use std::io::Read;
 
 impl App {
     pub(crate) fn plugin_activity_count(&self) -> usize {
@@ -239,7 +240,11 @@ impl App {
         // The queue is drained before reading so the records that explain what
         // just happened are already on disk.
         crate::log::flush(crate::log::FLUSH_BUDGET);
-        let text = match fs::read_to_string(&path) {
+        let text = match crate::path_safety::open_regular_file(&path, false).and_then(|mut file| {
+            let mut text = String::new();
+            file.read_to_string(&mut text)?;
+            Ok(text)
+        }) {
             Ok(text) => text,
             Err(error) => {
                 self.error_from(

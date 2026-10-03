@@ -2106,7 +2106,7 @@ async fn run(
                     None => break,
                 }
             }
-            event = services.lsp_events.recv() => {
+            event = receive_service_event("language servers", &ended_services, services.lsp_events.recv()) => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::Lsp(event));
                 } else {
@@ -2128,7 +2128,7 @@ async fn run(
                     note_ended_service(&mut ended_services, "syntax");
                 }
             }
-            event = services.file_picker_events.recv() => {
+            event = receive_service_event("file picker", &ended_services, services.file_picker_events.recv()) => {
                 if let Some(event) = event {
                     let paced = pace_file_picker_event(&event);
                     app.apply_event(HostEvent::FilePicker(event));
@@ -2136,23 +2136,25 @@ async fn run(
                         frame_pending = true;
                         continue;
                     }
+                } else {
+                    note_ended_service(&mut ended_services, "file picker");
                 }
             }
-            event = services.workspace_search_events.recv() => {
+            event = receive_service_event("workspace search", &ended_services, services.workspace_search_events.recv()) => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::WorkspaceSearch(event));
                 } else {
                     note_ended_service(&mut ended_services, "workspace search");
                 }
             }
-            event = services.file_monitor_events.recv() => {
+            event = receive_service_event("file monitor", &ended_services, services.file_monitor_events.recv()) => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::FileObservation(event));
                 } else {
                     note_ended_service(&mut ended_services, "file monitor");
                 }
             }
-            event = services.git_monitor_events.recv() => {
+            event = receive_service_event("Git monitor", &ended_services, services.git_monitor_events.recv()) => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::GitInvalidation(event));
                     let _ = app.refresh_git_if_due(Instant::now());
@@ -2170,7 +2172,7 @@ async fn run(
                     continue;
                 }
             }
-            event = receive_workspace_event(&mut services.workspace_events) => {
+            event = receive_optional_service_event(&mut services.workspace_events) => {
                 if let Some(event) = event {
                     app.apply_event(event);
                 }
@@ -2195,12 +2197,7 @@ async fn run(
                 #[cfg(not(windows))]
                 let _ = event;
             }
-            event = async {
-                match services.git_events.as_mut() {
-                    Some(events) => events.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
+            event = receive_optional_service_event(&mut services.git_events) => {
                 if let Some(event) = event {
                     app.apply_event(HostEvent::Git(event));
                 }
@@ -2978,7 +2975,7 @@ async fn run_host_server(
                     }
                 }
             }
-            event = services.lsp_events.recv() => {
+            event = receive_service_event("language servers", &ended_services, services.lsp_events.recv()) => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Lsp(event));
                     changed = true;
@@ -3003,7 +3000,7 @@ async fn run_host_server(
                     note_ended_service(&mut ended_services, "syntax");
                 }
             }
-            event = services.file_picker_events.recv() => {
+            event = receive_service_event("file picker", &ended_services, services.file_picker_events.recv()) => {
                 if let Some(event) = event {
                     let paced = pace_file_picker_event(&event);
                     host.apply_event(HostEvent::FilePicker(event));
@@ -3012,9 +3009,11 @@ async fn run_host_server(
                     } else {
                         changed = true;
                     }
+                } else {
+                    note_ended_service(&mut ended_services, "file picker");
                 }
             }
-            event = services.workspace_search_events.recv() => {
+            event = receive_service_event("workspace search", &ended_services, services.workspace_search_events.recv()) => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::WorkspaceSearch(event));
                     changed = true;
@@ -3022,7 +3021,7 @@ async fn run_host_server(
                     note_ended_service(&mut ended_services, "workspace search");
                 }
             }
-            event = services.file_monitor_events.recv() => {
+            event = receive_service_event("file monitor", &ended_services, services.file_monitor_events.recv()) => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::FileObservation(event));
                     changed = true;
@@ -3030,7 +3029,7 @@ async fn run_host_server(
                     note_ended_service(&mut ended_services, "file monitor");
                 }
             }
-            event = services.git_monitor_events.recv() => {
+            event = receive_service_event("Git monitor", &ended_services, services.git_monitor_events.recv()) => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::GitInvalidation(event));
                     changed = true;
@@ -3060,7 +3059,7 @@ async fn run_host_server(
                     frame_pending = true;
                 }
             }
-            event = receive_workspace_event(&mut services.workspace_events) => {
+            event = receive_optional_service_event(&mut services.workspace_events) => {
                 if let Some(event) = event {
                     let observation = matches!(&event, HostEvent::Workspace(runyte::workspace::WorkspaceEvent::Observed { .. }));
                     let before = observation.then(|| (host.app().session_strip_snapshot(), host.app().status.clone(), host.app().status_error,
@@ -3091,12 +3090,7 @@ async fn run_host_server(
                 #[cfg(not(windows))]
                 let _ = event;
             }
-            event = async {
-                match services.git_events.as_mut() {
-                    Some(events) => events.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
+            event = receive_optional_service_event(&mut services.git_events) => {
                 if let Some(event) = event {
                     host.apply_event(HostEvent::Git(event));
                     changed = true;
@@ -3513,18 +3507,26 @@ fn open_input_trace() -> Result<Option<fs::File>> {
     let Some(path) = std::env::var_os("RUNYTE_INPUT_TRACE") else {
         return Ok(None);
     };
-    fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| {
-            format!(
-                "failed to open RUNYTE_INPUT_TRACE path {}",
-                Path::new(&path).display()
-            )
-        })
-        .map(Some)
+    let mut options = fs::OpenOptions::new();
+    options.create(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(&path).with_context(|| {
+        format!(
+            "failed to open RUNYTE_INPUT_TRACE path {}",
+            Path::new(&path).display()
+        )
+    })?;
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "RUNYTE_INPUT_TRACE requires a regular file"
+    );
+    file.set_len(0)
+        .context("failed to truncate RUNYTE_INPUT_TRACE")?;
+    Ok(Some(file))
 }
 
 #[cfg(debug_assertions)]
@@ -5887,6 +5889,7 @@ fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRo
                         if attached { "yes" } else { "no" }.to_owned()
                     }),
             ]
+            .map(|cell| display_session_table_cell(&cell))
         })
         .collect::<Vec<_>>();
     let headings = [
@@ -5915,6 +5918,19 @@ fn format_session_table<'a>(workspaces: impl IntoIterator<Item = &'a WorkspaceRo
         append_workspace_row(&mut output, &row, &widths);
     }
     output
+}
+
+#[cfg(any(unix, windows))]
+fn display_session_table_cell(text: &str) -> String {
+    let mut displayed = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            displayed.extend(character.escape_default());
+        } else {
+            displayed.push(character);
+        }
+    }
+    displayed
 }
 
 #[cfg(any(unix, windows))]
@@ -6406,13 +6422,29 @@ impl HostServices {
     }
 }
 
-async fn receive_workspace_event(
-    events: &mut Option<tokio::sync::mpsc::Receiver<HostEvent>>,
-) -> Option<HostEvent> {
-    match events.as_mut() {
+/// A service's terminal event is observed once; later selects await useful work.
+async fn receive_service_event<T>(
+    service: &'static str,
+    ended: &std::collections::HashSet<&'static str>,
+    event: impl std::future::Future<Output = Option<T>>,
+) -> Option<T> {
+    if ended.contains(service) {
+        return std::future::pending().await;
+    }
+    event.await
+}
+
+async fn receive_optional_service_event<T>(
+    events: &mut Option<tokio::sync::mpsc::Receiver<T>>,
+) -> Option<T> {
+    let event = match events.as_mut() {
         Some(events) => events.recv().await,
         None => std::future::pending().await,
+    };
+    if event.is_none() {
+        *events = None;
     }
+    event
 }
 
 fn start_host_services(
@@ -7256,6 +7288,52 @@ Inside the editor press Space+? for the complete key reference."
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn ended_services_deliver_queued_work_and_then_stop_waking_the_loop() {
+        use super::{note_ended_service, receive_optional_service_event, receive_service_event};
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+        sender.send(7).await.unwrap();
+        drop(sender);
+        let mut ended = std::collections::HashSet::new();
+        assert_eq!(
+            receive_service_event("worker", &ended, receiver.recv()).await,
+            Some(7)
+        );
+        assert_eq!(
+            receive_service_event("worker", &ended, receiver.recv()).await,
+            None
+        );
+        note_ended_service(&mut ended, "worker");
+        tokio::select! {
+            biased;
+            _ = receive_service_event("worker", &ended, receiver.recv()) => panic!("ended service woke again"),
+            _ = std::future::ready(()) => {}
+        }
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(10),
+                receive_service_event("worker", &ended, receiver.recv())
+            )
+            .await
+            .is_err()
+        );
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender.send(9).await.unwrap();
+        drop(sender);
+        let mut optional = Some(receiver);
+        assert_eq!(receive_optional_service_event(&mut optional).await, Some(9));
+        assert_eq!(receive_optional_service_event(&mut optional).await, None);
+        assert!(optional.is_none(), "closed optional receiver was retained");
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(10),
+                receive_optional_service_event(&mut optional)
+            )
+            .await
+            .is_err()
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "requires an isolated native console; run under the ConPTY acceptance harness"]
@@ -8696,3 +8774,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix, debug_assertions))]
+#[path = "tui/tests/input_trace.rs"]
+mod input_trace_tests;
+
+#[cfg(all(test, any(unix, windows)))]
+#[path = "tui/tests/session_table.rs"]
+mod session_table_tests;

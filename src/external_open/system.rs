@@ -193,9 +193,22 @@ fn launch_with(
     executable: &OsStr,
     active: Arc<AtomicUsize>,
 ) -> Result<(), Error> {
-    launch_using(prepared, executable, active, |work| {
+    let command = opener_command(prepared, executable);
+    launch_command(command, active)
+}
+
+#[cfg(any(not(windows), test))]
+fn opener_command(prepared: Prepared, executable: &OsStr) -> Command {
+    let mut command = Command::new(executable);
+    command.arg(prepared.argument);
+    command
+}
+
+#[cfg(any(not(windows), test))]
+pub(super) fn launch_command(command: Command, active: Arc<AtomicUsize>) -> Result<(), Error> {
+    launch_command_using(command, active, |work| {
         std::thread::Builder::new()
-            .name("system-opener".into())
+            .name("external-opener".into())
             .spawn(work)
             .map(|_| ())
     })
@@ -203,24 +216,30 @@ fn launch_with(
 
 #[cfg(any(not(windows), test))]
 type ReapWork = Box<dyn FnOnce() + Send>;
-#[cfg(any(not(windows), test))]
+#[cfg(all(test, unix))]
 fn launch_using(
     prepared: Prepared,
     executable: &OsStr,
     active: Arc<AtomicUsize>,
     start_thread: impl FnOnce(ReapWork) -> std::io::Result<()>,
 ) -> Result<(), Error> {
+    launch_command_using(opener_command(prepared, executable), active, start_thread)
+}
+
+#[cfg(any(not(windows), test))]
+fn launch_command_using(
+    mut command: Command,
+    active: Arc<AtomicUsize>,
+    start_thread: impl FnOnce(ReapWork) -> std::io::Result<()>,
+) -> Result<(), Error> {
     let slot = Slot::reserve(active)?;
-    let executable = executable.to_owned();
     let (sender, receiver) = mpsc::sync_channel(1);
     // Create the reaper before the child: failure to create a thread cannot
     // leave a spawned child without a wait owner. There are at most 16 such
     // threads, including ones waiting on handlers that choose to stay alive.
     start_thread(Box::new(move || {
         let _slot = slot;
-        let mut command = Command::new(executable);
         command
-            .arg(prepared.argument)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());

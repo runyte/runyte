@@ -29,6 +29,60 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   candidates. Recorded in
   [`context/reference/fuzzy-matching.md`](../context/reference/fuzzy-matching.md).
   Its own section is [below](#fuzzy-matching-against-fzf).
+- **`terminal_grid.py`** — isolated insert/delete/scroll stress comparison of
+  the actual terminal grid at a selected Git revision against the working tree.
+  After `cargo build --locked --lib`, run
+  `python3 benchmarks/terminal_grid.py --runs 5 --json /tmp/terminal-grid.json`.
+  The default baseline is the parent of `d26624a`, before the character-shift
+  optimization. The harness compiles both grid modules with
+  `rustc --edition=2024 -O`, using the newest existing `unicode_width` debug
+  library artifact. It fills each grid outside the timed region, verifies
+  identical final text, discards one warm-up, and alternates measurement order.
+  The character case runs four insert/delete pairs of 16,000 columns on a
+  32,768-column, one-row screen. The row case runs one scroll-up, scroll-down,
+  insert-line and delete-line operation of 16,000 rows on a one-column,
+  32,768-row screen without history. These extreme supported shapes expose
+  algorithmic scaling; they do not measure ordinary terminal throughput or
+  PTY/rendering latency. Output reports median (min–max) milliseconds; JSON
+  retains every sample, source hashes, baseline commit, platform and compiler.
+- **`diff_filler.rs`** — compares the former backward scan with the current
+  diff viewport row lookup, using the working tree's actual diff modules.
+  Build instructions are in the file. Each sample maps the shorter side near
+  the end of a one-million-line inserted block 100 times; construction is
+  outside the clock, one warm-up is discarded, and five samples alternate
+  order. Both algorithms must return the same preceding row. This isolates
+  filler lookup cost, without measuring alignment or end-to-end scrolling.
+
+- **`directory_plan.py`** — unchanged filesystem-plan scaling at 2,048, 8,192
+  and 16,384 temporary files, compiling the actual baseline and current Unix
+  modules with `rustc -O`. After `cargo build --locked --lib`, run
+  `python3 benchmarks/directory_plan.py --runs 5 --json /tmp/directory-plan.json`.
+  Snapshot reads and input cloning are outside the measured interval. The
+  harness checks empty plans, discards one warm-up and alternates measurement
+  order. JSON retains samples, source hashes, compiler and platform. This
+  measures planning, rather than file I/O or interactive editor latency.
+
+- **`navigation_target.py`** — actual URL inference with growing unmatched
+  punctuation suffixes and repeated URL prefixes under a punctuation caret.
+  Run `python3 benchmarks/navigation_target.py --runs 5 --json /tmp/navigation.json`.
+  Both source versions compile with `rustc -O`, return identical targets,
+  discard one warm-up and alternate order. JSON retains all samples, source
+  hashes, compiler and platform. These adversarial rows expose algorithmic
+  scaling; they do not represent ordinary navigation or rendering latency.
+
+- **`transaction_mapping.py`** — actual transaction offset mapping at 2,000,
+  10,000 and 20,000 cursors. Run
+  `python3 benchmarks/transaction_mapping.py --runs 5 --json /tmp/transaction-mapping.json`
+  after `cargo build --locked --lib`. Each cursor checks both offset
+  associations; transaction construction is outside the timed interval.
+- **`scoped_search.py`** — actual scoped-search functions at 2,000, 10,000 and
+  20,000 selection regions, with two matches per region. Run
+  `python3 benchmarks/scoped_search.py --runs 5 --json /tmp/scoped-search.json`
+  after `cargo build --locked --lib`. Both versions must return identical
+  ranges. These two harnesses compile the measured source with `rustc -O`, use
+  existing debug dependency artifacts, discard one warm-up and alternate
+  measurement order. JSON retains samples, source hashes, compiler and platform.
+  They isolate mapping and search costs rather than end-to-end input latency.
 
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.

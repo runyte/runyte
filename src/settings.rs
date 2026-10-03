@@ -973,7 +973,7 @@ pub fn persist_setting(
     value: &SettingValue,
 ) -> Result<Config, SettingError> {
     let target = resolve_write_target(path)?;
-    let source = match fs::read_to_string(&target) {
+    let source = match Config::read_source(&target) {
         Ok(source) => source,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(source) => return Err(io_error("read", &target, source)),
@@ -1506,7 +1506,7 @@ pub fn persist_override(
         }
     };
     let target = resolve_write_target(path)?;
-    let source = match fs::read_to_string(&target) {
+    let source = match Config::read_source(&target) {
         Ok(source) => source,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(source) => return Err(io_error("read", &target, source)),

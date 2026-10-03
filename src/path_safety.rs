@@ -6,6 +6,28 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
+/// Open an existing regular file for reading, or for a write-permission probe
+/// when `write` is true. Symlinks are followed. Unix opens are nonblocking so a
+/// FIFO cannot wait for a peer before its descriptor's type can be checked.
+/// Checking the opened object also handles pathname replacement during open.
+pub(crate) fn open_regular_file(path: &Path, write: bool) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(!write).write(write);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "document I/O requires a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 /// Verifies that `candidate` remains inside `root` after resolving every
 /// existing path component, including symlinks.
 pub fn ensure_within_root(root: &Path, candidate: &Path) -> Result<()> {

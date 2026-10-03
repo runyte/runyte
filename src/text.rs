@@ -87,6 +87,9 @@ pub struct Transaction {
     // Changes are immutable once normalized. Large prepared replacements must
     // not rescan their text for every selection, jump or search endpoint.
     inserted_chars: Vec<usize>,
+    // Cumulative character delta after each normalized change, so each mapped
+    // endpoint can locate its change without walking the transaction prefix.
+    cumulative_deltas: Vec<isize>,
 }
 
 /// The inverse of an applied [`Transaction`].
@@ -125,10 +128,26 @@ impl Transaction {
     }
 
     fn from_ordered(changes: Vec<Change>) -> Self {
-        let inserted_chars = changes.iter().map(Change::inserted_len).collect();
+        let inserted_chars = changes.iter().map(Change::inserted_len).collect::<Vec<_>>();
+        let mut delta = 0isize;
+        let cumulative_deltas = changes
+            .iter()
+            .zip(&inserted_chars)
+            .map(|(change, inserted)| {
+                // Public raw changes can still be invalid here. Keep their
+                // endpoints intact for the application boundary to reject;
+                // constructing derived lookup metadata must not panic first.
+                let removed = change.to.saturating_sub(change.from);
+                let removed = isize::try_from(removed).unwrap_or(isize::MAX);
+                let inserted = isize::try_from(*inserted).unwrap_or(isize::MAX);
+                delta = delta.saturating_add(inserted.saturating_sub(removed));
+                delta
+            })
+            .collect();
         Self {
             changes,
             inserted_chars,
+            cumulative_deltas,
         }
     }
 
@@ -195,29 +214,22 @@ impl Transaction {
     /// Maps an offset in the pre-transaction document to the post-transaction
     /// document.
     pub fn map_offset(&self, offset: Offset, assoc: Assoc) -> Offset {
-        let mut delta: isize = 0;
-        for (change, &inserted) in self.changes.iter().zip(&self.inserted_chars) {
-            let change_delta = inserted as isize - change.removed_len() as isize;
-            if change.from == change.to && change.from == offset {
-                // A pure insertion exactly at the offset: only an `After`
-                // association moves past the inserted text.
-                if assoc == Assoc::After {
-                    delta += change_delta;
-                }
-                continue;
-            }
-            if change.to <= offset {
-                delta += change_delta;
-                continue;
-            }
-            if change.from >= offset {
-                break;
-            }
+        // Ends are ordered as well as starts. `Before` excludes every pure
+        // insertion exactly at the endpoint; `After` includes all of them.
+        let index = self.changes.partition_point(|change| {
+            change.to <= offset && (assoc == Assoc::After || change.from < offset)
+        });
+        let delta = index
+            .checked_sub(1)
+            .map_or(0, |previous| self.cumulative_deltas[previous]);
+        if let Some(change) = self.changes.get(index)
+            && change.from < offset
+        {
             // The offset pointed inside a replaced region.
             let start = (change.from as isize + delta) as usize;
             return match assoc {
                 Assoc::Before => start,
-                Assoc::After => start + inserted,
+                Assoc::After => start + self.inserted_chars[index],
             };
         }
         (offset as isize + delta).max(0) as usize
@@ -587,6 +599,69 @@ mod tests {
         assert_eq!(transaction.map_offset(4, Assoc::Before), 2);
         assert_eq!(transaction.map_offset(4, Assoc::After), 4);
         assert_eq!(transaction.map_offset(6, Assoc::After), 4);
+    }
+
+    #[test]
+    fn indexed_offset_mapping_preserves_all_normalized_boundary_associations() {
+        fn reference(transaction: &Transaction, offset: usize, assoc: Assoc) -> usize {
+            let mut delta = 0isize;
+            for change in transaction.changes() {
+                let inserted = change.text.chars().count();
+                let adjustment = inserted as isize - (change.to - change.from) as isize;
+                if change.from == change.to && change.from == offset {
+                    if assoc == Assoc::After {
+                        delta += adjustment;
+                    }
+                } else if change.to <= offset {
+                    delta += adjustment;
+                } else if change.from >= offset {
+                    break;
+                } else {
+                    return (change.from as isize + delta) as usize
+                        + if assoc == Assoc::After { inserted } else { 0 };
+                }
+            }
+            (offset as isize + delta).max(0) as usize
+        }
+
+        let candidates = (0..=4)
+            .flat_map(|from| {
+                (from..=4)
+                    .flat_map(move |to| ["", "x", "αβ"].map(|text| Change::new(from, to, text)))
+            })
+            .collect::<Vec<_>>();
+        for first in &candidates {
+            for second in &candidates {
+                let transaction =
+                    Transaction::new(vec![first.clone(), Change::new(2, 2, "界"), second.clone()]);
+                let mut text = Text::from_str("abcdef");
+                let inverse = text.apply(&transaction).into_transaction();
+                for candidate in [&transaction, &inverse] {
+                    for offset in 0..=text.len_chars().max(6) {
+                        for assoc in [Assoc::Before, Assoc::After] {
+                            assert_eq!(
+                                candidate.map_offset(offset, assoc),
+                                reference(candidate, offset, assoc),
+                                "{candidate:?}, {offset}, {assoc:?}"
+                            );
+                        }
+                    }
+                }
+                text.apply(&inverse);
+                assert_eq!(text.to_string(), "abcdef");
+            }
+        }
+    }
+
+    #[test]
+    fn many_cursor_offsets_map_through_one_large_transaction() {
+        let count = 20_000;
+        let transaction =
+            Transaction::new((0..count).map(|i| Change::new(i * 2, i * 2, "α")).collect());
+        for i in 0..count {
+            assert_eq!(transaction.map_offset(i * 2, Assoc::After), i * 3 + 1);
+            assert_eq!(transaction.map_offset(i * 2, Assoc::Before), i * 3);
+        }
     }
 
     #[test]

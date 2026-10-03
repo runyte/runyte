@@ -147,10 +147,11 @@ impl App {
         let path = stored
             .strip_prefix(&self.project_root)
             .unwrap_or(stored)
-            .to_string_lossy()
-            // Markdown separates path segments with `/` on every platform, and
-            // an absolute Windows destination is a path like any other.
-            .replace('\\', "/");
+            .to_string_lossy();
+        // Windows separators use Markdown's slash spelling; on Unix a
+        // backslash belongs to the filename and must survive link decoding.
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
         crate::pasted_image::destination(&path)
     }
 
@@ -778,7 +779,12 @@ impl App {
             .ranges()
             .iter()
             .filter(|range| {
-                let (from, to) = operative_span(buffer, range);
+                let (from, to) = match pane.selection_semantics() {
+                    SelectionSemantics::Runyte => operative_span(buffer, range),
+                    SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
+                        (range.from(), range.to())
+                    }
+                };
                 to.saturating_sub(from) >= 2
             })
             .copied()
@@ -786,6 +792,7 @@ impl App {
         (!spans.is_empty()).then_some(SearchRegion {
             buffer: pane.buffer,
             spans,
+            semantics: pane.selection_semantics(),
         })
     }
 
@@ -1151,7 +1158,7 @@ impl App {
                 .saturating_sub(1)
             });
             let last_row = self.buffers[buffer_id].last_row();
-            let pane = self.active_mut();
+            let pane = self.panes.get_mut(&pane_id).unwrap();
             if direction < 0 {
                 if segment > 0 {
                     pane.scroll_wrap -= 1;

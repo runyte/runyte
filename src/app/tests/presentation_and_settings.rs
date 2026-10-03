@@ -3,6 +3,56 @@
 use super::*;
 
 #[test]
+fn soft_wrap_wheel_scrolls_the_hovered_inactive_pane_in_both_directions() {
+    let mut config = Config::default();
+    config.editor.soft_wrap = true;
+    config.editor.line_numbers = false;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, &"x".repeat(400));
+    app.panes.insert(1, Pane::new(0));
+    app.layout = Layout::Split {
+        axis: Axis::Vertical,
+        ratio: u16::MAX / 2 + 1,
+        first: Box::new(Layout::Pane(0)),
+        second: Box::new(Layout::Pane(1)),
+    };
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 60,
+            height: 12,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 60,
+            height: 10,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(1).unwrap().body;
+    let selection = app.active().selection.clone();
+    let wheel = |kind| PointerEvent {
+        kind,
+        column: body.x,
+        row: body.y,
+        modifiers: Modifiers::NONE,
+    };
+    app.handle_pointer(wheel(PointerEventKind::ScrollDown), &view)
+        .unwrap();
+    assert_eq!(app.active_pane, 0);
+    assert_eq!(app.panes[&0].scroll_wrap, 0);
+    assert_eq!(app.panes[&1].scroll_wrap, 3);
+    app.handle_pointer(wheel(PointerEventKind::ScrollUp), &view)
+        .unwrap();
+    assert_eq!(app.active_pane, 0);
+    assert_eq!(app.panes[&0].scroll_wrap, 0);
+    assert_eq!(app.panes[&1].scroll_wrap, 0);
+    assert_eq!(app.active().selection, selection);
+}
+
+#[test]
 fn inactive_pane_snapshot_refreshes_after_git_marks_change_without_text_edit() {
     let path = temporary("pane-git-marks.txt");
     fs::write(&path, "new\n").unwrap();

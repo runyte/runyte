@@ -38,6 +38,16 @@ preservation, conflict checks and recovery backups are unchanged. Microsoft's
 [ReplaceFileW contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
 does not promise concurrent-reader visibility.
 
+Special-file hardening makes every existing-document open validate its descriptor
+as a regular file, using nonblocking opens on Unix so a concurrently substituted
+FIFO cannot stall conflict checks, permission probes, or ACL copying. An
+unreadable or unsupported object displaced by atomic replacement now follows
+the same restoration path as a content conflict. The bounded subprocess test
+`special_file_io_refuses_promptly_and_preserves_documents` and its owned
+`special_file_io_fixture` in `src/buffer/tests/special_files.rs` cover open,
+reload, observation, metadata, save refusal, and restoration of a raced FIFO
+without discarding the replacement contents.
+
 Known limitation: Unix targets without one of the implemented native ACL mechanisms refuse atomic replacement of an existing file rather than risk silently dropping its access controls. Concurrent Windows pathname readers may encounter transient errors before save completion; the bounded characterization is not a guarantee for every filesystem or process policy.
 
 ## Report

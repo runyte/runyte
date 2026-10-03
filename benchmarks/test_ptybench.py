@@ -12,6 +12,25 @@ from unittest import mock
 import ptybench
 
 
+class TerminalQueryTests(unittest.TestCase):
+    def test_every_query_split_is_answered_once(self):
+        for query in (b"\x1b[c", b"\x1b[>c", b"\x1b[?u", b"\x1b[5n", b"\x1b[6n",
+                      b"\x1b[>0q", b"\x1b[?2026$p", b"\x1bP$qm\x1b\\",
+                      b"\x1b]11;?\x07", b"\x1b]10;?\x1b\\"):
+            for split in range(len(query) + 1):
+                with self.subTest(query=query, split=split):
+                    responder = ptybench.TerminalQueries()
+                    actual = responder.feed(query[:split]) + responder.feed(query[split:])
+                    self.assertEqual(actual, ptybench.terminal_replies(query))
+                    self.assertEqual(responder.feed(b"ordinary document output"), b"")
+
+    def test_retained_output_is_bounded_and_following_queries_work(self):
+        responder = ptybench.TerminalQueries()
+        self.assertEqual(responder.feed(b"\x1b]" + b"x" * 65536), b"")
+        self.assertLessEqual(len(responder.tail), 256)
+        self.assertEqual(responder.feed(b"\x1b[6n"), b"\x1b[1;1R")
+
+
 class MedianStartupTests(unittest.TestCase):
     def test_idle_setup_failure_cannot_report_zero_cost(self):
         import sys
@@ -72,6 +91,37 @@ class MedianStartupTests(unittest.TestCase):
 
 
 class QuitValidityTests(unittest.TestCase):
+    def test_split_terminal_query_does_not_stall_document_startup(self) -> None:
+        script = (
+            "import os,time,tty; tty.setraw(0); "
+            "os.write(1,b'\\x1b['); time.sleep(.05); os.write(1,b'6n'); "
+            "reply=os.read(0,6); "
+            "os.write(1,b'DOC' if reply==b'\\x1b[1;1R' else b'BAD'); "
+            "os.read(0,10)"
+        )
+        with mock.patch.object(ptybench, "STARTUP_TIMEOUT_SECONDS", 1.0), \
+                mock.patch.object(ptybench, "QUIT_TIMEOUT_SECONDS", 0.2):
+            result = ptybench.measure_startup(
+                [sys.executable, "-c", script], {}, b"DOC"
+            )
+        self.assertIsNotNone(result["first_document_output"])
+        self.assertIsNotNone(result["settled_output"])
+
+    def test_terminal_eof_does_not_bypass_the_quit_deadline(self) -> None:
+        script = (
+            "import os,signal,time; "
+            "signal.signal(signal.SIGHUP,signal.SIG_IGN); "
+            "os.close(0); os.close(1); os.close(2); time.sleep(2)"
+        )
+        started = time.monotonic()
+        with mock.patch.object(ptybench, "QUIT_TIMEOUT_SECONDS", 0.05):
+            result = ptybench.measure_startup(
+                [sys.executable, "-c", script], {}, b"DOC"
+            )
+
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertIsNone(result["quit"])
+
     def test_cleanup_does_not_signal_an_already_reaped_pid(self) -> None:
         with mock.patch("ptybench.os.waitpid", side_effect=ChildProcessError):
             with mock.patch("ptybench.os.kill") as kill:

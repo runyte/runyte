@@ -155,7 +155,6 @@ impl TerminalPreparation {
         let id = self.reservation.cancellation.id;
         let events = self.reservation.cancellation.events.clone();
         let gate = events.clone();
-        #[cfg(windows)]
         let cancellation = self.reservation.cancellation.clone();
         let child = pty::Pty::spawn_gated_in_context(
             &self.request.program,
@@ -173,7 +172,6 @@ impl TerminalPreparation {
             },
             pty::PendingActivation {
                 wait: Arc::new(move || gate.wait_until_active(id)),
-                #[cfg(windows)]
                 cancel: Arc::new(move || cancellation.cancel()),
                 lifetime: self.reservation.budget.clone(),
             },

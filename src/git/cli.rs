@@ -1713,7 +1713,7 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
         return None;
     }
     crate::path_safety::ensure_within_root(root, path).ok()?;
-    let file = std::fs::File::open(path).ok()?;
+    let file = crate::path_safety::open_regular_file(path, false).ok()?;
     let mut content = Vec::new();
     let mut bounded = file.take(limit as u64);
     bounded.read_to_end(&mut content).ok()?;
@@ -1942,11 +1942,14 @@ fn has_git_marker_in<'a>(
                 return Ok(true);
             }
             Ok(metadata) if metadata.file_type().is_file() => {
-                let file = std::fs::File::open(&marker).map_err(|error| GitError::Io {
-                    action: "inspect repository marker at",
-                    path: marker.clone(),
-                    detail: error.to_string(),
-                })?;
+                let file =
+                    crate::path_safety::open_regular_file(&marker, false).map_err(|error| {
+                        GitError::Io {
+                            action: "inspect repository marker at",
+                            path: marker.clone(),
+                            detail: error.to_string(),
+                        }
+                    })?;
                 let mut content = Vec::new();
                 file.take(MAX_GIT_MARKER_BYTES as u64 + 1)
                     .read_to_end(&mut content)
@@ -2114,44 +2117,48 @@ impl GitCliProvider {
         )?;
         // Discovery, including explicit retries, is a read with the same
         // deadline and output ceiling as other bounded local reads.
-        let read = |directory: &Path, argument: &str| -> Result<String> {
+        let read = |directory: &Path, argument: &str| -> Result<PathBuf> {
             let arguments = ["rev-parse", argument];
             let output = self.run_read_bounded(directory, &arguments, self.max_output_bytes)?;
-            Ok(self.utf8(&arguments, output)?.trim_end().to_owned())
+            // Git terminates a pathname with one newline. Other trailing
+            // whitespace, and non-UTF-8 Unix bytes, belong to the path.
+            let path = output.strip_suffix(b"\n").unwrap_or(&output);
+            status::path_from_bytes(path).map_err(|detail| GitError::Malformed {
+                command: self.describe(&arguments),
+                detail,
+            })
         };
         let toplevel = read(start, "--show-toplevel")?;
-        if toplevel.is_empty() {
+        if toplevel.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--show-toplevel"]),
                 detail: "Git reported an empty repository root after a repository marker was found"
                     .to_owned(),
             });
         }
-        let workdir = PathBuf::from(toplevel);
+        let workdir = toplevel;
         #[cfg(windows)]
         let workdir = paths_windows::identity(&workdir)?;
-        let git_dir_text = read(&workdir, "--git-dir")?;
-        if git_dir_text.is_empty() {
+        let git_dir = read(&workdir, "--git-dir")?;
+        if git_dir.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-dir"]),
                 detail: "Git reported an empty repository metadata directory".to_owned(),
             });
         }
-        let git_dir = PathBuf::from(git_dir_text);
         let git_dir = if git_dir.is_absolute() {
             git_dir
         } else {
             workdir.join(git_dir)
         };
         let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
-        let common_text = read(&workdir, "--git-common-dir")?;
-        if common_text.is_empty() {
+        let common = read(&workdir, "--git-common-dir")?;
+        if common.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-common-dir"]),
                 detail: "Git reported an empty common metadata directory".to_owned(),
             });
         }
-        let common = PathBuf::from(common_text);
         let common = if common.is_absolute() {
             common
         } else {
@@ -2748,20 +2755,38 @@ impl GitProvider for GitCliProvider {
                 stderr: format!("history page size must be between 1 and {MAX_LOG_PAGE_SIZE}"),
             });
         }
-        let start = match &request.cursor {
-            Some(LogCursor { boundary }) => {
-                if !valid_object_id(boundary) {
+        let (tip, offset) = match &request.cursor {
+            Some(LogCursor {
+                tip,
+                offset,
+                boundary,
+            }) => {
+                if !valid_object_id(tip) || !valid_object_id(boundary) {
                     return Err(GitError::Malformed {
                         command: "git log".to_owned(),
                         detail: "history cursor is not a full object id".to_owned(),
                     });
                 }
-                format!("{boundary}^@")
+                (tip.clone(), *offset)
             }
-            None => "HEAD".to_owned(),
+            None => {
+                let output = self.run_read_bounded(
+                    repository.workdir(),
+                    &["rev-parse", "--verify", "HEAD^{commit}"],
+                    128,
+                )?;
+                let tip = std::str::from_utf8(&output).map(str::trim).unwrap_or("");
+                if !valid_object_id(tip) {
+                    return Err(GitError::Malformed {
+                        command: "git rev-parse".to_owned(),
+                        detail: "history tip is not a full object id".to_owned(),
+                    });
+                }
+                (tip.to_owned(), 0)
+            }
         };
         let total_output =
-            self.run_read_bounded(repository.workdir(), &["rev-list", "--count", "HEAD"], 64)?;
+            self.run_read_bounded(repository.workdir(), &["rev-list", "--count", &tip], 64)?;
         let total_commits = std::str::from_utf8(&total_output)
             .ok()
             .and_then(|output| output.trim().parse::<usize>().ok())
@@ -2778,9 +2803,10 @@ impl GitProvider for GitCliProvider {
             OsString::from("--date-order"),
             OsString::from("--abbrev=12"),
             OsString::from(format!("--max-count={count}")),
+            OsString::from(format!("--skip={offset}")),
             OsString::from("--date=format:%Y-%m-%d %H:%M"),
             OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%ad%x00%s%x00%D"),
-            OsString::from(start),
+            OsString::from(&tip),
         ];
         let mut commits = parse_log(&self.run_read_bounded(
             repository.workdir(),
@@ -2793,6 +2819,8 @@ impl GitProvider for GitCliProvider {
             .then(|| commits.last())
             .flatten()
             .map(|commit| LogCursor {
+                tip,
+                offset: offset.saturating_add(commits.len()),
                 boundary: commit.oid.clone(),
             });
         Ok(LogPage {
@@ -3150,6 +3178,7 @@ impl GitProvider for GitCliProvider {
             "--format=",
             "--patch",
             "--no-ext-diff",
+            "--no-textconv",
             "--no-color",
             oid,
         ];
@@ -4051,11 +4080,12 @@ fn tree_object(entries: &[u8]) -> Option<String> {
 }
 
 fn read_file_for_comparison(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let file = std::fs::File::open(path).map_err(|error| GitError::Io {
-        action: "read",
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
+    let file =
+        crate::path_safety::open_regular_file(path, false).map_err(|error| GitError::Io {
+            action: "read",
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
     let mut content = Vec::new();
     file.take(limit as u64 + 1)
         .read_to_end(&mut content)
@@ -4102,11 +4132,12 @@ fn bounded_file_sha256(repository: &Repository, path: &Path) -> Result<String> {
             path: path.to_path_buf(),
         });
     }
-    let file = std::fs::File::open(path).map_err(|error| GitError::Io {
-        action: "fingerprint",
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
+    let file =
+        crate::path_safety::open_regular_file(path, false).map_err(|error| GitError::Io {
+            action: "fingerprint",
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
     let mut bytes = Vec::new();
     file.take(MAX_PATCH_BYTES as u64 + 1)
         .read_to_end(&mut bytes)

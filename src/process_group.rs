@@ -378,10 +378,13 @@ fn append_record(path: &std::path::Path, line: &str, budget: &AtomicUsize) {
     if used + line.len() > MAX_AUDIT_BYTES {
         return;
     }
+    use std::os::unix::fs::OpenOptionsExt;
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open(path)
+        && file.metadata().is_ok_and(|metadata| metadata.is_file())
     {
         let _ = file.write_all(line.as_bytes());
     }
@@ -658,6 +661,70 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), after_two);
 
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn special_audit_destination_cannot_block_process_operations() {
+        use std::{
+            ffi::CString,
+            os::unix::ffi::OsStrExt,
+            time::{Duration, Instant},
+        };
+        let root = std::env::temp_dir().join(format!(
+            "runyte-special-audit-{}-{:?}",
+            std::process::id(),
+            Instant::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("audit.pipe");
+        let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: cpath is NUL-terminated and the fixture owns its parent.
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "process_group::tests::special_audit_fixture",
+                "--nocapture",
+            ])
+            .env(AUDIT_PATH_VARIABLE, &path)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "audit fixture failed: {status}");
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                std::fs::remove_dir_all(&root).unwrap();
+                panic!("audit destination blocked a process operation");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "owned by the bounded audit parent fixture"]
+    fn special_audit_fixture() {
+        record_spawn("test", "audit fixture", std::process::id());
+        let group = claim_anchored_group(
+            TEST_SITE,
+            std::process::id() as libc::pid_t,
+            GroupAnchor::RunningLeader,
+        );
+        let mut delivered = false;
+        // The supplied delivery callback observes progress without signalling
+        // the fixture process group itself.
+        group.signal_with(libc::SIGKILL, |_, _| delivered = true);
+        assert!(delivered);
+        let budget = AtomicUsize::new(0);
+        append_record(std::path::Path::new("/dev/null"), "ignored\n", &budget);
     }
 
     #[test]

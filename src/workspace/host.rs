@@ -159,8 +159,11 @@ pub enum SessionPreviewPaneKind {
 }
 
 fn session_preview_line(line: &str) -> String {
-    line.trim_end_matches(['\r', '\n'])
-        .chars()
+    session_preview_characters(line.trim_end_matches(['\r', '\n']).chars())
+}
+
+fn session_preview_characters(characters: impl Iterator<Item = char>) -> String {
+    characters
         .take(SESSION_PREVIEW_COLUMNS)
         .map(|character| {
             if character == '\t' || !character.is_control() {
@@ -536,7 +539,21 @@ impl WorkspaceHost {
                 let start = pane.scroll_row.min(buffer.len_lines().saturating_sub(1));
                 let lines = (start..buffer.len_lines())
                     .take(SESSION_PREVIEW_LINES)
-                    .map(|row| session_preview_line(&buffer.line_string(row)))
+                    .map(|row| {
+                        let line = buffer.text().line(row);
+                        let mut end = line.len_chars().min(SESSION_PREVIEW_COLUMNS);
+                        // Trimming the suffix can affect the prefix only
+                        // when its last character is itself a terminator.
+                        if end > 0 && matches!(line.char(end - 1), '\r' | '\n') {
+                            let mut tail = line.chars_at(line.len_chars());
+                            let mut content_end = line.len_chars();
+                            while matches!(tail.prev(), Some('\r' | '\n')) {
+                                content_end -= 1;
+                            }
+                            end = end.min(content_end);
+                        }
+                        session_preview_characters(line.slice(..end).chars())
+                    })
                     .collect();
                 Some(SessionPreviewPane {
                     active: *pane_id == self.app.active_pane,
@@ -696,8 +713,10 @@ impl WorkspaceHost {
     pub fn read_buffer(&self, id: BufferId) -> Result<BufferContents, BufferRequestError> {
         let index = self.live_buffer_index(id)?;
         let buffer = &self.app.buffers[index];
-        let text = buffer.to_string();
-        let (text, truncated) = bounded_utf8(&text, MAX_BUFFER_READ_BYTES);
+        let rope = buffer.text().rope();
+        let end = rope.byte_to_char(rope.len_bytes().min(MAX_BUFFER_READ_BYTES));
+        let text = rope.slice(..end).to_string();
+        let truncated = rope.len_bytes() > MAX_BUFFER_READ_BYTES;
         Ok(BufferContents {
             metadata: BufferMetadata {
                 id,
@@ -761,6 +780,8 @@ impl WorkspaceHost {
         Ok(BufferRevision::from_raw(self.app.buffers[index].revision()))
     }
 
+    /// Returns the revision only after an ordinary file write completes.
+    /// Refuses saves that need asynchronous work or native confirmation.
     pub fn save_buffer(&mut self, id: BufferId) -> Result<BufferRevision> {
         let index = self.live_buffer_index(id).map_err(anyhow::Error::from)?;
         self.app.host_save_buffer(index)?;
@@ -1736,17 +1757,6 @@ impl WorkspaceHost {
     }
 }
 
-fn bounded_utf8(value: &str, limit: usize) -> (String, bool) {
-    if value.len() <= limit {
-        return (value.to_owned(), false);
-    }
-    let mut end = limit;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    (value[..end].to_owned(), true)
-}
-
 fn update_wait_status(request: &mut WaitRequest) {
     let remaining = request
         .buffers
@@ -1783,6 +1793,8 @@ impl DerefMut for WorkspaceHost {
 
 #[cfg(test)]
 mod tests {
+    mod save_results;
+
     use super::*;
     use crate::{
         app::HostPorts,
@@ -2380,6 +2392,73 @@ mod tests {
         assert_eq!(preview.chars().count(), SESSION_PREVIEW_COLUMNS);
         assert!(preview.starts_with("abc\u{fffd}"));
         assert!(!preview.contains('\u{0}'));
+    }
+
+    #[test]
+    fn bounded_buffer_reads_preserve_utf8_boundaries_and_truncation() {
+        let mut host = host();
+        let id = BufferId::from_index(0);
+        for text in [
+            String::new(),
+            "x".repeat(MAX_BUFFER_READ_BYTES),
+            format!("{}界suffix", "x".repeat(MAX_BUFFER_READ_BYTES - 1)),
+            format!("{}界suffix", "x".repeat(MAX_BUFFER_READ_BYTES - 3)),
+        ] {
+            let length = host.app.buffers[0].len_chars();
+            host.app.buffers[0].apply(&Transaction::change(0, length, text.clone()));
+            let read = host.read_buffer(id).unwrap();
+            let mut end = text.len().min(MAX_BUFFER_READ_BYTES);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            assert_eq!(read.text, text[..end]);
+            assert_eq!(read.truncated, text.len() > MAX_BUFFER_READ_BYTES);
+            assert_eq!(read.metadata.revision.get(), host.app.buffers[0].revision());
+        }
+    }
+
+    #[test]
+    fn bounded_buffer_previews_keep_long_unicode_lines_and_control_spelling() {
+        let mut host = host();
+        let long = format!(
+            "\t\0{}\rX{}",
+            "界".repeat(SESSION_PREVIEW_COLUMNS - 3),
+            "z".repeat(2 * MAX_BUFFER_READ_BYTES)
+        );
+        let lines = ["before".to_owned(), long, "tail\r\r\n".to_owned()];
+        host.app.buffers[0].apply(&Transaction::insert(0, lines.join("\n")));
+        host.app.panes.get_mut(&0).unwrap().scroll_row = 1;
+        let preview = host.session_preview();
+        assert_eq!(preview.panes[0].start_line, Some(2));
+        assert_eq!(preview.panes[0].lines[0], session_preview_line(&lines[1]));
+        assert!(preview.panes[0].lines[0].starts_with("\t\u{fffd}"));
+        assert!(preview.panes[0].lines[0].ends_with('\u{fffd}'));
+        assert_eq!(preview.panes[0].lines[1], "tail");
+        assert_eq!(preview.panes[0].lines[2], "");
+        assert!(host.current_frame_id().is_none());
+    }
+
+    #[test]
+    fn bounded_buffer_previews_preserve_long_carriage_return_suffixes() {
+        let mut host = host();
+        let lines = [
+            format!(
+                "{}{}",
+                "x".repeat(SESSION_PREVIEW_COLUMNS),
+                "\r".repeat(2 * MAX_BUFFER_READ_BYTES)
+            ),
+            format!("tail{}", "\r".repeat(2 * MAX_BUFFER_READ_BYTES)),
+            format!("{}\ry\r\r", "x".repeat(SESSION_PREVIEW_COLUMNS - 1)),
+        ];
+        host.app.buffers[0].apply(&Transaction::insert(0, lines.join("\n")));
+        let preview = host.session_preview();
+        assert_eq!(
+            preview.panes[0].lines,
+            lines
+                .iter()
+                .map(|line| session_preview_line(line))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

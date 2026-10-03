@@ -5,11 +5,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::command::Mode;
+use crate::input::{KeyCode, Modifiers};
 
 use super::{Binding, BindingNamespace, BindingScope, ContextAction, KeySequence};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ViolationKind {
+    ReservedGrammarKey,
     DuplicateEffectiveSequence,
     ExactAndPrefix,
     GlobalScopedShadowing,
@@ -92,6 +94,49 @@ pub fn validate(
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
             for binding in &effective {
+                let modal_reservation = matches!(mode, Mode::Normal | Mode::Select)
+                    && !scope.is_merge_review()
+                    && binding
+                        .sequence
+                        .as_slice()
+                        .iter()
+                        .enumerate()
+                        .any(|(index, key)| {
+                            (index > 0 && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                                || (index == 0
+                                    && scope != BindingScope::DirectoryTree
+                                    && key.modifiers.is_empty()
+                                    && matches!(key.code, KeyCode::Char('1'..='9')))
+                        });
+                // Modal discovery observes every prefix. Insert/Replace
+                // discovery opens only for the declared window namespace;
+                // other configured prefixes go directly to the grammar.
+                let observes_hints = matches!(mode, Mode::Normal | Mode::Select)
+                    || (matches!(mode, Mode::Insert | Mode::Replace)
+                        && namespaces.iter().any(|namespace| {
+                            namespace.modes.contains(&mode)
+                                && namespace.sequence.len() == 1
+                                && binding.sequence.starts_with(&namespace.sequence)
+                        }));
+                let hint_reservation = observes_hints
+                    && binding.sequence.as_slice().iter().skip(1).any(|key| {
+                        key.modifiers == Modifiers::CONTROL
+                            && matches!(key.code, KeyCode::Char('n' | 'p'))
+                    });
+                if modal_reservation || hint_reservation {
+                    violations.push(Violation {
+                        kind: ViolationKind::ReservedGrammarKey,
+                        mode,
+                        scope,
+                        sequences: vec![binding.sequence.clone()],
+                        message: format!(
+                            "{} uses a reserved count, prefix-cancellation, or hint-scroll key in {} {:?}",
+                            binding.sequence,
+                            mode.label(),
+                            scope
+                        ),
+                    });
+                }
                 if let Some(previous) = by_sequence.insert(&binding.sequence, binding) {
                     violations.push(Violation {
                         kind: ViolationKind::DuplicateEffectiveSequence,

@@ -41,7 +41,7 @@ use crate::{
     external_open::{self, ProgramCache},
     file_picker::{
         CONTENT_ENTRY_LIMIT, FilePicker, FilePickerEvent, FilePickerKind, FilePreview, FileScanner,
-        PickerTarget, scan_content, scan_files,
+        PickerTarget, scan_files,
     },
     finder::{
         FinderMatchSource, FinderMode, FinderTarget, ResourceFinder, ResourceItem, ResourceKind,
@@ -1159,6 +1159,7 @@ struct SearchQuery {
 struct SearchRegion {
     buffer: usize,
     spans: Vec<Range>,
+    semantics: SelectionSemantics,
 }
 
 /// Exact pane selection installed by the most recent Runyte search action.
@@ -4513,6 +4514,13 @@ fn text_matches(
     }
     let matcher = mode.compile(pattern)?;
     let mut ranges = Vec::new();
+    let regions = region.map(|spans| {
+        let mut spans = spans.to_vec();
+        spans.sort_unstable();
+        spans
+    });
+    let mut region_index = 0;
+    let mut covered_until = None;
     // Matches arrive in order and never overlap, so one running byte-to-char
     // cursor replaces re-counting the prefix for every match.
     let mut byte_cursor = 0;
@@ -4522,10 +4530,19 @@ fn text_matches(
         byte_cursor = found.start();
         let start = char_cursor;
         let end = start + text[found.start()..found.end()].chars().count();
-        if let Some(spans) = region
-            && !spans.iter().any(|(from, to)| *from <= start && end <= *to)
-        {
-            continue;
+        if let Some(spans) = &regions {
+            // Every region that starts by this match remains eligible. Keep
+            // the furthest individual end; combining overlapping spans would
+            // incorrectly admit a match that no one selection contained.
+            while let Some(&(from, to)) = spans.get(region_index)
+                && from <= start
+            {
+                covered_until = Some(covered_until.map_or(to, |end: usize| end.max(to)));
+                region_index += 1;
+            }
+            if covered_until.is_none_or(|to| end > to) {
+                continue;
+            }
         }
         ranges.push(if end == start {
             Range::point(start)
@@ -4541,7 +4558,12 @@ fn region_spans(buffer: &Buffer, region: &SearchRegion) -> Vec<(Offset, Offset)>
     region
         .spans
         .iter()
-        .map(|range| operative_span(buffer, range))
+        .map(|range| match region.semantics {
+            SelectionSemantics::Runyte => operative_span(buffer, range),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
+                (range.from(), range.to())
+            }
+        })
         .collect()
 }
 
