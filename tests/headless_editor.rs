@@ -261,6 +261,29 @@ fn invalid_transactions_are_rejected_atomically_without_history() {
     assert_eq!((reversed.from(), reversed.to()), (2, 1));
     assert_eq!(editor.active_text(), "abc");
 
+    for (from, to) in [
+        (0, isize::MAX as usize + 1),
+        (0, usize::MAX),
+        (usize::MAX, 0),
+        (usize::MAX, usize::MAX),
+    ] {
+        let transaction = Transaction::new(vec![Change {
+            from,
+            to,
+            text: String::new(),
+        }]);
+        let invalid = editor.apply_transaction(transaction).unwrap_err();
+        assert_eq!((invalid.from(), invalid.to()), (from, to));
+        assert_eq!(editor.active_text(), "abc");
+    }
+
+    let excessive_delta = Transaction::new(vec![
+        Change::new(0, isize::MAX as usize, ""),
+        Change::new(isize::MAX as usize, usize::MAX, ""),
+    ]);
+    assert!(editor.apply_transaction(excessive_delta).is_err());
+    assert_eq!(editor.active_text(), "abc");
+
     let mixed = Transaction::new(vec![Change::new(0, 0, "X"), Change::new(4, 4, "Y")]);
     let mixed = editor.apply_transaction(mixed).unwrap_err();
     assert_eq!(mixed.change_index(), 1);

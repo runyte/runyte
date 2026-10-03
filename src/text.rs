@@ -129,12 +129,18 @@ impl Transaction {
 
     fn from_ordered(changes: Vec<Change>) -> Self {
         let inserted_chars = changes.iter().map(Change::inserted_len).collect::<Vec<_>>();
-        let mut delta = 0;
+        let mut delta = 0isize;
         let cumulative_deltas = changes
             .iter()
             .zip(&inserted_chars)
             .map(|(change, inserted)| {
-                delta += *inserted as isize - change.removed_len() as isize;
+                // Public raw changes can still be invalid here. Keep their
+                // endpoints intact for the application boundary to reject;
+                // constructing derived lookup metadata must not panic first.
+                let removed = change.to.saturating_sub(change.from);
+                let removed = isize::try_from(removed).unwrap_or(isize::MAX);
+                let inserted = isize::try_from(*inserted).unwrap_or(isize::MAX);
+                delta = delta.saturating_add(inserted.saturating_sub(removed));
                 delta
             })
             .collect();
