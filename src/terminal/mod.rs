@@ -2320,7 +2320,7 @@ fn review_motion_target(
             .find(|offset| characters[*offset] != '\n')
             .unwrap_or(head),
         ReviewMotion::LineStart => line.map_or(0, |line| line.text_start),
-        ReviewMotion::LineEnd => line.map_or(0, |line| line.text_end.saturating_sub(1)),
+        ReviewMotion::LineEnd => line.map_or(0, review_line_last_offset),
         ReviewMotion::FirstNonWhitespace => line.map_or(0, |line| {
             let relative = review
                 .text
@@ -3672,6 +3672,25 @@ mod tests {
         assert_eq!(session.review_selection_text(), "\n");
         session.select_review_line(true, true);
         assert_eq!(session.review_selection_text(), "\ntwo");
+    }
+
+    #[test]
+    fn review_line_end_stays_on_empty_rows() {
+        for extend in [false, true] {
+            let mut session = session(12, 4);
+            session.feed(b"one\r\n\r\ntwo");
+            session.begin_review();
+            for row in [2, 4] {
+                session.goto_review_line(row, false);
+                assert!(session.move_review(ReviewMotion::LineEnd, extend));
+                assert_eq!(session.cursor_row(), row - 1);
+                assert_eq!(session.cursor_column(), 0);
+            }
+            session.goto_review_line(3, false);
+            assert!(session.move_review(ReviewMotion::LineEnd, false));
+            assert_eq!(session.cursor_row(), 2);
+            assert_eq!(session.review_selection_text(), "o");
+        }
     }
 
     #[test]
