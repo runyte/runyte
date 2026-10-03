@@ -44,6 +44,12 @@ non-string sequences. The regressions are
 `escape_restarts_interrupted_control_sequences` in
 `tests/terminal_sequences.rs`.
 
+Unsupported CSI functions containing intermediate bytes are ignored as whole
+sequences; they never fall through to basic commands sharing their final byte.
+`unsupported_csi_intermediates_do_not_alias_basic_commands` in
+`tests/terminal_sequences.rs` covers screen cells, cursor, rendition, alternate
+screen state, and device replies.
+
 The shared retention budget counts primary-screen scrollback even while its
 alternate screen is visible. Oldest-history eviction leaves both live screens
 intact and reports the lost primary rows when that screen is restored. The

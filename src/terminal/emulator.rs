@@ -369,6 +369,12 @@ impl Emulator {
         intermediates: &[u8],
         final_byte: u8,
     ) {
+        // Intermediate bytes identify distinct control functions. None of
+        // those functions are supported here; do not interpret their final
+        // byte as an ordinary cursor, editing, or rendition command.
+        if !intermediates.is_empty() {
+            return;
+        }
         let pen = self.pen;
         let first = usize::from(parameter(parameters, 0, 1));
         match (private, final_byte) {
@@ -413,7 +419,7 @@ impl Emulator {
             (None, b'l') => self.set_ansi_modes(parameters, false),
             (None, b'm') => self.select_graphic_rendition(parameters),
             (None, b'n') => self.device_status(raw_parameter(parameters, 0)),
-            (None, b'r') if intermediates.is_empty() => {
+            (None, b'r') => {
                 let rows = self.grid().rows();
                 let top = usize::from(parameter(parameters, 0, 1)).saturating_sub(1);
                 let bottom = usize::from(parameter(parameters, 1, rows as u16)).saturating_sub(1);

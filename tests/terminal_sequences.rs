@@ -65,6 +65,35 @@ fn escape_restarts_interrupted_control_sequences() {
 }
 
 #[test]
+fn unsupported_csi_intermediates_do_not_alias_basic_commands() {
+    for sequence in [
+        b"\x1b[2 @".as_slice(),
+        b"\x1b[2 A",
+        b"\x1b[2$J",
+        b"\x1b[31 m",
+        b"\x1b[?1049 h",
+        b"\x1b[6 n",
+        b"\x1b[ c",
+    ] {
+        let mut emulator = Emulator::new(12, 3);
+        emulator.feed(b"first\r\nsecond\x1b[2;3H");
+        let before = (0..3).map(|row| screen(&emulator, row)).collect::<Vec<_>>();
+        emulator.feed(sequence);
+        assert_eq!(cursor(&emulator), (1, 2), "{sequence:?}");
+        assert_eq!(
+            (0..3).map(|row| screen(&emulator, row)).collect::<Vec<_>>(),
+            before,
+            "{sequence:?}"
+        );
+        assert!(!emulator.alternate_screen());
+        assert!(emulator.take_replies().is_empty());
+        emulator.feed(b"X");
+        assert_eq!(cell(&emulator, 1, 2).foreground, Color::Default);
+        assert_eq!(screen(&emulator, 1), "seXond");
+    }
+}
+
+#[test]
 fn cursor_motion_sequences_address_the_screen_by_row_and_column() {
     let mut emulator = Emulator::new(20, 10);
 
