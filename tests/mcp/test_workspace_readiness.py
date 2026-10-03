@@ -23,7 +23,7 @@ def inventory(*rows, truncated=False):
 
 
 def row(root, readable=True, reason=None):
-    return {'root': root, 'readable': readable, 'unavailable_reason': reason}
+    return {'root': root, 'scopes': ['editor_context_read'] if readable else [], 'unavailable_reason': reason}
 
 
 class WorkspaceReadinessTests(unittest.TestCase):
@@ -58,7 +58,7 @@ class WorkspaceReadinessTests(unittest.TestCase):
                                 clock=clock, sleep=clock.sleep)
         message = str(failure.exception)
         self.assertIn('/fixtures/one', message)
-        self.assertIn('"readable": false', message)
+        self.assertIn('"scopes": []', message)
         self.assertIn('"unavailable_reason": "denied', message)
         self.assertIn('"truncated": true', message)
         self.assertNotIn('private_credential', message)

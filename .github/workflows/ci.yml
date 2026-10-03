@@ -84,41 +84,11 @@ jobs:
               throw "Required native acceptance did not run: $case"
             }
           }
-      - name: Accept the private Windows context bridge
+      - name: Accept built-in MCP against the public Windows editor
         if: ${{ !cancelled() }}
         run: |
           $failures = [System.Collections.Generic.List[string]]::new()
-          $python = (Get-Command python -ErrorAction Stop).Source
-          Push-Location bridges/runyte-context
-          & $python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-python.log"
-          $pythonExit = $LASTEXITCODE
-          Pop-Location
-          if ($pythonExit -ne 0) {
-            $failures.Add("Windows context Python acceptance exited with $pythonExit")
-          }
-          $pythonAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-python.log"
-          foreach ($case in @(
-            'test_bounded_success_returns_exact_bytes_and_status',
-            'test_oversized_output_stops_at_one_byte_past_the_bound',
-            'test_timeout_terminates_the_owned_child_within_the_deadline',
-            'test_descendant_held_stdout_is_cancelled_at_the_same_deadline',
-            'test_registration_validation_matches_host_workspace_identity_width'
-          )) {
-            if ($pythonAcceptance -notmatch ('(?m)^' + [regex]::Escape($case) + ' \(.+\) \.\.\. ok\r?$')) {
-              $failures.Add("Required Windows context adapter acceptance did not run: $case")
-            }
-          }
-          $env:RUNYTE_CONTEXT_TEST_PYTHON = $python
-          $case = 'workspace::host::context::transport_tests::python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation'
-          cargo test --locked --lib $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-native.log"
-          $nativeExit = $LASTEXITCODE
-          if ($nativeExit -ne 0) {
-            $failures.Add("Native Windows context bridge acceptance exited with $nativeExit")
-          }
-          $nativeAcceptance = Get-Content -Raw "$env:RUNNER_TEMP/windows-context-native.log"
-          if ($nativeAcceptance -notmatch ('test ' + [regex]::Escape($case) + ' \.\.\. ok')) {
-            $failures.Add("Required native Windows context bridge acceptance did not run: $case")
-          }
+          $env:RUNYTE_CONTEXT_TEST_PYTHON = (Get-Command python -ErrorAction Stop).Source
           $case = 'public_windows_context_round_trip'
           cargo test --locked --test windows_context_acceptance $case -- --ignored --exact --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/windows-context-public.log"
           $publicExit = $LASTEXITCODE
@@ -256,7 +226,6 @@ jobs:
           plugin_schema_python="$RUNNER_TEMP/plugin-schema/bin/python"
           "$plugin_schema_python" -m pip install jsonschema==4.23.0 -r docs/plugins/requirements-sftp.txt -r docs/plugins/requirements-ftp-test.txt -r benchmarks/requirements.txt
           "$plugin_schema_python" docs/plugins/check_all.py --require-backends
-          (cd bridges/runyte-context && "$plugin_schema_python" -m unittest discover -s tests -v)
 
       # The checks above play the host themselves. This starts every example in
       # a real persistent host, using the same Python environment for Paramiko.
@@ -275,8 +244,7 @@ jobs:
           RUNYTE_CONTEXT_TEST_BINARY: ${{ github.workspace }}/target/debug/runyte
         run: |
           test -x "$RUNYTE_CONTEXT_TEST_BINARY"
-          cd bridges/runyte-context
-          "$RUNNER_TEMP/plugin-schema/bin/python" -m unittest discover -s tests -p test_runyte.py -v
+          "$RUNNER_TEMP/plugin-schema/bin/python" tests/mcp/run.py
 
   ru-time:
     name: ru-time moving head against this commit (${{ matrix.os }})

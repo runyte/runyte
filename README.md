@@ -28,7 +28,7 @@ Runyte can do **quite a lot**:
 It also has features that make it **pleasant to work with AI agents** — managing
 several at once and keeping up with their output:
 - Git worktree support and fast switching
-- built-in [MCP server](docs/mcp.md) for sharing buffer and terminal contents with agents
+- built-in [MCP server](docs/mcp.md) for sharing buffer and terminal contents with agents: `runyte mcp --identity <name>`
 - `Ctrl-g` in Claude Code or Codex attaches to the parent Runyte instance, instead of running a new one
   (after [setting `EDITOR`](#post-install-setup))
 - Markdown formatting with `?`, including wide tables

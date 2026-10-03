@@ -100,9 +100,11 @@ Regression coverage includes:
   `post_authentication_denial_is_delivered_before_connection_closes` in
   `src/workspace/host/tests/context_transport.rs`.
 - `test_two_agent_clients_read_live_and_detached_workspaces_edit_unsaved_and_observe_revocation`
-  in `bridges/runyte-context/tests/test_runyte.py`, with bounded fake-host/MCP
-  cases in `test_bridge.py`, SDK/schema checks in `docs/plugins/check_context.py`
-  and benchmark evidence checks in `benchmarks/test_context_access.py`.
+  now in `tests/mcp/test_runyte.py` and exercising `runyte mcp` after removal
+  of the Python adapter. Adapter-specific fake-host cases in `test_bridge.py`
+  were removed; Rust MCP cases remain in `src/mcp/tests*`. SDK/schema checks
+  remain in `docs/plugins/check_context.py` and benchmark evidence checks in
+  `benchmarks/test_context_access.py`.
 
 Known limitation: this is a same-user permission boundary, not an operating
 system sandbox against other processes running as that user. Printable input

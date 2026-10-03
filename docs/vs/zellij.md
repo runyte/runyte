@@ -14,7 +14,7 @@ They overlap in persistence and navigation, but a multiplexer does not own the e
 
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide.md), [plugin contract](../plugins.md), and
-[optional context bridge](../../bridges/runyte-context/README.md).
+[built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 
 | Area | Runyte | Zellij |
@@ -24,7 +24,7 @@ The bridge requires native grants; terminal-text proposals need approval and do 
 | Terminals | Built-in terminal panes with scrollback and modal review. | Tabs with tiled, floating, and stacked panes; reusable layouts. [Features](https://zellij.dev/features/). |
 | Navigation and search | Finder searches files, unsaved buffers, and terminals together. | Pane/tab navigation and bundled Strider file picker; open scrollback in your chosen editor. [Features](https://zellij.dev/features/). |
 | Persistence | Optional persistent host retains buffers and processes while detached; live state ends at host shutdown or reboot. | Detach/reattach plus session resurrection: restore layouts and optionally terminal history, then rerun commands. [Resurrection](https://zellij.dev/documentation/session-resurrection). |
-| Agent integration | Run agents in terminals; optional MCP bridge grants access to buffers and terminal context. | Run agents in panes; CLI actions and plugins provide automation. [Features](https://zellij.dev/features/). |
+| Agent integration | Run agents in terminals; built-in MCP adapter shares buffers and terminal context through native grants. | Run agents in panes; CLI actions and plugins provide automation. [Features](https://zellij.dev/features/). |
 | Extensibility | Explicitly enabled external-process plugins, in any language, using the documented JSON protocol. | WebAssembly/WASI plugins that can render panes and control the workspace. [Plugins](https://zellij.dev/documentation/plugins). |
 | Interaction model | Modal keys, contextual help and key hints, plus mouse selection and pane resizing. | Keyboard modes and visible key guidance, with mouse interaction. |
 | Remote work | Persistent-session transport is local to the workspace host. | Built-in web client and remote attachment over HTTPS. [Features](https://zellij.dev/features/). |

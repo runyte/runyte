@@ -16,7 +16,7 @@ def wait_for_workspaces(discover, projects, *, seconds=15, clock=time.monotonic,
         # The caller passes this remaining budget to its bounded RPC reader.
         # Errors propagate: only a successful but not-ready inventory is retried.
         inventory = discover(remaining)
-        readable = {Path(row['root']) for row in inventory['workspaces'] if row['readable']}
+        readable = {Path(row['root']) for row in inventory['workspaces'] if row['scopes'] and row['unavailable_reason'] is None}
         if expected <= readable and clock() < deadline:
             return inventory
         remaining = deadline - clock()
@@ -25,7 +25,7 @@ def wait_for_workspaces(discover, projects, *, seconds=15, clock=time.monotonic,
     summary = {
         'expected_roots': [root.as_posix()[:200] for root in sorted(expected)[:8]],
         'workspaces': [
-            {'root': str(row['root'])[:200], 'readable': bool(row['readable']),
+            {'root': str(row['root'])[:200], 'scopes': row['scopes'],
              'unavailable_reason': str(row.get('unavailable_reason'))[:200]}
             for row in inventory['workspaces'][:8]
         ],

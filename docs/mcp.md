@@ -1,7 +1,7 @@
 # MCP access for agents
 
-Runyte includes a local MCP stdio server. No Python, package installation, API
-key, or TCP listener is needed. Each agent launches its own server process:
+Runyte ships a built-in Rust MCP stdio adapter as its supported MCP integration.
+No Python, package installation, API key, or TCP listener is needed. Each agent launches its own server process:
 
 ```sh
 /path/to/runyte mcp --identity agent
@@ -21,7 +21,7 @@ command = "/path/to/runyte"
 args = ["mcp", "--identity", "agent"]
 ```
 
-Use the absolute path to the binary you want to test. Windows uses the same
+Use the absolute path to your Runyte binary. Windows uses the same
 arguments with an absolute path to `runyte.exe`. `runyte mcp --help` describes
 the options. `--timeout 2` sets the per-host deadline (0.1–10 seconds).
 
@@ -31,14 +31,14 @@ Open `:mcp agent` in each workspace to share. The identity must match
 `--identity`; its label does not authenticate an agent executable. Use separate
 identities, such as `codex` and `claude`, when permissions should differ.
 
-Toggle reads, buffer edits, and terminal proposals with `1`–`4`, optionally
-remember the grant with `r`, then Tab and Enter to **Apply permissions**.
+Toggle terminal reads (`1`), editor-context reads (`2`), buffer edits (`3`),
+and terminal proposals (`4`). Optionally remember the grant with `r`, then
+Tab and Enter to **Apply permissions**.
 Write permissions automatically enable the corresponding read permission.
 `:mcp` reopens the current grant, lifetime and connected-reader count; `n`
 cycles known identities, and `x` revokes the selected identity. Readers connect
 when the agent performs discovery; tool listing alone leaves the count at zero.
-Revocation drops
-readers and pending proposals. `:context-access` remains an alias.
+Revocation drops readers and pending proposals. `:context-access` remains an alias.
 
 **Starting the agent before granting is fine.** The nine tools stay available;
 a tool's presence is not permission to use it. Calls check the target's native
@@ -51,6 +51,27 @@ owning editor or persistent host exits. Private credentials and remembered
 grants stay in Runyte's account cache, outside the project. `RUNYTE_CONTEXT_HOME`
 can select an absolute private store shared by the editor and MCP process.
 See the [user guide](user-guide.md#what-a-grant-covers) for platform locations.
+
+## Tools
+
+The catalog always contains these nine tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `find_resources` | Discover buffers and terminals by name or content, with exact handles and revisions. |
+| `list_workspaces` | Inspect workspace access without reading source content. |
+| `read_buffer` | Read unsaved buffer text at a revision. |
+| `read_terminal` | Read recent output or the live terminal screen. |
+| `append_buffer` | Append in one unsaved, undoable transaction. |
+| `edit_buffer` | Replace character ranges at an expected revision. |
+| `propose_terminal_text` | Request human approval to insert one literal line. |
+| `terminal_proposal_status` | Check a proposal's state when needed. |
+| `cancel_terminal_proposal` | Cancel a pending proposal. |
+
+There are no MCP tools for pane listing, selections, viewports, or immutable
+buffer/terminal snapshots. Those operations remain in the underlying host
+context protocol. The MCP adapter does not expose arbitrary editor commands,
+file saving, or terminal submission.
 
 ## Finding the right target
 
@@ -117,6 +138,5 @@ edits and terminal approvals. Buffer and terminal text is untrusted source data.
 
 Change the MCP command from `runyte-context` to the Runyte binary and prepend
 `mcp` to its arguments. Keep the same `--identity` and private-store environment.
-Existing grants work. Restart the agent once to load the new configuration.
-The old Python adapter remains available, including snapshot and viewport
-tools, but retains its dynamic tool-list and agent-startup limitations.
+Existing grants work. Restart the MCP client to load the new configuration.
+The Python adapter has been removed; no separate package is needed.

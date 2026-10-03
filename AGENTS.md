@@ -284,8 +284,11 @@ and the order of the push. Do not infer any of those from the commit history.
   `context_reads.rs` owns connection-scoped reads and revision-checked edits.
   `src/app/context_access.rs` owns native grants and terminal-text approval.
   `src/mcp.rs` and `src/mcp/` implement the built-in `runyte mcp` stdio adapter;
-  the host remains the authorization boundary. `bridges/runyte-context/` is the
-  legacy Python adapter. Terminal insertion never submits Enter.
+  the host remains the authorization boundary. This is the supported MCP
+  integration, with nine tools. Pane, selection, viewport and snapshot operations
+  remain part of the host context protocol, outside the MCP tool catalog.
+  MCP acceptance tests and editor/PTY fixtures live in `tests/mcp/`. Terminal
+  insertion never submits Enter.
 - `src/main.rs`: CLI, Crossterm lifecycle, and event loop.
 
 Key dispatch, help, and hints must continue to read from the same keymap

@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: MPL-2.0
 """Built-in binary MCP against real editors; fixtures isolate all storage."""
 import os
-import json
 from pathlib import Path
 import time
 import unittest
 
-from test_runyte import BINARY, UNIX_PTY, RealMCPClient
-import test_runyte as fixture
+from editor_fixture import BINARY, UNIX_PTY
+from mcp_client import RealMCPClient
+import editor_fixture as fixture
 
 
 @unittest.skipUnless(UNIX_PTY and BINARY, 'set RUNYTE_CONTEXT_TEST_BINARY on Unix')
 class NativeMCPTests(unittest.TestCase):
-    setUp = fixture.RealRunyteTests.setUp
-    editor = fixture.RealRunyteTests.editor
+    setUp = fixture.EditorFixture.setUp
+    editor = fixture.EditorFixture.editor
 
     def client(self, identity):
-        client = RealMCPClient(self.binary, self.root, self.env, identity, native=True)
+        client = RealMCPClient(self.binary, self.root, self.env, identity)
         self.addCleanup(client.close)
         return client
 
@@ -55,12 +55,6 @@ class NativeMCPTests(unittest.TestCase):
             self.assertEqual(terminal['name'], 'shell-one')
             self.assertEqual(terminal['matched_on'], 'content')
             self.assertIn('CLAUDE_LIVE_MARKER', terminal['excerpt'])
-        legacy_started = time.monotonic()
-        legacy = RealMCPClient(self.binary, self.root, self.env, 'codex')
-        self.addCleanup(legacy.close)
-        legacy_catalog = legacy.rpc('tools/list', {})['result']['tools']
-        legacy_startup_ms = (time.monotonic() - legacy_started) * 1000
-        print(f'Tool catalog bytes: native={len(json.dumps(catalog))}, legacy={len(json.dumps(legacy_catalog))}; legacy startup+catalog={legacy_startup_ms:.1f} ms', flush=True)
         proposed = self.call(client, 'propose_terminal_text', terminal=terminal['terminal'], text='hello Claude')
         self.assertEqual(proposed['data']['state'], 'pending')
         self.call(client, 'cancel_terminal_proposal', proposal=proposed['data']['proposal'])

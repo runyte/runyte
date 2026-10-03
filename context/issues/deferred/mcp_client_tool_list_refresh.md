@@ -96,7 +96,9 @@ mutation checks the exact host grant. Native grant changes renew connections
 on the next search without requiring a client tool-list refresh. This
 supersedes the dynamic-advertisement constraint below for the native adapter;
 it does not weaken native approval or make the client honor notifications.
-The separately installed Python adapter retains the behavior diagnosed here.
+The separately installed Python adapter retained the behavior diagnosed here
+until its removal. This record preserves that diagnosis; current MCP setup
+uses the built-in Rust adapter described in `docs/mcp.md`.
 The native implementation and verification are tracked in
 `context/reviews/native_mcp_ux.md` pending review and a fix commit.
 

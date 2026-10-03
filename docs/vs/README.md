@@ -101,8 +101,8 @@ Present workflow recommendations as judgments based on the comparison.
   command compatibility; do not call Runyte Helix-compatible. Use the
   [UI vocabulary](../../context/reference/ui-vocabulary.md) for Runyte surfaces.
 - Keep optional [plugins](../plugins.md) and the
-  [context bridge](../../bridges/runyte-context/README.md) distinct. Describe
-  bridge grants and terminal approval accurately without implying that agents
+  [built-in MCP adapter](../mcp.md) distinct. Describe
+  native grants and terminal approval accurately without implying that agents
   can approve their own access or submit terminal commands automatically.
 - Review related pages when shared Runyte behavior changes. Update the date only
   after rechecking the claims, not just when fixing spelling.

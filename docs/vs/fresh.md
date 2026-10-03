@@ -14,7 +14,7 @@ Persistence alone does not distinguish them. Fresh also documents daemon attachm
 
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide.md), [plugin contract](../plugins.md), and
-[optional context bridge](../../bridges/runyte-context/README.md).
+[built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 
 | Area | Runyte | Fresh |
@@ -24,7 +24,7 @@ The bridge requires native grants; terminal-text proposals need approval and do 
 | Terminals | Built-in terminal panes with scrollback and modal review. | Built-in terminal emulator. [Terminal](https://getfresh.dev/docs/features/terminal). |
 | Navigation and search | Finder searches files, unsaved buffers, and terminals together. | File explorer, navigation, and project search; bundled plugins add Git search tools. [Plugins](https://getfresh.dev/docs/plugins/). |
 | Persistence | Optional persistent host retains buffers and processes while detached; live state ends at host shutdown or reboot. | Daemon mode supports detach/reattach; hot exit restores unsaved buffers. A bare invocation defaults to its orchestrator workspace. [Daemon mode](https://getfresh.dev/docs/features/session-persistence). |
-| Agent integration | Run agents in terminals; optional MCP bridge grants access to buffers and terminal context. | Terminal-hosted agents and CLI scripting that can inspect and manipulate the editor through TypeScript. [Scripting](https://getfresh.dev/docs/features/scripting). |
+| Agent integration | Run agents in terminals; built-in MCP adapter shares buffers and terminal context through native grants. | Terminal-hosted agents and CLI scripting that can inspect and manipulate the editor through TypeScript. [Scripting](https://getfresh.dev/docs/features/scripting). |
 | Extensibility | Explicitly enabled external-process plugins, in any language, using the documented JSON protocol. | TypeScript plugins, language packs, themes, and a built-in package manager. [Plugins](https://getfresh.dev/docs/plugins/). |
 | Interaction model | Modal keys, contextual help and key hints, plus mouse selection and pane resizing. | Conventional shortcuts, command palette, menus, mouse interaction, and a keybinding editor. [Features](https://getfresh.dev/docs/features/). |
 | Language tooling | Bundled Tree-sitter grammars and asynchronous LSP. | Syntax highlighting and LSP integration. [Documentation](https://getfresh.dev/docs/). |

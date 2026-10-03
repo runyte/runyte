@@ -14,7 +14,7 @@ Runyte supplies a selection-first project workflow with its own Finder, Git view
 
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide.md), [plugin contract](../plugins.md), and
-[optional context bridge](../../bridges/runyte-context/README.md).
+[built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 
 | Area | Runyte | Neovim |
@@ -24,7 +24,7 @@ The bridge requires native grants; terminal-text proposals need approval and do 
 | Terminals | Built-in terminal panes with scrollback and modal review. | Built-in terminal buffers, displayed in editor windows. [Terminal](https://neovim.io/doc/user/terminal/). |
 | Navigation and search | Finder searches files, unsaved buffers, and terminals together. | Buffer/window navigation and search; plugins can provide additional project pickers and combined views. |
 | Persistence | Optional persistent host retains buffers and processes while detached; live state ends at host shutdown or reboot. | Client/server and remote UI attachment are supported. Saved terminal buffers restart commands when restored; that differs from keeping processes alive. [Remote](https://neovim.io/doc/user/remote/), [terminal](https://neovim.io/doc/user/terminal/). |
-| Agent integration | Run agents in terminals; optional MCP bridge grants access to buffers and terminal context. | Agents can run in terminal buffers; editor automation uses APIs, RPC, and optional integrations. |
+| Agent integration | Run agents in terminals; built-in MCP adapter shares buffers and terminal context through native grants. | Agents can run in terminal buffers; editor automation uses APIs, RPC, and optional integrations. |
 | Extensibility | Explicitly enabled external-process plugins, in any language, using the documented JSON protocol. | Lua, Vimscript, and RPC extensions in other languages. [Overview](https://neovim.io/). |
 | Interaction model | Modal keys, contextual help and key hints, plus mouse selection and pane resizing. | Vim-style modal interaction, configurable mappings, and interfaces supplied by the chosen UI. |
 | Language tooling | Bundled Tree-sitter grammars and an asynchronous LSP client. | Built-in LSP and Tree-sitter facilities; configuration and plugins shape the language workflow. [Overview](https://neovim.io/). |

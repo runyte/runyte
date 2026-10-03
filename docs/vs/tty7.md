@@ -14,7 +14,7 @@ This comparison spans different layers: tty7 can provide the terminal in which R
 
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide.md), [plugin contract](../plugins.md), and
-[optional context bridge](../../bridges/runyte-context/README.md).
+[built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 
 | Area | Runyte | tty7 |
@@ -24,7 +24,7 @@ The bridge requires native grants; terminal-text proposals need approval and do 
 | Terminals | Built-in terminal panes with scrollback and modal review. | Own terminal window, tabs, splits, and background server. |
 | Navigation and search | Finder searches files, unsaved buffers, and terminals together. | Scrollback search, command palette, and repository-grouped tabs. |
 | Persistence | Optional persistent host retains buffers and processes while detached; live state ends at host shutdown or reboot. | Background server retains shells when the window closes; supported agent sessions can resume after restart. Resumption uses new processes. |
-| Agent integration | Run agents in terminals; optional MCP bridge grants access to buffers and terminal context. | Agent detection; supported hooks add status, notifications, waits, and resumption. |
+| Agent integration | Run agents in terminals; built-in MCP adapter shares buffers and terminal context through native grants. | Agent detection; supported hooks add status, notifications, waits, and resumption. |
 | Extensibility | Explicitly enabled external-process plugins, in any language, using the documented JSON protocol. | CLI automation and agent hooks; these differ from an editor plugin API. |
 | Interaction model | Modal keys, contextual help and key hints, plus mouse selection and pane resizing. | Graphical controls and keyboard shortcuts; GPU rendering via gpui. |
 | Remote work | Workspace host uses local transport. | Native SSH stack, remote workspaces, SFTP, and port forwarding. |
