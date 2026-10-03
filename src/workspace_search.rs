@@ -301,13 +301,27 @@ fn extend_matches(
             return false;
         }
         let line = line.as_ref();
+        let mut previous_byte = 0;
+        let mut previous_column = 0;
+        let mut preview = None;
         for found in matcher.find_iter(line) {
+            if cancelled() {
+                return false;
+            }
+            // Matches never overlap. Count each prefix fragment once rather
+            // than scanning from column zero again for every result.
+            let column = previous_column + line[previous_byte..found.start()].chars().count();
+            let length = found.as_str().chars().count();
+            previous_byte = found.end();
+            previous_column = column + length;
+            let preview =
+                preview.get_or_insert_with(|| line.trim().chars().take(240).collect::<String>());
             matches.push(WorkspaceMatch {
                 path: path.to_path_buf(),
                 row,
-                column: line[..found.start()].chars().count(),
-                length: found.as_str().chars().count(),
-                preview: line.trim().chars().take(240).collect(),
+                column,
+                length,
+                preview: preview.clone(),
             });
             if matches.len() > GLOBAL_SEARCH_RESULT_LIMIT {
                 return true;
