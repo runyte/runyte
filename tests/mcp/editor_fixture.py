@@ -225,6 +225,18 @@ class NativeEditor:
         self.command(rename_command)
         self.wait_output(rename_marker, deadline=deadline, compact=True)
 
+    def revoke_context_access(self, identity):
+        deadline = time.monotonic() + 15
+        command = 'context-access ' + identity
+        self.command(command)
+        self.wait_output('MCP permissions', deadline=deadline)
+        os.write(self.fd, b'x')
+        # Closing the overlay only queues the host decision. Reopen it and
+        # wait for the applied grant state before testing an existing MCP
+        # handle; MCP discovery here could invalidate that handle itself.
+        self.command(command)
+        self.wait_output('Not granted', deadline=deadline)
+
     def detach(self):
         self.command('detach')
         self.wait_exit()

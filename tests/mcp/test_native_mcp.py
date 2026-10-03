@@ -72,14 +72,9 @@ class NativeMCPTests(unittest.TestCase):
         catalog = client.rpc('tools/list', {})['result']['tools']
         found = self.find(client, kind='buffer', query='note')
         old = found['results'][0]['buffer']
-        editor.command('mcp codex')
-        editor.wait_output('MCP permissions')
-        os.write(editor.fd, b'x')
-        time.sleep(.1)
+        editor.revoke_context_access('codex')
         denied = client.tool('read_buffer', buffer=old)
         self.assertTrue(denied['isError'])
-        editor.command('mcp codex')
-        editor.wait_output('Not granted')
         os.write(editor.fd, b'34')
         for _ in range(4):
             os.write(editor.fd, b'j')

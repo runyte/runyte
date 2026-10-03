@@ -68,6 +68,32 @@ class NativeFixtureSynchronizationTests(unittest.TestCase):
         self.assertNotIn(b'namedDetached', compact_presentation(editor.output))
         editor.wait_output('namedDetached', seconds=.05, compact=True)
 
+    def test_revocation_waits_for_applied_permissions_in_a_complete_frame(self):
+        editor = self.screen_fixture()
+        editor.fd = 123
+        editor.command = Mock()
+        editor.screen.feed(b'MCP permissions: Enabled')
+        now = 0
+        frames = iter([
+            b'',  # The editor has not processed the queued native keys yet.
+            b'\x1b[?2026h\x1b[2JNot granted',
+            b'\x1b[?2026l',
+        ])
+
+        def advance(_seconds):
+            nonlocal now
+            now += .15  # A delayed acknowledgement exceeds both old sleeps.
+            editor.screen.feed(next(frames))
+
+        with patch('editor_fixture.os.write') as write, \
+                patch('editor_fixture.time.monotonic', side_effect=lambda: now), \
+                patch('editor_fixture.time.sleep', side_effect=advance):
+            editor.revoke_context_access('codex')
+
+        write.assert_called_once_with(editor.fd, b'x')
+        self.assertGreater(now, .2)
+        self.assertIn('Not granted', fixture.screen_text(editor.screen))
+
     def test_terminal_marker_is_child_output_and_absent_from_typed_command(self):
         with tempfile.TemporaryDirectory(prefix='ry-terminal-fixture-') as directory:
             stop = Path(directory) / 'stop'
@@ -236,10 +262,7 @@ class RealRunyteTests(fixture.EditorFixture):
             expected_revision=observed['revision'], **{'from': 0, 'to': observed['chars']})['text'], read['text'])
 
         # Revoke only Codex in workspace one through genuine native overlay input.
-        standalone.command('context-access codex')
-        standalone.wait_output('MCP permissions')
-        os.write(standalone.fd, b'x')
-        time.sleep(.2)
+        standalone.revoke_context_access('codex')
         denied = codex.tool('read_buffer', buffer=original['buffer'],
                            expected_revision=edited['revision'], **{'from': 0, 'to': 1})
         self.assertTrue(denied['isError'])
