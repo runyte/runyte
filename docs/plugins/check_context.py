@@ -140,6 +140,29 @@ class ContextClientTests(unittest.TestCase):
             self.assertEqual(len(host.frames), 3)
             self.assertIsNone(client._socket)
 
+    def test_append_success_and_uncertain_delivery(self):
+        scopes = ('editor_context_read', 'buffer_edit')
+        params = {'buffer': 'b:1', 'text': '猫\n', 'expected_tail': 'old\n'}
+        def reply(host, connection, request):
+            self.assertEqual(request['method'], 'buffer.append')
+            self.assertEqual(request['params'], params)
+            host.send(connection, {'type': 'response', 'id': request['id'],
+                                   'result': {'buffer': 'b:1', 'revision': 'r:2'}})
+            return True
+        with Host(reply, scopes=scopes) as host, self.client(host, required_scopes=scopes, optional_scopes=()) as client:
+            self.assertEqual(client.request('buffer.append', params), {'buffer': 'b:1', 'revision': 'r:2'})
+        with Host(lambda *_: False, scopes=scopes) as host, self.client(host, required_scopes=scopes, optional_scopes=()) as client:
+            with self.assertRaises(ContextError) as error:
+                client.request('buffer.append', params)
+            self.assertEqual(error.exception.code, 'outcome_unknown')
+            self.assertEqual(len(host.frames), 3)
+            self.assertIsNone(client._socket)
+        with Host() as host, self.client(host) as client:
+            with self.assertRaises(ContextError) as error:
+                client.request('buffer.append', params)
+            self.assertEqual(error.exception.code, 'capability_denied')
+            self.assertEqual(len(host.frames), 2)
+
     def test_malformed_duplicate_or_mismatched_reply_closes_connection(self):
         for raw in [b'{"type":"response","id":"c:1","id":"c:1","result":{}}\n',
                     b'{"type":"response","id":"c:99","result":{}}\n',
@@ -213,6 +236,22 @@ class ContextClientTests(unittest.TestCase):
 class ContextSchemaTests(unittest.TestCase):
     def setUp(self):
         self.validator = Draft202012Validator(SCHEMA)
+
+    def test_append_shape_and_utf8_limits(self):
+        for params in ({'buffer': 'b:1', 'text': '猫\n'},
+                       {'buffer': 'b:1', 'text': '猫\n', 'expected_tail': None},
+                       {'buffer': 'b:1', 'text': 'x' * 524288, 'expected_tail': 'x' * 4096}):
+            with self.subTest(params_length=len(params['text'])):
+                self.assertTrue(self.validator.is_valid({'type': 'request', 'id': 'c:1',
+                                'method': 'buffer.append', 'params': params}))
+                self.assertEqual(validate_request('buffer.append', params), 'buffer_edit')
+        for params in ({'text': ''}, {'text': None}, {'text': '\ud800'},
+                       {'text': 'é' * 262145}, {'expected_tail': ''},
+                       {'expected_tail': False}, {'expected_tail': 'é' * 2049},
+                       {'expected_tail': '\ud800'}, {'expected_revision': 'r:1'}):
+            value = {'buffer': 'b:1', 'text': 'line\n', **params}
+            with self.subTest(fields=tuple(params)), self.assertRaises(ContextError):
+                validate_request('buffer.append', value)
 
     def test_schema_and_every_request_shape_have_matching_closed_validation(self):
         Draft202012Validator.check_schema(SCHEMA)
