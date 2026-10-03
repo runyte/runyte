@@ -3503,18 +3503,26 @@ fn open_input_trace() -> Result<Option<fs::File>> {
     let Some(path) = std::env::var_os("RUNYTE_INPUT_TRACE") else {
         return Ok(None);
     };
-    fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| {
-            format!(
-                "failed to open RUNYTE_INPUT_TRACE path {}",
-                Path::new(&path).display()
-            )
-        })
-        .map(Some)
+    let mut options = fs::OpenOptions::new();
+    options.create(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(&path).with_context(|| {
+        format!(
+            "failed to open RUNYTE_INPUT_TRACE path {}",
+            Path::new(&path).display()
+        )
+    })?;
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "RUNYTE_INPUT_TRACE requires a regular file"
+    );
+    file.set_len(0)
+        .context("failed to truncate RUNYTE_INPUT_TRACE")?;
+    Ok(Some(file))
 }
 
 #[cfg(debug_assertions)]
@@ -8744,3 +8752,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix, debug_assertions))]
+#[path = "tui/tests/input_trace.rs"]
+mod input_trace_tests;
