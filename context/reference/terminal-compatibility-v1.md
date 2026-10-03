@@ -132,6 +132,13 @@ in `src/terminal/pending/tests.rs` covers cancellation with unread output and
 an independently held slave. The exited-leader descendant test in that file
 keeps terminal output empty to establish its non-reaping zombie barrier.
 
+Partial Unix setup follows the same ordering: the child guard owns the initial
+master and slave, cancels any started unpublished worker, signals the still
+unreaped child group, closes its endpoints, and only then waits. The
+`unpublished_setup_failures_cancel_gates_and_release_accounting` test in
+`src/terminal/pty.rs` injects failure after child ownership, each descriptor
+duplication, and writer startup, with output queued before cleanup.
+
 Deliberate limits:
 
 - Windows Phase 1 provides provisional standalone ConPTY support on x86-64
