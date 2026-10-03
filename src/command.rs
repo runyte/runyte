@@ -2752,6 +2752,39 @@ impl CommandInvocation {
                     && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(
+                command @ (EditorCommand::OpenTerminal
+                | EditorCommand::OpenTerminalFileDirectory
+                | EditorCommand::OpenTerminalDirectoryRoot
+                | EditorCommand::OpenTerminalSelectedDirectory
+                | EditorCommand::OpenTerminalSessionDirectory
+                | EditorCommand::ShowTerminal
+                | EditorCommand::RenameTerminal
+                | EditorCommand::SendToTerminal),
+            ) => {
+                // Bindings carry no parameters; named invocations carry the
+                // optional command, name, or terminal selector explicitly.
+                if matches!(
+                    parameters,
+                    InvocationParameters::None | InvocationParameters::OptionalText(_)
+                ) {
+                    validate_editor_execution(command, execution)?;
+                    true
+                } else {
+                    false
+                }
+            }
+            CommandId::Editor(command @ EditorCommand::OpenPathFilePicker) => {
+                if matches!(
+                    parameters,
+                    InvocationParameters::None | InvocationParameters::OptionalPath(_)
+                ) {
+                    validate_editor_execution(command, execution)?;
+                    true
+                } else {
+                    false
+                }
+            }
+            CommandId::Editor(
                 command @ (EditorCommand::OpenThemeSettings | EditorCommand::ShowTutorial),
             ) => {
                 if matches!(parameters, InvocationParameters::OptionalText(_)) {
@@ -3012,7 +3045,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (
             Colon::GitStashTracked | Colon::GitStashAll | Colon::GitStashUntracked,
             InvocationParameters::OptionalText(value),
-        ) => value.as_ref().is_some_and(|value| !value.trim().is_empty()),
+        ) => value.as_ref().is_none_or(|value| !value.trim().is_empty()),
         (
             Colon::ResizeRight | Colon::ResizeLeft | Colon::ResizeTop | Colon::ResizeBottom,
             InvocationParameters::PaneResize(delta),
@@ -3971,6 +4004,116 @@ mod tests {
                 "folder"
             ))))
         );
+    }
+
+    #[test]
+    fn typed_construction_preserves_named_optional_argument_invocations() {
+        for (name, argument) in [
+            ("terminal", "htop"),
+            ("terminal-file-directory", "htop"),
+            ("terminal-directory-root", "htop"),
+            ("terminal-selected-directory", "htop"),
+            ("terminal-session-directory", "1"),
+            ("terminal-show", "1"),
+            ("terminal-rename", "build"),
+            ("terminal-send", "1"),
+            ("file-picker-path", "src"),
+        ] {
+            for argument in [None, Some(argument)] {
+                // Required arguments are exercised with their supplied value.
+                let Ok(parsed) = parse_named_command(name, argument) else {
+                    assert!(argument.is_none(), "{name}");
+                    continue;
+                };
+                assert_eq!(
+                    CommandInvocation::from_parts(
+                        parsed.id(),
+                        parsed.parameters().clone(),
+                        parsed.execution(),
+                    ),
+                    Ok(parsed.clone()),
+                    "{name} {argument:?}"
+                );
+                let CommandId::Editor(command) = parsed.id() else {
+                    unreachable!()
+                };
+                let keyboard =
+                    CommandInvocation::editor(command, CommandExecutionContext::default()).unwrap();
+                assert_eq!(
+                    CommandInvocation::from_parts(
+                        keyboard.id(),
+                        keyboard.parameters().clone(),
+                        keyboard.execution(),
+                    ),
+                    Ok(keyboard),
+                    "{name} keyboard invocation"
+                );
+                assert!(
+                    CommandInvocation::from_parts(
+                        parsed.id(),
+                        InvocationParameters::PaneResize(1),
+                        parsed.execution(),
+                    )
+                    .is_err()
+                );
+                assert!(
+                    CommandInvocation::from_parts(
+                        parsed.id(),
+                        parsed.parameters().clone(),
+                        CommandExecutionContext::resolved(std::num::NonZeroUsize::MIN, Some('x')),
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn typed_construction_accepts_the_entire_named_command_inventory() {
+        for spec in COMMANDS {
+            let argument = match spec.arguments {
+                CommandArguments::None | CommandArguments::Optional(_) => None,
+                CommandArguments::Required(ArgumentKind::Path) => Some("folder/note.txt"),
+                CommandArguments::Required(ArgumentKind::FreeText) => Some(match spec.id {
+                    CommandId::Colon(ColonCommand::SessionRename) => "workspace name",
+                    CommandId::Colon(ColonCommand::GitNetworkRef) => "refs/heads/main",
+                    CommandId::Colon(
+                        ColonCommand::ResizeLeft
+                        | ColonCommand::ResizeRight
+                        | ColonCommand::ResizeTop
+                        | ColonCommand::ResizeBottom,
+                    ) => "+ 1",
+                    _ => "example",
+                }),
+            };
+            let parsed = parse_named_command(spec.name, argument).unwrap();
+            assert_eq!(
+                CommandInvocation::from_parts(
+                    parsed.id(),
+                    parsed.parameters().clone(),
+                    parsed.execution(),
+                ),
+                Ok(parsed),
+                "{}",
+                spec.name
+            );
+        }
+        for command in [
+            ColonCommand::GitStashTracked,
+            ColonCommand::GitStashAll,
+            ColonCommand::GitStashUntracked,
+        ] {
+            for name in ["", "   "] {
+                assert!(
+                    CommandInvocation::from_parts(
+                        CommandId::Colon(command),
+                        InvocationParameters::OptionalText(Some(name.to_owned())),
+                        CommandExecutionContext::default(),
+                    )
+                    .is_err()
+                );
+            }
+        }
     }
 
     #[test]
