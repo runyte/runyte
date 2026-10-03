@@ -342,12 +342,19 @@ fn paths_overlap(left: &Path, right: &Path) -> bool {
 
 #[cfg(not(windows))]
 fn comparable_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| {
-        path.parent()
-            .and_then(|parent| parent.canonicalize().ok())
-            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
-            .unwrap_or_else(|| path.to_path_buf())
-    })
+    // A future state directory may have several absent parents. Resolve the
+    // existing ancestor before comparing it with per-user storage, otherwise
+    // a symlink above those parents hides their eventual containment.
+    for ancestor in path.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(resolved) => {
+                return resolved.join(path.strip_prefix(ancestor).unwrap());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => break,
+        }
+    }
+    path.to_path_buf()
 }
 
 fn is_git_root(candidate: &Path) -> io::Result<bool> {
@@ -755,6 +762,25 @@ mod tests {
         assert!(validate_state_root(&home.join(".runyte"), &[config]).is_ok());
 
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_root_overlap_resolves_aliases_above_missing_descendants() {
+        let root = tempfile();
+        let reserved = root.join("reserved");
+        let alias = root.join("alias");
+        fs::create_dir(&reserved).unwrap();
+        std::os::unix::fs::symlink(&reserved, &alias).unwrap();
+        let state = alias.join("not-created/yet");
+        assert!(initialize(&root, &state, std::slice::from_ref(&reserved)).is_err());
+        assert!(!reserved.join("not-created").exists());
+        assert!(validate_state_root(&reserved, &[state]).is_err());
+
+        let separate = root.join("separate/not-created/yet");
+        initialize(&root, &separate, std::slice::from_ref(&reserved)).unwrap();
+        assert!(separate.is_dir());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
