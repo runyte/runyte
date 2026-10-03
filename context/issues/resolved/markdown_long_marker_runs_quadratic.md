@@ -1,3 +1,21 @@
+---
+title: "Long Markdown marker runs cause repeated unbounded scans"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 57db4ce
+---
+
+## Resolution
+
+Commit `57db4ce` (`perf(markdown): skip unparseable marker prefixes in one pass`).
+
+The inline parser now emits the impossible-to-close prefix of oversized marker runs as literal text in one step, preserving the bounded tail for existing span parsing. Source-link navigation applies the same rule to backticks. Closing backtick inspection is bounded and fixed-width delimiter checks count only the required markers, preventing oversized input from bypassing the existing lookahead policy.
+
+Coverage: long_inline_marker_runs_remain_literal_and_keep_trailing_spans and long_closing_backticks_do_not_hide_a_later_source_link in src/markdown.rs exercise 32,768-character runs of all four marker types, valid trailing spans, source/page position mappings, long closers, and subsequent link navigation. All 33 Markdown tests pass; tests assert behavior without timing thresholds.
+
+## Report
+
 Markdown's inline parser documents a 2,048-character lookahead limit, but
 opening backtick, emphasis and strikethrough runs are counted without that
 bound. When a long run does not form a span, rendering advances one character
