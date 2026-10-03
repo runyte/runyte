@@ -8,7 +8,8 @@ from pathlib import Path
 import unittest
 import threading
 import queue
-from application import Application
+from unittest.mock import patch
+from application import Application, PluginError
 from jsonschema import Draft202012Validator
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -16,6 +17,29 @@ SCHEMA = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())
 FIXTURES = json.loads((DIRECTORY / 'stable-fixtures.json').read_text())
 
 class ApplicationSchemaTests(unittest.TestCase):
+    def test_file_manager_releases_new_directory_when_later_page_fails(self):
+        import files
+        for handle in ('new-directory', 'visible-directory'):
+            for cleanup_fails in (False, True):
+                with self.subTest(handle=handle, cleanup_fails=cleanup_fails):
+                    def request(method, **params):
+                        if method == 'filesystem.release':
+                            if cleanup_fails:
+                                raise PluginError('unavailable', 'Cleanup failed')
+                            return {}
+                        if params['offset'] == 0:
+                            return {'directory': handle, 'revision': 'd:1',
+                                    'entries': [], 'next': 128}
+                        raise PluginError('stale', 'Directory changed between pages')
+                    with patch.object(files, 'directory', 'visible-directory'), \
+                         patch.object(files.app, 'request', side_effect=request) as calls:
+                        with self.assertRaisesRegex(PluginError, 'Directory changed'):
+                            files.listing('destination')
+                        released = [call.kwargs for call in calls.call_args_list
+                                    if call.args[0] == 'filesystem.release']
+                        self.assertEqual(released, [{'directory': handle}]
+                                         if handle == 'new-directory' else [])
+
     def test_optional_alias_preserves_local_command_identity_and_bounds(self):
         schema = SCHEMA['$defs']['command']
         validator = Draft202012Validator({'$defs': SCHEMA['$defs'], **schema})
