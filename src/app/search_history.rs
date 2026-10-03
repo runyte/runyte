@@ -778,7 +778,12 @@ impl App {
             .ranges()
             .iter()
             .filter(|range| {
-                let (from, to) = operative_span(buffer, range);
+                let (from, to) = match pane.selection_semantics() {
+                    SelectionSemantics::Runyte => operative_span(buffer, range),
+                    SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
+                        (range.from(), range.to())
+                    }
+                };
                 to.saturating_sub(from) >= 2
             })
             .copied()
@@ -786,6 +791,7 @@ impl App {
         (!spans.is_empty()).then_some(SearchRegion {
             buffer: pane.buffer,
             spans,
+            semantics: pane.selection_semantics(),
         })
     }
 

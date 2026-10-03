@@ -1159,6 +1159,7 @@ struct SearchQuery {
 struct SearchRegion {
     buffer: usize,
     spans: Vec<Range>,
+    semantics: SelectionSemantics,
 }
 
 /// Exact pane selection installed by the most recent Runyte search action.
@@ -4541,7 +4542,12 @@ fn region_spans(buffer: &Buffer, region: &SearchRegion) -> Vec<(Offset, Offset)>
     region
         .spans
         .iter()
-        .map(|range| operative_span(buffer, range))
+        .map(|range| match region.semantics {
+            SelectionSemantics::Runyte => operative_span(buffer, range),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
+                (range.from(), range.to())
+            }
+        })
         .collect()
 }
 
