@@ -2,6 +2,10 @@
 
 //! File, directory-buffer, pane, and side-by-side comparison workflows.
 
+#[cfg(all(test, unix))]
+#[path = "tests/host_open_atomicity.rs"]
+mod host_open_atomicity;
+
 // Application-module dependencies:
 use super::{
     App, Axis, Buffer, BufferKind, CommandRefusal, ContentAlignment, DiffSession, DiffSide,
@@ -976,6 +980,13 @@ impl App {
             self.track_in_git(&path);
             self.buffers.len() - 1
         };
+        self.activate_opened_path(buffer_id, &path, was_showing);
+        Ok(())
+    }
+
+    /// Presents an already accepted buffer without resolving or reopening its
+    /// pathname. Host requests cross their publication boundary before this.
+    fn activate_opened_path(&mut self, buffer_id: usize, path: &Path, was_showing: usize) {
         // Only once the buffer is known to exist, so a path that failed to
         // open leaves no jump to nowhere. Retargeting the explorer the pane
         // was already showing leaves nothing to jump back to: the listing the
@@ -984,7 +995,7 @@ impl App {
             self.push_jump();
         }
         self.refresh_background_buffer(buffer_id);
-        let directory_view = self.directory_views.get(&path).cloned();
+        let directory_view = self.directory_views.get(path).cloned();
         let launch_selection = self.take_pending_launch_selection(buffer_id);
         let pane = self.active_mut();
         pane.retarget(buffer_id);
@@ -1005,7 +1016,6 @@ impl App {
         self.lsp_touch(buffer_id);
         self.status(format!("opened {}", path.display()));
         self.report_new_registry_errors();
-        Ok(())
     }
 
     pub(crate) fn host_open_file(&mut self, path: PathBuf, activate: bool) -> Result<usize> {
@@ -1195,6 +1205,20 @@ impl App {
         activate: bool,
         pending_wait_buffers: Option<&HashSet<usize>>,
     ) -> Result<Vec<usize>> {
+        self.host_open_files_prepared(paths, activate, pending_wait_buffers, || {})
+    }
+
+    fn host_open_files_prepared(
+        &mut self,
+        paths: Vec<PathBuf>,
+        activate: bool,
+        pending_wait_buffers: Option<&HashSet<usize>>,
+        before_publish: impl FnOnce(),
+    ) -> Result<Vec<usize>> {
+        ensure!(
+            !activate || paths.is_empty() || !self.plugins.filesystem_applying,
+            "Wait for filesystem changes before opening a path"
+        );
         let covered_terminal = activate.then(|| self.active_terminal()).flatten();
         enum Prepared {
             /// Already open before this request, so nothing is staged for it.
@@ -1264,6 +1288,7 @@ impl App {
             Prepared::Live(index) => self.buffers[*index].is_directory(),
             Prepared::Staged(slot) => staged[*slot].2.is_directory(),
         });
+        before_publish();
         let activated_directory = if activate && first_is_directory {
             let path = &paths[0];
             if let Some(buffer_id) = self.reusable_pane_directory_buffer() {
@@ -1280,14 +1305,15 @@ impl App {
             // pane-owned id; the atomic explorer path leaves no pane or buffer
             // mutation behind if its final listing read loses a filesystem
             // race.
-            self.open_file(path.clone())?;
-            let buffer_id = self.active().buffer;
-            ensure!(
-                self.buffers[buffer_id].is_directory()
-                    && self.buffers[buffer_id].path.as_deref() == Some(path),
-                "directory activation did not enter {}",
-                path.display()
-            );
+            // Preserve the prepared directory intent. Dispatching through
+            // open_file again could instead publish an ordinary file if the
+            // directory was replaced after preparation.
+            let was_showing = self.active().buffer;
+            self.remember_active_directory_view();
+            let buffer_id = self.retarget_pane_directory(path)?.ok_or_else(|| {
+                anyhow::anyhow!("directory activation did not enter {}", path.display())
+            })?;
+            self.activate_opened_path(buffer_id, path, was_showing);
             Some(buffer_id)
         } else {
             None
@@ -1341,9 +1367,11 @@ impl App {
                 }
             }
         } else if activate && let Some(path) = paths.first() {
-            // The buffer exists by now, so this retargets the pane rather than
-            // reading the path again.
-            self.open_file(path.clone())?;
+            // The preparation owns this buffer identity. A renamed, replaced,
+            // or newly unreadable path cannot fail after publication or select
+            // a different buffer instead of the one returned to the caller.
+            self.remember_active_directory_view();
+            self.activate_opened_path(opened[0], path, self.active().buffer);
         }
         // Recorded after the activation, because retargeting the pane is what
         // took the terminal off it. Nobody in the editor asked this pane to
