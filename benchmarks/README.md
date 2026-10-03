@@ -45,6 +45,13 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   algorithmic scaling; they do not measure ordinary terminal throughput or
   PTY/rendering latency. Output reports median (min–max) milliseconds; JSON
   retains every sample, source hashes, baseline commit, platform and compiler.
+- **`diff_filler.rs`** — compares the former backward scan with the current
+  diff viewport row lookup, using the working tree's actual diff modules.
+  Build instructions are in the file. Each sample maps the shorter side near
+  the end of a one-million-line inserted block 100 times; construction is
+  outside the clock, one warm-up is discarded, and five samples alternate
+  order. Both algorithms must return the same preceding row. This isolates
+  filler lookup cost, without measuring alignment or end-to-end scrolling.
 
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.

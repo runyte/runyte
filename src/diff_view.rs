@@ -326,12 +326,16 @@ impl DiffSession {
 
     /// The nearest row of `side` at or above an aligned row.
     pub fn row_at_or_above(&self, side: Side, aligned: usize) -> usize {
-        for candidate in (0..=aligned).rev() {
-            if let Some(row) = self.alignment.row_at(side, candidate) {
-                return row;
-            }
+        if let Some(row) = self.alignment.row_at(side, aligned) {
+            return row;
         }
-        0
+        // Filler follows the real rows of its run. Side ranges are contiguous,
+        // so an empty range's end also names the first row after all preceding
+        // real rows; no scan through the gap is necessary.
+        let runs = self.alignment.runs();
+        runs.partition_point(|run| run.aligned <= aligned)
+            .checked_sub(1)
+            .map_or(0, |index| runs[index].side(side).end.saturating_sub(1))
     }
 }
 
@@ -408,6 +412,45 @@ mod tests {
         // so it falls back to the last real line above the gap.
         assert_eq!(session.facing_row(Side::Right, 1), 0);
         assert_eq!(session.row_at_or_above(Side::Left, 1), 0);
+    }
+
+    #[test]
+    fn filler_lookup_matches_backward_scan_for_every_small_alignment() {
+        let texts = [
+            "",
+            "a\n",
+            "a\nb\n",
+            "b\na\n",
+            "x\na\ny\nb\nz\n",
+            "x\ny\nz\n",
+        ];
+        for left in texts {
+            for right in texts {
+                let session = session(left, right);
+                for side in [Side::Left, Side::Right] {
+                    for aligned in 0..session.alignment().height() + 3 {
+                        let expected = (0..=aligned)
+                            .rev()
+                            .find_map(|row| session.alignment().row_at(side, row))
+                            .unwrap_or(0);
+                        assert_eq!(
+                            session.row_at_or_above(side, aligned),
+                            expected,
+                            "left={left:?} right={right:?} side={side:?} aligned={aligned}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn large_inserted_block_maps_directly_to_preceding_row() {
+        let right = format!("head\n{}tail\n", "x\n".repeat(1_000_000));
+        let session = session("head\ntail\n", &right);
+        assert_eq!(session.row_at_or_above(Side::Left, 1_000_000), 0);
+        assert_eq!(session.row_at_or_above(Side::Left, 1_000_001), 1);
+        assert_eq!(session.row_at_or_above(Side::Right, 1_000_000), 1_000_000);
     }
 
     #[test]
