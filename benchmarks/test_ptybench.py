@@ -72,6 +72,21 @@ class MedianStartupTests(unittest.TestCase):
 
 
 class QuitValidityTests(unittest.TestCase):
+    def test_terminal_eof_does_not_bypass_the_quit_deadline(self) -> None:
+        script = (
+            "import os,signal,time; "
+            "signal.signal(signal.SIGHUP,signal.SIG_IGN); "
+            "os.close(0); os.close(1); os.close(2); time.sleep(2)"
+        )
+        started = time.monotonic()
+        with mock.patch.object(ptybench, "QUIT_TIMEOUT_SECONDS", 0.05):
+            result = ptybench.measure_startup(
+                [sys.executable, "-c", script], {}, b"DOC"
+            )
+
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertIsNone(result["quit"])
+
     def test_cleanup_does_not_signal_an_already_reaped_pid(self) -> None:
         with mock.patch("ptybench.os.waitpid", side_effect=ChildProcessError):
             with mock.patch("ptybench.os.kill") as kill:

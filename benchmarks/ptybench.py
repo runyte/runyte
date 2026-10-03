@@ -195,7 +195,9 @@ def measure_startup(argv, env, document_marker, cwd=None):
     exit_status = None
     saw_eof = False
     while time.perf_counter() - exit_wait_start < QUIT_TIMEOUT_SECONDS:
-        readable, _, _ = select.select([fd], [], [], 0.01)
+        # EOF closes the output channel, not necessarily the child process.
+        # Stop polling the permanently readable PTY but keep the exit deadline.
+        readable, _, _ = select.select([] if saw_eof else [fd], [], [], 0.01)
         if readable:
             try:
                 data = os.read(fd, 65536)
@@ -217,14 +219,6 @@ def measure_startup(argv, env, document_marker, cwd=None):
             exited = time.perf_counter()
             exit_status = status
             break
-        if saw_eof:
-            try:
-                _, exit_status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                pass
-            exited = time.perf_counter()
-            break
-
     if exited is None:
         _reap(pid)
     try:
