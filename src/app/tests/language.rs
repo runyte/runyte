@@ -1624,6 +1624,7 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
         ]),
     });
     let picker = app.list.as_ref().expect("several results open a picker");
+    assert_eq!(picker.title, "References");
     assert_eq!(picker.items.len(), 2);
 
     // Enter jumps to the selected row.

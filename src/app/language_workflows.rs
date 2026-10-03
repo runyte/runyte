@@ -1901,11 +1901,8 @@ impl App {
             actions.push(ListAction::Jump(location));
         }
         self.list_actions = actions;
-        let title = format!("{}{label}", label[..1].to_uppercase());
-        self.list = Some(
-            ListPicker::new(format!("{}{}", &title[..1], &title[1..]), items)
-                .with_primary_action("jump"),
-        );
+        let title = format!("{}{}", label[..1].to_uppercase(), &label[1..]);
+        self.list = Some(ListPicker::new(title, items).with_primary_action("jump"));
     }
 
     /// The source line a location points at, when the file is already open.
