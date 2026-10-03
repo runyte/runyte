@@ -20,6 +20,8 @@ this change makes that path linear without changing authored help content.
 All seven `key_spelling` tests passed, including
 `unicode_marker_offsets_and_escaped_boundaries_stay_exact` and
 `large_unmarked_page_has_identity_character_offsets` in `src/key_spelling.rs`.
+The Unicode regression asserts the substitution count and its single range
+separately, keeping the intended range-valued comparison explicit for Clippy.
 The parent reviewer independently checked all output append and offset-map
 update paths. No wall-clock speedup is claimed for this change.
 

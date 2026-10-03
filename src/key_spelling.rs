@@ -333,7 +333,8 @@ mod tests {
         let template = format!("λ{marker}e\u{301}{{{{key:nope}}");
         let (resolved, map) = resolve_with_map(&template, default_keymap()).unwrap();
         assert_eq!(resolved.text, "λ界e\u{301}{key:nope}");
-        assert_eq!(resolved.substitutions, [1..2]);
+        assert_eq!(resolved.substitutions.len(), 1);
+        assert_eq!(resolved.substitutions[0], 1..2);
         let after_marker = 1 + marker.chars().count();
         assert_eq!(map[0], 0);
         assert!(map[1..after_marker].iter().all(|offset| *offset == 1));
