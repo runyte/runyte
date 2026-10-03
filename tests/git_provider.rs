@@ -420,6 +420,27 @@ fn discovery_finds_the_working_tree_from_any_directory_inside_it() {
     assert_eq!(found.git_dir(), repository.path().join(".git"));
 }
 
+#[cfg(unix)]
+#[test]
+fn discovery_preserves_trailing_whitespace_and_non_utf8_path_bytes() {
+    use std::os::unix::ffi::OsStringExt;
+
+    for suffix in [b" ".as_slice(), b"\t", b"\n", b"\xff"] {
+        let mut fixture = TempRepository::new("discovery-path-bytes");
+        let mut name = fixture.path().as_os_str().as_encoded_bytes().to_vec();
+        name.extend_from_slice(suffix);
+        let renamed = PathBuf::from(std::ffi::OsString::from_vec(name));
+        fs::rename(fixture.path(), &renamed).unwrap();
+        fixture.0 = renamed;
+
+        let repository = provider().discover(fixture.path()).unwrap().unwrap();
+
+        assert_eq!(repository.workdir(), fixture.path());
+        assert_eq!(repository.git_dir(), fixture.path().join(".git"));
+        assert_eq!(repository.common_dir(), repository.git_dir());
+    }
+}
+
 #[test]
 fn provider_refusals_validate_every_external_identity_before_mutating_git() {
     let fixture = TempRepository::new("invalid-identities");

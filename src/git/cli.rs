@@ -2117,44 +2117,48 @@ impl GitCliProvider {
         )?;
         // Discovery, including explicit retries, is a read with the same
         // deadline and output ceiling as other bounded local reads.
-        let read = |directory: &Path, argument: &str| -> Result<String> {
+        let read = |directory: &Path, argument: &str| -> Result<PathBuf> {
             let arguments = ["rev-parse", argument];
             let output = self.run_read_bounded(directory, &arguments, self.max_output_bytes)?;
-            Ok(self.utf8(&arguments, output)?.trim_end().to_owned())
+            // Git terminates a pathname with one newline. Other trailing
+            // whitespace, and non-UTF-8 Unix bytes, belong to the path.
+            let path = output.strip_suffix(b"\n").unwrap_or(&output);
+            status::path_from_bytes(path).map_err(|detail| GitError::Malformed {
+                command: self.describe(&arguments),
+                detail,
+            })
         };
         let toplevel = read(start, "--show-toplevel")?;
-        if toplevel.is_empty() {
+        if toplevel.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--show-toplevel"]),
                 detail: "Git reported an empty repository root after a repository marker was found"
                     .to_owned(),
             });
         }
-        let workdir = PathBuf::from(toplevel);
+        let workdir = toplevel;
         #[cfg(windows)]
         let workdir = paths_windows::identity(&workdir)?;
-        let git_dir_text = read(&workdir, "--git-dir")?;
-        if git_dir_text.is_empty() {
+        let git_dir = read(&workdir, "--git-dir")?;
+        if git_dir.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-dir"]),
                 detail: "Git reported an empty repository metadata directory".to_owned(),
             });
         }
-        let git_dir = PathBuf::from(git_dir_text);
         let git_dir = if git_dir.is_absolute() {
             git_dir
         } else {
             workdir.join(git_dir)
         };
         let git_dir = git_dir.canonicalize().unwrap_or(git_dir);
-        let common_text = read(&workdir, "--git-common-dir")?;
-        if common_text.is_empty() {
+        let common = read(&workdir, "--git-common-dir")?;
+        if common.as_os_str().is_empty() {
             return Err(GitError::Malformed {
                 command: self.describe(&["rev-parse", "--git-common-dir"]),
                 detail: "Git reported an empty common metadata directory".to_owned(),
             });
         }
-        let common = PathBuf::from(common_text);
         let common = if common.is_absolute() {
             common
         } else {
