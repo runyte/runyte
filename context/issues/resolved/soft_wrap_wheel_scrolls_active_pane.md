@@ -1,3 +1,27 @@
+---
+title: "Soft-wrap wheel scrolling changes the active pane instead of the hovered pane"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 6bcf501
+---
+
+## Resolution
+
+Commit `6bcf501` (`fix(panes): scroll the hovered pane when soft wrapping`).
+
+`App::scroll_pane` derived wrapping coordinates from the requested pane but
+mutated `active_mut()`. Looking up `pane_id` for that mutation keeps geometry
+and state attached to the same pane, also preventing the mismatched upward
+scroll subtraction from underflowing.
+
+Coverage: `soft_wrap_wheel_scrolls_the_hovered_inactive_pane_in_both_directions`
+in `src/app/tests/presentation_and_settings.rs` sends physical pointer events
+over an inactive pane and verifies both scroll directions, unchanged keyboard
+focus, and preserved selections. It failed before the fix and passes after it.
+
+## Report
+
 With soft wrapping enabled, a mouse wheel event over an inactive document pane
 changes the active pane's viewport instead. `scroll_pane` calculates wrapped
 rows from the requested pane, but mutates `active_mut()` in its wrapped branch.
