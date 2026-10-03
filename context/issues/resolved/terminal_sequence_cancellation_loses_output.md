@@ -1,3 +1,21 @@
+---
+title: "Cancelled terminal sequences swallow subsequent output"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 36addad
+---
+
+## Resolution
+
+Commit `36addad` (`fix(terminal): cancel interrupted control sequences consistently`).
+
+Parser::step now handles CAN and SUB before state dispatch and abandons all partial sequence data, including ignored strings. ESC restarts non-string collection and ignore states while string states retain their terminator handling. This prevents printable bytes after cancellation from being interpreted as abandoned sequence finals or payload.
+
+Coverage: cancelled_control_sequences_resume_printing_across_chunk_boundaries and escape_restarts_interrupted_control_sequences in tests/terminal_sequences.rs reproduce cancellation and restart from escape, CSI, OSC and ignored string states. Both failed before the fix; all 15 sequence integration tests and all 15 parser unit tests pass.
+
+## Report
+
 The terminal parser does not consistently leave a control sequence when it
 receives CAN (`0x18`), SUB (`0x1a`), or a new ESC. In a CSI parameter or
 intermediate state, cancellation enters the ignore state, consuming the next
