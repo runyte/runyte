@@ -15,7 +15,11 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, SyncSender, sync_channel},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, SyncSender, sync_channel},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -42,6 +46,7 @@ enum WorkerMessage {
 
 pub struct FileMonitorHandle {
     commands: SyncSender<WorkerMessage>,
+    stopped: Arc<AtomicBool>,
     synced_requests: Vec<FileObservationRequest>,
 }
 
@@ -66,6 +71,7 @@ impl FileMonitorHandle {
 
 impl Drop for FileMonitorHandle {
     fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
         let _ = self.commands.try_send(WorkerMessage::Stop);
     }
 }
@@ -78,13 +84,16 @@ pub fn spawn() -> (FileMonitorHandle, mpsc::Receiver<FileObservationEvent>) {
     })
     .ok();
     let (events, event_receiver) = mpsc::channel(EVENT_CAPACITY);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stopped = Arc::clone(&stopped);
     thread::Builder::new()
         .name("runyte-file-monitor".to_owned())
-        .spawn(move || run_worker(watcher.as_mut(), receiver, events))
+        .spawn(move || run_worker(watcher.as_mut(), receiver, events, worker_stopped))
         .expect("file monitor thread must start");
     (
         FileMonitorHandle {
             commands,
+            stopped,
             synced_requests: Vec::new(),
         },
         event_receiver,
@@ -95,6 +104,7 @@ fn run_worker(
     mut watcher: Option<&mut RecommendedWatcher>,
     receiver: Receiver<WorkerMessage>,
     events: mpsc::Sender<FileObservationEvent>,
+    stopped: Arc<AtomicBool>,
 ) {
     let mut registrations = HashMap::<usize, FileObservationRequest>::new();
     let mut watched = HashSet::<PathBuf>::new();
@@ -105,7 +115,7 @@ fn run_worker(
     let mut forwarded = HashMap::<usize, FileObservation>::new();
     let mut next_reconcile = Instant::now() + RECONCILE_INTERVAL;
 
-    loop {
+    while !stopped.load(Ordering::Acquire) {
         let now = Instant::now();
         let next_due = due.values().copied().min().unwrap_or(next_reconcile);
         let wake_at = next_reconcile.min(next_due);
@@ -440,6 +450,7 @@ mod tests {
         let (commands, receiver) = sync_channel(2);
         let mut monitor = FileMonitorHandle {
             commands,
+            stopped: Arc::new(AtomicBool::new(false)),
             synced_requests: Vec::new(),
         };
         let request = FileObservationRequest {
@@ -457,5 +468,37 @@ mod tests {
             receiver.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn dropping_monitor_stops_worker_when_command_queue_is_full() {
+        let (commands, receiver) = sync_channel(1);
+        let callback_sender = commands.clone();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let monitor = FileMonitorHandle {
+            commands,
+            stopped: Arc::clone(&stopped),
+            synced_requests: Vec::new(),
+        };
+        monitor
+            .commands
+            .try_send(WorkerMessage::Sync(Vec::new()))
+            .unwrap();
+        // This drop cannot enqueue Stop. The callback's sender models the
+        // watcher retained inside the worker and prevents disconnection.
+        drop(monitor);
+        let (events, event_receiver) = mpsc::channel(1);
+        let (finished, completion) = sync_channel(1);
+        let worker = thread::spawn(move || {
+            run_worker(None, receiver, events, stopped);
+            finished.send(()).unwrap();
+        });
+        let result = completion.recv_timeout(Duration::from_secs(1));
+        // Keep both channels alive until worker completion has been checked;
+        // clean them up even on regression so the failed test leaks no thread.
+        drop(callback_sender);
+        drop(event_receiver);
+        worker.join().unwrap();
+        assert!(result.is_ok(), "monitor did not stop with a full queue");
     }
 }
