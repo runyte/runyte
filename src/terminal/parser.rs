@@ -114,6 +114,25 @@ impl Parser {
             self.utf8_needed = 0;
             apply(Action::Print(char::REPLACEMENT_CHARACTER));
         }
+        // Cancellation applies in every state, including ignored strings.
+        // Otherwise the next printable byte can be mistaken for the abandoned
+        // sequence's final byte, or remain hidden inside a discarded DCS.
+        if matches!(byte, 0x18 | 0x1a) {
+            self.abandon_sequence(State::Ground);
+            apply(Action::Execute(byte));
+            return;
+        }
+        // String states need ESC to recognize ST. Everywhere else it starts
+        // a fresh escape even after intermediates or malformed parameters.
+        if byte == 0x1b
+            && !matches!(
+                self.state,
+                State::Osc | State::DcsIgnore | State::StringEscape
+            )
+        {
+            self.abandon_sequence(State::Escape);
+            return;
+        }
         match self.state {
             State::Ground => self.ground(byte, apply),
             State::Escape => self.escape(byte, apply),
@@ -221,11 +240,6 @@ impl Parser {
                 self.sequence_size = 0;
                 self.state = State::Ground;
             }
-            0x18 | 0x1a => {
-                apply(Action::Execute(byte));
-                self.reset_sequence();
-                self.state = State::Ground;
-            }
             0x1b => self.reset_sequence(),
             _ => {
                 self.reset_sequence();
@@ -320,10 +334,6 @@ impl Parser {
                 self.state = State::Ground;
             }
             0x00..=0x17 | 0x19 | 0x1c..=0x1f => apply(Action::Execute(byte)),
-            0x1b => {
-                self.reset_sequence();
-                self.state = State::Escape;
-            }
             _ => self.state = State::CsiIgnore,
         }
         if self.parameters.len() > 32 {
@@ -363,10 +373,6 @@ impl Parser {
             0x40..=0x7e => {
                 self.reset_sequence();
                 self.state = State::Ground;
-            }
-            0x1b => {
-                self.reset_sequence();
-                self.state = State::Escape;
             }
             _ => {}
         }

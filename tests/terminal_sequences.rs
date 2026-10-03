@@ -28,6 +28,43 @@ fn cursor(emulator: &Emulator) -> (usize, usize) {
 }
 
 #[test]
+fn cancelled_control_sequences_resume_printing_across_chunk_boundaries() {
+    for prefix in [
+        b"\x1b".as_slice(),
+        b"\x1b(",
+        b"\x1b[",
+        b"\x1b[31",
+        b"\x1b[ ",
+        b"\x1b[1?",
+        b"\x1b]2;unfinished title",
+        b"\x1bPignored",
+        b"\x1b_ignored",
+        b"\x1b]2;unfinished title\x1b",
+    ] {
+        for cancel in [0x18, 0x1a] {
+            let mut emulator = Emulator::new(20, 2);
+            emulator.feed(b"before ");
+            emulator.feed(prefix);
+            emulator.feed(&[cancel]);
+            emulator.feed(b"OK");
+            assert_eq!(screen(&emulator, 0), "before OK", "{prefix:?}, {cancel}");
+            assert!(emulator.title().is_none());
+        }
+    }
+}
+
+#[test]
+fn escape_restarts_interrupted_control_sequences() {
+    for prefix in [b"\x1b(".as_slice(), b"\x1b[31", b"\x1b[ ", b"\x1b[1?"] {
+        let mut emulator = Emulator::new(20, 2);
+        emulator.feed(b"before");
+        emulator.feed(prefix);
+        emulator.feed(b"\x1b[2J\x1b[Hafter");
+        assert_eq!(screen(&emulator, 0), "after", "{prefix:?}");
+    }
+}
+
+#[test]
 fn cursor_motion_sequences_address_the_screen_by_row_and_column() {
     let mut emulator = Emulator::new(20, 10);
 

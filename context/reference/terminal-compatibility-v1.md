@@ -37,6 +37,13 @@ of the legacy button-3 marker. The regression is
 `sgr_mouse_encoding_preserves_coordinates_buttons_and_modifiers` in
 `src/terminal/mod.rs`.
 
+CAN and SUB cancel incomplete escape sequences, including ignored control
+strings, so following printable output is preserved. ESC restarts incomplete
+non-string sequences. The regressions are
+`cancelled_control_sequences_resume_printing_across_chunk_boundaries` and
+`escape_restarts_interrupted_control_sequences` in
+`tests/terminal_sequences.rs`.
+
 ## Unix PTY descriptor ownership
 
 Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`
