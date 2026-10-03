@@ -1893,7 +1893,7 @@ impl App {
                 format!(
                     "{}:{}",
                     display_path(&location.path),
-                    location.range.start.line + 1
+                    u64::from(location.range.start.line) + 1
                 ),
                 self.location_preview(&location),
                 index,

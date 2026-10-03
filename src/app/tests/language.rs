@@ -1634,6 +1634,37 @@ fn a_single_goto_result_moves_the_caret_and_several_open_a_picker() {
 }
 
 #[test]
+fn lsp_location_picker_displays_maximum_protocol_row_without_overflow() {
+    let (mut app, path, _queue) = rust_app("one\ntwo");
+    ready(&mut app, Encoding::Utf8);
+    app.lsp_requests.insert(
+        99,
+        tracked(
+            &app,
+            PendingRequest::Goto {
+                label: "references",
+            },
+        ),
+    );
+    let location = crate::lsp::Location {
+        path,
+        range: LspRange::new(LspPosition::new(u32::MAX, 0), LspPosition::new(u32::MAX, 1)),
+        encoding: Encoding::Utf8,
+    };
+    app.apply_lsp_event(LspEvent::Response {
+        token: 99,
+        response: Response::Locations(vec![location.clone(), location]),
+    });
+    let picker = app.list.as_ref().expect("multiple locations open a picker");
+    assert!(picker.items[0].label.ends_with(":4294967296"));
+    assert!(picker.items[0].detail.is_empty());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(cursor(&app), Position::new(1, 0));
+    assert_eq!(app.active_buffer().to_string(), "one\ntwo");
+}
+
+#[test]
 fn a_cross_language_location_uses_the_sending_servers_encoding() {
     let (mut app, _source, _queue) = rust_app("fn main() {}\n");
     ready(&mut app, Encoding::Utf8);
