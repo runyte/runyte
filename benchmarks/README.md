@@ -53,6 +53,15 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   order. Both algorithms must return the same preceding row. This isolates
   filler lookup cost, without measuring alignment or end-to-end scrolling.
 
+- **`directory_plan.py`** — unchanged filesystem-plan scaling at 2,048, 8,192
+  and 16,384 temporary files, compiling the actual baseline and current Unix
+  modules with `rustc -O`. After `cargo build --locked --lib`, run
+  `python3 benchmarks/directory_plan.py --runs 5 --json /tmp/directory-plan.json`.
+  Snapshot reads and input cloning are outside the measured interval. The
+  harness checks empty plans, discards one warm-up and alternates measurement
+  order. JSON retains samples, source hashes, compiler and platform. This
+  measures planning, rather than file I/O or interactive editor latency.
+
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
 

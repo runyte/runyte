@@ -9,7 +9,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
     fs::{self, OpenOptions},
     path::{Component, Path, PathBuf},
@@ -547,7 +547,10 @@ impl DirectorySnapshot {
     }
 
     pub fn entry(&self, id: EntryId) -> Option<&SnapshotEntry> {
-        self.entries.iter().find(|entry| entry.id == id)
+        // Snapshot identities are assigned once in listing order by
+        // read_bounded; the private entry table is never reordered afterward.
+        let index = usize::try_from(id.0.checked_sub(1)?).ok()?;
+        self.entries.get(index).filter(|entry| entry.id == id)
     }
 
     /// Compares the directory's visible entries without treating changes
@@ -958,6 +961,12 @@ impl FsPlan {
         let mut changes = Vec::new();
         let mut copies = Vec::new();
         let mut deletes = Vec::new();
+        let mut by_identity: HashMap<EntryId, Vec<&DesiredEntry>> = HashMap::new();
+        for entry in &desired {
+            if let Some(id) = entry.id {
+                by_identity.entry(id).or_default().push(entry);
+            }
+        }
 
         for entry in desired.iter().filter(|entry| entry.id.is_none()) {
             let Some(transfer) = &entry.transfer else {
@@ -1001,10 +1010,7 @@ impl FsPlan {
             }
         }
         for original in expected.entries() {
-            let entries = desired
-                .iter()
-                .filter(|entry| entry.id == Some(original.id))
-                .collect::<Vec<_>>();
+            let entries = by_identity.remove(&original.id).unwrap_or_default();
             let Some(primary) = entries
                 .iter()
                 .copied()
@@ -1095,6 +1101,8 @@ impl FsPlan {
         creates.extend(copies);
         creates.extend(deletes);
 
+        let original_paths: HashSet<_> =
+            expected.entries().iter().map(|entry| &entry.path).collect();
         let mut seen_sources = HashSet::new();
         let confirmed_sources = creates
             .iter()
@@ -1105,12 +1113,7 @@ impl FsPlan {
                 FsOperation::Delete { path, .. } => Some(path),
                 FsOperation::Create { .. } => None,
             })
-            .filter(|source| {
-                expected
-                    .entries()
-                    .iter()
-                    .any(|entry| &entry.path == *source)
-            })
+            .filter(|source| original_paths.contains(source))
             .filter(|source| seen_sources.insert((*source).clone()))
             .map(|source| {
                 let captured = SourceFingerprint::capture_limited(&root.join(source), limits);
