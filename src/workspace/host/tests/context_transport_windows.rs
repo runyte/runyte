@@ -113,7 +113,7 @@ async fn pump<T>(
     host: &mut WorkspaceHost,
     events: &mut mpsc::Receiver<Event>,
     future: impl Future<Output = T>,
-) -> T {
+) -> Result<T, tokio::time::error::Elapsed> {
     tokio::pin!(future);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -124,7 +124,6 @@ async fn pump<T>(
         }
     })
     .await
-    .expect("native context host deadline")
 }
 
 async fn exchange(
@@ -142,6 +141,7 @@ async fn exchange(
         serde_json::from_str(&line).unwrap()
     })
     .await
+    .expect("native context exchange deadline")
 }
 
 async fn connect_host(host: &WorkspaceHost) -> BufReader<NativeConnection> {
@@ -278,7 +278,8 @@ async fn compiled_native_client_authenticates_reads_and_exits_before_shutdown() 
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
-    .await;
+    .await
+    .expect("compiled context client deadline");
     assert!(
         status.success(),
         "compiled context client failed: {}",
@@ -322,17 +323,15 @@ async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation
     let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("bridges")
         .join("runyte-context");
-    let tests = package.join("tests");
+    // CI runs the adapter suite separately. Discovery here would also run its
+    // descendant-held-stdout timeout after our handshake, consuming the bridge
+    // exit deadline with unrelated subprocess startup and cleanup.
+    let test = package.join("tests").join("test_windows_native.py");
     let mut child = ChildGuard(
         Command::new(python)
+            .arg(test)
             .args([
-                "-m",
-                "unittest",
-                "discover",
-                "-s",
-                tests.to_str().unwrap(),
-                "-p",
-                "test_windows_native.py",
+                "NativeWindowsBridgeTests.test_private_windows_mcp_round_trip_security_unicode_reconnect_and_revoke",
                 "-v",
             ])
             .current_dir(&package)
@@ -366,7 +365,13 @@ async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
-    .await;
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "Python bridge timed out before pre-auth checks: {}",
+            std::fs::read_to_string(&output).unwrap()
+        )
+    });
     assert!(
         fixture.host.context.readers.is_empty(),
         "invalid process or hard-linked identity reached host authentication"
@@ -386,7 +391,13 @@ async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
-    .await;
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "Python bridge timed out before revocation: {}",
+            std::fs::read_to_string(&output).unwrap()
+        )
+    });
 
     fixture.host.context_revoke("agent");
     wait_for_retirement(&mut fixture.host, &mut fixture.events).await;
@@ -405,7 +416,13 @@ async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
-    .await;
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "Python bridge timed out after revocation: {}",
+            std::fs::read_to_string(&output).unwrap()
+        )
+    });
     let output = std::fs::read_to_string(output).unwrap();
     assert!(
         status.success(),
@@ -414,7 +431,8 @@ async fn python_mcp_bridge_uses_real_native_host_security_unicode_and_revocation
     assert!(
         output
             .contains("test_private_windows_mcp_round_trip_security_unicode_reconnect_and_revoke")
-            && output.contains("OK"),
+            && output.contains("Ran 1 test in ")
+            && output.trim_end().ends_with("\nOK"),
         "required Python bridge acceptance did not run:\n{output}"
     );
     assert_eq!(fixture.host.app.buffers[0].to_string(), "aŻółć🙂z");
