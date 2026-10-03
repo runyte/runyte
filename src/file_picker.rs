@@ -15,7 +15,7 @@ use std::{
     ops::Range,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc as sync_mpsc,
     },
@@ -2204,13 +2204,16 @@ fn close_file_rank_state(state: &mut FileRankState) {
 }
 
 fn file_rank_worker(
-    mailbox: Arc<FileRankMailbox>,
+    mailbox: Weak<FileRankMailbox>,
     wake: sync_mpsc::Receiver<()>,
     events: Sender<FilePickerEvent>,
     active_rank: Arc<AtomicU64>,
 ) {
     let mut state = FileRankState::default();
     while wake.recv().is_ok() {
+        let Some(mailbox) = mailbox.upgrade() else {
+            break;
+        };
         let mut pending = {
             let mut queued = mailbox
                 .pending
@@ -2218,6 +2221,9 @@ fn file_rank_worker(
                 .unwrap_or_else(|error| error.into_inner());
             std::mem::take(&mut *queued)
         };
+        // The mailbox owns the wake sender. Keeping it while waiting for the
+        // next wake would let this thread keep itself alive after teardown.
+        drop(mailbox);
         for discarded in pending.discarded.drain(..) {
             drop((
                 discarded.matches,
@@ -2350,18 +2356,22 @@ fn file_rank_worker(
 }
 
 fn file_preview_worker(
-    mailbox: Arc<FilePreviewMailbox>,
+    mailbox: Weak<FilePreviewMailbox>,
     wake: sync_mpsc::Receiver<()>,
     events: Sender<FilePickerEvent>,
     active: Arc<AtomicU64>,
 ) {
     while wake.recv().is_ok() {
-        let Some(request) = mailbox
+        let Some(mailbox) = mailbox.upgrade() else {
+            break;
+        };
+        let request = mailbox
             .pending
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .take()
-        else {
+            .take();
+        drop(mailbox);
+        let Some(request) = request else {
             continue;
         };
         let FilePreviewRequest {
@@ -2692,7 +2702,7 @@ impl FileScanner {
                 let events = self.events.clone();
                 let rank_events = self.events.clone();
                 let rank_cancellation = self.active_rank.clone();
-                let worker_mailbox = mailbox.clone();
+                let worker_mailbox = Arc::downgrade(&mailbox);
                 match thread::Builder::new()
                     .name("runyte-file-rank".to_owned())
                     .spawn(move || {
@@ -2809,7 +2819,7 @@ impl FileScanner {
             let events = self.events.clone();
             let preview_events = self.events.clone();
             let active = self.active_preview.clone();
-            let worker_mailbox = mailbox.clone();
+            let worker_mailbox = Arc::downgrade(&mailbox);
             match thread::Builder::new()
                 .name("runyte-file-preview".to_owned())
                 .spawn(move || {
@@ -4343,6 +4353,62 @@ mod tests {
         let (scanner, _events) = scanner();
         assert!(scanner.rank_commands.get().is_none());
         assert!(scanner.preview_commands.get().is_none());
+    }
+
+    #[test]
+    fn dropping_the_final_scanner_releases_idle_rank_and_preview_workers() {
+        let root = crate::test_support::TestRuntimeRoot::new("finder-worker-lifetime").unwrap();
+        let file = root.join("preview.txt");
+        fs::write(&file, "preview").unwrap();
+        let (scanner, mut receiver) = scanner();
+        let surviving = scanner.clone();
+        scanner.reset_ranker(1, FilePickerKind::Files);
+        scanner.preview(FilePreviewRequest {
+            scan_id: 1,
+            query_revision: 0,
+            request_id: 1,
+            path: file.clone(),
+            is_dir: false,
+            content_match: None,
+            show_hidden: false,
+        });
+        let rank = Arc::downgrade(scanner.rank_commands.get().unwrap().as_ref().unwrap());
+        let preview = Arc::downgrade(scanner.preview_commands.get().unwrap().as_ref().unwrap());
+        assert!(matches!(
+            receiver.blocking_recv(),
+            Some(FilePickerEvent::Preview { request_id: 1, .. })
+        ));
+        drop(scanner);
+        surviving.preview(FilePreviewRequest {
+            scan_id: 1,
+            query_revision: 0,
+            request_id: 2,
+            path: file,
+            is_dir: false,
+            content_match: None,
+            show_hidden: false,
+        });
+        assert!(matches!(
+            receiver.blocking_recv(),
+            Some(FilePickerEvent::Preview { request_id: 2, .. })
+        ));
+        drop(surviving);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+            ) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "workers retained their event senders after the final scanner was dropped"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rank.upgrade().is_none());
+        assert!(preview.upgrade().is_none());
     }
 
     #[test]
