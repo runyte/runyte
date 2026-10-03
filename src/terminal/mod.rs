@@ -1562,10 +1562,12 @@ impl TerminalSession {
         use crate::input::{Modifiers, PointerButton, PointerEventKind};
 
         let mut code = match event.kind {
-            PointerEventKind::Down(PointerButton::Left) => 0,
-            PointerEventKind::Down(PointerButton::Middle) => 1,
-            PointerEventKind::Down(PointerButton::Right) => 2,
-            PointerEventKind::Up(_) => 3,
+            PointerEventKind::Down(PointerButton::Left)
+            | PointerEventKind::Up(PointerButton::Left) => 0,
+            PointerEventKind::Down(PointerButton::Middle)
+            | PointerEventKind::Up(PointerButton::Middle) => 1,
+            PointerEventKind::Down(PointerButton::Right)
+            | PointerEventKind::Up(PointerButton::Right) => 2,
             PointerEventKind::Drag(PointerButton::Left) => 32,
             PointerEventKind::Drag(PointerButton::Middle) => 33,
             PointerEventKind::Drag(PointerButton::Right) => 34,
@@ -3867,19 +3869,35 @@ mod tests {
             ),
             b"\x1b[<16;5;3M"
         );
-        assert_eq!(
-            TerminalSession::sgr_mouse_bytes(
-                PointerEvent {
-                    kind: PointerEventKind::Up(PointerButton::Left),
-                    column: 0,
-                    row: 0,
-                    modifiers: Modifiers::NONE,
-                },
-                4,
-                2,
-            ),
-            b"\x1b[<3;5;3m"
-        );
+        for (button, code) in [
+            (PointerButton::Left, 0),
+            (PointerButton::Middle, 1),
+            (PointerButton::Right, 2),
+        ] {
+            for (modifiers, modifier_bits) in [
+                (Modifiers::NONE, 0),
+                (Modifiers::SHIFT | Modifiers::ALT | Modifiers::CONTROL, 28),
+            ] {
+                for (kind, suffix) in [
+                    (PointerEventKind::Down(button), 'M'),
+                    (PointerEventKind::Up(button), 'm'),
+                ] {
+                    assert_eq!(
+                        TerminalSession::sgr_mouse_bytes(
+                            PointerEvent {
+                                kind,
+                                column: 0,
+                                row: 0,
+                                modifiers,
+                            },
+                            4,
+                            2,
+                        ),
+                        format!("\x1b[<{};5;3{suffix}", code + modifier_bits).as_bytes()
+                    );
+                }
+            }
+        }
         assert_eq!(
             TerminalSession::sgr_mouse_bytes_repeated(
                 PointerEvent {

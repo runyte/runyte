@@ -31,6 +31,12 @@ top-anchored inline scroll regions, review stability, SGR mouse encoding,
 simultaneous noisy/quiet sessions, process-group close, resize, frame damage,
 default foreground/background queries, client loss, and detach/reattach.
 
+SGR mouse reports preserve the specific left, middle, or right button on both
+press and release, including modifier bits. Release uses the final `m` instead
+of the legacy button-3 marker. The regression is
+`sgr_mouse_encoding_preserves_coordinates_buttons_and_modifiers` in
+`src/terminal/mod.rs`.
+
 ## Unix PTY descriptor ownership
 
 Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`
