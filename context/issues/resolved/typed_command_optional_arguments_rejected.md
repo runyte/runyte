@@ -1,3 +1,28 @@
+---
+title: "Typed commands reject valid optional arguments"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 7dc376f
+---
+
+## Resolution
+
+Commit `7dc376f` (`fix(commands): accept valid typed optional arguments`).
+
+`CommandInvocation::from_parts` omitted the optional parameter forms produced
+by the named parser for eight terminal commands and the path Finder. It now
+accepts those forms alongside the parameterless key-binding form and still
+validates execution context. Git stash commands accept an absent name to open
+the existing prompt, while explicitly blank names remain invalid.
+
+Coverage: `typed_construction_preserves_named_optional_argument_invocations`
+and `typed_construction_accepts_the_entire_named_command_inventory` in
+`src/command.rs` reconstruct parsed invocations, retain keyboard calls, and
+reject incompatible parameter/context values. All 19 command tests passed.
+
+## Report
+
 The validated `CommandInvocation::from_parts` constructor rejects argument
 shapes accepted by `parse_named_command` for terminal commands and the path
 Finder. A typed caller cannot reconstruct `terminal htop`,
