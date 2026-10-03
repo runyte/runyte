@@ -52,6 +52,25 @@ ROWS, COLUMNS = 40, 120
 
 # ESC alone, then the command, so the escape is not folded into an Alt chord.
 QUIT_SEQUENCE = ((b"\x1b", 0.08), (b":", 0.05), (b"q!", 0.05), (b"\r", 0.0))
+CONTROL = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)")
+
+
+class TerminalQueries:
+    """Answer complete capability queries across arbitrary PTY read boundaries."""
+
+    def __init__(self):
+        self.tail = b""
+
+    def feed(self, data):
+        joined = self.tail + data
+        replies = b"".join(
+            terminal_replies(match.group()) for match in CONTROL.finditer(joined)
+            if match.end() > len(self.tail)
+        )
+        # Supported capability requests are short; do not retain document output
+        # or an indefinitely unterminated string beyond this bounded suffix.
+        self.tail = joined[-256:]
+        return replies
 
 
 def terminal_replies(chunk: bytes) -> bytes:
@@ -138,6 +157,7 @@ def measure_startup(argv, env, document_marker, cwd=None):
     marker_tail = b""
     settled_output = None
     closed = False
+    queries = TerminalQueries()
 
     while time.perf_counter() - start < STARTUP_TIMEOUT_SECONDS:
         readable, _, _ = select.select([fd], [], [], 0.01)
@@ -164,7 +184,7 @@ def measure_startup(argv, env, document_marker, cwd=None):
                     last_document_output = output_at
                 tail_length = len(document_marker) - 1
                 marker_tail = marker_input[-tail_length:] if tail_length else b""
-            reply = terminal_replies(data)
+            reply = queries.feed(data)
             if reply:
                 try:
                     os.write(fd, reply)
@@ -206,7 +226,7 @@ def measure_startup(argv, env, document_marker, cwd=None):
                 else:
                     # Editors query the terminal while tearing down too; an
                     # unanswered query here looks like a slow exit.
-                    reply = terminal_replies(data)
+                    reply = queries.feed(data)
                     if reply:
                         os.write(fd, reply)
             except OSError:
@@ -288,6 +308,7 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0, prepare=None):
     """
     pid, fd = _spawn(argv, env, cwd)
     complete = True
+    queries = TerminalQueries()
     initial_output = bytearray() if prepare is not None else None
     start = time.perf_counter()
     while time.perf_counter() - start < settle:
@@ -304,7 +325,7 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0, prepare=None):
             if initial_output is not None:
                 initial_output.extend(data)
                 del initial_output[:-131072]
-            reply = terminal_replies(data)
+            reply = queries.feed(data)
             if reply:
                 try:
                     os.write(fd, reply)
@@ -333,7 +354,7 @@ def measure_idle(argv, env, cwd=None, settle=2.5, window=10.0, prepare=None):
                 break
             writes += 1
             idle_bytes += len(data)
-            reply = terminal_replies(data)
+            reply = queries.feed(data)
             if reply:
                 try:
                     os.write(fd, reply)

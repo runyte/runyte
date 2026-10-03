@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import time
 
-from ptybench import _spawn, _reap, terminal_replies
+from ptybench import _spawn, _reap, TerminalQueries
 
 
 def own_cpu_ticks(pid):
@@ -26,7 +26,7 @@ def own_cpu_ticks(pid):
     return int(fields[11]) + int(fields[12])
 
 
-def drain(fd, duration, marker=None):
+def drain(fd, queries, duration, marker=None):
     deadline = time.monotonic() + duration
     writes = total = 0
     accumulated = b""
@@ -39,7 +39,7 @@ def drain(fd, duration, marker=None):
             raise RuntimeError("TUI closed during observation")
         writes += 1
         total += len(data)
-        reply = terminal_replies(data)
+        reply = queries.feed(data)
         if reply:
             os.write(fd, reply)
         accumulated = (accumulated + data)[-65536:]
@@ -50,9 +50,9 @@ def drain(fd, duration, marker=None):
     return writes, total
 
 
-def command(fd, text):
+def command(fd, queries, text):
     os.write(fd, b"\x1b")
-    drain(fd, .08)
+    drain(fd, queries, .08)
     os.write(fd, b":" + text.encode() + b"\r")
 
 
@@ -94,29 +94,31 @@ def sample(binary, sessions, hidden, noisy, window):
                 projects.append(project)
                 cold_start = time.monotonic()
                 pid, fd = _spawn([binary, "-a", str(project)], env, str(project))
+                queries = TerminalQueries()
                 clients.append((pid, fd))
-                drain(fd, 15, b"[about]")
+                drain(fd, queries, 15, b"[about]")
                 cold_start_ms = (time.monotonic() - cold_start) * 1000
-                drain(fd, .4)
-                command(fd, "open navigation-marker.txt")
-                drain(fd, .4)
+                drain(fd, queries, .4)
+                command(fd, queries, "open navigation-marker.txt")
+                drain(fd, queries, .4)
                 if noisy and index == sessions - 1:
-                    command(fd, "terminal /bin/sh -c 'while :; do printf noise\\\\n; sleep 0.02; done'")
-                    drain(fd, .5)
+                    command(fd, queries, "terminal /bin/sh -c 'while :; do printf noise\\\\n; sleep 0.02; done'")
+                    drain(fd, queries, .5)
                     os.write(fd, b"\x1c")
-                    drain(fd, .1)
-                command(fd, "detach")
+                    drain(fd, queries, .1)
+                command(fd, queries, "detach")
                 wait_for_detach(pid)
                 os.close(fd)
                 clients.pop()
             started = time.monotonic()
             pid, fd = _spawn([binary, "-a", str(projects[0])], env, str(projects[0]))
+            queries = TerminalQueries()
             clients.append((pid, fd))
-            drain(fd, 15, b"navbench-content-ready")
+            drain(fd, queries, 15, b"navbench-content-ready")
             attachment_ms = (time.monotonic() - started) * 1000
             # Auto visibility can need discovery followed by a scalar poll.
             # Allow both 15-second cycles before measuring unchanged output.
-            drain(fd, 32)
+            drain(fd, queries, 32)
             pids = {pid}
             for path in root.rglob("endpoint.json"):
                 metadata = json.loads(path.read_text())
@@ -125,7 +127,7 @@ def sample(binary, sessions, hidden, noisy, window):
             cpu_supported = Path("/proc").is_dir()
             before = sum(own_cpu_ticks(process) for process in pids) if cpu_supported else 0
             start = time.monotonic()
-            writes, byte_count = drain(fd, window)
+            writes, byte_count = drain(fd, queries, window)
             elapsed = time.monotonic() - start
             after = sum(own_cpu_ticks(process) for process in pids) if cpu_supported else 0
             return {"cold_start_ms": cold_start_ms, "attachment_ms": attachment_ms, "cpu_percent": (after-before)/os.sysconf("SC_CLK_TCK")/elapsed*100 if cpu_supported else None,

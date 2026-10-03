@@ -13,7 +13,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import select
 import statistics
 import subprocess
@@ -32,7 +31,6 @@ TIMEOUT = 40.0
 # per-keystroke parsing work. Verify its position, not a substring in a gutter.
 EDIT = b" "
 DOCUMENT_TEXT = "local function scan_0"
-CONTROL = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)")
 
 
 class Terminal:
@@ -42,7 +40,7 @@ class Terminal:
         import pyte
         self.screen = pyte.Screen(ptybench.COLUMNS, ptybench.ROWS)
         self.stream = pyte.ByteStream(self.screen)
-        self.tail = b""
+        self.queries = ptybench.TerminalQueries()
         self.strings = b""
 
     def display_bytes(self, data):
@@ -84,14 +82,7 @@ class Terminal:
 
     def feed(self, data):
         self.stream.feed(self.display_bytes(data))
-        # Preserve split capability requests, but never reply twice to one.
-        joined = self.tail + data
-        replies = b""
-        for match in CONTROL.finditer(joined):
-            if match.end() > len(self.tail):
-                replies += ptybench.terminal_replies(match.group())
-        self.tail = joined[-256:]
-        return replies
+        return self.queries.feed(data)
 
     def contains(self, text):
         return self.position(text) is not None
