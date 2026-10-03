@@ -2577,34 +2577,50 @@ fn workspace_search_escapes_line_breaks_without_losing_path_identity() {
 }
 
 #[test]
-fn workspace_search_retains_disk_scan_truncation_after_live_reconciliation() {
-    let directory = temporary("workspace-search-retained-limit");
-    fs::create_dir_all(&directory).unwrap();
-    let omitted = directory.join("a-omitted.txt");
-    let saturated = directory.join("z-saturated.txt");
-    fs::write(&omitted, "needle omitted\n").unwrap();
-    fs::write(
-        &saturated,
-        "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
-    )
-    .unwrap();
-    let mut app = App::new(Config::default(), Some(saturated.clone())).unwrap();
-    app.project_root = directory.clone();
-    let length = app.buffers[0].len_chars();
-    assert!(app.apply_to_buffer(
-        0,
-        &Transaction::new(vec![Change::new(0, length, "needle live\n")]),
-    ));
+fn workspace_search_reports_only_limits_reached_by_authoritative_matches() {
+    for disk_limited in [false, true] {
+        let directory = temporary("workspace-search-authoritative-limit");
+        fs::create_dir_all(&directory).unwrap();
+        let other = directory.join("a-other.txt");
+        let saturated = directory.join("z-saturated.txt");
+        fs::write(&other, "needle other\n").unwrap();
+        fs::write(
+            &saturated,
+            "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
+        )
+        .unwrap();
+        if disk_limited {
+            fs::write(
+                directory.join("y-unopened.txt"),
+                "needle\n".repeat(crate::workspace_search::GLOBAL_SEARCH_RESULT_LIMIT),
+            )
+            .unwrap();
+        }
+        let mut app = App::new(Config::default(), Some(saturated.clone())).unwrap();
+        app.project_root = directory.clone();
+        let length = app.buffers[0].len_chars();
+        assert!(app.apply_to_buffer(
+            0,
+            &Transaction::new(vec![Change::new(0, length, "needle live\n")]),
+        ));
 
-    app.open_global_search("needle", SearchMode::Insensitive);
+        app.open_global_search("needle", SearchMode::Insensitive);
 
-    assert!(app.status.contains("limit reached"), "{}", app.status);
-    assert!(
-        app.active_buffer()
-            .to_string()
-            .contains("result limit reached")
-    );
-    fs::remove_dir_all(directory).unwrap();
+        let rendered = app.active_buffer().to_string();
+        assert_eq!(
+            app.status.contains("limit reached"),
+            disk_limited,
+            "{}",
+            app.status
+        );
+        assert_eq!(rendered.contains("result limit reached"), disk_limited);
+        if !disk_limited {
+            assert!(rendered.contains("needle live"), "{rendered}");
+            assert!(rendered.contains("needle other"), "{rendered}");
+            assert!(app.status.contains("2 results"), "{}", app.status);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[test]

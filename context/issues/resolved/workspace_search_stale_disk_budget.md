@@ -19,7 +19,12 @@ and cancellation semantics.
 `stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search` and
 `workspace_search_combines_live_and_unopened_matches_without_duplicates` in
 `src/workspace_search/tests/mod.rs` cover the 10,000-stale-match reproduction
-and correct combined live/disk positions. All six workspace-search tests pass.
+and correct combined live/disk positions. All six workspace-search tests passed for the implementation. The follow-up
+`workspace_search_reports_only_limits_reached_by_authoritative_matches` in
+`src/app/tests/editing_and_buffers.rs` replaces the old regression's expectation
+that stale on-disk matches should trigger a limit warning. It checks both the
+two-result unsaved-buffer case and genuine truncation from an unopened file,
+including the generated result page and status text.
 
 ## Report
 
