@@ -696,6 +696,52 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hint_scroll_keys_cannot_replace_prefix_continuations() {
+        for source in [
+            "rebind: {'Space e': 'F12 Ctrl-n'}",
+            "rebind: {'Ctrl-w h': 'Ctrl-w Ctrl-p'}",
+            "bind: {normal: {'F12 Ctrl-n': move-left}}",
+            "bind: {insert: {'Ctrl-w Ctrl-p': move-left}}",
+        ] {
+            let compiled = configured(source);
+            assert!(!compiled.errors.is_empty(), "accepted {source}");
+            validate::assert_valid(&compiled.keymap);
+        }
+
+        // Insert-mode arbitrary prefixes bypass key discovery, so their
+        // Ctrl-n/p strokes remain available to the grammar.
+        for mode in [Mode::Insert, Mode::Replace] {
+            let mode_name = if mode == Mode::Insert {
+                "insert"
+            } else {
+                "replace"
+            };
+            let compiled = configured(&format!(
+                "bind: {{{mode_name}: {{'F12 Ctrl-n': move-left}}}}"
+            ));
+            assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+            let mut app = crate::app::App::new(crate::config::Config::default(), None).unwrap();
+            app.set_keymap(compiled.keymap);
+            app.mode = mode;
+            app.handle_input(crate::input::InputEvent::Text("ab".into()))
+                .unwrap();
+            let mut hints = crate::key_hints::KeyHintState::default();
+            for key in KeySequence::parse("F12 Ctrl-n").unwrap().as_slice() {
+                if let Some(mode) = app.key_hint_mode_for_key(*key) {
+                    assert_eq!(
+                        hints.observe_in(*key, mode, app.key_binding_scope(), app.keymap()),
+                        crate::key_hints::HintEventResult::Forward,
+                    );
+                } else {
+                    hints.clear();
+                }
+                app.handle_key(*key).unwrap();
+            }
+            assert_eq!(app.cursor_position().col, 1);
+        }
+    }
+
     fn configured(source: &str) -> CompiledKeymap {
         let value: Value = serde_yaml::from_str(source).unwrap();
         compile(&value, default_keymap())
