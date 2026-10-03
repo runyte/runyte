@@ -3158,7 +3158,9 @@ pub(crate) fn scan_content_excluding(
 
 fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
     let text = read_regular_text(path, GREP_FILE_BYTES).ok()?;
-    let lines = line_hits(&text, query);
+    // Keep one overflow candidate so the shared scan budget can distinguish a
+    // complete file from one whose remaining matches require a future rescan.
+    let lines = line_hits_bounded(&text, query, CONTENT_ENTRY_LIMIT + 1);
     (!lines.is_empty()).then(|| FileHits {
         path: path.to_path_buf(),
         lines,
@@ -3187,10 +3189,14 @@ fn read_regular_text(path: &Path, limit: u64) -> io::Result<String> {
 /// a line the query cannot match never becomes an entry, so the budget is
 /// spent on matches wherever in the project they live.
 pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
+    line_hits_bounded(text, query, CONTENT_ENTRY_LIMIT)
+}
+
+fn line_hits_bounded(text: &str, query: &str, limit: usize) -> Vec<LineHit> {
     text.lines()
         .enumerate()
         .filter_map(|(row, line)| line_hit(line, query).map(|hit| LineHit { row, ..hit }))
-        .take(CONTENT_ENTRY_LIMIT)
+        .take(limit)
         .collect()
 }
 
