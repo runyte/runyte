@@ -274,37 +274,40 @@ impl App {
         }
         let query = picker.query.clone();
         if self.finder.is_none() {
-            let live = self
-                .buffers
-                .iter()
-                .enumerate()
-                .filter(|(index, buffer)| {
-                    !self.closed_buffers.contains(index)
-                        && !buffer.is_directory()
-                        && buffer
-                            .path
-                            .as_deref()
-                            .is_some_and(|path| path.starts_with(&root))
-                })
-                .filter_map(|(_, buffer)| {
-                    let path = buffer
+            let mut live = Vec::new();
+            let mut remaining = CONTENT_ENTRY_LIMIT;
+            for (_, buffer) in self.buffers.iter().enumerate().filter(|(index, buffer)| {
+                !self.closed_buffers.contains(index)
+                    && !buffer.is_directory()
+                    && buffer
                         .path
                         .as_deref()
-                        .expect("filtered file buffer has a path");
-                    let lines = crate::file_picker::line_hits(&buffer.to_string(), &query);
-                    (!lines.is_empty()).then(|| crate::file_picker::FileHits {
-                        path: path.to_path_buf(),
-                        lines,
-                    })
-                })
-                .scan(0usize, |held, hits| {
-                    if *held >= CONTENT_ENTRY_LIMIT {
-                        return None;
-                    }
-                    *held += hits.len();
-                    Some(hits)
-                })
-                .collect();
+                        .is_some_and(|path| path.starts_with(&root))
+            }) {
+                // One extra live match tells picker admission that narrowing
+                // must rescan, including when a later buffer exceeds an
+                // exactly filled budget.
+                let lines = crate::file_picker::line_hits_bounded(
+                    &buffer.to_string(),
+                    &query,
+                    remaining + 1,
+                );
+                if lines.is_empty() {
+                    continue;
+                }
+                let overflow = lines.len() > remaining;
+                remaining = remaining.saturating_sub(lines.len());
+                live.push(FileHits {
+                    path: buffer
+                        .path
+                        .clone()
+                        .expect("filtered file buffer has a path"),
+                    lines,
+                });
+                if overflow {
+                    break;
+                }
+            }
             self.picker.as_mut().unwrap().add_content(live);
         }
         let excluded = self

@@ -56,3 +56,65 @@ fn content_finder_excludes_open_disk_rows_before_the_scan_budget() {
         app.close_file_picker();
     }
 }
+
+#[test]
+fn directory_grep_marks_overflow_within_one_live_buffer() {
+    assert_directory_grep_rescans_live_overflow(false);
+}
+
+#[test]
+fn directory_grep_marks_overflow_after_an_exact_limit_live_buffer() {
+    assert_directory_grep_rescans_live_overflow(true);
+}
+
+fn assert_directory_grep_rescans_live_overflow(later_buffer: bool) {
+    let fixture = crate::test_support::TestRuntimeRoot::new("directory-grep-live-limit").unwrap();
+    let root = fixture.path().canonicalize().unwrap();
+    let file = root.join("dense.txt");
+    fs::write(&file, "needle\n".repeat(CONTENT_ENTRY_LIMIT)).unwrap();
+    let mut app = App::new_in_project(Config::default(), Some(file.clone()), &root).unwrap();
+    app.open_directory_grep().unwrap();
+    assert!(!app.picker.as_ref().unwrap().limited);
+    assert_eq!(
+        app.picker.as_ref().unwrap().entries.len(),
+        CONTENT_ENTRY_LIMIT
+    );
+    app.close_file_picker();
+
+    let (target, row) = if later_buffer {
+        let target = root.join("later.txt");
+        fs::write(&target, "saved contents\n").unwrap();
+        let mut buffer = Buffer::open(&target).unwrap();
+        buffer.apply(&Transaction::new(vec![Change::new(
+            0,
+            buffer.len_chars(),
+            "needle rare\n",
+        )]));
+        app.buffers.push(buffer);
+        (target, 0)
+    } else {
+        let end = app.buffers[0].len_chars();
+        app.buffers[0].apply(&Transaction::insert(end, "needle rare\n"));
+        (file, CONTENT_ENTRY_LIMIT)
+    };
+    app.open_directory_grep().unwrap();
+    assert!(
+        app.picker.as_ref().unwrap().limited,
+        "a live matching row beyond the shared budget must mark the scan limited"
+    );
+    assert_eq!(
+        app.picker.as_ref().unwrap().entries.len(),
+        CONTENT_ENTRY_LIMIT
+    );
+    for character in "rare".chars() {
+        app.handle_key(KeyStroke::char(character)).unwrap();
+    }
+    assert!(app.restart_due_content_scan(Instant::now() + std::time::Duration::from_secs(1)));
+    let picker = app.picker.as_ref().unwrap();
+    assert!(!picker.limited);
+    assert_eq!(picker.matches.len(), 1);
+    let found = picker.selected_entry().unwrap();
+    assert_eq!(found.path, target);
+    assert_eq!(found.row, Some(row));
+    app.close_file_picker();
+}

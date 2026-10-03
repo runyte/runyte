@@ -3192,7 +3192,7 @@ pub fn line_hits(text: &str, query: &str) -> Vec<LineHit> {
     line_hits_bounded(text, query, CONTENT_ENTRY_LIMIT)
 }
 
-fn line_hits_bounded(text: &str, query: &str, limit: usize) -> Vec<LineHit> {
+pub(crate) fn line_hits_bounded(text: &str, query: &str, limit: usize) -> Vec<LineHit> {
     text.lines()
         .enumerate()
         .filter_map(|(row, line)| line_hit(line, query).map(|hit| LineHit { row, ..hit }))
