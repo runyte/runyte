@@ -341,13 +341,10 @@ impl DirectoryTree {
             error: self.errors.get(path).cloned(),
         });
         if expanded && depth < 128 {
-            let mut entries = self.listings.get(path).cloned().unwrap_or_default();
-            entries.sort_by(|left, right| {
-                (left.kind != EntryKind::Directory)
-                    .cmp(&(right.kind != EntryKind::Directory))
-                    .then_with(|| left.path.file_name().cmp(&right.path.file_name()))
-            });
-            for entry in entries {
+            for entry in self.listings.get(path).into_iter().flatten() {
+                if rows.len() >= MAX_VISIBLE_ROWS {
+                    break;
+                }
                 if !self.show_hidden
                     && !self.revealed_hidden.contains(path)
                     && entry
@@ -747,7 +744,11 @@ impl DirectoryTree {
                     let entries = self.listings.entry(parent.to_path_buf()).or_default();
                     entries.retain(|entry| entry.path != path);
                     if entries.len() < MAX_DIRECTORY_ENTRIES {
-                        entries.push(TreeEntry { path, kind });
+                        let entry = TreeEntry { path, kind };
+                        let index = entries
+                            .binary_search_by(|existing| compare_entries(existing, &entry))
+                            .unwrap_or_else(|index| index);
+                        entries.insert(index, entry);
                     }
                 }
             }
@@ -835,13 +836,19 @@ fn read_directory(path: &Path) -> Result<Vec<TreeEntry>> {
             kind,
         });
     }
-    entries.sort_by(|left, right| {
-        (left.kind != EntryKind::Directory)
-            .cmp(&(right.kind != EntryKind::Directory))
-            .then_with(|| left.path.file_name().cmp(&right.path.file_name()))
-    });
+    entries.sort_by(compare_entries);
     Ok(entries)
 }
+
+fn compare_entries(left: &TreeEntry, right: &TreeEntry) -> std::cmp::Ordering {
+    (left.kind != EntryKind::Directory)
+        .cmp(&(right.kind != EntryKind::Directory))
+        .then_with(|| left.path.file_name().cmp(&right.path.file_name()))
+}
+
+#[cfg(test)]
+#[path = "directory_tree/tests/mod.rs"]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {
