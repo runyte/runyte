@@ -16,7 +16,7 @@
 use std::process::{Command, Stdio};
 use std::{
     fs,
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::mpsc,
     time::Instant,
@@ -41,6 +41,9 @@ const PREFIX_BYTES: usize = 8192;
 /// Long enough that the tools someone actually uses stay in it, short enough
 /// that the hint list stays readable.
 const MAX_PROGRAMS: usize = 16;
+
+/// Cache hints never justify reading an unbounded file during startup.
+const MAX_CACHE_BYTES: usize = 64 * 1024;
 
 const CACHE_FILE: &str = "recent-programs";
 const DEFAULT_FILE: &str = "default-program";
@@ -219,7 +222,7 @@ impl ProgramCache {
     pub fn load(root: Option<PathBuf>) -> Self {
         let mut programs: Vec<String> = root
             .as_ref()
-            .and_then(|root| fs::read_to_string(root.join(CACHE_FILE)).ok())
+            .and_then(|root| read_cache_file(&root.join(CACHE_FILE)).ok())
             .map(|contents| {
                 contents
                     .lines()
@@ -232,7 +235,7 @@ impl ProgramCache {
             .unwrap_or_default();
         let default_program = root
             .as_ref()
-            .and_then(|root| fs::read_to_string(root.join(DEFAULT_FILE)).ok())
+            .and_then(|root| read_cache_file(&root.join(DEFAULT_FILE)).ok())
             .map(|program| program.trim().to_owned())
             .filter(|program| !program.is_empty());
         if let Some(program) = &default_program
@@ -321,7 +324,7 @@ impl ProgramCache {
             .with_context(|| format!("failed to create {}", root.display()))?;
         let mut contents = self.programs.join("\n");
         contents.push('\n');
-        fs::write(root.join(CACHE_FILE), contents)
+        write_cache_file(&root.join(CACHE_FILE), &contents)
             .with_context(|| format!("failed to write {}", root.join(CACHE_FILE).display()))?;
         Ok(())
     }
@@ -342,9 +345,50 @@ impl ProgramCache {
         };
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
-        fs::write(&path, format!("{program}\n"))
+        write_cache_file(&path, &format!("{program}\n"))
             .with_context(|| format!("failed to write {}", path.display()))
     }
+}
+
+fn read_cache_file(path: &Path) -> std::io::Result<String> {
+    let file = crate::path_safety::open_regular_file(path, false)?;
+    let mut contents = String::new();
+    file.take(MAX_CACHE_BYTES as u64 + 1)
+        .read_to_string(&mut contents)?;
+    if contents.len() > MAX_CACHE_BYTES {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "program cache exceeds its byte limit",
+        ));
+    }
+    Ok(contents)
+}
+
+fn write_cache_file(path: &Path, contents: &str) -> std::io::Result<()> {
+    if contents.len() > MAX_CACHE_BYTES {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "program cache exceeds its byte limit",
+        ));
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    // Inspect the opened object before truncating it. A pathname check cannot
+    // prevent replacement between inspection and a blocking or destructive open.
+    let mut file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "program cache requires a regular file",
+        ));
+    }
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())
 }
 
 /// Opens a web URL through the desktop's default handler, independent of the
@@ -921,3 +965,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "external_open/tests/cache_files.rs"]
+mod cache_file_tests;
