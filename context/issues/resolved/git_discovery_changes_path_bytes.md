@@ -17,12 +17,18 @@ trailing pathname characters, could address a different directory, and refused
 valid non-UTF-8 Unix roots. Required empty responses still fail. Other Git
 text parsing is unaffected.
 
-`discovery_preserves_trailing_whitespace_and_non_utf8_path_bytes` in
-`tests/git_provider.rs` uses real temporary repositories whose roots end with
-a space, tab, newline or non-UTF-8 byte. It checks working, Git and common
-metadata directories. The test failed before the change; all four discovery
-tests passed after it. The parent reviewer checked all three discovery path
-responses and the existing lossless path decoder.
+`discovery_preserves_trailing_whitespace_in_paths` and
+`discovery_preserves_non_utf8_path_bytes` in `tests/git_provider.rs` use real
+temporary repositories whose roots end with a space, tab, newline or non-UTF-8
+byte. They check working, Git and common metadata directories. The original
+combined test failed before the change; all four discovery tests passed after
+it. The parent reviewer checked all three discovery path responses and the
+existing lossless path decoder.
+
+The cases are separate because macOS rejects the non-UTF-8 directory rename
+with `EILSEQ` before discovery runs. Only that filesystem fixture is ignored
+on macOS, matching the existing non-UTF-8 worktree and blame tests; whitespace
+coverage still runs there.
 
 Known limitation: this session validated the regression on Linux. Native
 Windows and macOS checks remain necessary in their normal CI environments.

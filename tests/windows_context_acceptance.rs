@@ -304,9 +304,9 @@ fn grant_remembered_edit(editor: &mut Console) {
         }
     }
     editor.send("3");
-    editor.until("3 [x] buffer_edit");
+    editor.until("3 [x] Edit and append to buffers");
     editor.send("r");
-    editor.until("r [x] Remember; x Revoke");
+    editor.until("r [x] Remember for this workspace");
     editor.send("\t");
     editor.next_output();
     editor.send("\r");

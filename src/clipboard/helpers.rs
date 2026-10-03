@@ -880,9 +880,12 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let helper = root.join("clipboard-helper");
         let marker = root.join("leaked");
+        // Non-interactive shells may replace a background job's stdin with
+        // /dev/null before applying its redirects. Preserve the pipe on a
+        // separate descriptor so dash holds it open just as bash does.
         fs::write(
             root.join("clipboard-helper.behavior"),
-            "(sleep 0.6; printf leaked > \"$1\") <&0 &\nexit 0\n",
+            "exec 3<&0\n(sleep 0.6; printf leaked > \"$1\") <&3 &\nexit 0\n",
         )
         .unwrap();
         std::os::unix::fs::symlink(

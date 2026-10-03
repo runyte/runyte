@@ -422,23 +422,38 @@ fn discovery_finds_the_working_tree_from_any_directory_inside_it() {
 
 #[cfg(unix)]
 #[test]
-fn discovery_preserves_trailing_whitespace_and_non_utf8_path_bytes() {
+fn discovery_preserves_trailing_whitespace_in_paths() {
+    for suffix in [b" ".as_slice(), b"\t", b"\n"] {
+        assert_discovery_preserves_path_suffix(suffix);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS rejects non-UTF-8 filesystem path components with EILSEQ"
+)]
+fn discovery_preserves_non_utf8_path_bytes() {
+    assert_discovery_preserves_path_suffix(b"\xff");
+}
+
+#[cfg(unix)]
+fn assert_discovery_preserves_path_suffix(suffix: &[u8]) {
     use std::os::unix::ffi::OsStringExt;
 
-    for suffix in [b" ".as_slice(), b"\t", b"\n", b"\xff"] {
-        let mut fixture = TempRepository::new("discovery-path-bytes");
-        let mut name = fixture.path().as_os_str().as_encoded_bytes().to_vec();
-        name.extend_from_slice(suffix);
-        let renamed = PathBuf::from(std::ffi::OsString::from_vec(name));
-        fs::rename(fixture.path(), &renamed).unwrap();
-        fixture.0 = renamed;
+    let mut fixture = TempRepository::new("discovery-path-bytes");
+    let mut name = fixture.path().as_os_str().as_encoded_bytes().to_vec();
+    name.extend_from_slice(suffix);
+    let renamed = PathBuf::from(std::ffi::OsString::from_vec(name));
+    fs::rename(fixture.path(), &renamed).unwrap();
+    fixture.0 = renamed;
 
-        let repository = provider().discover(fixture.path()).unwrap().unwrap();
+    let repository = provider().discover(fixture.path()).unwrap().unwrap();
 
-        assert_eq!(repository.workdir(), fixture.path());
-        assert_eq!(repository.git_dir(), fixture.path().join(".git"));
-        assert_eq!(repository.common_dir(), repository.git_dir());
-    }
+    assert_eq!(repository.workdir(), fixture.path());
+    assert_eq!(repository.git_dir(), fixture.path().join(".git"));
+    assert_eq!(repository.common_dir(), repository.git_dir());
 }
 
 #[test]

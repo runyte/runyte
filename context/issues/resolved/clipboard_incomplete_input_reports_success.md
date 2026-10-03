@@ -14,6 +14,12 @@ run_helper_with_environment now requires the stdin writer to confirm completion 
 
 Coverage: successful_exit_requires_all_clipboard_input_to_be_written in src/clipboard/helpers.rs sends 1 MiB to a checked-in stand-in that exits zero while a descendant retains undrained stdin. It checks the timeout and absence of the descendant marker after cleanup. The regression reproduced false success before the change; all 19 clipboard tests pass, including the existing forked-selection-owner case.
 
+The fixture saves stdin on descriptor 3 before starting the background owner.
+Ubuntu's dash otherwise replaces the background job's stdin with `/dev/null`
+before applying `<&0`, causing `BrokenPipe` instead of exercising the intended
+stalled writer. Redirecting from the saved descriptor preserves the input pipe
+on both dash and bash without weakening the timeout or cleanup assertions.
+
 ## Report
 
 The Unix clipboard helper runner waits for its stdin writer through
