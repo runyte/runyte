@@ -142,8 +142,14 @@ struct FileRow {
 impl FileRow {
     fn new(marker: char, file: &FileStatus, side: StatusSide, stats: &StatusStats) -> Self {
         let name = file.original_path.as_ref().map_or_else(
-            || file.path.display().to_string(),
-            |from| format!("{} → {}", from.display(), file.path.display()),
+            || super::display_path(&file.path),
+            |from| {
+                format!(
+                    "{} → {}",
+                    super::display_path(from),
+                    super::display_path(&file.path)
+                )
+            },
         );
         Self {
             marker,
@@ -350,6 +356,49 @@ fn heading(
 mod tests {
     use super::*;
     use crate::git::Head;
+
+    #[test]
+    fn control_characters_in_paths_cannot_shift_status_action_rows() {
+        let renamed = FileStatus {
+            path: PathBuf::from("first\ncontinuation\r\t.txt"),
+            original_path: Some(PathBuf::from("old\nname.txt")),
+            index: FileState::Renamed,
+            worktree: FileState::Modified,
+        };
+        let following = FileStatus {
+            path: PathBuf::from("following.txt"),
+            original_path: None,
+            index: FileState::Modified,
+            worktree: FileState::Modified,
+        };
+        let status = RepositoryStatus {
+            head: Head::Branch("main".into()),
+            upstream: None,
+            divergence: Divergence::default(),
+            files: vec![renamed.clone(), following.clone()],
+        };
+        let rows = status_rows(&status);
+        let text = rows
+            .iter()
+            .map(|row| row.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text.lines().count(), rows.len());
+        for row in rows.iter().filter(|row| row.entry.is_some()) {
+            let entry = row.entry.as_ref().unwrap();
+            assert!(!row.text.contains(['\n', '\r', '\t']));
+            if entry.path == renamed.path {
+                assert!(
+                    row.text
+                        .contains("old\\nname.txt → first\\ncontinuation\\r\\t.txt")
+                );
+                assert_eq!(entry.original_path, renamed.original_path);
+            } else {
+                assert_eq!(entry.path, following.path);
+                assert!(row.text.ends_with("following.txt"));
+            }
+        }
+    }
     use std::path::Path;
 
     fn status(files: Vec<FileStatus>) -> RepositoryStatus {
