@@ -1,3 +1,31 @@
+---
+title: "Stale saved contents exhaust Content Finder's result budget"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: a847564
+---
+
+## Resolution
+
+Commit `a847564` (`fix(finder): exclude open files before spending disk result limits`).
+
+Content scanning admitted saved matches before the app removed paths owned by
+open buffers. Both synchronous and background scanners now receive a captured
+set of those paths and skip them before reading content or charging the result
+budget. Existing public scanner wrappers retain their behavior for callers
+without exclusions. Post-scan reconciliation remains necessary for documents
+opened during an outstanding scan.
+
+Coverage: `content_finder_excludes_open_disk_rows_before_the_scan_budget` in
+`src/app/tests/finder_disk_budget.rs` exercises both execution paths against a
+50,000-row stale disk file and checks that an unopened-file result survives
+without a false limit flag. It failed before the change and passes afterward.
+All 53 file-picker tests and 109 app search/picker tests passed. Root reviewed
+the scanner admission and app capture boundaries independently.
+
+## Report
+
 Content Finder drops matches from unopened files when an earlier scanned file
 is already open and its saved contents contain enough matches to exhaust the
 50,000-row content budget. The scanner reads and counts those saved rows, then
