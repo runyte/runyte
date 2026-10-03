@@ -3588,13 +3588,24 @@ impl DocumentSyntax {
         loop {
             let start = node.start_byte();
             let end = node.end_byte();
-            if end > start + 1 {
+            let delimiter_edges =
+                [0, node.child_count().saturating_sub(1)]
+                    .into_iter()
+                    .all(|index| {
+                        node.child(index)
+                            .is_some_and(|child| !child.is_named() && !child.is_missing())
+                    });
+            if end > start + 1 && delimiter_edges {
                 let first = byte_to_char(text, start);
                 let last = byte_to_char(text, end.saturating_sub(1));
-                if text.char_at(first) == Some(character) && opening.is_some() {
+                if first == offset
+                    && opening.is_some_and(|(_, close)| text.char_at(last) == Some(*close))
+                {
                     return Some(last);
                 }
-                if text.char_at(last) == Some(character) && closing.is_some() {
+                if last == offset
+                    && closing.is_some_and(|(open, _)| text.char_at(first) == Some(*open))
+                {
                     return Some(first);
                 }
             }

@@ -3930,6 +3930,63 @@ fn match_bracket_returns_none_off_a_bracket() {
     assert_eq!(syntax.matching_bracket(&text, 0), None);
 }
 
+#[test]
+fn match_bracket_requires_a_present_partner_in_the_same_container() {
+    for (source, offset) in [
+        ("[123", 0),
+        ("{\"x\":1", 0),
+        ("123]", 3),
+        ("[[123]", 0),
+        ("[123]]", 5),
+        ("[123}", 0),
+    ] {
+        let (_, text, syntax) = parse(source, "json");
+        assert_eq!(syntax.matching_bracket(&text, offset), None, "{source}");
+    }
+    let (_, text, syntax) = parse("[[123]", "json");
+    assert_eq!(syntax.matching_bracket(&text, 1), Some(5));
+    assert_eq!(syntax.matching_bracket(&text, 5), Some(1));
+}
+
+#[test]
+fn match_bracket_ignores_a_caret_inside_strings_and_comments() {
+    for source in [
+        "fn main() { let s = \"界 { b\"; }",
+        "fn main() { /* 界 { } */ }",
+        "fn main() { // 界 { }\n}",
+    ] {
+        let (_, text, syntax) = parse(source, "rust");
+        let inside = char_offset(source, "界 ") + 2;
+        assert_eq!(syntax.matching_bracket(&text, inside), None, "{source}");
+        let open = char_offset(source, "{");
+        let close = source.chars().count() - 1;
+        assert_eq!(syntax.matching_bracket(&text, open), Some(close));
+        assert_eq!(syntax.matching_bracket(&text, close), Some(open));
+    }
+}
+
+#[test]
+fn match_bracket_preserves_pairs_in_nested_and_injected_syntax() {
+    for (language, source, opening, closing) in [
+        ("json", "{\"界\": [1, 2]}", '[', ']'),
+        ("rust", "fn main() { call(1); }", '{', '}'),
+        ("html", "<div>界</div>", '<', '>'),
+        ("markdown", "```rust\nfn main() { call(1); }\n```", '{', '}'),
+    ] {
+        let (_, text, syntax) = parse(source, language);
+        let from = source
+            .chars()
+            .position(|character| character == opening)
+            .unwrap();
+        let to = source
+            .chars()
+            .position(|character| character == closing)
+            .unwrap();
+        assert_eq!(syntax.matching_bracket(&text, from), Some(to), "{source}");
+        assert_eq!(syntax.matching_bracket(&text, to), Some(from), "{source}");
+    }
+}
+
 /// Markdown leaves ordinary prose punctuation as text, so a quoted phrase has
 /// no delimiter-shaped node for the structural path to find. The lexical
 /// fallback pairs a delimiter that opens and closes with the same character by
