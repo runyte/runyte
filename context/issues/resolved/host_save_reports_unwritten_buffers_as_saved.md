@@ -1,3 +1,21 @@
+---
+title: "Host saves report success without writing the buffer"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: e79a6b2
+---
+
+## Resolution
+
+Commit `e79a6b2` (`fix(session): report host saves only after completed writes`).
+
+The native save workflow deliberately reports failures through editor feedback while returning a handled command. Its new explicit SaveDisposition separates completed writes from refusals, failures, and deferred work. The host adapter now returns an error for NotWritten and refuses commit-message and directory operations before starting asynchronous work or confirmation. Native command behavior and successful writes with durability warnings remain intact.
+
+Coverage: host_save_returns_errors_for_failed_and_stale_writes, host_save_refuses_read_only_commit_and_directory_buffers_without_side_effects, and host_save_returns_the_revision_after_writing_the_requested_buffer in src/workspace/host/tests/save_results.rs. All three pass; failed writes and refused special buffers reproduced before the fix.
+
+## Report
+
 `WorkspaceHost::save_buffer` reports a successful buffer revision when the native
 save workflow refuses the write or encounters an I/O error. Native saves report
 these outcomes through editor feedback and normally return `Ok(())`; the host
