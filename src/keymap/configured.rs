@@ -625,6 +625,77 @@ mod tests {
         assert_eq!(compiled.errors.len(), 1);
     }
 
+    #[test]
+    fn grammar_reserved_remaps_restore_reachable_defaults() {
+        use crate::{
+            command::EditorCommand,
+            input::InputEvent,
+            input_grammar::{EditorIntent, GrammarContext, InputGrammar, RunyteGrammar},
+        };
+
+        for source in [
+            "leader: '1'",
+            "leader: Tab",
+            "rebind: {'Space e': '2 e'}",
+            "rebind: {'Space e': 'Tab e'}",
+            "rebind: {'Space e': 'F12 Esc e'}",
+            "rebind: {'Space e': 'F12 Ctrl-Backspace e'}",
+        ] {
+            let compiled = configured(source);
+            assert!(!compiled.errors.is_empty(), "accepted {source}");
+            assert_eq!(compiled.keymap.leader(), Key::char(' '));
+            validate::assert_valid(&compiled.keymap);
+            for mode in [Mode::Normal, Mode::Select] {
+                let mut grammar = RunyteGrammar::default();
+                let context = crate::input_grammar::GrammarContext::new(
+                    mode,
+                    BindingScope::Global,
+                    &compiled.keymap,
+                );
+                grammar
+                    .translate(InputEvent::Key(Key::char(' ')), context)
+                    .unwrap();
+                let output = grammar
+                    .translate(InputEvent::Key(Key::char('e')), context)
+                    .unwrap();
+                assert!(
+                    matches!(output.intents.as_slice(), [EditorIntent::Command(command)]
+                    if command.id() == crate::command::CommandId::Editor(EditorCommand::OpenExplorer)),
+                    "{source} did not restore explorer dispatch"
+                );
+            }
+        }
+
+        let compiled =
+            configured("leader: Ctrl-x\nrebind: {'Space e': 'F12 Esc e', 'Space f': F10}");
+        assert_eq!(compiled.keymap.leader(), Key::ctrl('x'));
+        assert!(matches!(
+            compiled.keymap.lookup(Mode::Normal, &KeySequence::parse("F10").unwrap()),
+            Lookup::Exact(binding) if binding.target == BindingTarget::Editor(EditorCommand::OpenFilePicker)
+        ));
+
+        // Grammar-owned reservations do not apply to a literal Tab in Insert
+        // mode, or to the directory tree's direct numbered pane commands.
+        let compiled = configured("bind: {insert: {Tab: insert-newline}}");
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        validate::assert_valid(&compiled.keymap);
+        let mut grammar = RunyteGrammar::default();
+        let output = grammar
+            .translate(
+                InputEvent::Key(Key::plain(KeyCode::Tab)),
+                GrammarContext::new(
+                    crate::command::Mode::Insert,
+                    BindingScope::Global,
+                    &compiled.keymap,
+                ),
+            )
+            .unwrap();
+        assert!(
+            matches!(output.intents.as_slice(), [EditorIntent::Command(command)]
+            if command.id() == crate::command::CommandId::Editor(EditorCommand::InsertNewline))
+        );
+    }
+
     fn configured(source: &str) -> CompiledKeymap {
         let value: Value = serde_yaml::from_str(source).unwrap();
         compile(&value, default_keymap())

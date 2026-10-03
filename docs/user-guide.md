@@ -6521,7 +6521,9 @@ keys:
   keys under it is an error.
 - **Reserved keys.** In Normal and Select, a leading `1`–`9` is still a count
   and `Tab` still opens context actions. `Escape` and `Backspace` cannot appear
-  inside a sequence.
+  inside a sequence. Named prefixes and `keys.rebind` must respect these
+  reservations too; unreachable remappings are rejected and retain their
+  working defaults.
 - **Scoped input wins.** Buffer-specific keys, prompts, lists, native
   confirmations, and terminal input keep handling their own keys.
 

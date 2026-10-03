@@ -5,11 +5,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::command::Mode;
+use crate::input::KeyCode;
 
 use super::{Binding, BindingNamespace, BindingScope, ContextAction, KeySequence};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ViolationKind {
+    ReservedGrammarKey,
     DuplicateEffectiveSequence,
     ExactAndPrefix,
     GlobalScopedShadowing,
@@ -92,6 +94,34 @@ pub fn validate(
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
             for binding in &effective {
+                if matches!(mode, Mode::Normal | Mode::Select)
+                    && !scope.is_merge_review()
+                    && binding
+                        .sequence
+                        .as_slice()
+                        .iter()
+                        .enumerate()
+                        .any(|(index, key)| {
+                            (index > 0 && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                                || (index == 0
+                                    && scope != BindingScope::DirectoryTree
+                                    && key.modifiers.is_empty()
+                                    && matches!(key.code, KeyCode::Char('1'..='9')))
+                        })
+                {
+                    violations.push(Violation {
+                        kind: ViolationKind::ReservedGrammarKey,
+                        mode,
+                        scope,
+                        sequences: vec![binding.sequence.clone()],
+                        message: format!(
+                            "{} uses a reserved count or prefix-cancellation key in {} {:?}",
+                            binding.sequence,
+                            mode.label(),
+                            scope
+                        ),
+                    });
+                }
                 if let Some(previous) = by_sequence.insert(&binding.sequence, binding) {
                     violations.push(Violation {
                         kind: ViolationKind::DuplicateEffectiveSequence,
