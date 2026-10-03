@@ -29,6 +29,22 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   candidates. Recorded in
   [`context/reference/fuzzy-matching.md`](../context/reference/fuzzy-matching.md).
   Its own section is [below](#fuzzy-matching-against-fzf).
+- **`terminal_grid.py`** — isolated insert/delete/scroll stress comparison of
+  the actual terminal grid at a selected Git revision against the working tree.
+  After `cargo build --locked --lib`, run
+  `python3 benchmarks/terminal_grid.py --runs 5 --json /tmp/terminal-grid.json`.
+  The default baseline is the parent of `d26624a`, before the character-shift
+  optimization. The harness compiles both grid modules with
+  `rustc --edition=2024 -O`, using the newest existing `unicode_width` debug
+  library artifact. It fills each grid outside the timed region, verifies
+  identical final text, discards one warm-up, and alternates measurement order.
+  The character case runs four insert/delete pairs of 16,000 columns on a
+  32,768-column, one-row screen. The row case runs one scroll-up, scroll-down,
+  insert-line and delete-line operation of 16,000 rows on a one-column,
+  32,768-row screen without history. These extreme supported shapes expose
+  algorithmic scaling; they do not measure ordinary terminal throughput or
+  PTY/rendering latency. Output reports median (min–max) milliseconds; JSON
+  retains every sample, source hashes, baseline commit, platform and compiler.
 
 The harnesses generate their inputs from a fixed seed into `.work/`, which is
 ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in it.
