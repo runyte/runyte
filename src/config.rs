@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     fmt, fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -1116,7 +1117,7 @@ impl Config {
 
     /// The one parse, merge, and validation path every load shares.
     fn read(path: &Path) -> Result<Self> {
-        let source = fs::read_to_string(path)
+        let source = Self::read_source(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: Self = serde_yaml::from_str(&source)
             .with_context(|| format!("invalid YAML in {}", path.display()))?;
@@ -1126,6 +1127,16 @@ impl Config {
             .map_err(anyhow::Error::msg)
             .with_context(|| format!("invalid settings in {}", path.display()))?;
         Ok(config)
+    }
+
+    /// Configurations are ordinary files, including through symlinks. Open
+    /// first with the shared nonblocking type check so external replacement
+    /// with a FIFO cannot stall a reload or a settings write.
+    pub(crate) fn read_source(path: &Path) -> std::io::Result<String> {
+        let mut file = crate::path_safety::open_regular_file(path, false)?;
+        let mut source = String::new();
+        file.read_to_string(&mut source)?;
+        Ok(source)
     }
 
     /// Merge additive built-ins after deserializing a user configuration.
@@ -1531,6 +1542,10 @@ fn parse_color(value: &str) -> Result<Color> {
     };
     Ok(color)
 }
+
+#[cfg(all(test, unix))]
+#[path = "config/tests/special_files.rs"]
+mod special_file_tests;
 
 #[cfg(test)]
 mod tests {
