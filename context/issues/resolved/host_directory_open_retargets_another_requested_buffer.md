@@ -1,3 +1,21 @@
+---
+title: "Host directory activation retargets another requested buffer"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 9fa0fdf
+---
+
+## Resolution
+
+Commit `9fa0fdf` (`fix(workspace): preserve every requested directory buffer identity`).
+
+Host open preparation captured a live explorer for a later requested path, then first-directory activation reused and retargeted that same buffer. The request now protects any reusable explorer named under another requested identity. It adopts an existing unclaimed prepared destination where safe, or prepares another explorer without disturbing another pane or dirty alias. The shared enter_pane_directory helper retains read-before-publication behavior. Canonical identities also drive activated-result substitution, so aliases receive the same activated id as repeated identical paths.
+
+Tests in `src/app/tests/host_directory_identity.rs`: `directory_host_open_preserves_other_requested_explorer_identity`, `directory_host_open_returns_one_activated_id_for_existing_aliases`, `directory_host_open_adopts_existing_unclaimed_requested_target`, `directory_host_open_keeps_another_panes_explorer_claim`, and `reserved_explorer_is_unchanged_when_requested_directory_read_fails`. All five pass, along with two prior atomicity regressions, 100 navigation/file tests and 41 host tests. Independent review verified ordinary explorer reuse, bounded adoption and pane ownership.
+
+## Report
+
 A multi-directory host open can return the wrong directory buffer for a
 successfully accepted request. If the active pane's explorer already shows
 `second`, opening `[first, second]` with activation enabled prepares `second`
