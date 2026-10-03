@@ -40,6 +40,7 @@ const PREVIEW_BYTES: u64 = 64 * 1024;
 const PREVIEW_CONTEXT_LINES: usize = 512;
 const PREVIEW_CONTEXT_BEFORE: usize = PREVIEW_CONTEXT_LINES / 2;
 const GREP_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const IGNORE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// How many ranking candidates a picker will hold.
 ///
 /// This is a budget on the rank pass a keystroke pays for, not on how much of
@@ -402,19 +403,19 @@ impl FilePreview {
     }
 
     pub fn snippet_from_path(path: &Path, focus_row: usize, emphasis: Vec<usize>) -> Self {
-        let metadata = match fs::metadata(path) {
+        let file = match crate::path_safety::open_regular_file(path, false) {
+            Ok(file) => file,
+            Err(error) => return Self::Unreadable(error.to_string()),
+        };
+        let metadata = match file.metadata() {
             Ok(metadata) => metadata,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
         if metadata.len() > GREP_FILE_BYTES {
             return Self::Unreadable("file is now too large for a content preview".to_owned());
         }
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) => return Self::Unreadable(error.to_string()),
-        };
         let rows = Self::snippet_rows(focus_row);
-        match BufReader::new(file)
+        match BufReader::new(file.take(GREP_FILE_BYTES))
             .lines()
             .skip(rows.start)
             .take(rows.len())
@@ -428,12 +429,12 @@ impl FilePreview {
     }
 
     pub fn from_path(path: &Path) -> Self {
-        let metadata = match fs::metadata(path) {
-            Ok(metadata) => metadata,
+        let mut file = match crate::path_safety::open_regular_file(path, false) {
+            Ok(file) => file,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
-        let mut file = match fs::File::open(path) {
-            Ok(file) => file,
+        let metadata = match file.metadata() {
+            Ok(metadata) => metadata,
             Err(error) => return Self::Unreadable(error.to_string()),
         };
         let mut bytes = Vec::with_capacity(metadata.len().min(PREVIEW_BYTES) as usize);
@@ -3146,16 +3147,26 @@ pub(crate) fn scan_content_excluding(
 }
 
 fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
-    let metadata = fs::metadata(path).ok()?;
-    if metadata.len() > GREP_FILE_BYTES {
-        return None;
-    }
-    let text = fs::read_to_string(path).ok()?;
+    let text = read_regular_text(path, GREP_FILE_BYTES).ok()?;
     let lines = line_hits(&text, query);
     (!lines.is_empty()).then(|| FileHits {
         path: path.to_path_buf(),
         lines,
     })
+}
+
+fn read_regular_text(path: &Path, limit: u64) -> io::Result<String> {
+    let file = crate::path_safety::open_regular_file(path, false)?;
+    if file.metadata()?.len() > limit {
+        return Err(io::Error::other("file exceeds finder read limit"));
+    }
+    let mut text = String::new();
+    file.take(limit.saturating_add(1))
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > limit {
+        return Err(io::Error::other("file exceeds finder read limit"));
+    }
+    Ok(text)
 }
 
 /// Bounded matching lines from authoritative live text, holding only the lines
@@ -3363,7 +3374,7 @@ fn read_ignore_files(
 ) {
     for name in [".gitignore", ".ignore"] {
         let path = directory.join(name);
-        match fs::read_to_string(&path) {
+        match read_regular_text(&path, IGNORE_FILE_BYTES) {
             Ok(contents) => rules.extend(parse_ignore(relative_directory, &contents)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(_) => *skipped += 1,
@@ -3540,6 +3551,33 @@ mod tests {
                 std::process::id(),
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ))
+    }
+
+    #[test]
+    fn finder_text_reads_enforce_byte_limits_and_skip_oversized_ignore_files() {
+        let root = temporary("bounded-text-reads");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("ordinary.txt");
+        fs::write(&file, "éé").unwrap();
+        assert_eq!(read_regular_text(&file, 4).unwrap(), "éé");
+        assert!(read_regular_text(&file, 3).is_err());
+        let ignore = root.join(".ignore");
+        fs::write(&ignore, "x".repeat(IGNORE_FILE_BYTES as usize + 1)).unwrap();
+        let (entries, skipped) = scan_files(
+            &root,
+            &ScanScope::ignoring(&root),
+            &root.join(".runyte"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(skipped, 1);
+        assert_eq!(entries.len(), 1);
+        assert!(content_entries(&ignore, "x").is_none());
+        assert!(matches!(
+            FilePreview::snippet_from_path(&ignore, 0, vec![]),
+            FilePreview::Unreadable(_)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
