@@ -116,7 +116,7 @@ pub fn is_binary(prefix: &[u8], complete: bool) -> bool {
 /// A path that cannot be read is not binary: the caller's own open reports
 /// that failure with the message it wants.
 pub fn looks_binary(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else {
+    let Ok(mut file) = crate::path_safety::open_regular_file(path, false) else {
         return false;
     };
     // One byte past the prefix, which is what tells a file of exactly

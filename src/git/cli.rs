@@ -1713,7 +1713,7 @@ fn read_bounded_file(root: &Path, path: &Path, limit: usize) -> Option<Vec<u8>> 
         return None;
     }
     crate::path_safety::ensure_within_root(root, path).ok()?;
-    let file = std::fs::File::open(path).ok()?;
+    let file = crate::path_safety::open_regular_file(path, false).ok()?;
     let mut content = Vec::new();
     let mut bounded = file.take(limit as u64);
     bounded.read_to_end(&mut content).ok()?;
@@ -1942,11 +1942,14 @@ fn has_git_marker_in<'a>(
                 return Ok(true);
             }
             Ok(metadata) if metadata.file_type().is_file() => {
-                let file = std::fs::File::open(&marker).map_err(|error| GitError::Io {
-                    action: "inspect repository marker at",
-                    path: marker.clone(),
-                    detail: error.to_string(),
-                })?;
+                let file =
+                    crate::path_safety::open_regular_file(&marker, false).map_err(|error| {
+                        GitError::Io {
+                            action: "inspect repository marker at",
+                            path: marker.clone(),
+                            detail: error.to_string(),
+                        }
+                    })?;
                 let mut content = Vec::new();
                 file.take(MAX_GIT_MARKER_BYTES as u64 + 1)
                     .read_to_end(&mut content)
@@ -4051,11 +4054,12 @@ fn tree_object(entries: &[u8]) -> Option<String> {
 }
 
 fn read_file_for_comparison(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let file = std::fs::File::open(path).map_err(|error| GitError::Io {
-        action: "read",
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
+    let file =
+        crate::path_safety::open_regular_file(path, false).map_err(|error| GitError::Io {
+            action: "read",
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
     let mut content = Vec::new();
     file.take(limit as u64 + 1)
         .read_to_end(&mut content)
@@ -4102,11 +4106,12 @@ fn bounded_file_sha256(repository: &Repository, path: &Path) -> Result<String> {
             path: path.to_path_buf(),
         });
     }
-    let file = std::fs::File::open(path).map_err(|error| GitError::Io {
-        action: "fingerprint",
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-    })?;
+    let file =
+        crate::path_safety::open_regular_file(path, false).map_err(|error| GitError::Io {
+            action: "fingerprint",
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
     let mut bytes = Vec::new();
     file.take(MAX_PATCH_BYTES as u64 + 1)
         .read_to_end(&mut bytes)

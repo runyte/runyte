@@ -33,6 +33,7 @@ use crate::{
     directory_buffer::{DirectoryBuffer, DirectoryTransfer, ListingView},
     fs_plan::{DirectoryListing, FsPlan, TransferMode},
     notification::{NOTIFICATIONS_BUFFER_NAME, NotificationDocument, NotificationRow},
+    path_safety::open_regular_file,
     row_hints::{RowHints, display_cells},
     settings::{SETTINGS_BUFFER_NAME, SettingId},
     text::{Offset, Text, Transaction},
@@ -499,7 +500,7 @@ pub(crate) enum ObservationApply {
 
 impl DiskState {
     fn inspect(path: &Path) -> Result<Option<Self>> {
-        let mut file = match File::open(path) {
+        let mut file = match open_regular_file(path, false) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => {
@@ -720,25 +721,13 @@ fn read_text_and_state_limit(
     action: &str,
     limit: Option<usize>,
 ) -> Result<(String, DiskState)> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    if limit.is_some() {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let mut file = options
-        .open(path)
+    let mut file = open_regular_file(path, false)
         .with_context(|| format!("failed to {action} {}", path.display()))?;
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect {}", path.display()))?;
     let mut contents = Vec::new();
     if let Some(limit) = limit {
-        ensure!(
-            metadata.is_file(),
-            "bounded document opens require a regular file"
-        );
         (&mut file)
             .take(limit as u64 + 1)
             .read_to_end(&mut contents)?;
@@ -760,7 +749,7 @@ fn read_text_and_state_limit(
 }
 
 pub(crate) fn observe_file(path: &Path) -> FileObservation {
-    let mut file = match File::open(path) {
+    let mut file = match open_regular_file(path, false) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return FileObservation::Deleted;
@@ -833,7 +822,7 @@ pub(crate) fn observe_directory(path: &Path, show_hidden: bool) -> FileObservati
 }
 
 pub(crate) fn inspect_file_metadata(path: &Path) -> Option<FileMetadataHint> {
-    let file = File::open(path).ok()?;
+    let file = open_regular_file(path, false).ok()?;
     let metadata = file.metadata().ok()?;
     Some(FileMetadataHint {
         len: metadata.len(),
@@ -992,9 +981,7 @@ fn atomic_write_with_identity(
         // Atomic rename is authorized by the directory, unlike an in-place
         // write. Retain the old save boundary: a readable but non-writable
         // file must not become writable merely because its parent is.
-        OpenOptions::new()
-            .write(true)
-            .open(&destination)
+        open_regular_file(&destination, true)
             .with_context(|| format!("failed to open {} for writing", path.display()))?;
     }
     let (temporary, file) = create_save_temporary(parent)?;
@@ -1192,7 +1179,7 @@ fn preserve_posix_acl(temporary: &File, destination: &Path) -> io::Result<()> {
     use std::os::fd::AsRawFd;
 
     const ACL_NAME: &[u8] = b"system.posix_acl_access\0";
-    let source = File::open(destination)?;
+    let source = open_regular_file(destination, false)?;
     // SAFETY: both descriptors are live and ACL_NAME is NUL terminated.
     let size = unsafe {
         libc::fgetxattr(
@@ -1393,10 +1380,11 @@ fn replace_file(
         libc::RENAME_EXCHANGE as u32,
     );
     if exchanged == 0 {
-        let displaced = DiskState::inspect(source)
-            .map_err(|error| io::Error::other(format!("cannot inspect displaced file: {error}")))?;
+        let displaced = DiskState::inspect(source);
         if displaced
             .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .zip(policy.expected())
             .is_some_and(|(displaced, expected)| displaced.matches_displaced(expected))
         {
@@ -1501,10 +1489,11 @@ fn replace_file(
     let exchanged =
         unsafe { libc::renamex_np(source_c.as_ptr(), destination_c.as_ptr(), libc::RENAME_SWAP) };
     if exchanged == 0 {
-        let displaced = DiskState::inspect(source)
-            .map_err(|error| io::Error::other(format!("cannot inspect displaced file: {error}")))?;
+        let displaced = DiskState::inspect(source);
         if displaced
             .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .zip(policy.expected())
             .is_some_and(|(displaced, expected)| displaced.matches_displaced(expected))
         {
@@ -1642,14 +1631,11 @@ fn replace_file(
         ));
     }
     if let (ReplacePolicy::Expected(expected), Some(backup)) = (policy, backup.as_ref()) {
-        let displaced = DiskState::inspect(backup).map_err(|error| {
-            io::Error::other(format!(
-                "cannot inspect displaced file retained at {}: {error}",
-                backup.display()
-            ))
-        })?;
+        let displaced = DiskState::inspect(backup);
         if displaced
             .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .is_none_or(|displaced| !displaced.matches_displaced(expected))
         {
             let recovery = create_save_backup_path(&destination_path).map_err(|error| {
@@ -1725,6 +1711,10 @@ fn replace_file(
         Ok(Some(warnings.join("; ")))
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "buffer/tests/special_files.rs"]
+mod special_file_tests;
 
 #[cfg(windows)]
 fn create_save_backup_path(destination: &Path) -> io::Result<PathBuf> {
