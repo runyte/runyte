@@ -1,3 +1,21 @@
+---
+title: "Unsupported CSI functions execute unrelated basic commands"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: a09e163
+---
+
+## Resolution
+
+Commit `a09e163` (`fix(terminal): ignore unsupported CSI intermediate functions`).
+
+Emulator::csi dispatch previously matched the private marker and final byte while generally ignoring intermediates. Since none of its supported CSI functions use intermediates, it now rejects those complete sequences before dispatch. Unsupported editing, cursor, rendition, mode and query functions cannot alias supported commands that share a final byte.
+
+Coverage: unsupported_csi_intermediates_do_not_alias_basic_commands in tests/terminal_sequences.rs verifies unchanged screen text, cursor, colors, alternate-screen state and device replies, followed by ordinary printing. It failed before the fix; all 16 terminal sequence tests pass.
+
+## Report
+
 CSI dispatch ignores intermediate bytes for most commands. An unsupported
 sequence such as `ESC [ 2 SP @` is consequently treated as ordinary Insert
 Character and shifts the current row. Likewise `ESC [ 2 SP A` moves the cursor
