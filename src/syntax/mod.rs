@@ -13,6 +13,9 @@
 
 mod background;
 mod grammars;
+mod parse_error;
+
+use parse_error::tree_has_parse_error;
 
 pub(crate) use background::{ParseRequest, StaleSyntax};
 pub use background::{SyntaxEvent, SyntaxEvents, SyntaxHandle, spawn_background};
@@ -2319,11 +2322,15 @@ impl DocumentSyntax {
             let begin = query.get_capture("indent.begin");
             let always = query.get_capture("indent.always");
             let tab = query.get_capture("indent.tab");
-            let scan_end = u32::try_from(len_bytes)
-                .map_err(|_| SyntaxError::DocumentTooLarge { len_bytes })?;
             let loader = |candidate: Language| (candidate == parser_language).then_some(query);
-            let mut iter =
-                QueryMatchIter::<_, ()>::new(&self.syntax, rope_slice(text), loader, 0..scan_end);
+            // Tree-sitter includes matches whose nodes enclose this range, so
+            // ancestor indentation survives without visiting unrelated bodies.
+            let mut iter = QueryMatchIter::<_, ()>::new(
+                &self.syntax,
+                rope_slice(text),
+                loader,
+                byte_range.clone(),
+            );
             let mut seen = std::collections::HashSet::new();
             let mut begin_levels = 0usize;
             let mut always_levels = 0usize;
@@ -3157,17 +3164,6 @@ fn has_trailing_closing_delimiter(
             .all(|character| character == '`' || character == '~'))
 }
 
-fn tree_has_parse_error(root: Node<'_>) -> bool {
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "ERROR" || node.is_missing() {
-            return true;
-        }
-        stack.extend((0..node.child_count()).filter_map(|index| node.child(index)));
-    }
-    false
-}
-
 struct ResolvedPath<'tree> {
     layer_depth: usize,
     layer: Layer,
@@ -3640,6 +3636,73 @@ fn lexical_enclosing_delimiter(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_parse_error_checks_match_visible_tree_walks() {
+        fn visible_error(root: Node<'_>) -> bool {
+            let mut nodes = vec![root];
+            while let Some(node) = nodes.pop() {
+                if node.kind() == "ERROR" || node.is_missing() {
+                    return true;
+                }
+                nodes.extend((0..node.child_count()).filter_map(|index| node.child(index)));
+            }
+            false
+        }
+
+        let registry = Registry::new();
+        let mut saw_error = false;
+        let mut saw_missing = false;
+        let mut saw_hidden_recovery = false;
+        let mut saw_injection = false;
+        for (language, source) in [
+            ("rust", "fn main() {\n if true { go(); }\n}\n"),
+            ("rust", "fn main() {\n let x = ;\n}\n"),
+            ("json", "[1, 2"),
+            ("html", "<main>\n    text"),
+            ("html", "<script>function f() {\n x();\n}</script>"),
+            ("markdown", "```json\n[1, 2\n```\n"),
+        ] {
+            let text = Text::from_str(source);
+            let syntax = DocumentSyntax::new(
+                &text,
+                registry.language_for_name(language).unwrap(),
+                &registry,
+            )
+            .unwrap();
+            let mut visited = std::collections::HashSet::new();
+            for byte in 0..text.rope().len_bytes() as u32 {
+                for (depth, layer) in syntax
+                    .layers_covering(byte..byte + 1)
+                    .into_iter()
+                    .enumerate()
+                {
+                    if !visited.insert(layer) {
+                        continue;
+                    }
+                    saw_injection |= depth > 0;
+                    let Some(tree) = syntax.syntax.layer(layer).tree() else {
+                        continue;
+                    };
+                    let mut nodes = vec![tree.root_node()];
+                    while let Some(node) = nodes.pop() {
+                        saw_error |= node.kind() == "ERROR";
+                        saw_missing |= node.is_missing();
+                        let expected = visible_error(node.clone());
+                        saw_hidden_recovery |=
+                            parse_error::node_has_parse_error(node.clone()) && !expected;
+                        assert_eq!(
+                            tree_has_parse_error(node.clone()),
+                            expected,
+                            "{language}: {node:?}"
+                        );
+                        nodes.extend((0..node.child_count()).filter_map(|index| node.child(index)));
+                    }
+                }
+            }
+        }
+        assert!(saw_error && saw_missing && saw_hidden_recovery && saw_injection);
+    }
 
     /// The marker is an `Option` so that a language added later cannot
     /// silently inherit somebody else's comment syntax. This pins the current
