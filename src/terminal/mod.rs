@@ -2057,6 +2057,7 @@ impl TerminalSession {
         }
         // A pane taller than the whole session pads at the top, so the first
         // output stays where it was written rather than floating.
+        let top_padding = rows.saturating_sub(lines.len());
         while lines.len() < rows {
             lines.insert(0, vec![Cell::default(); columns]);
             line_ids.insert(0, None);
@@ -2066,7 +2067,7 @@ impl TerminalSession {
             let absolute = history + cursor.row;
             (absolute >= start && absolute < end).then(|| {
                 (
-                    absolute - start,
+                    top_padding + absolute - start,
                     cursor.column.min(columns.saturating_sub(1)),
                 )
             })
@@ -3198,6 +3199,26 @@ mod tests {
         assert_eq!(view_text(&view), vec!["two", "three"]);
         assert_eq!(view.cursor, Some((1, 5)));
         assert_eq!(view.scrollback, 0);
+    }
+
+    #[test]
+    fn padded_live_views_keep_the_cursor_with_its_terminal_row() {
+        let mut session = session(8, 2);
+        session.feed(b"one\r\ntwo");
+        let view = session.view(4);
+        assert_eq!(view_text(&view), ["", "", "one", "two"]);
+        assert_eq!(view.line_ids, [None, None, Some(0), Some(1)]);
+        assert_eq!(view.cursor, Some((3, 3)));
+        assert_eq!(session.view(2).cursor, Some((1, 3)));
+        assert_eq!(session.view(1).cursor, Some((0, 3)));
+        assert_eq!(session.cursor_row(), 1);
+
+        session.feed(b"\r\nthree");
+        let view = session.view(5);
+        assert_eq!(view_text(&view), ["", "", "one", "two", "three"]);
+        assert_eq!(view.cursor, Some((4, 5)));
+        session.feed(b"\x1b[?25l");
+        assert_eq!(session.view(5).cursor, None);
     }
 
     #[test]
