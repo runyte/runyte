@@ -1,3 +1,29 @@
+---
+title: "Diff viewport mapping scans entire filler gaps"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 4cca101
+---
+
+## Resolution
+
+Commit `4cca101` (`perf(diff): locate filler rows by alignment run`).
+
+`DiffSession::row_at_or_above` walked backward through every filler row,
+performing a run lookup each time. It now finds the containing alignment run
+and uses its contiguous side range to obtain the preceding row directly.
+Leading gaps, empty sides and virtual rows retain their existing mapping.
+
+Coverage: `filler_lookup_matches_backward_scan_for_every_small_alignment` and
+`large_inserted_block_maps_directly_to_preceding_row` in `src/diff_view.rs`;
+all nine module tests passed. `benchmarks/diff_filler.rs` compares the old scan
+and current modules outside alignment construction. Five measured samples of
+100 lookups across a million-row gap had medians of 146.793 ms and 0.000450 ms.
+This is isolated algorithmic stress, not an end-to-end scrolling measurement.
+
+## Report
+
 `DiffSession::row_at_or_above` searches backward through every aligned row until
 it reaches a real row of the requested side. Each candidate performs a binary
 search through the alignment runs. A large inserted or deleted block therefore
