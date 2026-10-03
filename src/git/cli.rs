@@ -3153,6 +3153,7 @@ impl GitProvider for GitCliProvider {
             "--format=",
             "--patch",
             "--no-ext-diff",
+            "--no-textconv",
             "--no-color",
             oid,
         ];

@@ -3378,6 +3378,36 @@ fn commit_detail_reads_a_patch_past_the_default_output_bound() {
     assert!(detail.patch.contains("large.txt"));
 }
 
+#[cfg(unix)]
+#[test]
+fn commit_detail_never_executes_configured_text_converters() {
+    let repository = TempRepository::new("commit-detail-textconv");
+    repository.write(".gitattributes", "note.txt diff=fixture\n");
+    repository.write("note.txt", "original text\n");
+    repository.commit("original");
+    repository.write("note.txt", "changed text\n");
+    repository.commit("change");
+    let converter = repository.path().join("textconv");
+    install_stand_in(
+        &converter,
+        "printf 'ran\\n' > textconv-ran\nprintf 'converted text\\n'\n",
+    );
+    repository.git(&[
+        "config",
+        "diff.fixture.textconv",
+        converter.to_str().unwrap(),
+    ]);
+    let oid = git_output(&repository, &["rev-parse", "HEAD"]);
+
+    let detail = provider()
+        .commit_detail(&repository.repository(), oid.trim())
+        .unwrap();
+
+    assert!(!repository.path().join("textconv-ran").exists());
+    assert!(detail.patch.contains("-original text"));
+    assert!(detail.patch.contains("+changed text"));
+}
+
 #[test]
 fn commit_detail_honors_a_patch_limit_lowered_below_the_default() {
     let repository = TempRepository::new("lowered-commit-detail-bound");
