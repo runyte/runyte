@@ -1,3 +1,21 @@
+---
+title: "Missing state directories conceal overlap through symlink aliases"
+status: resolved
+reported: 2026-10-03
+resolved: 2026-10-03
+commit: 4035a9a
+---
+
+## Resolution
+
+Commit `4035a9a` (`fix(storage): resolve aliases above missing state directories`).
+
+On Unix, comparable_path now resolves the longest existing ancestor before appending the unresolved suffix. This exposes containment through aliases even when several descendants have not been created, while preserving the spelling and semantics of unresolved components. Initialization rejects overlap before creating runtime state; distinct future roots remain valid.
+
+Coverage: state_root_overlap_resolves_aliases_above_missing_descendants in src/project_root.rs checks both containment directions, rejection without directory creation, and a separate valid future root. The regression failed before the fix; all 18 project_root tests pass.
+
+## Report
+
 On Unix, runtime-state overlap validation can accept a path inside reserved
 per-user storage when the configured path has multiple nonexistent components
 below a symbolic-link alias. `project_root::comparable_path` canonicalizes only
