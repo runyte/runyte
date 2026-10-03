@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import time
 
-from ptybench import _spawn, _reap, TerminalQueries
+from ptybench import _spawn, _reap, clean_environment, TerminalQueries
 
 
 def own_cpu_ticks(pid):
@@ -68,17 +68,21 @@ def wait_for_detach(pid):
     raise RuntimeError("benchmark client did not detach")
 
 
+def environment(root):
+    env = clean_environment()
+    for name, suffix in [("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"),
+                         ("XDG_STATE_HOME", "state"), ("XDG_DATA_HOME", "data"),
+                         ("XDG_RUNTIME_DIR", "runtime"), ("RUNYTE_ALL_HOSTS_DIR", "inventory")]:
+        path = root / suffix
+        path.mkdir(mode=0o700)
+        env[name] = str(path)
+    return env
+
+
 def sample(binary, sessions, hidden, noisy, window):
     with tempfile.TemporaryDirectory(prefix="runyte-nav-bench-") as temporary:
         root = Path(temporary)
-        env = dict(os.environ)
-        env.pop("RUNYTE_PARENT_CONTEXT", None)
-        for name, suffix in [("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"),
-                             ("XDG_STATE_HOME", "state"), ("XDG_DATA_HOME", "data"),
-                             ("XDG_RUNTIME_DIR", "runtime"), ("RUNYTE_ALL_HOSTS_DIR", "inventory")]:
-            path = root / suffix
-            path.mkdir(mode=0o700)
-            env[name] = str(path)
+        env = environment(root)
         config = root / "config" / "runyte"
         config.mkdir()
         (config / "config.yaml").write_text("lsp:\n  enable: false\nworkspace:\n  session_strip: " + ("hidden" if hidden else "auto") + "\n")
@@ -142,8 +146,6 @@ def sample(binary, sessions, hidden, noisy, window):
 
 
 def main():
-    # ptybench overlays the inherited environment when forking its child.
-    os.environ.pop("RUNYTE_PARENT_CONTEXT", None)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default="target/release/runyte")
     parser.add_argument("--runs", type=int, default=3)

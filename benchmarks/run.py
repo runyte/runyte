@@ -23,7 +23,6 @@ table in the report says which rows satisfy that and which do not.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixtures  # noqa: E402
-from ptybench import median_idle, median_startup  # noqa: E402
+from ptybench import clean_environment, median_idle, median_startup  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -127,7 +126,7 @@ def discover(requested: list[str] | None) -> list[tuple[str, list[str]]]:
 
 def version_of(argv: list[str], env: dict[str, str], cwd: str) -> str:
     try:
-        probe_env = os.environ.copy()
+        probe_env = clean_environment()
         probe_env.update(env)
         out = subprocess.run(
             [argv[0], "--version"],

@@ -65,9 +65,7 @@ class Terminal(startup.Terminal):
 
 
 def environment(root):
-    env = dict(os.environ)
-    for key in ('RUNYTE_PARENT_CONTEXT', 'RUNYTE_BENCH_EVENTS'):
-        env.pop(key, None)
+    env = ptybench.clean_environment()
     for key, name in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'),
                       ('XDG_STATE_HOME', 'state'), ('XDG_DATA_HOME', 'data'), ('XDG_RUNTIME_DIR', 'runtime'),
                       ('RUNYTE_ALL_HOSTS_DIR', 'hosts')]:

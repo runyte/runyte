@@ -105,12 +105,24 @@ def _configure(fd: int) -> None:
         pass
 
 
+def clean_environment() -> dict[str, str]:
+    """Keep caller development output and routing out of isolated measurements."""
+    environment = dict(os.environ)
+    for name in ("RUNYTE_INPUT_TRACE", "RUNYTE_STARTUP_TIMING_FILE",
+                 "RUNYTE_BENCH_EVENTS", "RUNYTE_PARENT_CONTEXT"):
+        environment.pop(name, None)
+    return environment
+
+
 def _spawn(argv: list[str], env: dict[str, str], cwd: str | None) -> tuple[int, int]:
+    environment = clean_environment()
+    environment.update(env)
     pid, fd = pty.fork()
     if pid == 0:
         if cwd:
             os.chdir(cwd)
-        os.environ.update(env)
+        os.environ.clear()
+        os.environ.update(environment)
         os.environ["TERM"] = "xterm-256color"
         try:
             os.execvp(argv[0], argv)

@@ -158,11 +158,15 @@ class RunyteReadinessTests(unittest.TestCase):
             )}
             with mock.patch.multiple(startup.baseline, **replacements):
                 fixtures = startup.baseline.prepare()
+                caller_trace = root / "caller-trace"
+                caller_trace.write_text("retain the caller's trace\n")
                 for name in ("short.txt", "short.lua"):
-                    with self.subTest(fixture=name):
+                    with self.subTest(fixture=name), mock.patch.dict(
+                            os.environ, {"RUNYTE_INPUT_TRACE": str(caller_trace)}):
                         result = startup.measure(
                             [binary], startup.baseline.environment(), fixtures[name])
                         self.assertGreater(result["ready_to_edit"], 0)
+                        self.assertEqual(caller_trace.read_text(), "retain the caller's trace\n")
 
 
 if __name__ == "__main__":
