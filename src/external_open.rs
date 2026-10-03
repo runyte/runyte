@@ -13,7 +13,7 @@
 //! is one process spawn.
 
 #[cfg(not(windows))]
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::{
     fs,
     io::{ErrorKind, Read, Write},
@@ -26,8 +26,6 @@ use anyhow::{Context, Result};
 pub mod system;
 #[cfg(windows)]
 mod windows;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 
 /// How much of a file is examined before calling it text.
 ///
@@ -508,32 +506,22 @@ pub fn launch(program: &str, path: &Path) -> Result<()> {
     #[cfg(windows)]
     return finish_dispatch(dispatch(program, path)?);
     #[cfg(not(windows))]
-    {
-        let program = launch_program_for(program, OpenPlatform::CURRENT)?;
-        let mut words = program.split_whitespace();
-        let executable = words.next().context("no program was given")?;
-        let mut command = Command::new(executable);
-        command
-            .args(words)
-            .arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        command.process_group(0);
-        let child = command
-            .spawn()
-            .with_context(|| format!("failed to run {executable}"))?;
-        // Reaped on a thread of its own. Nothing waits on the exit status — the
-        // whole point is not to block the editor — but a child nobody waits for
-        // stays in the process table until Runyte itself exits, and a session
-        // spent opening images should not accumulate one zombie per image.
-        std::thread::spawn(move || {
-            let mut child = child;
-            let _ = child.wait();
-        });
-        Ok(())
-    }
+    launch_with_openers(program, path, system::active_openers())
+}
+
+#[cfg(not(windows))]
+fn launch_with_openers(
+    program: &str,
+    path: &Path,
+    active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> Result<()> {
+    let program = launch_program_for(program, OpenPlatform::CURRENT)?;
+    let mut words = program.split_whitespace();
+    let executable = words.next().context("no program was given")?;
+    let mut command = Command::new(executable);
+    command.args(words).arg(path);
+    system::launch_command(command, active)
+        .map_err(|error| anyhow::anyhow!("failed to run {executable}: {error}"))
 }
 
 #[cfg(test)]
@@ -899,6 +887,65 @@ mod tests {
             program,
         )
         .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manual_opens_share_bounded_admission_and_keep_literal_arguments() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let root = crate::test_support::TestRuntimeRoot::new("manual-open-admission").unwrap();
+        let helper = root.path().join("viewer");
+        let release = root.path().join("release");
+        install_stand_in(
+            &helper,
+            "printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\" > \"$0.args\"\nwhile [ ! -f \"$2\" ]; do sleep 0.01; done\n",
+        );
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut slots = Vec::new();
+        while let Ok(slot) = system::Slot::reserve(active.clone()) {
+            slots.push(slot);
+        }
+        let program = format!("{} literal {}", helper.display(), release.display());
+        let target = Path::new("file with spaces;$(literal).bin");
+        let error = launch_with_openers(&program, target, active.clone()).unwrap_err();
+        assert!(
+            error.to_string().contains("opener limit reached"),
+            "{error}"
+        );
+        assert!(
+            !root.path().join("viewer.args").exists(),
+            "rejected opener started a child"
+        );
+        drop(slots);
+        launch_with_openers(&program, target, active.clone()).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let arguments = loop {
+            if let Ok(text) = fs::read_to_string(root.path().join("viewer.args"))
+                && text.lines().count() == 4
+            {
+                break text;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(
+            arguments.lines().collect::<Vec<_>>(),
+            [
+                "3",
+                "literal",
+                release.to_str().unwrap(),
+                target.to_str().unwrap()
+            ]
+        );
+        assert_eq!(active.load(Ordering::Acquire), 1);
+        fs::write(&release, []).unwrap();
+        while active.load(Ordering::Acquire) != 0 {
+            assert!(Instant::now() < deadline, "child was not reaped");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[cfg(unix)]
