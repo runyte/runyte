@@ -1204,6 +1204,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
                 commit('4', "2026-08-10"),
             ],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: "1".repeat(40),
             }),
             total_pages: 2,
@@ -1273,6 +1275,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
     app.open_git_log_result(
         LogRequest {
             cursor: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: "1".repeat(40),
             }),
             ..LogRequest::default()
@@ -1302,6 +1306,8 @@ fn log_pages_step_forward_and_back_without_taking_a_motion_key() {
     assert_eq!(
         app.git_state.log_cursors()[1],
         Some(LogCursor {
+            tip: "1".repeat(40),
+            offset: 2,
             boundary: "1".repeat(40)
         })
     );
@@ -1360,6 +1366,8 @@ fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
         LogPage {
             commits: vec![commit('1')],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: boundary.clone(),
             }),
             total_pages: 2,
@@ -1375,7 +1383,7 @@ fn asynchronous_log_paging_applies_the_page_correlated_with_the_request() {
         GitOperation::Log {
             repository: requested,
             request: LogRequest {
-                cursor: Some(LogCursor { boundary: cursor }),
+                cursor: Some(LogCursor { boundary: cursor, .. }),
                 ..
             },
         } if requested == &repository && cursor == &boundary
@@ -1754,6 +1762,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         LogPage {
             commits: vec![first.clone(), selected.clone()],
             next: Some(LogCursor {
+                tip: "1".repeat(40),
+                offset: 2,
                 boundary: selected.oid.clone(),
             }),
             total_pages: 2,
@@ -1980,6 +1990,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
             repository: repository.clone(),
             request: LogRequest {
                 cursor: Some(LogCursor {
+                    tip: "1".repeat(40),
+                    offset: 2,
                     boundary: "4".repeat(40),
                 }),
                 limit: 100,
@@ -1988,6 +2000,8 @@ fn log_selection_is_object_stable_and_stale_blame_is_discarded() {
         result: Box::new(Ok(GitResponse::Log {
             request: LogRequest {
                 cursor: Some(LogCursor {
+                    tip: "1".repeat(40),
+                    offset: 2,
                     boundary: "4".repeat(40),
                 }),
                 limit: 100,

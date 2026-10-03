@@ -2755,20 +2755,38 @@ impl GitProvider for GitCliProvider {
                 stderr: format!("history page size must be between 1 and {MAX_LOG_PAGE_SIZE}"),
             });
         }
-        let start = match &request.cursor {
-            Some(LogCursor { boundary }) => {
-                if !valid_object_id(boundary) {
+        let (tip, offset) = match &request.cursor {
+            Some(LogCursor {
+                tip,
+                offset,
+                boundary,
+            }) => {
+                if !valid_object_id(tip) || !valid_object_id(boundary) {
                     return Err(GitError::Malformed {
                         command: "git log".to_owned(),
                         detail: "history cursor is not a full object id".to_owned(),
                     });
                 }
-                format!("{boundary}^@")
+                (tip.clone(), *offset)
             }
-            None => "HEAD".to_owned(),
+            None => {
+                let output = self.run_read_bounded(
+                    repository.workdir(),
+                    &["rev-parse", "--verify", "HEAD^{commit}"],
+                    128,
+                )?;
+                let tip = std::str::from_utf8(&output).map(str::trim).unwrap_or("");
+                if !valid_object_id(tip) {
+                    return Err(GitError::Malformed {
+                        command: "git rev-parse".to_owned(),
+                        detail: "history tip is not a full object id".to_owned(),
+                    });
+                }
+                (tip.to_owned(), 0)
+            }
         };
         let total_output =
-            self.run_read_bounded(repository.workdir(), &["rev-list", "--count", "HEAD"], 64)?;
+            self.run_read_bounded(repository.workdir(), &["rev-list", "--count", &tip], 64)?;
         let total_commits = std::str::from_utf8(&total_output)
             .ok()
             .and_then(|output| output.trim().parse::<usize>().ok())
@@ -2785,9 +2803,10 @@ impl GitProvider for GitCliProvider {
             OsString::from("--date-order"),
             OsString::from("--abbrev=12"),
             OsString::from(format!("--max-count={count}")),
+            OsString::from(format!("--skip={offset}")),
             OsString::from("--date=format:%Y-%m-%d %H:%M"),
             OsString::from("--format=%H%x00%h%x00%P%x00%an%x00%at%x00%as%x00%ad%x00%s%x00%D"),
-            OsString::from(start),
+            OsString::from(&tip),
         ];
         let mut commits = parse_log(&self.run_read_bounded(
             repository.workdir(),
@@ -2800,6 +2819,8 @@ impl GitProvider for GitCliProvider {
             .then(|| commits.last())
             .flatten()
             .map(|commit| LogCursor {
+                tip,
+                offset: offset.saturating_add(commits.len()),
                 boundary: commit.oid.clone(),
             });
         Ok(LogPage {
