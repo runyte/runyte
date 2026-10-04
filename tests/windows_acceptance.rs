@@ -169,13 +169,15 @@ fn native_editor_console_fixture() {
     std::fs::write(&config, "lsp:\n  enable: false\n").unwrap();
     let file = project.join("unicode note.txt");
     std::fs::write(&file, "original\r\n").unwrap();
+    // A launch naming a file outside any workspace opens a plain session
+    // without asking, so the setup question is reached by a bare launch and
+    // the file is opened once the workspace exists.
     let mut editor = Console::spawn(
         Path::new(env!("CARGO_BIN_EXE_runyte")),
         &[
             "--standalone".into(),
             "--config".into(),
             config.display().to_string(),
-            file.display().to_string(),
         ],
         &project,
         columns,
@@ -184,6 +186,8 @@ fn native_editor_console_fixture() {
     editor.send("\r");
     editor.until_prompt("[y/N]:");
     editor.send("y\r");
+    editor.until("NOR");
+    editor.send(":open \"unicode note.txt\"\r");
     editor.until("original");
     editor.until("NOR");
     // In Normal mode this must never execute :quit! or its following line.
