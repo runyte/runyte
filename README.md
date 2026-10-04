@@ -147,6 +147,23 @@ There are multiple ways to create a new session when you are already in Runyte:
 
 Switch between sessions with `Space Space`, or with `Shift-Left` and `Shift-Right`.
 
+## Quick edits outside a project
+
+Open a file or directory where there is no Git repository or `.runyte/`
+directory, such as `runyte /etc/hosts`, and Runyte starts a **plain
+session**: a simple editor with no workspace. It writes nothing beside the
+file and starts no Git, language server, plugin, or MCP integration. The
+status line reads `plain`, and the Finder searches the directory you are in.
+`--plain` does the same from inside a project, and `:workspace-init` turns a
+plain session into a workspace later.
+
+For system files, use `sudoedit` with Runyte as the editor:
+
+```sh
+export SUDO_EDITOR="runyte --plain"
+sudoedit /etc/fstab
+```
+
 ## Plugins
 
 Much of what Neovim users assemble from plugins comes built into Runyte:

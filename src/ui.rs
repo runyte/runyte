@@ -862,7 +862,11 @@ fn render_editor_frame(
         frame,
         &app.theme,
         &snapshot.status,
-        SessionMode::Standalone,
+        if app.is_plain() {
+            SessionMode::Plain
+        } else {
+            SessionMode::Standalone
+        },
         global_status_line_area,
         interaction_line_area,
     );
@@ -2081,7 +2085,12 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Filesystem plan · {}/{} · {} ",
+            " Filesystem plan{} · {}/{} · {} ",
+            if app.running_as_root() {
+                " · as root"
+            } else {
+                ""
+            },
             confirmation.selected.saturating_add(1),
             confirmation.plan.operations().len(),
             confirmation.plan.root().display()
@@ -2910,6 +2919,8 @@ enum SessionMode {
     Standalone,
     /// This TUI is attached to a workspace host running elsewhere.
     Persistent,
+    /// A standalone process with no workspace at all.
+    Plain,
 }
 
 impl SessionMode {
@@ -2917,6 +2928,16 @@ impl SessionMode {
         match self {
             Self::Standalone => "standalone",
             Self::Persistent => "persistent",
+            Self::Plain => "plain",
+        }
+    }
+
+    /// What the directory after the mode is. A plain session has no
+    /// workspace, so the same path is only the directory it works in.
+    fn directory_label(self) -> &'static str {
+        match self {
+            Self::Standalone | Self::Persistent => "Workspace",
+            Self::Plain => "Directory",
         }
     }
 }
@@ -3026,7 +3047,7 @@ fn draw_normal_status(
     status_area: TuiRect,
 ) {
     let mode_label = format!(" {} ", status.mode.label());
-    let left_prefix = format!("│ {} │ Workspace: ", session.label());
+    let left_prefix = format!("│ {} │ {}: ", session.label(), session.directory_label());
     let left_suffix = format!(
         "{}{}{} ",
         if status.dirty { " [+]" } else { "" },
@@ -5686,6 +5707,7 @@ mod tests {
 
         let standalone = rendered_status_line_for(&status, SessionMode::Standalone, 120);
         let persistent = rendered_status_line_for(&status, SessionMode::Persistent, 120);
+        let plain = rendered_status_line_for(&status, SessionMode::Plain, 120);
 
         assert!(
             standalone.starts_with(" NOR │ standalone │ Workspace: /project/runyte "),
@@ -5694,6 +5716,11 @@ mod tests {
         assert!(
             persistent.starts_with(" NOR │ persistent │ Workspace: /project/runyte "),
             "{persistent:?}"
+        );
+        // Without a workspace the path is only where the session works.
+        assert!(
+            plain.starts_with(" NOR │ plain │ Directory: /project/runyte "),
+            "{plain:?}"
         );
     }
 
@@ -5895,6 +5922,21 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_plain_session_names_itself_in_the_rendered_status_row() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let workspace = rendered(&mut app, 160, 8);
+        assert!(
+            workspace.contains("│ standalone │ Workspace: "),
+            "{workspace:?}"
+        );
+
+        app.enter_plain_session();
+        let plain = rendered(&mut app, 160, 8);
+        assert!(plain.contains("│ plain │ Directory: "), "{plain:?}");
+        assert!(!plain.contains("standalone"), "{plain:?}");
     }
 
     #[test]

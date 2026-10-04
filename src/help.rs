@@ -172,6 +172,7 @@ impl HelpTopic {
                 "An ordinary file changed outside Runyte keeps its in-memory text and gains [STALE]. {binding:Space b d} compares a fresh disk snapshot without discarding edits; {binding:Space r} reloads, asking first whenever the buffer is dirty.",
                 "Below the editor area, the global status line reports editor state and unread notification counts. The interaction line below it is reserved for active prompts and the last action echo; :notifications or :not opens complete retained feedback.",
                 ":service-health describes optional services right now, and :log-open opens the durable diagnostic log of the process that owns this workspace. Start Runyte with -v, -vv, or -vvv for more detail in it; :help diagnostics explains the rest.",
+                "A file or directory opened where no Git repository or .runyte directory is found starts a plain session, which the status line names plain. It has no workspace: {binding:Space f} and project search cover the active file's or explorer's directory instead of a project root, and Git, language-server, MCP, plugin, and session commands are unavailable. :workspace-init gives the session a workspace without restarting it.",
             ],
             Self::Explorer => &[
                 "The explorer is an editable directory listing. Move and edit here just as you do in a text buffer.",
@@ -222,6 +223,7 @@ impl HelpTopic {
             Self::WorkspaceSearch => &[
                 "Workspace search results are a retained query snapshot. Move, select, search, split, and copy from this buffer like any other read-only document.",
                 "Enter opens the typed path and source range represented by the current result row. The clean result remains available while it is among the eight most recently active special buffers; run workspace search again for fresh results.",
+                "In a plain session, which has no workspace, the search covered the directory named in the Directory line rather than a project root.",
             ],
             Self::CommitMessage => COMMIT_MESSAGE_OVERVIEW,
             Self::Diff => DIFF_OVERVIEW,

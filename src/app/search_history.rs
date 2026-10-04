@@ -96,6 +96,15 @@ impl App {
             self.action_failed("a directory listing does not hold images");
             return;
         }
+        // Pasted images live in the workspace state directory, which a plain
+        // session never creates.
+        if self.is_plain() {
+            self.mark_unavailable(format!(
+                "pasting an image {}",
+                crate::service_health::PLAIN_SESSION_REASON
+            ));
+            return;
+        }
         let Some(format) = ImageFormat::detect(bytes) else {
             self.action_failed("the system clipboard image is in an unrecognised format");
             return;

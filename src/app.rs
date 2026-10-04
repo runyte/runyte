@@ -282,6 +282,7 @@ mod diff_work;
 mod indentation_workflows;
 mod picker_workflows;
 pub(crate) mod pipe;
+mod plain_session;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
@@ -2737,6 +2738,10 @@ struct PendingWorkspaceSearch {
     pattern: String,
     mode: SearchMode,
     started_at: Instant,
+    /// The directory a plain session's search covers, kept with the request
+    /// because the results buffer it opens has no directory of its own.
+    /// `None` for a workspace search, which covers the project root.
+    directory: Option<PathBuf>,
 }
 
 /// Clean special buffers retained across pane switches. A working set this
@@ -3025,6 +3030,18 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
+    /// A standalone session with no workspace. `project_root` then only names
+    /// the launch directory, which relative paths are displayed against;
+    /// nothing scoped to a project reads it, and `state_root` is never
+    /// created. Every workspace-scoped service checks this instead.
+    plain: bool,
+    /// Set by `:workspace-init` once the state directory exists. The event
+    /// loop owns the services a workspace needs and starts them on its next
+    /// turn.
+    workspace_services_requested: bool,
+    /// Whether the editor process runs as root. Captured once at launch so
+    /// confirmations that act on the filesystem can say so.
+    running_as_root: bool,
     /// Resolved once from the configured OS-known-folder policy. Plugin state
     /// workers receive this captured boundary rather than re-reading ambient
     /// paths after the workspace owner starts.
@@ -3352,6 +3369,29 @@ impl App {
             ProgramCache::load(external_open::cache_root()),
             HostPorts::live(),
             false,
+            false,
+        )
+    }
+
+    /// A plain session: standalone, with no workspace. `launch_directory`
+    /// only anchors displayed relative paths; its state directory is neither
+    /// validated nor created, because nothing will be written there.
+    pub fn new_plain_with_deferred_syntax(
+        config: Config,
+        targets: Vec<LaunchTarget>,
+        launch_directory: impl AsRef<Path>,
+        startup: &mut StartupTrace,
+    ) -> Result<Self> {
+        Self::new_with_boundaries(
+            config,
+            targets,
+            launch_directory.as_ref().canonicalize()?,
+            startup,
+            std::env::current_dir()?,
+            ProgramCache::load(external_open::cache_root()),
+            HostPorts::live(),
+            true,
+            true,
         )
     }
 
@@ -3371,6 +3411,7 @@ impl App {
             ProgramCache::load(external_open::cache_root()),
             HostPorts::live(),
             true,
+            false,
         )
     }
 
@@ -3402,6 +3443,7 @@ impl App {
             ProgramCache::default(),
             ports,
             defer_syntax,
+            false,
         )
     }
 
@@ -3415,6 +3457,7 @@ impl App {
         programs: ProgramCache,
         ports: HostPorts,
         defer_syntax: bool,
+        plain: bool,
     ) -> Result<Self> {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
@@ -3425,7 +3468,9 @@ impl App {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        if !plain {
+            project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        }
         let registry = Arc::new(Registry::new());
         startup.mark(StartupPhase::LanguageRegistryReady);
         let OpenedLaunchTargets {
@@ -3604,6 +3649,9 @@ impl App {
             prompt_revision: 0,
             project_root,
             state_root,
+            plain,
+            workspace_services_requested: false,
+            running_as_root: false,
             plugin_state_anchor,
             git: GitTracker::new(),
             diff_worker: diff_work::Worker::new(),

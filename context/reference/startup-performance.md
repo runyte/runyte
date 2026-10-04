@@ -17,6 +17,37 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-10-04 — plain sessions
+
+A development build of the plain-session change on top of commit `ed5a1cc`,
+built with `cargo build --release` and Rust 1.97.1. Machine: AMD Ryzen AI 9
+365, 10 cores / 20 logical CPUs, Linux 7.2.8-arch1-2, ext4. Python with pyte
+0.8.2 and wcwidth 0.8.3 from `benchmarks/requirements.txt`.
+
+The comparison uses `measure` from `benchmarks/startup.py` with the same
+isolated environment and fixtures, inside the fixtures' Git repository. The
+only difference between the columns is `--plain`, so both launch from the same
+directory and differ only in whether a workspace is adopted. Each cell is
+**median (min–max), milliseconds** to the verified first edit, from ten
+measured launches after one discarded warm-up, alternating which variant runs
+first each round. LSP is disabled in both, as in every configuration here.
+
+| Fixture | Workspace | Plain |
+| --- | ---: | ---: |
+| `short.txt` | 29.2 (24.6–31.7) | 28.4 (25.0–32.6) |
+| `long.txt` | 40.1 (32.6–46.0) | 39.3 (36.2–41.3) |
+| `short.lua` | 31.7 (27.4–45.4) | 27.8 (24.5–36.9) |
+| `long.lua` | 31.4 (29.5–35.9) | 30.7 (25.7–32.5) |
+
+Readiness is within run-to-run spread. This is expected: every service a
+plain session leaves out — Git, the language-server manager attachment,
+plugins, the context endpoint, and the session catalog — already starts after
+the first editable frame, so leaving it out saves background work and child
+processes rather than time to the first edit. Absolute values are higher than
+the 0.3.5 table because this run did not follow its procedure (different
+kernel, filesystem, and background load) and should only be compared within
+its own rows.
+
 ## 2026-09-30 — Runyte 0.3.5
 
 Release `v0.3.5`, commit `b937570`, built with `cargo build --release --locked`

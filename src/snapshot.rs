@@ -842,7 +842,7 @@ impl App {
         let prompt_cursor_column = (self.mode == Mode::Command
             && !matches!(self.prompt_kind, PromptKind::SettingValue(_)))
         .then(|| {
-            prompt_prefix(self.prompt_kind)
+            self.prompt_prefix()
                 .chars()
                 .chain(self.command.chars().take(self.command_cursor))
                 .map(character_cells)
@@ -856,7 +856,7 @@ impl App {
         } else if matches!(self.prompt_kind, PromptKind::SettingValue(_)) {
             String::new()
         } else if self.mode == Mode::Command {
-            format!("{}{}", prompt_prefix(self.prompt_kind), self.command)
+            format!("{}{}", self.prompt_prefix(), self.command)
         } else if let Some(pending) = live_pending_display.clone() {
             pending
         } else {
@@ -2010,6 +2010,24 @@ fn clip_fragment_cell_range(fragment: &str, start: usize, limit: usize) -> Strin
         position = next;
     }
     clipped
+}
+
+impl App {
+    /// The prompt's leading label. Project search has no workspace to name
+    /// in a plain session, so it names the directory it will cover instead.
+    fn prompt_prefix(&self) -> String {
+        if let PromptKind::GlobalSearch(mode) = self.prompt_kind
+            && self.is_plain()
+        {
+            let flavour = match mode {
+                crate::app::SearchMode::Insensitive => "",
+                crate::app::SearchMode::Sensitive => " (case-sensitive)",
+                crate::app::SearchMode::Regex => " (regex)",
+            };
+            return format!("search {}{flavour}: ", self.search_root().display());
+        }
+        prompt_prefix(self.prompt_kind)
+    }
 }
 
 fn prompt_prefix(kind: crate::app::PromptKind) -> String {

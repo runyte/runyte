@@ -378,9 +378,15 @@ When one of these fails, recoverable edits are preserved.
 | `runyte a.md src/main.rs` | Both files; the first is active |
 | `runyte +12:4 notes.md` | `notes.md` with the caret on line 12, column 4 |
 | `runyte -- +draft.md -notes.md` | Files whose names start with `+` or `-` |
+| `runyte --plain /etc/fstab` | That file in a plain session, even inside a workspace |
 | `runyte --help` | Command-line options |
 
 Details:
+
+- **No workspace.** A file or directory launched where no Git repository or
+  `.runyte/` directory is found opens a
+  [plain session](#plain-sessions): Runyte as a simple editor, with no
+  workspace and nothing written beside the file.
 
 - **About page.** A new persistent session starts on the about page too, so
   `runyte -a` before anything has been opened in that workspace shows it.
@@ -483,8 +489,8 @@ open the same retained special commit-detail buffer when a commit is selected.
 | Part | Meaning |
 | --- | --- |
 | `NOR` | The mode, in the current mode's caret colour (see [Mode carets](#mode-carets)). The rest of the row keeps the theme's ordinary background. |
-| `standalone` | The workspace mode. `standalone` keeps live state in the TUI process; `persistent` keeps it in a separate local process. These are the values of `workspace.mode`. |
-| `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. |
+| `standalone` | The workspace mode. `standalone` keeps live state in the TUI process; `persistent` keeps it in a separate local process. These are the values of `workspace.mode`. A [plain session](#plain-sessions), which has no workspace, reads `plain`. |
+| `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. A plain session labels it `Directory: …`. |
 | `[+]` / `[STALE]` / `[RO]` | The active buffer has unsaved changes / the path it shows (a file or an explorer's directory) disagrees with the accepted baseline / is read-only. |
 | `412:17 · 34%` | Cursor line and column, and how far through the buffer it is. |
 | `3 sel` | Selection count, shown above one. |
@@ -1725,7 +1731,9 @@ Opening one asks which program should have it instead of loading it as text.
 ### The Finder
 
 `Space f` opens the Finder: one ranked list of files below the project root,
-open buffers, and terminal sessions.
+open buffers, and terminal sessions. In a [plain session](#plain-sessions) it
+covers the active file's or explorer's directory instead, and names it in the
+title.
 
 | Mode | Matches | Enter |
 | --- | --- | --- |
@@ -2590,7 +2598,7 @@ showing it.
 
 | Command | Runs |
 | --- | --- |
-| `:terminal` (`:term`, `:t`), `Space t n`, `Ctrl-w t` | `$SHELL` on Unix, `%COMSPEC%` (else `cmd.exe`) on Windows, in the editor working directory |
+| `:terminal` (`:term`, `:t`), `Space t n`, `Ctrl-w t` | `$SHELL` on Unix, `%COMSPEC%` (else `cmd.exe`) on Windows, in the editor working directory (in a [plain session](#plain-sessions), the active file's or explorer's directory) |
 | `:terminal htop` | That command line |
 | `:terminal-file-directory [command]` | From the active file's parent |
 | `:terminal-directory-root [command]` | From the active explorer's root |
@@ -4254,11 +4262,13 @@ Persistent sessions work on Unix and Windows; see
 | `runyte --standalone` | Standalone, overriding `workspace.mode: persistent` |
 | `runyte --init /path/to/project` | Make that exact directory a standalone workspace root and open it |
 | `runyte DIRECTORY` | Open that directory in the workspace discovered from the current directory |
+| `runyte --plain TARGET` | Open a file or directory in a [plain session](#plain-sessions), with no workspace |
 | `runyte --serve` | Run the host in the foreground |
 
 **Finding the workspace.** Runyte walks up from the launch directory to a Git
 root, or else to a workspace state directory (`.runyte/`). If neither exists,
-it asks where project data should live. See
+a launch naming a file or directory opens a [plain session](#plain-sessions),
+and a bare `runyte` asks where project data should live. See
 [Where workspace state lives](#where-workspace-state-lives).
 
 **`--init`** creates the configured state directory (`.runyte/` by default)
@@ -4289,6 +4299,90 @@ when absent, then opens that directory.
 
 **Only one interactive TUI** may be attached at a time. Separate control
 connections can still manage the host.
+
+### Plain sessions
+
+A **plain session** is a standalone session with no workspace: Runyte as a
+simple editor for a configuration file or a system directory. It is never
+persistent, because a persistent session is the live state of one workspace.
+
+| Launch | Workspace found | No workspace found |
+| --- | --- | --- |
+| `runyte FILE...` | Standalone in that workspace | Plain, file open |
+| `runyte DIR`, `runyte .` | Standalone in that workspace, explorer | Plain, explorer |
+| `runyte` | Follows `workspace.mode` | Asks where project data should live |
+| `runyte -a` | Persistent | Makes the current directory a workspace, persistent |
+| `runyte --init DIR` | Standalone at exactly `DIR` | Same |
+| `runyte --plain FILE/DIR` | Plain | Plain |
+| A file or directory, run as root | Plain, unless `--init` or `-a` is given | Plain |
+
+"Workspace found" means a Git repository or a `.runyte/` directory in the
+launch directory or above it. A Git checkout is a workspace without `.runyte/`.
+Running as root never adopts a workspace for a file or directory target, so
+`sudo runyte` cannot leave root-owned files in a repository you own. For the
+same reason `--wait`, which opens files through a persistent session, refuses
+to run as root.
+
+**What a plain session keeps:** editing, keys, your configuration and theme,
+syntax highlighting, undo, registers and the clipboard, safe saves, splits,
+help, `:open` with path completion, the editable explorer with reviewed
+filesystem plans, and terminals.
+
+**What it leaves out entirely:** the `.runyte/` directory, the diagnostic log
+(unless `--log PATH` is given), the recent-workspace list, persistent sessions,
+Git (no repository discovery, gutter marks, or Git views, even for a file inside
+a checkout), language servers, MCP, and plugins. Their commands report
+`needs a workspace; use :workspace-init`, and help and key hints grey them out.
+Pasting an image is refused too, because pasted images live in `.runyte/`.
+
+**Search covers the directory in front of you.** `Space f`, `Space / f`, the
+all-files Finder, and the project content searches (`Space / s`, `Space / /`,
+`:fuzzy-grep`) search below the active file's or explorer's directory instead
+of a project root, and their titles and prompts name that directory, as in
+`search /etc/nginx: `. Because that directory
+may be anywhere, these searches are contained:
+
+- They stay on the filesystem they start on, so mounts such as `/proc` below
+  `/` are not entered.
+- They stop after 20,000 entries and say the result is limited.
+- They refuse to start at `/` or inside a virtual filesystem such as `/proc`,
+  `/sys`, or `/dev`; open a narrower directory instead.
+
+`g f` resolves relative paths beside the active file only, and `:terminal`
+starts in the active file's or explorer's directory.
+
+**The status line** reads `plain` where it otherwise reads `standalone` or
+`persistent`, and labels the directory `Directory:` rather than `Workspace:`.
+
+**`:workspace-init [DIRECTORY]`** turns a plain session into a workspace
+without restarting it: like `--init`, it creates `.runyte/` in exactly the
+active file's or explorer's directory, or in `DIRECTORY`, makes that directory
+the working directory, and the session stays standalone. Git, language servers, plugins, and MCP then start as they would
+for a standalone launch in that workspace. Use `runyte -a` there later for a
+persistent session. The diagnostic log is not moved into the new workspace; a
+plain session that should keep one is started with `--log PATH`.
+
+#### Editing system files with sudo
+
+1. Point `SUDO_EDITOR` at an installed `runyte` in your shell profile:
+
+   ```sh
+   export SUDO_EDITOR="runyte --plain"
+   ```
+
+   Use a binary on `PATH` rather than a path into a build directory such as
+   `target/release/runyte`, which breaks after a clean or during a rebuild.
+2. Edit single files with `sudoedit /etc/fstab`. sudo copies the file to a
+   temporary path, runs Runyte as you with your own configuration and theme,
+   and copies the result back as root after you quit. Quitting without saving
+   leaves the file unchanged. Runyte itself never runs as root.
+3. Use `sudo runyte /etc` only for what `sudoedit` cannot do: renaming, moving,
+   or deleting files in system directories through the explorer. Runyte then
+   runs as root, the filesystem plan says `as root` in its title, and deletions
+   go to root's trash (or the mount's trash directory), not yours. Runyte finds
+   its configuration through `XDG_CONFIG_HOME` and `HOME`, so whose
+   configuration applies depends on the sudoers environment policy; with the
+   common defaults it is root's.
 
 ### Quitting and detaching
 
@@ -5157,6 +5251,7 @@ The working directory starts where Runyte was launched.
 | `:session-stop [WORKSPACE]` | | Stop a clean persistent session |
 | `:session-rename WORKSPACE NAME` | | Rename a persistent session |
 | `:session-clean` | | Clean verified stopped session history (Windows) |
+| `:workspace-init [DIRECTORY]` | | Give a plain session a workspace at the active directory, or at DIRECTORY |
 
 #### Terminal commands
 
@@ -6223,8 +6318,10 @@ Runyte finds the workspace directory by walking up from the launch directory:
 1. It looks for a Git repository root.
 2. If there is none, it looks for the configured relative state directory
    (`.runyte/` by default).
-3. If neither exists, it asks where project data should live. Nothing is
-   created until you confirm a location.
+3. If neither exists, a launch naming a file or directory opens a
+   [plain session](#plain-sessions) and creates nothing. A bare `runyte` asks
+   where project data should live; nothing is created until you confirm a
+   location.
 
 Confirming creates the state directory, so later launches find the same
 workspace without asking.
@@ -6909,6 +7006,7 @@ with `{ command: name, argument: text }`.
 | `session-stop` | `session-stop [workspace]` | Stop a clean persistent session |
 | `session-rename` | `session-rename <workspace> <name>` | Rename a persistent session |
 | `session-clean` | `session-clean` | Clean verified stopped session history |
+| `workspace-init` | `workspace-init [directory]` | Make a directory this plain session's workspace |
 | `diff-disk` | `diff-disk` | Compare the active file buffer with a fresh disk observation |
 | `diff-remote` | `diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `diff-this` | `diff-this` | Compare this buffer with the next one marked |

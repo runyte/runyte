@@ -1546,6 +1546,12 @@ async fn run(
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
     let initializing = arguments.init.is_some();
+    let running_as_root = effective_user_is_root();
+    refuse_wait_as_root(&arguments, running_as_root)?;
+    let plain = launch_is_plain(&arguments, attaching_elsewhere, running_as_root, || {
+        project_root::discover(&launch_directory, &config.workspace.state)
+            .map(|root| root.is_some())
+    })?;
     let project_root = match arguments.init.take() {
         Some(requested) => {
             let requested = if requested.is_absolute() {
@@ -1560,6 +1566,13 @@ async fn run(
             )?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
+        }
+        // A plain session has no workspace. The launch directory stands in
+        // as the root that relative paths are displayed against; nothing
+        // project-scoped reads it and its state directory is never made.
+        None if plain => {
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            launch_directory.clone()
         }
         None if attaching_elsewhere => {
             let project_root = selected_workspace.expect("selector resolved a workspace");
@@ -1608,7 +1621,9 @@ async fn run(
         },
     };
     let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
-    project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+    if !plain {
+        project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+    }
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the
     // shell was in would place a host outside the project it serves.
@@ -1626,7 +1641,9 @@ async fn run(
         })?;
     }
     #[cfg(unix)]
-    let recorded_workspace = if arguments.mode == LaunchMode::Standalone {
+    let recorded_workspace = if plain {
+        None
+    } else if arguments.mode == LaunchMode::Standalone {
         record_recent_workspace(&project_root).ok().flatten()
     } else {
         ensure_recent_workspace(&project_root).ok().flatten()
@@ -1720,12 +1737,23 @@ async fn run(
     } else {
         LogRole::Standalone
     };
-    let logging_failure = initialize_logging(&arguments, role, &state_root, &project_root)?;
+    // A plain session keeps no log unless one was asked for: its default
+    // place is the state directory, which a plain session never creates.
+    let logging_failure = if plain && arguments.log.is_none() {
+        None
+    } else {
+        initialize_logging(
+            &arguments,
+            role,
+            &state_root,
+            (!plain).then_some(project_root.as_path()),
+        )?
+    };
     log_info!(
         "process",
         "runyte {} started", env!("CARGO_PKG_VERSION");
         "role" => role,
-        "workspace" => workspace_id(&project_root),
+        "workspace" => if plain { "none".to_owned() } else { workspace_id(&project_root) },
         "root" => project_root.display()
     );
     log_debug!(
@@ -1805,12 +1833,22 @@ async fn run(
     } else {
         None
     };
-    let mut app = App::new_in_project_with_deferred_syntax(
-        config,
-        arguments.targets,
-        project_root.clone(),
-        startup,
-    )?;
+    let mut app = if plain {
+        App::new_plain_with_deferred_syntax(
+            config,
+            arguments.targets,
+            project_root.clone(),
+            startup,
+        )?
+    } else {
+        App::new_in_project_with_deferred_syntax(
+            config,
+            arguments.targets,
+            project_root.clone(),
+            startup,
+        )?
+    };
+    app.note_running_as_root(running_as_root);
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -1892,26 +1930,32 @@ async fn run(
 
     // Optional services start only after the standalone editor is usable.
     // Their initialization must never hide first-frame latency.
+    // The native catalog describes the workspace this editor serves, and a
+    // plain session serves none.
     #[cfg(windows)]
-    let native_catalog = DiscoveryScope::resolve(DiscoveryInputs {
-        reserved_user_roots: reserved_user_roots.clone(),
-        roots: CapturedRoots::capture(),
-    })
-    .and_then(|scope| {
-        let current = scope.known_read_location(&project_root, &state_root)?;
-        Ok(NativeCatalogConfig {
-            scope,
-            current,
-            current_layout: None,
-            configured_state: app.config.workspace.state.clone(),
-            parent_attach: None,
-        })
-    })
-    .map(Some)
-    .unwrap_or_else(|error| {
-        app.report_host_error(format!("native session catalog is unavailable: {error}"));
+    let native_catalog = if plain {
         None
-    });
+    } else {
+        DiscoveryScope::resolve(DiscoveryInputs {
+            reserved_user_roots: reserved_user_roots.clone(),
+            roots: CapturedRoots::capture(),
+        })
+        .and_then(|scope| {
+            let current = scope.known_read_location(&project_root, &state_root)?;
+            Ok(NativeCatalogConfig {
+                scope,
+                current,
+                current_layout: None,
+                configured_state: app.config.workspace.state.clone(),
+                parent_attach: None,
+            })
+        })
+        .map(Some)
+        .unwrap_or_else(|error| {
+            app.report_host_error(format!("native session catalog is unavailable: {error}"));
+            None
+        })
+    };
     let mut services = start_host_services(
         &mut app,
         startup,
@@ -1963,6 +2007,11 @@ async fn run(
         key_hints.expire_at(Instant::now());
         if app.should_quit {
             break;
+        }
+        // Checked here rather than beside the command that asks, because
+        // several branches below `continue` past the end of the loop body.
+        if app.take_workspace_services_request() {
+            start_workspace_services(&mut app, &mut services, config_path.as_deref());
         }
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
@@ -2345,7 +2394,66 @@ fn uses_automatic_persistent_mode(
     !arguments.mode_explicit
         && arguments.targets.is_empty()
         && arguments.init.is_none()
+        && !arguments.plain
         && workspace_mode == WorkspaceMode::Persistent
+}
+
+/// Whether this launch runs as a plain session: standalone, with no
+/// workspace.
+///
+/// `--plain` asks for one outright. Otherwise a launch that names a file or
+/// directory goes plain when no workspace is found from the launch
+/// directory, rather than stopping to ask where project data should live,
+/// and always when the editor runs as root, so that root never adopts — and
+/// writes runtime state into — a workspace some other account owns. A bare
+/// launch keeps asking: it is a request to open a project. `--init`,
+/// `--project-root` and a persistent attachment each name a workspace and
+/// are never plain. `discovered` is only consulted when its answer matters.
+fn launch_is_plain(
+    arguments: &LaunchArguments,
+    attaching_elsewhere: bool,
+    running_as_root: bool,
+    discovered: impl FnOnce() -> io::Result<bool>,
+) -> io::Result<bool> {
+    if arguments.mode != LaunchMode::Standalone
+        || arguments.init.is_some()
+        || arguments.project_root.is_some()
+        || attaching_elsewhere
+    {
+        return Ok(false);
+    }
+    if arguments.plain {
+        return Ok(true);
+    }
+    if arguments.targets.is_empty() {
+        return Ok(false);
+    }
+    Ok(running_as_root || !discovered()?)
+}
+
+/// Refuses `--wait` as root. It opens its files through the workspace's
+/// persistent session, starting one if needed, so as root it would leave a
+/// root-owned host and state directory in whatever workspace the launch
+/// directory belongs to — which a plain session exists to prevent.
+fn refuse_wait_as_root(arguments: &LaunchArguments, running_as_root: bool) -> Result<()> {
+    anyhow::ensure!(
+        !(running_as_root && arguments.mode == LaunchMode::Wait),
+        "--wait is not available as root, because it would start a root-owned persistent session; use sudoedit, or open the file with runyte FILE for a plain session"
+    );
+    Ok(())
+}
+
+/// Whether the editor process runs with root's effective user ID.
+fn effective_user_is_root() -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid has no preconditions.
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 /// Resolves the workspace a persistent attachment named on the command line.
@@ -6454,21 +6562,34 @@ fn start_host_services(
     persistent: bool,
     #[cfg(windows)] native_catalog: Option<NativeCatalogConfig>,
 ) -> Result<HostServices> {
+    // A plain session starts none of the services that assume a workspace:
+    // no agent context endpoint, session catalog, Git, language server or
+    // plugin. Their receivers are left closed or absent, which the event
+    // loop already treats as a service that is not running.
+    let plain = app.is_plain();
     // Windows context initialization is the only fallible service setup below.
     // Complete it before spawning or transferring ownership of any other
     // service so an initialization error has no background owners to abandon.
     #[cfg(unix)]
-    let context_events = app.start_context(if persistent {
-        runyte::workspace::context::storage::HostMode::Persistent
+    let context_events = if plain {
+        tokio::sync::mpsc::channel(1).1
     } else {
-        runyte::workspace::context::storage::HostMode::Standalone
-    });
+        app.start_context(if persistent {
+            runyte::workspace::context::storage::HostMode::Persistent
+        } else {
+            runyte::workspace::context::storage::HostMode::Standalone
+        })
+    };
     #[cfg(windows)]
-    let context_events = app.start_context(if persistent {
-        runyte::workspace::context::storage::HostMode::Persistent
+    let context_events = if plain {
+        tokio::sync::mpsc::channel(1).1
     } else {
-        runyte::workspace::context::storage::HostMode::Standalone
-    })?;
+        app.start_context(if persistent {
+            runyte::workspace::context::storage::HostMode::Persistent
+        } else {
+            runyte::workspace::context::storage::HostMode::Standalone
+        })?
+    };
     #[cfg(all(not(unix), not(windows)))]
     let context_events = tokio::sync::mpsc::channel(1).1;
     #[cfg(windows)]
@@ -6518,19 +6639,21 @@ fn start_host_services(
     if let Some(service) = native_catalog_handle.as_ref() {
         app.attach_workspace_service(service.clone());
     }
-    let git_events = if let Some(provider) = GitCliProvider::from_environment() {
-        let (service, events) = GitService::spawn(provider);
-        app.attach_git_service(service);
-        Some(events)
-    } else {
-        None
-    };
-    #[cfg(any(unix, windows))]
-    app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
+    let git_events = if plain { None } else { start_git_service(app) };
+    // The manager is spawned either way so the loop has its channel, but a
+    // plain session never attaches it: no document is offered to it and no
+    // server process starts. `:workspace-init` replaces it with one rooted
+    // at the new workspace.
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);
-    app.attach_lsp(language_servers.clone());
+    if !plain {
+        #[cfg(any(unix, windows))]
+        app.configure_lsp_trust(
+            runyte::external_open::cache_root().map(|root| root.join("lsp-trust")),
+        );
+        app.attach_lsp(language_servers.clone());
+    }
     let (syntax_worker, syntax_events) = syntax::spawn_background(Arc::clone(&app.registry));
     app.attach_syntax_worker(syntax_worker);
     let (file_scanner, file_picker_events) = file_picker::scanner();
@@ -6543,28 +6666,17 @@ fn start_host_services(
     git_monitor.sync(app.git_monitor_repository());
     app.attach_word_index(word_index::spawn());
     #[cfg(unix)]
-    let workspace_events = {
-        let (service, mut events) = WorkspaceService::spawn(
-            app.config.workspace.state.clone(),
-            config_path.map(Path::to_path_buf),
-        );
-        app.attach_workspace_service(service);
-        let (host_events, receiver) = tokio::sync::mpsc::channel(16);
-        tokio::spawn(async move {
-            while let Some(event) = events.recv().await {
-                if host_events.send(HostEvent::Workspace(event)).await.is_err() {
-                    break;
-                }
-            }
-        });
-        Some(receiver)
+    let workspace_events = if plain {
+        None
+    } else {
+        Some(start_workspace_service(app, config_path))
     };
     #[cfg(not(unix))]
     let workspace_events = None;
     let terminal_events = app
         .take_terminal_events()
         .expect("terminal output is claimed once, when services start");
-    let plugin_events = app.start_plugins();
+    let plugin_events = if plain { None } else { app.start_plugins() };
     let pipe_events = app.start_pipe_service();
     #[cfg(windows)]
     let _ = config_path;
@@ -6593,6 +6705,78 @@ fn start_host_services(
         workspace_events,
         terminal_events,
     })
+}
+
+fn start_git_service(
+    app: &mut WorkspaceHost,
+) -> Option<tokio::sync::mpsc::Receiver<GitServiceEvent>> {
+    let provider = GitCliProvider::from_environment()?;
+    let (service, events) = GitService::spawn(provider);
+    app.attach_git_service(service);
+    Some(events)
+}
+
+#[cfg(unix)]
+fn start_workspace_service(
+    app: &mut WorkspaceHost,
+    config_path: Option<&Path>,
+) -> tokio::sync::mpsc::Receiver<HostEvent> {
+    let (service, mut events) = WorkspaceService::spawn(
+        app.config.workspace.state.clone(),
+        config_path.map(Path::to_path_buf),
+    );
+    app.attach_workspace_service(service);
+    let (host_events, receiver) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            if host_events.send(HostEvent::Workspace(event)).await.is_err() {
+                break;
+            }
+        }
+    });
+    receiver
+}
+
+/// Starts what a plain session left off once `:workspace-init` has given it a
+/// workspace: the same services a standalone launch in that workspace starts.
+///
+/// The session stays standalone. Diagnostic logging is not moved into the new
+/// state directory; a logger is installed once per process.
+fn start_workspace_services(
+    app: &mut WorkspaceHost,
+    services: &mut HostServices,
+    config_path: Option<&Path>,
+) {
+    app.refresh_workspace_identity();
+    #[cfg(unix)]
+    {
+        services.context_events =
+            app.start_context(runyte::workspace::context::storage::HostMode::Standalone);
+    }
+    #[cfg(windows)]
+    match app.start_context(runyte::workspace::context::storage::HostMode::Standalone) {
+        Ok(events) => services.context_events = events,
+        Err(error) => app.report_host_error(format!("agent context could not start: {error}")),
+    }
+    services.git_events = start_git_service(app);
+    services.git_monitor.sync(app.git_monitor_repository());
+    services.language_servers.send(LspCommand::Shutdown);
+    let (language_servers, lsp_events) =
+        lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
+    #[cfg(any(unix, windows))]
+    app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
+    app.attach_lsp(language_servers.clone());
+    services.language_servers = language_servers;
+    services.lsp_events = lsp_events;
+    #[cfg(unix)]
+    {
+        services.workspace_events = Some(start_workspace_service(app, config_path));
+        let recorded = record_recent_workspace(&app.project_root).ok().flatten();
+        app.note_workspace_number(recorded.and_then(|recorded| recorded.number));
+    }
+    #[cfg(not(unix))]
+    let _ = config_path;
+    services.plugin_events = app.start_plugins();
 }
 
 #[cfg(not(windows))]
@@ -7115,7 +7299,7 @@ fn initialize_logging(
     arguments: &LaunchArguments,
     role: LogRole,
     state_root: &Path,
-    project_root: &Path,
+    project_root: Option<&Path>,
 ) -> Result<Option<String>> {
     let level = LogLevel::from_verbosity(arguments.verbosity);
     let path = arguments
@@ -7131,12 +7315,14 @@ fn initialize_logging(
             diagnostic_log::RETAINED_STANDALONE_LOGS,
         );
     }
-    let workspace = workspace_id(project_root);
-    let abbreviated = workspace
-        .get(..ABBREVIATED_LOG_WORKSPACE_ID)
-        .unwrap_or(&workspace)
-        .to_owned();
-    let settings = diagnostic_log::Settings::new(level, role).with_workspace(Some(abbreviated));
+    let abbreviated = project_root.map(|root| {
+        let workspace = workspace_id(root);
+        workspace
+            .get(..ABBREVIATED_LOG_WORKSPACE_ID)
+            .unwrap_or(&workspace)
+            .to_owned()
+    });
+    let settings = diagnostic_log::Settings::new(level, role).with_workspace(abbreviated);
     let sink = if arguments.log.is_some() {
         diagnostic_log::Sink::exclusive_file(path.clone())
     } else {
@@ -7178,6 +7364,7 @@ OPTIONS:
     -c, --config PATH    Use a specific YAML config
         --init DIRECTORY Make DIRECTORY the exact standalone workspace root
                          and open it
+        --plain          Open the targets without a workspace, even inside one
     -v, --verbose        Raise the diagnostic log level; repeat for more
         --log PATH       Write the diagnostic log to PATH instead
     -h, --help           Print help
@@ -7278,6 +7465,18 @@ TARGETS:
     only a bare runyte, and --persistent reads its argument as a workspace
     rather than a file. Use --init to make a directory the exact standalone
     workspace root. --wait uses a persistent session on Unix and Windows.
+
+PLAIN SESSIONS:
+    A target launched where no Git repository or .runyte directory is found
+    opens a plain session instead of asking where project data should live:
+    standalone, with no workspace. It writes no .runyte directory or log, and
+    starts no Git, language server, plugin, MCP or persistent session. The
+    Finder and project search cover the active directory. --plain asks for one
+    inside a workspace too. A file or directory opened as root is always
+    plain, and --wait refuses to run as root.
+    :workspace-init gives a plain session a workspace without restarting.
+
+    For system files, set SUDO_EDITOR=\"runyte --plain\" and use sudoedit.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.
@@ -8651,6 +8850,113 @@ mod tests {
         assert!(!uses_automatic_persistent_mode(
             &bare,
             WorkspaceMode::Standalone
+        ));
+    }
+
+    #[test]
+    fn a_launch_is_plain_only_with_targets_and_no_workspace_or_when_asked() {
+        let parse = |arguments: &[&str]| {
+            LaunchArguments::parse_from(arguments.iter().map(|argument| (*argument).into()))
+                .unwrap()
+        };
+        let found = || Ok(true);
+        let missing = || Ok(false);
+        let unasked = || -> std::io::Result<bool> { panic!("discovery is not needed here") };
+
+        // A file or directory with no workspace goes plain instead of asking.
+        assert!(super::launch_is_plain(&parse(&["/etc/fstab"]), false, false, missing).unwrap());
+        assert!(super::launch_is_plain(&parse(&["/etc"]), false, false, missing).unwrap());
+        // Inside a workspace the same launch keeps it.
+        assert!(!super::launch_is_plain(&parse(&["note.txt"]), false, false, found).unwrap());
+        // A bare launch keeps asking for a project.
+        assert!(!super::launch_is_plain(&parse(&[]), false, false, unasked).unwrap());
+
+        // --plain wins over a workspace, and needs no discovery.
+        assert!(
+            super::launch_is_plain(&parse(&["--plain", "note.txt"]), false, false, unasked)
+                .unwrap()
+        );
+        assert!(super::launch_is_plain(&parse(&["--plain"]), false, false, unasked).unwrap());
+
+        // Root never adopts a workspace for a file or directory target.
+        assert!(super::launch_is_plain(&parse(&["note.txt"]), false, true, unasked).unwrap());
+        assert!(!super::launch_is_plain(&parse(&[]), false, true, unasked).unwrap());
+
+        // Launches that name a workspace are never plain.
+        for arguments in [
+            &["--init", "/work/new"][..],
+            &["--project-root", "/work", "note.txt"][..],
+            &["-a"][..],
+            &["--serve"][..],
+        ] {
+            assert!(
+                !super::launch_is_plain(&parse(arguments), false, true, unasked).unwrap(),
+                "{arguments:?}"
+            );
+        }
+        assert!(!super::launch_is_plain(&parse(&["note.txt"]), true, true, unasked).unwrap());
+
+        // A discovery failure is the launch's failure, not a silent answer.
+        assert!(
+            super::launch_is_plain(&parse(&["note.txt"]), false, false, || Err(
+                std::io::Error::other("unreadable")
+            ))
+            .is_err()
+        );
+    }
+
+    /// A plain host starts none of the services that assume a workspace.
+    /// Nothing here reaches per-user storage: the services that would are
+    /// exactly the ones that must stay off.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_plain_host_starts_no_workspace_service() {
+        let root = TestRuntimeRoot::new("plain-host-services").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+        app.enter_plain_session();
+        let mut host = WorkspaceHost::new(app);
+
+        let mut services = super::start_host_services(
+            &mut host,
+            &mut runyte::startup::StartupTrace::new(),
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            host.workspace_services_started(),
+            runyte::workspace::WorkspaceServicesStarted::default()
+        );
+        assert!(services.git_events.is_none());
+        assert!(services.plugin_events.is_none());
+        assert!(services.workspace_events.is_none());
+        assert!(
+            services.context_events.recv().await.is_none(),
+            "the context channel is closed rather than served"
+        );
+        assert!(!root.path().join(".runyte").exists());
+        services
+            .language_servers
+            .send(runyte::lsp::LspCommand::Shutdown);
+    }
+
+    #[test]
+    fn wait_is_refused_as_root_and_nowhere_else() {
+        let wait = LaunchArguments::parse_from(["--wait".into(), "/etc/hosts".into()]).unwrap();
+        let error = super::refuse_wait_as_root(&wait, true).unwrap_err();
+        assert!(error.to_string().contains("sudoedit"), "{error}");
+        assert!(super::refuse_wait_as_root(&wait, false).is_ok());
+        let file = LaunchArguments::parse_from(["/etc/hosts".into()]).unwrap();
+        assert!(super::refuse_wait_as_root(&file, true).is_ok());
+    }
+
+    #[test]
+    fn plain_keeps_a_bare_launch_off_the_persistent_default() {
+        let plain = LaunchArguments::parse_from(["--plain".into()]).unwrap();
+        assert!(!uses_automatic_persistent_mode(
+            &plain,
+            WorkspaceMode::Persistent
         ));
     }
 

@@ -69,6 +69,9 @@ them, regardless of which extensibility direction is chosen.
   title, not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
   meanings and order as the pane title.
+  The session word after the mode is `standalone`, `persistent`, or `plain`.
+  A plain session has no workspace, so its directory is labelled `Directory:`
+  rather than `Workspace:`; the frontend chooses the word, not the snapshot.
   A long-running background action temporarily replaces the ordinary fields
   with its action name, target or query, elapsed time, optional cancellation
   hint, and a rotating spinner directly beside that text at the right edge.
@@ -193,7 +196,10 @@ them, regardless of which extensibility direction is chosen.
   says the ignore files were not consulted, and a path says the walk began
   somewhere other than the project root. So an unfiltered finder at the
   project root reads `all files`, an ignore-aware one below or outside it
-  reads that root's path, and one that is both reads `all files in <path>`. **Name mode** merges files, open buffers, and terminal sessions by
+  reads that root's path, and one that is both reads `all files in <path>`.
+  A plain session has no project root, so its finders always name the
+  directory they cover — `<path>` or `all files in <path>` — because that
+  directory follows the active file or explorer. **Name mode** merges files, open buffers, and terminal sessions by
   resource identity. **Content mode** merges file lines, authoritative
   in-memory buffer lines including pathless buffers, and decoded retained
   terminal rows. Matching characters are emphasized in the content detail
@@ -469,7 +475,8 @@ surfaces whether or not a record was written.
 Ownership follows editor-state ownership. A standalone editor owns
 `standalone-<pid>.log`; a persistent host owns `host.log`. Both sit beneath the
 resolved runtime workspace state root, normally `.runyte/`, never under
-Git-tracked context. A client never appends to a host's file and never forwards
+Git-tracked context. A plain session has no state root and keeps no log
+unless it was started with an explicit `--log PATH`. A client never appends to a host's file and never forwards
 records over the local protocol.
 
 `:log-open` projects the owning process's file into the single read-only

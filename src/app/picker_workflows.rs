@@ -103,26 +103,28 @@ impl App {
         scanner.update_finder_context(scan_id, query_revision, finder);
     }
 
-    /// The scope the project's own finders scan with: every ignore file from
-    /// the project root down.
-    pub(super) fn project_scan_scope(&self) -> ScanScope {
-        ScanScope::ignoring(&self.project_root)
-    }
-
+    /// The project finder. Without a workspace it covers the directory the
+    /// active buffer or explorer shows instead, bounded as every scan in a
+    /// plain session is.
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
-        self.open_finder_at(self.project_root.clone(), self.project_scan_scope())
+        let root = self.search_root();
+        let scope = self.ignoring_scan_scope(root.clone());
+        self.open_finder_at(root, scope)
     }
 
     /// The project finder over every file the project holds, ignore files not
     /// consulted. Only the scope separates it from `open_project_picker`.
     pub(super) fn open_all_files_picker(&mut self) -> Result<()> {
-        self.open_finder_at(self.project_root.clone(), ScanScope::Everything)
+        let root = self.search_root();
+        let scope = self.unfiltered_scan_scope();
+        self.open_finder_at(root, scope)
     }
 
     /// The same unfiltered finder rooted at a path that need not be inside
     /// the workspace.
     pub(super) fn open_path_picker(&mut self, root: PathBuf) -> Result<()> {
-        self.open_finder_at(root, ScanScope::Everything)
+        let scope = self.unfiltered_scan_scope();
+        self.open_finder_at(root, scope)
     }
 
     /// Opens the unfiltered finder at a path as a person spelled it: `~` and
@@ -160,23 +162,20 @@ impl App {
             .path
             .clone()
             .expect("directory buffers have paths");
-        self.open_finder_at(directory, self.project_scan_scope())
+        let scope = self.ignoring_scan_scope(directory.clone());
+        self.open_finder_at(directory, scope)
     }
 
     pub(super) fn open_directory_picker(&mut self) -> Result<()> {
-        self.open_picker_at(
-            self.active_directory(),
-            self.project_scan_scope(),
-            FilePickerKind::Files,
-        )
+        let directory = self.active_directory();
+        let scope = self.ignoring_scan_scope(directory.clone());
+        self.open_picker_at(directory, scope, FilePickerKind::Files)
     }
 
     pub(super) fn open_project_grep(&mut self) -> Result<()> {
-        self.open_picker_at(
-            self.project_root.clone(),
-            self.project_scan_scope(),
-            FilePickerKind::Contents,
-        )?;
+        let root = self.search_root();
+        let scope = self.ignoring_scan_scope(root.clone());
+        self.open_picker_at(root, scope, FilePickerKind::Contents)?;
         self.picker.as_mut().unwrap().enable_unified_finder();
         self.finder = Some(ResourceFinder::new(FinderMode::Contents));
         self.start_content_scan();
@@ -185,11 +184,9 @@ impl App {
     }
 
     pub(super) fn open_directory_grep(&mut self) -> Result<()> {
-        self.open_picker_at(
-            self.active_directory(),
-            self.project_scan_scope(),
-            FilePickerKind::Contents,
-        )?;
+        let directory = self.active_directory();
+        let scope = self.ignoring_scan_scope(directory.clone());
+        self.open_picker_at(directory, scope, FilePickerKind::Contents)?;
         self.start_content_scan();
         Ok(())
     }
@@ -231,10 +228,10 @@ impl App {
                 &self.state_root,
                 self.config.editor.show_hidden_files,
             ) {
-                Ok((paths, skipped)) => {
+                Ok((paths, skipped, limited)) => {
                     let picker = self.picker.as_mut().unwrap();
                     picker.add_paths(paths);
-                    picker.finish(skipped, false);
+                    picker.finish(skipped, limited);
                 }
                 Err(error) => self.picker.as_mut().unwrap().fail(error.to_string()),
             }
@@ -1357,10 +1354,10 @@ impl App {
                 &self.state_root,
                 self.config.editor.show_hidden_files,
             ) {
-                Ok((paths, skipped)) => {
+                Ok((paths, skipped, limited)) => {
                     let picker = self.picker.as_mut().unwrap();
                     picker.add_paths(paths);
-                    picker.finish(skipped, false);
+                    picker.finish(skipped, limited);
                 }
                 Err(error) => self.picker.as_mut().unwrap().fail(error.to_string()),
             }

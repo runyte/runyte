@@ -202,6 +202,7 @@ mod markdown_tables;
 mod mouse_autoscroll;
 mod navigation_and_files;
 mod paste_many_selections;
+mod plain_session;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;
 #[cfg(not(windows))]

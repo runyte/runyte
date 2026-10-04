@@ -64,6 +64,12 @@ pub enum CommandCapability {
     /// Session catalog controls. Unix requires persistent mode; Windows uses
     /// the owned native catalog service even in a standalone editor.
     SessionControls,
+    /// Anything that belongs to a workspace and has no service-level answer
+    /// of its own: agent permissions, LSP permission, and plugins. A plain
+    /// session has none of them.
+    Workspace,
+    /// Only a plain session, which has a workspace still to be given.
+    PlainSession,
 }
 
 /// Stable identities for commands that currently exist only on the colon
@@ -145,6 +151,8 @@ pub enum ColonCommand {
     SessionStop,
     SessionRename,
     SessionClean,
+    /// Gives a plain session a workspace without restarting it.
+    WorkspaceInit,
 }
 
 /// Editing grammar selected for interactive input.
@@ -324,6 +332,7 @@ impl ColonCommand {
         Self::SessionStop,
         Self::SessionRename,
         Self::SessionClean,
+        Self::WorkspaceInit,
     ];
 
     pub const fn category(self) -> CommandCategory {
@@ -398,7 +407,8 @@ impl ColonCommand {
             | Self::SessionList
             | Self::SessionStop
             | Self::SessionRename
-            | Self::SessionClean => CommandCategory::Application,
+            | Self::SessionClean
+            | Self::WorkspaceInit => CommandCategory::Application,
         }
     }
 }
@@ -1549,6 +1559,14 @@ impl CommandId {
                 Some(CommandCapability::LspManager)
             }
             Self::Colon(ColonCommand::GitRefresh) => Some(CommandCapability::GitRefresh),
+            Self::Colon(
+                ColonCommand::LspTrust
+                | ColonCommand::ContextAccess
+                | ColonCommand::Plugins
+                | ColonCommand::PluginStop
+                | ColonCommand::PluginRestart,
+            ) => Some(CommandCapability::Workspace),
+            Self::Colon(ColonCommand::WorkspaceInit) => Some(CommandCapability::PlainSession),
             Self::Colon(ColonCommand::SessionAttach) => Some(CommandCapability::PersistentSession),
             Self::Colon(
                 ColonCommand::SessionList
@@ -1710,6 +1728,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         [],
         "session-stop [workspace]",
         "Stop a clean persistent session",
+        Optional(Path)
+    ),
+    spec!(
+        ColonId(Colon::WorkspaceInit),
+        "workspace-init",
+        [],
+        "workspace-init [directory]",
+        "Make a directory this plain session's workspace",
         Optional(Path)
     ),
     spec!(
@@ -3054,7 +3080,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::ChangeDirectory | Colon::Open | Colon::SessionAttach,
             InvocationParameters::Path(path),
         ) => !path.as_os_str().is_empty(),
-        (Colon::SessionStop, InvocationParameters::OptionalPath(_)) => true,
+        (Colon::SessionStop | Colon::WorkspaceInit, InvocationParameters::OptionalPath(_)) => true,
         (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
             !workspace.as_os_str().is_empty() && !name.trim().is_empty()
         }
@@ -3384,7 +3410,8 @@ fn invocation_from_parts(
             )),
             _ => Err(invalid()),
         },
-        CommandId::Colon(ColonCommand::SessionStop) => match argument {
+        CommandId::Colon(ColonCommand::SessionStop | ColonCommand::WorkspaceInit) => match argument
+        {
             ParsedArgument::Path(path) => Ok(CommandInvocation::new(
                 id,
                 InvocationParameters::OptionalPath(path),

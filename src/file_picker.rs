@@ -106,12 +106,36 @@ pub enum ScanScope {
     /// Read no ignore file at all. The reserved names, the workspace state
     /// directory, symlinks, and the hidden-file rule still apply.
     Everything,
+    /// A scan with no workspace behind it, begun from wherever the reader
+    /// is. Ignore files are read from `from` down when it is given, as
+    /// `Ignoring` does, and none at all otherwise. The walk is bounded by
+    /// [`crate::scan_boundary`]: it refuses the filesystem root and virtual
+    /// filesystems, stays on the root's filesystem, and stops after
+    /// [`crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT`] entries.
+    Contained { from: Option<PathBuf> },
 }
 
 impl ScanScope {
     /// The ordinary scope: every ignore file from `from` down to the root.
     pub fn ignoring(from: impl Into<PathBuf>) -> Self {
         Self::Ignoring { from: from.into() }
+    }
+
+    /// A bounded scan for a session without a workspace.
+    pub fn contained(from: Option<PathBuf>) -> Self {
+        Self::Contained { from }
+    }
+
+    /// The directory ignore rules are inherited from, if any are read.
+    fn ignore_root(&self) -> Option<&Path> {
+        match self {
+            Self::Ignoring { from } | Self::Contained { from: Some(from) } => Some(from),
+            Self::Everything | Self::Contained { from: None } => None,
+        }
+    }
+
+    const fn is_contained(&self) -> bool {
+        matches!(self, Self::Contained { .. })
     }
 }
 
@@ -623,6 +647,12 @@ impl FilePicker {
             (ScanScope::Ignoring { .. }, root) => root,
             (ScanScope::Everything, None) => Some("all files".to_owned()),
             (ScanScope::Everything, Some(root)) => Some(format!("all files in {root}")),
+            // Without a workspace the root is never implied: the scope moves
+            // with the active directory, so the title always names it.
+            (ScanScope::Contained { from: Some(_) }, _) => Some(self.root.display().to_string()),
+            (ScanScope::Contained { from: None }, _) => {
+                Some(format!("all files in {}", self.root.display()))
+            }
         }
     }
 
@@ -2877,11 +2907,11 @@ impl FileScanner {
                     return;
                 }
                 match result {
-                    Ok(skipped) => {
+                    Ok(tally) => {
                         let _ = events.blocking_send(FilePickerEvent::Finished {
                             scan_id,
-                            skipped,
-                            limited: false,
+                            skipped: tally.skipped,
+                            limited: tally.limited,
                         });
                     }
                     Err(error) => {
@@ -3022,11 +3052,11 @@ impl FileScanner {
                     return;
                 }
                 match result {
-                    Ok(skipped) => {
+                    Ok(tally) => {
                         let _ = events.blocking_send(FilePickerEvent::Finished {
                             scan_id,
-                            skipped,
-                            limited,
+                            skipped: tally.skipped,
+                            limited: limited || tally.limited,
                         });
                     }
                     Err(error) => {
@@ -3081,9 +3111,9 @@ pub fn scan_files(
     scope: &ScanScope,
     state_root: &Path,
     show_hidden: bool,
-) -> Result<(Vec<ScanEntry>, usize)> {
+) -> Result<(Vec<ScanEntry>, usize, bool)> {
     let mut paths = Vec::new();
-    let skipped = scan_with(
+    let tally = scan_with(
         root,
         scope,
         state_root,
@@ -3095,7 +3125,7 @@ pub fn scan_files(
             true
         },
     )?;
-    Ok((paths, skipped))
+    Ok((paths, tally.skipped, tally.limited))
 }
 
 /// Synchronous content scan used by isolated tests and non-TUI embedders.
@@ -3124,7 +3154,7 @@ pub(crate) fn scan_content_excluding(
     let mut files = Vec::new();
     let mut lines = 0;
     let mut limited = false;
-    let skipped = scan_with(
+    let tally = scan_with(
         root,
         scope,
         state_root,
@@ -3153,7 +3183,7 @@ pub(crate) fn scan_content_excluding(
             true
         },
     )?;
-    Ok((files, skipped, limited))
+    Ok((files, tally.skipped, limited || tally.limited))
 }
 
 fn content_entries(path: &Path, query: &str) -> Option<FileHits> {
@@ -3231,6 +3261,15 @@ pub(crate) fn line_hit_from_trimmed(trimmed: &str, query: &str, column: usize) -
     })
 }
 
+/// What a walk reports besides the entries it emitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ScanTally {
+    /// Entries that could not be read.
+    skipped: usize,
+    /// Whether a contained scan stopped at its entry cap.
+    limited: bool,
+}
+
 fn scan_with(
     root: &Path,
     scope: &ScanScope,
@@ -3239,7 +3278,7 @@ fn scan_with(
     include_dirs: bool,
     mut cancelled: impl FnMut() -> bool,
     mut emit: impl FnMut(Vec<ScanEntry>) -> bool,
-) -> Result<usize> {
+) -> Result<ScanTally> {
     let root = root
         .canonicalize()
         .with_context(|| format!("failed to resolve picker root {}", root.display()))?;
@@ -3256,14 +3295,26 @@ fn scan_with(
         "picker root {} is inside reserved Runyte or Git state",
         root.display()
     );
-    let respect_ignore_files = matches!(scope, ScanScope::Ignoring { .. });
+    let boundary = if scope.is_contained() {
+        if let Some(reason) = crate::scan_boundary::refusal(&root) {
+            anyhow::bail!(reason);
+        }
+        Some(
+            crate::scan_boundary::Boundary::of(&root)
+                .with_context(|| format!("failed to read {}", root.display()))?,
+        )
+    } else {
+        None
+    };
+    let mut visited = 0usize;
+    let respect_ignore_files = scope.ignore_root().is_some();
     let mut skipped = 0;
     let mut inherited = Vec::<IgnoreRule>::new();
     // A path is matched against the rules of the directory that stated them,
     // so it is spelled relative to where inheritance began. A scan that reads
     // no rules has nothing to be relative to.
     let mut root_relative = PathBuf::new();
-    if let ScanScope::Ignoring { from } = scope {
+    if let Some(from) = scope.ignore_root() {
         let ignore_root = from.canonicalize().unwrap_or_else(|_| root.clone());
         let ignore_root = if root.starts_with(&ignore_root) {
             ignore_root
@@ -3279,7 +3330,10 @@ fn scan_with(
             let mut ancestor_relative = PathBuf::new();
             for component in root_relative.components() {
                 if cancelled() {
-                    return Ok(skipped);
+                    return Ok(ScanTally {
+                        skipped,
+                        limited: false,
+                    });
                 }
                 read_ignore_files(&ancestor, &ancestor_relative, &mut inherited, &mut skipped);
                 let Component::Normal(component) = component else {
@@ -3287,7 +3341,10 @@ fn scan_with(
                 };
                 let next_relative = ancestor_relative.join(component);
                 if ignored(&inherited, &next_relative, true) {
-                    return Ok(skipped);
+                    return Ok(ScanTally {
+                        skipped,
+                        limited: false,
+                    });
                 }
                 ancestor.push(component);
                 ancestor_relative = next_relative;
@@ -3298,13 +3355,19 @@ fn scan_with(
     let mut batch = Vec::with_capacity(SCAN_BATCH);
     while let Some((directory, relative_directory, mut rules)) = pending.pop() {
         if cancelled() {
-            return Ok(skipped);
+            return Ok(ScanTally {
+                skipped,
+                limited: false,
+            });
         }
         if respect_ignore_files {
             read_ignore_files(&directory, &relative_directory, &mut rules, &mut skipped);
         }
         if cancelled() {
-            return Ok(skipped);
+            return Ok(ScanTally {
+                skipped,
+                limited: false,
+            });
         }
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -3319,7 +3382,10 @@ fn scan_with(
         let mut readable_entries = Vec::new();
         for entry in entries {
             if cancelled() {
-                return Ok(skipped);
+                return Ok(ScanTally {
+                    skipped,
+                    limited: false,
+                });
             }
             match entry {
                 Ok(entry) => readable_entries.push(entry),
@@ -3329,7 +3395,10 @@ fn scan_with(
         readable_entries.sort_by_key(fs::DirEntry::file_name);
         for entry in readable_entries.into_iter().rev() {
             if cancelled() {
-                return Ok(skipped);
+                return Ok(ScanTally {
+                    skipped,
+                    limited: false,
+                });
             }
             let name = entry.file_name();
             let name_text = name.to_string_lossy();
@@ -3354,26 +3423,53 @@ fn scan_with(
             {
                 continue;
             }
+            if let Some(boundary) = boundary.as_ref() {
+                if is_directory && !entry.metadata().is_ok_and(|meta| boundary.admits(&meta)) {
+                    continue;
+                }
+                visited += 1;
+                if visited > crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+                    if !batch.is_empty() {
+                        emit(std::mem::take(&mut batch));
+                    }
+                    return Ok(ScanTally {
+                        skipped,
+                        limited: true,
+                    });
+                }
+            }
             if is_directory {
                 if include_dirs {
                     batch.push(ScanEntry::directory(path.clone()));
                     if batch.len() == SCAN_BATCH && !emit(std::mem::take(&mut batch)) {
-                        return Ok(skipped);
+                        return Ok(ScanTally {
+                            skipped,
+                            limited: false,
+                        });
                     }
                 }
                 pending.push((path, relative, rules.clone()));
             } else if file_type.is_file() {
                 batch.push(ScanEntry::file(path));
                 if batch.len() == SCAN_BATCH && !emit(std::mem::take(&mut batch)) {
-                    return Ok(skipped);
+                    return Ok(ScanTally {
+                        skipped,
+                        limited: false,
+                    });
                 }
             }
         }
     }
     if !batch.is_empty() && !emit(batch) {
-        return Ok(skipped);
+        return Ok(ScanTally {
+            skipped,
+            limited: false,
+        });
     }
-    Ok(skipped)
+    Ok(ScanTally {
+        skipped,
+        limited: false,
+    })
 }
 
 fn contains_reserved_component(path: &Path) -> bool {
@@ -3579,7 +3675,7 @@ mod tests {
         assert!(read_regular_text(&file, 3).is_err());
         let ignore = root.join(".ignore");
         fs::write(&ignore, "x".repeat(IGNORE_FILE_BYTES as usize + 1)).unwrap();
-        let (entries, skipped) = scan_files(
+        let (entries, skipped, _) = scan_files(
             &root,
             &ScanScope::ignoring(&root),
             &root.join(".runyte"),
@@ -3700,7 +3796,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("src/main.rs"), root.join("link.rs")).unwrap();
 
-        let (paths, skipped) =
+        let (paths, skipped, _) =
             scan_files(&root, &ScanScope::ignoring(&root), &workspace, false).unwrap();
         let relative = paths
             .iter()
@@ -3800,7 +3896,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("src/main.rs"), root.join("link.rs")).unwrap();
 
-        let (paths, skipped) =
+        let (paths, skipped, _) =
             scan_files(&root, &ScanScope::Everything, &workspace, false).unwrap();
         let relative = paths
             .iter()
@@ -3844,7 +3940,7 @@ mod tests {
         fs::write(root.join("generated/secret.rs"), "secret\n").unwrap();
         fs::write(workspace.join("journal"), "private\n").unwrap();
 
-        let (paths, _) =
+        let (paths, _, _) =
             scan_files(&root, &ScanScope::ignoring(&project), &workspace, true).unwrap();
         assert_eq!(paths, vec![ScanEntry::file(root.join("main.rs"))]);
         assert!(scan_files(&workspace, &ScanScope::ignoring(&project), &workspace, true).is_err());
@@ -3858,6 +3954,93 @@ mod tests {
             .is_err()
         );
         fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn a_contained_scan_reads_ignore_files_only_when_given_a_root() {
+        let root = temporary("contained-ignore");
+        fs::create_dir_all(root.join("cache")).unwrap();
+        fs::write(root.join(".ignore"), "cache/\n").unwrap();
+        fs::write(root.join("kept.conf"), "kept\n").unwrap();
+        fs::write(root.join("cache/dropped"), "dropped\n").unwrap();
+        let workspace = root.join(".runyte");
+
+        let (paths, _, limited) = scan_files(
+            &root,
+            &ScanScope::contained(Some(root.clone())),
+            &workspace,
+            false,
+        )
+        .unwrap();
+        assert_eq!(paths, vec![ScanEntry::file(root.join("kept.conf"))]);
+        assert!(!limited);
+
+        let (paths, _, _) =
+            scan_files(&root, &ScanScope::contained(None), &workspace, false).unwrap();
+        assert!(paths.contains(&ScanEntry::file(root.join("cache/dropped"))));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_contained_scan_refuses_the_filesystem_root() {
+        let filesystem_root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .ancestors()
+            .last()
+            .unwrap()
+            .to_path_buf();
+        let error = scan_files(
+            &filesystem_root,
+            &ScanScope::contained(None),
+            &filesystem_root.join(".runyte"),
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("open a narrower directory"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_contained_scan_stops_at_its_entry_cap_and_says_so() {
+        let root = temporary("contained-cap");
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..=crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+            fs::write(root.join(format!("{index:05}")), "").unwrap();
+        }
+        let workspace = root.join(".runyte");
+
+        let (paths, _, limited) =
+            scan_files(&root, &ScanScope::contained(None), &workspace, false).unwrap();
+        assert!(limited);
+        assert_eq!(
+            paths.len(),
+            crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT
+        );
+
+        // A project scan of the same directory has no such cap.
+        let (paths, _, limited) =
+            scan_files(&root, &ScanScope::Everything, &workspace, false).unwrap();
+        assert!(!limited);
+        assert_eq!(
+            paths.len(),
+            crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT + 1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_contained_scope_always_names_its_root() {
+        let root = PathBuf::from("/etc/nginx");
+        let named = FilePicker::new(1, root.clone(), ScanScope::contained(Some(root.clone())));
+        assert_eq!(named.scope_label(&root), Some("/etc/nginx".to_owned()));
+        let unfiltered = FilePicker::new(1, root.clone(), ScanScope::contained(None));
+        assert_eq!(
+            unfiltered.scope_label(&root),
+            Some("all files in /etc/nginx".to_owned())
+        );
     }
 
     #[test]

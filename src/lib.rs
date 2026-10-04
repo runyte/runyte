@@ -63,6 +63,7 @@ pub mod project_root;
 #[cfg(any(unix, windows))]
 pub mod protocol;
 pub mod row_hints;
+pub mod scan_boundary;
 pub mod selection;
 pub mod service_health;
 mod session_strip;

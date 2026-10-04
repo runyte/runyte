@@ -90,7 +90,7 @@ fn finder_special_file_child() {
     fs::write(root.join("ordinary.txt"), "ordinary text").unwrap();
     match case.as_str() {
         "ignore" => {
-            let (entries, skipped) = scan_files(
+            let (entries, skipped, _) = scan_files(
                 &root,
                 &ScanScope::ignoring(&root),
                 &root.join(".runyte"),

@@ -448,8 +448,12 @@ pub(super) async fn run(
         parent.ensure_alive()?;
     }
     let project_lease = layout.acquire_project_lease()?;
-    let logging_failure =
-        initialize_logging(&arguments, LogRole::Host, layout.state_root(), &project)?;
+    let logging_failure = initialize_logging(
+        &arguments,
+        LogRole::Host,
+        layout.state_root(),
+        Some(project.as_path()),
+    )?;
     let mut app =
         App::new_in_project_with_deferred_syntax(config, arguments.targets, project, startup)?;
     app.set_quit_directory_handoff(false);

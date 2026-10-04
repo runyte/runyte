@@ -69,6 +69,8 @@ pub struct LaunchArguments {
     /// The workspace this process serves, when the caller has already resolved
     /// it. Discovery and its non-Git prompt are skipped in favour of this.
     pub project_root: Option<PathBuf>,
+    /// Open the targets without a workspace even when one would be found.
+    pub plain: bool,
     pub help: bool,
     pub version: bool,
     pub json: bool,
@@ -164,6 +166,7 @@ impl LaunchArguments {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?
                 }
                 "--serve" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Serve)?,
+                "--plain" => parsed.plain = true,
                 // A bare `-a` attaches to the workspace found from the
                 // current directory. A trailing selector names one outright,
                 // in the same grammar `:session-attach` already accepts, so
@@ -350,6 +353,14 @@ impl LaunchArguments {
         ensure!(
             parsed.init.is_none() || parsed.project_root.is_none(),
             "--init cannot be combined with --project-root"
+        );
+        ensure!(
+            !parsed.plain || parsed.mode == LaunchMode::Standalone,
+            "--plain is available only in standalone mode"
+        );
+        ensure!(
+            !parsed.plain || (parsed.init.is_none() && parsed.project_root.is_none()),
+            "--plain opens no workspace, so it cannot be combined with --init or --project-root"
         );
         ensure!(
             parsed.init.is_none() || parsed.targets.is_empty(),
@@ -644,6 +655,44 @@ mod tests {
                 "api".into(),
                 "--project-root".into(),
                 "/work/api".into(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn plain_is_a_standalone_option_that_opens_no_workspace() {
+        let parsed = LaunchArguments::parse_from(["--plain".into(), "/etc/fstab".into()]).unwrap();
+        assert!(parsed.plain);
+        assert_eq!(parsed.mode, LaunchMode::Standalone);
+        assert_eq!(parsed.targets, [LaunchTarget::new("/etc/fstab")]);
+        assert!(
+            !LaunchArguments::parse_from(["note.txt".into()])
+                .unwrap()
+                .plain
+        );
+        assert!(
+            LaunchArguments::parse_from(["--standalone".into(), "--plain".into()])
+                .unwrap()
+                .plain
+        );
+
+        for mode in ["--persistent", "--serve", "--wait", "--session-list"] {
+            assert!(
+                LaunchArguments::parse_from([mode.into(), "--plain".into(), "note.txt".into()])
+                    .is_err(),
+                "{mode} --plain"
+            );
+        }
+        assert!(
+            LaunchArguments::parse_from(["--plain".into(), "--init".into(), "/work/new".into()])
+                .is_err()
+        );
+        assert!(
+            LaunchArguments::parse_from([
+                "--plain".into(),
+                "--project-root".into(),
+                "/work".into(),
             ])
             .is_err()
         );

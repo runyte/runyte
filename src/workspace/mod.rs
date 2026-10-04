@@ -88,7 +88,7 @@ pub use catalog_values::{WorkspaceEvent, WorkspaceRow};
 pub use host::{
     BufferRequestError, FrameId, HostCommand, HostEvent, HostFrame, HostInputOutcome,
     HostServiceSubmitError, SessionPreview, SessionPreviewPane, SessionPreviewPaneKind,
-    TERMINAL_OUTPUT_QUIET_INTERVAL, WorkspaceHost,
+    TERMINAL_OUTPUT_QUIET_INTERVAL, WorkspaceHost, WorkspaceServicesStarted,
 };
 pub use identity::{WORKSPACE_ID_LENGTH, WorkspaceIdentity, workspace_id};
 #[cfg(any(unix, windows))]

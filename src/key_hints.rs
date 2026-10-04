@@ -216,6 +216,9 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
     }
 
     let compact_availability = match (&row.unavailable_reason, row.availability) {
+        (Some(reason), _) if reason == crate::service_health::PLAIN_SESSION_REASON => {
+            " no workspace"
+        }
         (Some(_), _) => match row.capability {
             Some(crate::command::CommandCapability::Syntax) => {
                 if row.unavailable_reason.as_deref() == Some("Syntax is still parsing") {
@@ -241,6 +244,8 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
             ) => " unavailable",
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
             Some(crate::command::CommandCapability::SessionControls) => " session controls",
+            Some(crate::command::CommandCapability::Workspace) => " no workspace",
+            Some(crate::command::CommandCapability::PlainSession) => " has a workspace",
             None => " unavailable",
         },
         (_, BindingAvailability::Implemented) => "",
@@ -850,6 +855,12 @@ mod tests {
             session_controls: CommandAvailability::Unavailable(
                 "needs workspace.mode: persistent".to_owned(),
             ),
+            workspace: CommandAvailability::Unavailable(
+                crate::service_health::PLAIN_SESSION_REASON.to_owned(),
+            ),
+            plain_session: CommandAvailability::Unavailable(
+                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
+            ),
         };
         let assert_fits = |row: &KeyHintRow| {
             let description = key_hint_description(row);
@@ -877,7 +888,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 408, "the command inventory changed");
+        assert_eq!(targets.len(), 409, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
@@ -1022,6 +1033,10 @@ mod tests {
             git_conflict_whole: CommandAvailability::Available,
             persistent_session: CommandAvailability::Available,
             session_controls: CommandAvailability::Available,
+            workspace: CommandAvailability::Available,
+            plain_session: CommandAvailability::Unavailable(
+                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
+            ),
         };
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());
@@ -1077,6 +1092,10 @@ mod tests {
             git_conflict_whole: CommandAvailability::Available,
             session_controls: persistent_session.clone(),
             persistent_session,
+            workspace: CommandAvailability::Available,
+            plain_session: CommandAvailability::Unavailable(
+                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
+            ),
         };
         let manager_row = |capabilities: &AppCapabilitySnapshot| {
             let mut hints = KeyHintState::default();

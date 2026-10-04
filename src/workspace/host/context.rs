@@ -60,6 +60,13 @@ pub(super) struct State {
     pub frame_attachment: u64,
 }
 
+impl State {
+    /// Whether the context service was started for this host.
+    pub(super) fn started(&self) -> bool {
+        self.events.is_some()
+    }
+}
+
 struct Reader {
     identity: String,
     granted: BTreeSet<Scope>,

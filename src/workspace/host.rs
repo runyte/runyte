@@ -383,6 +383,16 @@ impl ProtectedHostState {
     }
 }
 
+/// The workspace-scoped services a host has started.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WorkspaceServicesStarted {
+    pub git: bool,
+    pub language_servers: bool,
+    pub session_catalog: bool,
+    pub plugins: bool,
+    pub context: bool,
+}
+
 impl WorkspaceHost {
     pub fn new(app: App) -> Self {
         let identity = WorkspaceIdentity::from_canonical(app.project_root.clone());
@@ -440,6 +450,32 @@ impl WorkspaceHost {
 
     pub fn identity(&self) -> &WorkspaceIdentity {
         &self.identity
+    }
+
+    /// Which workspace-scoped services this host has started. A plain session
+    /// starts none of them; a workspace session starts each one available.
+    pub fn workspace_services_started(&self) -> WorkspaceServicesStarted {
+        let (git, language_servers, session_catalog) = self.app.workspace_ports_attached();
+        WorkspaceServicesStarted {
+            git,
+            language_servers,
+            session_catalog,
+            plugins: self.plugins_started,
+            #[cfg(any(unix, windows))]
+            context: self.context.started(),
+            #[cfg(not(any(unix, windows)))]
+            context: false,
+        }
+    }
+
+    /// Takes the identity of the workspace the editor now serves. A plain
+    /// session is given a workspace by `:workspace-init`, and its identity
+    /// was captured from the launch directory, which need not be the new
+    /// root. Context registration and anything else keyed by workspace
+    /// identity must use the new one, so this runs before their services
+    /// start.
+    pub fn refresh_workspace_identity(&mut self) {
+        self.identity = WorkspaceIdentity::from_canonical(self.app.project_root.clone());
     }
 
     pub fn app(&self) -> &App {

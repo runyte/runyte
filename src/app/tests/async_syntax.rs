@@ -27,6 +27,7 @@ impl SyntaxFixture {
                 String::new(),
             ))))),
             true,
+            false,
         )
         .unwrap()
     }

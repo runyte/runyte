@@ -839,7 +839,9 @@ impl App {
             if let Some(directory) = self.buffer_directory(buffer) {
                 directories.push(directory.join(requested));
             }
-            directories.push(self.project_root.join(requested));
+            if !self.is_plain() {
+                directories.push(self.project_root.join(requested));
+            }
         }
 
         let mut visited = HashSet::new();
@@ -1166,6 +1168,7 @@ impl App {
         };
         let id = self.next_workspace_search_id;
         self.next_workspace_search_id = self.next_workspace_search_id.wrapping_add(1).max(1);
+        let root = self.search_root();
         let open_buffers = self
             .buffers
             .iter()
@@ -1173,7 +1176,7 @@ impl App {
             .filter(|(buffer_id, _)| !self.closed_buffers.contains(buffer_id))
             .filter_map(|(_, buffer)| {
                 let path = buffer.path.as_ref()?;
-                (!buffer.is_directory() && path.starts_with(&self.project_root)).then(|| {
+                (!buffer.is_directory() && path.starts_with(&root)).then(|| {
                     WorkspaceSearchSnapshot {
                         path: path.clone(),
                         text: buffer.text().clone(),
@@ -1181,18 +1184,21 @@ impl App {
                 })
             })
             .collect();
+        let directory = self.is_plain().then(|| root.clone());
         let request = WorkspaceSearchRequest {
             id,
-            root: self.project_root.clone(),
+            root,
             matcher,
             show_hidden: self.config.editor.show_hidden_files,
             open_buffers,
+            contained: self.is_plain(),
         };
         self.pending_workspace_search = Some(super::PendingWorkspaceSearch {
             id,
             pattern: pattern.to_owned(),
             mode,
             started_at: std::time::Instant::now(),
+            directory,
         });
         if let Some(service) = self.workspace_search.as_ref() {
             if let Err(error) = service.search(request) {
@@ -1241,7 +1247,13 @@ impl App {
         match event {
             WorkspaceSearchEvent::Completed {
                 matches, limited, ..
-            } => self.finish_global_search(&pending.pattern, pending.mode, matches, limited),
+            } => self.finish_global_search(
+                &pending.pattern,
+                pending.mode,
+                pending.directory.as_deref(),
+                matches,
+                limited,
+            ),
             WorkspaceSearchEvent::Failed { message, .. } => {
                 self.error_from("Runyte", "Workspace search failed", message);
             }
@@ -1252,13 +1264,18 @@ impl App {
         &mut self,
         pattern: &str,
         mode: SearchMode,
+        directory: Option<&Path>,
         matches: Vec<WorkspaceMatch>,
         limited: bool,
     ) {
         let result_count = matches.len();
+        let relative_to = directory.unwrap_or(&self.project_root).to_path_buf();
 
-        let mut lines = vec![
-            format!("Query: {pattern}"),
+        let mut lines = vec![format!("Query: {pattern}")];
+        if let Some(directory) = directory {
+            lines.push(format!("Directory: {}", directory.display()));
+        }
+        lines.extend([
             format!(
                 "Mode: {} · {} result{} · query-time snapshot{}",
                 if mode == SearchMode::Regex {
@@ -1276,15 +1293,16 @@ impl App {
                     ""
                 }
             ),
-            "Rerun the workspace search to refresh these results.".to_owned(),
+            if directory.is_some() {
+                "Rerun the search to refresh these results.".to_owned()
+            } else {
+                "Rerun the workspace search to refresh these results.".to_owned()
+            },
             String::new(),
-        ];
+        ]);
         let mut rows = vec![None; lines.len()];
         for found in matches {
-            let relative = found
-                .path
-                .strip_prefix(&self.project_root)
-                .unwrap_or(&found.path);
+            let relative = found.path.strip_prefix(&relative_to).unwrap_or(&found.path);
             let relative = relative
                 .display()
                 .to_string()
@@ -1365,7 +1383,11 @@ impl App {
         pane.preserve_scroll = false;
         self.mode = Mode::Normal;
         self.status(format!(
-            "workspace search: {} result{}{}",
+            "{}: {} result{}{}",
+            directory.map_or_else(
+                || "workspace search".to_owned(),
+                |directory| format!("search in {}", directory.display())
+            ),
             result_count,
             if result_count == 1 { "" } else { "s" },
             if limited { " (limit reached)" } else { "" }

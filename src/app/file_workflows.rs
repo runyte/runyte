@@ -301,7 +301,7 @@ impl App {
         candidates
     }
 
-    fn literal_navigation_candidates(
+    pub(super) fn literal_navigation_candidates(
         &self,
         requested_text: &str,
         directory: Option<PathBuf>,
@@ -317,7 +317,10 @@ impl App {
             if let Some(directory) = directory {
                 unresolved.push(directory.join(&requested));
             }
-            unresolved.push(self.project_root.join(requested));
+            // Without a workspace there is no project root to resolve against.
+            if !self.is_plain() {
+                unresolved.push(self.project_root.join(requested));
+            }
         }
 
         let mut seen = HashSet::new();

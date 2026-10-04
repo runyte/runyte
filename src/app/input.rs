@@ -350,7 +350,7 @@ impl App {
         } else {
             git_conflict.clone()
         };
-        AppCapabilitySnapshot {
+        let mut snapshot = AppCapabilitySnapshot {
             syntax,
             lsp_manager,
             lsp_document,
@@ -374,7 +374,37 @@ impl App {
             } else {
                 persistent_session_availability(cfg!(unix), self.persistent_session)
             },
+            workspace: CommandAvailability::Available,
+            plain_session: if self.is_plain() {
+                CommandAvailability::Available
+            } else {
+                CommandAvailability::Unavailable(
+                    crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
+                )
+            },
+        };
+        // Without a workspace these services were never started, and the
+        // reason that helps is the one naming how to get a workspace rather
+        // than whichever service-level detail happens to be observed.
+        if let Some(plain) = self.plain_capability() {
+            for capability in [
+                &mut snapshot.lsp_manager,
+                &mut snapshot.lsp_document,
+                &mut snapshot.git_project,
+                &mut snapshot.git_refresh,
+                &mut snapshot.git_fetch_branch,
+                &mut snapshot.git_merge_active,
+                &mut snapshot.git_merge_continue,
+                &mut snapshot.git_conflict,
+                &mut snapshot.git_conflict_whole,
+                &mut snapshot.persistent_session,
+                &mut snapshot.session_controls,
+                &mut snapshot.workspace,
+            ] {
+                *capability = plain.clone();
+            }
         }
+        snapshot
     }
 
     pub fn matching_commands(&self) -> Vec<CommandMatch<'_>> {
@@ -4273,6 +4303,9 @@ impl App {
             self.mark_unavailable(reason);
             return Ok(());
         }
+        if self.refuse_in_plain_session(CommandId::Editor(command)) {
+            return Ok(());
+        }
 
         // Before the read-only check, because a terminal is not read only —
         // it is not a document at all, and the buffer whose permissions that
@@ -5522,6 +5555,9 @@ impl App {
             self.mark_unavailable(reason);
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
+        if self.refuse_in_plain_session(id) {
+            return Ok(CommandOutcome::Unavailable(self.status.clone()));
+        }
         if let CommandId::Plugin(id) = id {
             let arguments = match &parameters {
                 InvocationParameters::OptionalText(Some(text)) => text.as_str(),
@@ -5957,10 +5993,17 @@ impl App {
             self.hide_directory_tree();
             return Ok(());
         }
+        if self.refuse_in_plain_session(CommandId::Colon(command)) {
+            return Ok(());
+        }
 
         match (command, parameters) {
             (Colon::ChangeDirectory, InvocationParameters::Path(path)) => {
                 self.change_directory(path)
+            }
+            (Colon::WorkspaceInit, InvocationParameters::OptionalPath(path)) => {
+                self.initialize_workspace(path);
+                Ok(())
             }
             (Colon::SessionAttach, InvocationParameters::Path(path)) => {
                 if self.reject_unavailable_persistent_session(

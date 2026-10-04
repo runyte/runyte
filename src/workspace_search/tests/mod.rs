@@ -78,6 +78,7 @@ fn stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search() {
             path: open,
             text: Text::from_str("unsaved replacement\n"),
         }],
+        contained: false,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -104,6 +105,7 @@ fn workspace_search_combines_live_and_unopened_matches_without_duplicates() {
             path: open.clone(),
             text: Text::from_str("changed\nneedle live\n"),
         }],
+        contained: false,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -114,4 +116,94 @@ fn workspace_search_combines_live_and_unopened_matches_without_duplicates() {
     assert_eq!(matches[1].row, 1);
     assert_eq!(matches[1].preview, "needle live");
     assert!(!limited);
+}
+
+#[test]
+fn a_contained_search_refuses_the_filesystem_root() {
+    let filesystem_root = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .ancestors()
+        .last()
+        .unwrap()
+        .to_path_buf();
+    let request = WorkspaceSearchRequest {
+        id: 1,
+        root: filesystem_root,
+        matcher: Regex::new("needle").unwrap(),
+        show_hidden: false,
+        open_buffers: Vec::new(),
+        contained: true,
+    };
+
+    let error = perform(request, || false).unwrap_err();
+    assert!(
+        error.to_string().contains("open a narrower directory"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_contained_search_stops_at_its_entry_cap() {
+    let root = crate::test_support::TestRuntimeRoot::new("search").unwrap();
+    // Directory entries are visited in reverse name order, so the one match
+    // sits in the entry the cap leaves unvisited.
+    for index in 0..=crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+        let text = if index == 0 { "needle\n" } else { "" };
+        std::fs::write(root.path().join(format!("{index:05}")), text).unwrap();
+    }
+    let request = |contained| WorkspaceSearchRequest {
+        id: 1,
+        root: root.path().to_path_buf(),
+        matcher: Regex::new("needle").unwrap(),
+        show_hidden: false,
+        open_buffers: Vec::new(),
+        contained,
+    };
+
+    let (matches, limited) = perform(request(true), || false).unwrap().unwrap();
+    assert!(limited);
+    assert!(matches.is_empty());
+
+    let (matches, limited) = perform(request(false), || false).unwrap().unwrap();
+    assert!(!limited);
+    assert_eq!(matches.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_contained_search_passes_over_directories_it_cannot_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = crate::test_support::TestRuntimeRoot::new("search").unwrap();
+    let private = root.path().join("private");
+    std::fs::create_dir(&private).unwrap();
+    std::fs::write(private.join("secret"), "needle\n").unwrap();
+    std::fs::write(root.path().join("open.conf"), "needle\n").unwrap();
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads every directory, so there is nothing unreadable to pass over.
+    if std::fs::read_dir(&private).is_ok() {
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let request = |contained| WorkspaceSearchRequest {
+        id: 1,
+        root: root.path().to_path_buf(),
+        matcher: Regex::new("needle").unwrap(),
+        show_hidden: false,
+        open_buffers: Vec::new(),
+        contained,
+    };
+
+    let contained = perform(request(true), || false);
+    let project = perform(request(false), || false);
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (matches, _) = contained.unwrap().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].path, root.path().join("open.conf"));
+    assert!(
+        project.is_err(),
+        "a project search still reports the failure"
+    );
 }

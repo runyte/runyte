@@ -39,6 +39,11 @@ pub(crate) struct WorkspaceSearchRequest {
     pub matcher: Regex,
     pub show_hidden: bool,
     pub open_buffers: Vec<WorkspaceSearchSnapshot>,
+    /// Whether the walk is bounded by [`crate::scan_boundary`], as a search
+    /// with no workspace behind it is. Unreadable directories below the root
+    /// are then passed over rather than failing the search, because such a
+    /// search starts in system directories the reader only partly owns.
+    pub contained: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,6 +161,7 @@ pub(crate) fn perform(
         &request.root,
         &request.matcher,
         request.show_hidden,
+        request.contained,
         &open_paths,
         &cancelled,
     )?
@@ -193,17 +199,33 @@ fn workspace_matches(
     root: &Path,
     matcher: &Regex,
     show_hidden: bool,
+    contained: bool,
     open_paths: &HashSet<&Path>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<Option<(Vec<WorkspaceMatch>, bool)>> {
+    let boundary = if contained {
+        let root = root.canonicalize()?;
+        if let Some(reason) = crate::scan_boundary::refusal(&root) {
+            anyhow::bail!(reason);
+        }
+        Some(crate::scan_boundary::Boundary::of(&root)?)
+    } else {
+        None
+    };
+    let mut visited = 0usize;
     let mut pending = vec![root.to_path_buf()];
     let mut matches = Vec::new();
     while let Some(directory) = pending.pop() {
         if cancelled() {
             return Ok(None);
         }
-        let mut entries: Vec<_> =
-            std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        let entries = std::fs::read_dir(&directory)
+            .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>());
+        let mut entries = match entries {
+            Ok(entries) => entries,
+            Err(_) if contained && directory != root => continue,
+            Err(error) => return Err(error.into()),
+        };
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries.into_iter().rev() {
             if cancelled() {
@@ -211,9 +233,35 @@ fn workspace_matches(
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let file_type = entry.file_type()?;
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) if contained => continue,
+                Err(error) => return Err(error.into()),
+            };
             if file_type.is_symlink() {
                 continue;
+            }
+            // A contained walk needs every entry's device for its boundary.
+            // An uncontained one reads metadata only for the files that pass
+            // the cheaper checks below, as it always has.
+            let metadata = if contained {
+                match entry.metadata() {
+                    Ok(metadata) => Some(metadata),
+                    Err(_) => continue,
+                }
+            } else {
+                None
+            };
+            if let Some(boundary) = boundary.as_ref() {
+                if file_type.is_dir()
+                    && !metadata.as_ref().is_some_and(|meta| boundary.admits(meta))
+                {
+                    continue;
+                }
+                visited += 1;
+                if visited > crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+                    return Ok(Some((matches, true)));
+                }
             }
             if file_type.is_dir() {
                 if matches!(name.as_ref(), ".git" | ".runyte" | "target")
@@ -224,10 +272,14 @@ fn workspace_matches(
                 pending.push(entry.path());
                 continue;
             }
-            if !file_type.is_file()
-                || (!show_hidden && name.starts_with('.'))
-                || entry.metadata()?.len() > GLOBAL_SEARCH_FILE_LIMIT
-            {
+            if !file_type.is_file() || (!show_hidden && name.starts_with('.')) {
+                continue;
+            }
+            let length = match metadata {
+                Some(metadata) => metadata.len(),
+                None => entry.metadata()?.len(),
+            };
+            if length > GLOBAL_SEARCH_FILE_LIMIT {
                 continue;
             }
             let path = entry.path();
@@ -370,6 +422,7 @@ mod tests {
             matcher: Regex::new("needle").unwrap(),
             show_hidden: false,
             open_buffers: Vec::new(),
+            contained: false,
         };
 
         assert!(perform(request, || true).unwrap().is_none());
@@ -383,6 +436,7 @@ mod tests {
             matcher: Regex::new("needle").unwrap(),
             show_hidden: false,
             open_buffers: Vec::new(),
+            contained: false,
         };
 
         assert!(perform(request, || false).is_err());
@@ -401,6 +455,7 @@ mod tests {
                 matcher: Regex::new("needle").unwrap(),
                 show_hidden: false,
                 open_buffers: Vec::new(),
+                contained: false,
             })
             .unwrap();
 

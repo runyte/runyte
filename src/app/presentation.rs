@@ -1698,7 +1698,15 @@ impl App {
         if let Some(confirmation) = &self.fs_confirmation {
             overlays.push(bounded(
                 OverlayKind::FilesystemConfirmation,
-                format!("Filesystem plan · {}", confirmation.plan.root().display()),
+                format!(
+                    "Filesystem plan{} · {}",
+                    if self.running_as_root() {
+                        " · as root"
+                    } else {
+                        ""
+                    },
+                    confirmation.plan.root().display()
+                ),
                 "",
                 confirmation
                     .plan
