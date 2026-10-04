@@ -163,7 +163,12 @@ fn plain_project_search_is_rooted_at_the_active_directory() {
         text.contains(&format!("Directory: {}", nginx.display())),
         "{text}"
     );
-    assert!(text.contains("sites/default:1:1"), "{text}");
+    // Result rows display paths with the platform's separator.
+    let sibling = Path::new("sites").join("default");
+    assert!(
+        text.contains(&format!("{}:1:1", sibling.display())),
+        "{text}"
+    );
     assert!(!text.contains("outside.txt"), "{text}");
     assert_eq!(
         app.status,
