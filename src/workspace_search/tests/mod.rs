@@ -144,13 +144,13 @@ fn a_contained_search_refuses_the_filesystem_root() {
 }
 
 #[test]
-fn a_contained_search_stops_at_its_entry_cap() {
+fn a_contained_search_spends_its_budget_on_hidden_entries_too() {
+    // Hidden entries are never searched, but reading them is still work: a
+    // directory of nothing but dotfiles must exhaust the budget rather than
+    // be enumerated in full.
     let root = crate::test_support::TestRuntimeRoot::new("search").unwrap();
-    // Directory entries are visited in reverse name order, so the one match
-    // sits in the entry the cap leaves unvisited.
     for index in 0..=crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
-        let text = if index == 0 { "needle\n" } else { "" };
-        std::fs::write(root.path().join(format!("{index:05}")), text).unwrap();
+        std::fs::write(root.path().join(format!(".{index:05}")), "needle\n").unwrap();
     }
     let request = |contained| WorkspaceSearchRequest {
         id: 1,
@@ -166,8 +166,8 @@ fn a_contained_search_stops_at_its_entry_cap() {
     assert!(matches.is_empty());
 
     let (matches, limited) = perform(request(false), || false).unwrap().unwrap();
-    assert!(!limited);
-    assert_eq!(matches.len(), 1);
+    assert!(!limited, "a project search has no entry budget");
+    assert!(matches.is_empty());
 }
 
 #[cfg(unix)]

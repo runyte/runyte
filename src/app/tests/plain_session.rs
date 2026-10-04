@@ -340,3 +340,25 @@ fn workspace_only_and_plain_only_commands_grey_out_in_the_other_session() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn workspace_init_protects_the_loaded_configuration_directory() {
+    // `--config` named a file outside the default configuration directory,
+    // and `workspace.state` points inside that file's directory. `--init`
+    // refuses this; so must `:workspace-init`, which only knows about the
+    // loaded configuration through the roots startup hands it.
+    let (root, file) = system_tree("plain-workspace-init-config");
+    let config = root.join("custom-config");
+    fs::create_dir_all(&config).unwrap();
+    let mut app = plain_app(&root, &file);
+    app.config.workspace.state = config.join("state");
+    app.note_reserved_user_roots(vec![config.clone()]);
+
+    app.execute_command("workspace-init").unwrap();
+
+    assert!(app.is_plain());
+    assert!(!app.take_workspace_services_request());
+    assert!(!config.join("state").exists());
+    assert_eq!(app.reserved_user_roots(), [config]);
+    fs::remove_dir_all(root).unwrap();
+}

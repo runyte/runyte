@@ -219,13 +219,30 @@ fn workspace_matches(
         if cancelled() {
             return Ok(None);
         }
-        let entries = std::fs::read_dir(&directory)
-            .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>());
-        let mut entries = match entries {
+        let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if contained && directory != root => continue,
             Err(error) => return Err(error.into()),
         };
+        // A contained walk spends its budget as entries are read, hidden ones
+        // included, so a huge directory is never collected or sorted whole.
+        let mut truncated = false;
+        let mut collected = Vec::new();
+        for entry in entries {
+            if contained {
+                if visited == crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+                    truncated = true;
+                    break;
+                }
+                visited += 1;
+            }
+            match entry {
+                Ok(entry) => collected.push(entry),
+                Err(_) if contained => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let mut entries = collected;
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries.into_iter().rev() {
             if cancelled() {
@@ -252,16 +269,11 @@ fn workspace_matches(
             } else {
                 None
             };
-            if let Some(boundary) = boundary.as_ref() {
-                if file_type.is_dir()
-                    && !metadata.as_ref().is_some_and(|meta| boundary.admits(meta))
-                {
-                    continue;
-                }
-                visited += 1;
-                if visited > crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
-                    return Ok(Some((matches, true)));
-                }
+            if let Some(boundary) = boundary.as_ref()
+                && file_type.is_dir()
+                && !metadata.as_ref().is_some_and(|meta| boundary.admits(meta))
+            {
+                continue;
             }
             if file_type.is_dir() {
                 if matches!(name.as_ref(), ".git" | ".runyte" | "target")
@@ -304,6 +316,9 @@ fn workspace_matches(
                 matches.truncate(GLOBAL_SEARCH_RESULT_LIMIT);
                 return Ok(Some((matches, true)));
             }
+        }
+        if truncated {
+            return Ok(Some((matches, true)));
         }
     }
     Ok(Some((matches, false)))

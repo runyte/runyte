@@ -63,8 +63,12 @@ session. Their scans use the new `ScanScope::Contained`, bounded by
 filesystems (the `/proc`, `/sys` and `/dev` mount points by name, since
 devtmpfs reports the tmpfs magic number, plus kernel pseudo-filesystems by
 `statfs` magic on Linux); `Boundary` keeps the walk on the root's device; and
-both walkers stop after `CONTAINED_SCAN_ENTRY_LIMIT` (20,000) entries and
-report the result as limited. `scan_with` in `src/file_picker.rs` returns a
+both walkers stop after reading `CONTAINED_SCAN_ENTRY_LIMIT` (20,000)
+directory entries and report the result as limited. The budget is spent while
+entries are read from the directory, before collecting, sorting or filtering,
+so hidden and ignored entries count and a single huge directory is never
+collected whole; a first version counted only admitted entries after reading
+each directory in full. `scan_with` in `src/file_picker.rs` returns a
 `ScanTally` so the cap reaches the picker as `limited`, and the contained
 workspace-search walk passes over unreadable subdirectories instead of failing,
 since it starts in system directories the reader only partly owns. Instead of a
@@ -73,13 +77,20 @@ for a contained scope (`<dir>` or `all files in <dir>`). The search prompt
 reads `search <dir>: `, and the results page gains a `Directory:` line.
 
 `:workspace-init [directory]` calls `project_root::initialize`, as `--init`
-does, then `adopt_workspace` moves `project_root`, `state_root` and the working
+does, against the same per-user roots the launch was validated with: startup
+hands the editor its list through `note_reserved_user_roots`, so a `--config`
+file outside the default configuration directory is protected with its
+launch-relative `config_root_for` resolution rather than the default
+directory. It then `adopt_workspace` moves `project_root`, `state_root` and the working
 directory to the new root and sets a request the standalone event loop reads at
 the top of each turn. `start_workspace_services` refreshes the host's
 `WorkspaceIdentity` first — context registration pairs it with the project root
 and is rejected when they differ — then starts the context endpoint, Git, a
 language-server manager rooted at the new workspace, the session catalog and
-plugins, and records the workspace.
+plugins, and records the workspace. On Windows the session catalog is the
+native one, so `standalone_native_catalog_config` and `spawn_native_catalog`,
+shared with launch, start and attach it and its owner and receiver join
+`HostServices`.
 
 The status row reads `plain │ Directory:` through a third `SessionMode` in
 `src/ui.rs`, and filesystem-plan titles say `as root` when `running_as_root` is
@@ -92,7 +103,8 @@ Tests:
 
 - `src/app/tests/plain_session.rs`: capabilities, refusals by typed command and
   key binding, Finder and search scope, the search prompt and results header,
-  `g f`, `:workspace-init` with and without a directory and on an unusable one,
+  `g f`, `:workspace-init` with and without a directory, on an unusable one, and
+  against a state path inside the loaded configuration directory,
   host identity after init, greying of workspace-only and plain-only commands,
   and the `as root` plan title.
 - `src/main.rs`: `a_launch_is_plain_only_with_targets_and_no_workspace_or_when_asked`,
@@ -105,7 +117,8 @@ Tests:
   still writes.
 - `src/launch.rs`: `plain_is_a_standalone_option_that_opens_no_workspace`.
 - `src/scan_boundary.rs` tests, the `a_contained_*` tests in
-  `src/file_picker.rs` and `src/workspace_search/tests/mod.rs`, and
+  `src/file_picker.rs` and `src/workspace_search/tests/mod.rs` (including the
+  budget spent on hidden and ignored entries), and
   `a_plain_session_names_itself_in_the_rendered_status_row` and
   `the_status_row_names_the_workspace_mode_before_the_workspace` in
   `src/ui.rs`.

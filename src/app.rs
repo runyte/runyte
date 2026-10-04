@@ -3042,6 +3042,11 @@ pub struct App {
     /// Whether the editor process runs as root. Captured once at launch so
     /// confirmations that act on the filesystem can say so.
     running_as_root: bool,
+    /// Per-user Runyte storage a workspace state directory must not overlap:
+    /// the loaded configuration's directory and the cache. Startup injects
+    /// the list it validated the launch against, resolved from the launch
+    /// directory, so `:workspace-init` checks exactly what `--init` would.
+    reserved_user_roots: Vec<PathBuf>,
     /// Resolved once from the configured OS-known-folder policy. Plugin state
     /// workers receive this captured boundary rather than re-reading ambient
     /// paths after the workspace owner starts.
@@ -3652,6 +3657,7 @@ impl App {
             plain,
             workspace_services_requested: false,
             running_as_root: false,
+            reserved_user_roots,
             plugin_state_anchor,
             git: GitTracker::new(),
             diff_worker: diff_work::Worker::new(),

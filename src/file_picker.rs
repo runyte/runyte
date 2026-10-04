@@ -3380,12 +3380,24 @@ fn scan_with(
             }
         };
         let mut readable_entries = Vec::new();
+        // A contained scan spends its budget on every entry it reads, hidden
+        // and ignored ones included, and stops reading once it is spent:
+        // collecting a huge directory before counting would make the bound
+        // meaningless for memory and sorting.
+        let mut truncated = false;
         for entry in entries {
             if cancelled() {
                 return Ok(ScanTally {
                     skipped,
                     limited: false,
                 });
+            }
+            if boundary.is_some() {
+                if visited == crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+                    truncated = true;
+                    break;
+                }
+                visited += 1;
             }
             match entry {
                 Ok(entry) => readable_entries.push(entry),
@@ -3423,20 +3435,11 @@ fn scan_with(
             {
                 continue;
             }
-            if let Some(boundary) = boundary.as_ref() {
-                if is_directory && !entry.metadata().is_ok_and(|meta| boundary.admits(&meta)) {
-                    continue;
-                }
-                visited += 1;
-                if visited > crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
-                    if !batch.is_empty() {
-                        emit(std::mem::take(&mut batch));
-                    }
-                    return Ok(ScanTally {
-                        skipped,
-                        limited: true,
-                    });
-                }
+            if let Some(boundary) = boundary.as_ref()
+                && is_directory
+                && !entry.metadata().is_ok_and(|meta| boundary.admits(&meta))
+            {
+                continue;
             }
             if is_directory {
                 if include_dirs {
@@ -3458,6 +3461,15 @@ fn scan_with(
                     });
                 }
             }
+        }
+        if truncated {
+            if !batch.is_empty() {
+                emit(std::mem::take(&mut batch));
+            }
+            return Ok(ScanTally {
+                skipped,
+                limited: true,
+            });
         }
     }
     if !batch.is_empty() && !emit(batch) {
@@ -4028,6 +4040,27 @@ mod tests {
             paths.len(),
             crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT + 1
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_contained_scan_spends_its_budget_on_hidden_and_ignored_entries() {
+        let root = temporary("contained-hidden-cap");
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..=crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT {
+            fs::write(root.join(format!(".{index:05}")), "").unwrap();
+        }
+        let workspace = root.join(".runyte");
+
+        let (paths, _, limited) =
+            scan_files(&root, &ScanScope::contained(None), &workspace, false).unwrap();
+        assert!(limited, "reading the dotfiles spent the budget");
+        assert!(paths.is_empty());
+
+        let (paths, _, limited) =
+            scan_files(&root, &ScanScope::Everything, &workspace, false).unwrap();
+        assert!(!limited);
+        assert!(paths.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1849,6 +1849,7 @@ async fn run(
         )?
     };
     app.note_running_as_root(running_as_root);
+    app.note_reserved_user_roots(reserved_user_roots.clone());
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -1936,25 +1937,7 @@ async fn run(
     let native_catalog = if plain {
         None
     } else {
-        DiscoveryScope::resolve(DiscoveryInputs {
-            reserved_user_roots: reserved_user_roots.clone(),
-            roots: CapturedRoots::capture(),
-        })
-        .and_then(|scope| {
-            let current = scope.known_read_location(&project_root, &state_root)?;
-            Ok(NativeCatalogConfig {
-                scope,
-                current,
-                current_layout: None,
-                configured_state: app.config.workspace.state.clone(),
-                parent_attach: None,
-            })
-        })
-        .map(Some)
-        .unwrap_or_else(|error| {
-            app.report_host_error(format!("native session catalog is unavailable: {error}"));
-            None
-        })
+        standalone_native_catalog_config(&mut app, &reserved_user_roots)
     };
     let mut services = start_host_services(
         &mut app,
@@ -6593,52 +6576,8 @@ fn start_host_services(
     #[cfg(all(not(unix), not(windows)))]
     let context_events = tokio::sync::mpsc::channel(1).1;
     #[cfg(windows)]
-    let (native_catalog_handle, native_catalog_owner, native_catalog_events) = if let Some(config) =
-        native_catalog
-    {
-        let NativeCatalogConfig {
-            scope,
-            current,
-            current_layout,
-            configured_state,
-            parent_attach,
-        } = config;
-        let spawned = match (parent_attach, current_layout) {
-            (Some(parent_attach), Some(layout)) => {
-                runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_current_layout(
-                    layout,
-                    configured_state,
-                    parent_attach,
-                )
-            }
-            (Some(parent_attach), None) => {
-                runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_parent_attach(
-                    scope,
-                    Some(current),
-                    configured_state,
-                    parent_attach,
-                )
-            }
-            (None, _) => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
-                scope,
-                Some(current),
-                configured_state,
-            ),
-        };
-        match spawned {
-            Ok((handle, owner, events)) => (Some(handle), Some(owner), Some(events)),
-            Err(error) => {
-                app.report_host_error(format!("native session catalog could not start: {error}"));
-                (None, None, None)
-            }
-        }
-    } else {
-        (None, None, None)
-    };
-    #[cfg(windows)]
-    if let Some(service) = native_catalog_handle.as_ref() {
-        app.attach_workspace_service(service.clone());
-    }
+    let (native_catalog_handle, native_catalog_owner, native_catalog_events) =
+        spawn_native_catalog(app, native_catalog);
     let git_events = if plain { None } else { start_git_service(app) };
     // The manager is spawned either way so the loop has its channel, but a
     // plain session never attaches it: no document is offered to it and no
@@ -6707,6 +6646,91 @@ fn start_host_services(
     })
 }
 
+/// The native catalog configuration for a standalone editor in the
+/// workspace it now serves, or `None` with the reason reported.
+#[cfg(windows)]
+fn standalone_native_catalog_config(
+    app: &mut WorkspaceHost,
+    reserved_user_roots: &[PathBuf],
+) -> Option<NativeCatalogConfig> {
+    let project_root = app.project_root.clone();
+    let state_root = app.state_root.clone();
+    DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: reserved_user_roots.to_vec(),
+        roots: CapturedRoots::capture(),
+    })
+    .and_then(|scope| {
+        let current = scope.known_read_location(&project_root, &state_root)?;
+        Ok(NativeCatalogConfig {
+            scope,
+            current,
+            current_layout: None,
+            configured_state: app.config.workspace.state.clone(),
+            parent_attach: None,
+        })
+    })
+    .map(Some)
+    .unwrap_or_else(|error| {
+        app.report_host_error(format!("native session catalog is unavailable: {error}"));
+        None
+    })
+}
+
+/// Starts the native catalog described by `config` and attaches it, so the
+/// session controls it backs become available.
+#[cfg(windows)]
+fn spawn_native_catalog(
+    app: &mut WorkspaceHost,
+    config: Option<NativeCatalogConfig>,
+) -> (
+    Option<runyte::workspace::WorkspaceServiceHandle>,
+    Option<runyte::workspace::windows_service::WorkspaceServiceOwner>,
+    Option<tokio::sync::mpsc::Receiver<runyte::workspace::WorkspaceEvent>>,
+) {
+    let Some(config) = config else {
+        return (None, None, None);
+    };
+    let NativeCatalogConfig {
+        scope,
+        current,
+        current_layout,
+        configured_state,
+        parent_attach,
+    } = config;
+    let spawned = match (parent_attach, current_layout) {
+        (Some(parent_attach), Some(layout)) => {
+            runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_current_layout(
+                layout,
+                configured_state,
+                parent_attach,
+            )
+        }
+        (Some(parent_attach), None) => {
+            runyte::workspace::windows_service::WorkspaceServiceOwner::spawn_with_parent_attach(
+                scope,
+                Some(current),
+                configured_state,
+                parent_attach,
+            )
+        }
+        (None, _) => runyte::workspace::windows_service::WorkspaceServiceOwner::spawn(
+            scope,
+            Some(current),
+            configured_state,
+        ),
+    };
+    match spawned {
+        Ok((handle, owner, events)) => {
+            app.attach_workspace_service(handle.clone());
+            (Some(handle), Some(owner), Some(events))
+        }
+        Err(error) => {
+            app.report_host_error(format!("native session catalog could not start: {error}"));
+            (None, None, None)
+        }
+    }
+}
+
 fn start_git_service(
     app: &mut WorkspaceHost,
 ) -> Option<tokio::sync::mpsc::Receiver<GitServiceEvent>> {
@@ -6773,6 +6797,17 @@ fn start_workspace_services(
         services.workspace_events = Some(start_workspace_service(app, config_path));
         let recorded = record_recent_workspace(&app.project_root).ok().flatten();
         app.note_workspace_number(recorded.and_then(|recorded| recorded.number));
+    }
+    // Windows session controls come from the native catalog, which a plain
+    // launch left unstarted; a standalone launch in this workspace starts it.
+    #[cfg(windows)]
+    {
+        let reserved_user_roots = app.reserved_user_roots().to_vec();
+        let config = standalone_native_catalog_config(app, &reserved_user_roots);
+        let (handle, owner, events) = spawn_native_catalog(app, config);
+        services.native_catalog = handle;
+        services.native_catalog_owner = owner;
+        services.native_catalog_events = events;
     }
     #[cfg(not(unix))]
     let _ = config_path;

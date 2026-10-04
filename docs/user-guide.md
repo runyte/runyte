@@ -4344,7 +4344,8 @@ may be anywhere, these searches are contained:
 
 - They stay on the filesystem they start on, so mounts such as `/proc` below
   `/` are not entered.
-- They stop after 20,000 entries and say the result is limited.
+- They stop after reading 20,000 directory entries, hidden and ignored ones
+  included, and say the result is limited.
 - They refuse to start at `/` or inside a virtual filesystem such as `/proc`,
   `/sys`, or `/dev`; open a narrower directory instead.
 

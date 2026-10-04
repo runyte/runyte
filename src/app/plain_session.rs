@@ -40,6 +40,18 @@ impl App {
         self.running_as_root
     }
 
+    /// Replaces the per-user storage a workspace state directory must not
+    /// overlap with the list startup validated against. Construction starts
+    /// from the default configuration directory and the cache, which is
+    /// wrong when `--config` names a file elsewhere.
+    pub fn note_reserved_user_roots(&mut self, roots: Vec<PathBuf>) {
+        self.reserved_user_roots = roots;
+    }
+
+    pub fn reserved_user_roots(&self) -> &[PathBuf] {
+        &self.reserved_user_roots
+    }
+
     /// Whether Git, the language-server manager, and the session catalog
     /// are attached, in that order.
     pub(crate) fn workspace_ports_attached(&self) -> (bool, bool, bool) {
@@ -149,17 +161,10 @@ impl App {
             || self.active_directory(),
             |path| self.resolve_working_path(path),
         );
-        let reserved_user_roots = [
-            crate::config::default_config_root(),
-            crate::external_open::cache_root(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
         let project_root = match crate::project_root::initialize(
             &requested,
             &self.config.workspace.state,
-            &reserved_user_roots,
+            &self.reserved_user_roots,
         ) {
             Ok(root) => root,
             Err(error) => {
