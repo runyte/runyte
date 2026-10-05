@@ -463,12 +463,12 @@ fn persistent_tutorial_finishes_only_after_detach_and_reattach() {
 }
 
 #[test]
-fn standalone_session_lesson_states_the_real_boundary() {
+fn ide_mode_session_lesson_states_the_real_boundary() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.execute_command("tutorial sessions").unwrap();
     let state = app.tutorial_state().unwrap();
     let instructions = app.buffers[state.instruction_buffer].to_string();
-    assert!(instructions.contains("standalone workspace"));
+    assert!(instructions.contains("runs in ide mode"));
     assert!(instructions.contains("runyte --mux"));
     assert!(instructions.contains("not crash, reboot, or machine-failure storage"));
 }

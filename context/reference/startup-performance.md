@@ -19,6 +19,9 @@ benchmarks/run.py
 
 ## 2026-10-04 — plain sessions
 
+Plain sessions have since become editor mode (`runyte --editor`, or `runed`);
+the services it leaves out are the same, so the comparison still describes it.
+
 A development build of the plain-session change on top of commit `ed5a1cc`,
 built with `cargo build --release` and Rust 1.97.1. Machine: AMD Ryzen AI 9
 365, 10 cores / 20 logical CPUs, Linux 7.2.8-arch1-2, ext4. Python with pyte

@@ -17,7 +17,7 @@ reading from top to bottom.
 | [Terminals](#terminals) | Integrated terminal sessions |
 | [Git](#git) | Status, branches, worktrees, history, staging, pull and push |
 | [Language support](#language-support) | Syntax highlighting, rendered Markdown, language servers |
-| [Workspaces and persistent sessions](#workspaces-and-persistent-sessions) | Standalone and persistent modes, the session manager |
+| [Workspaces and persistent sessions](#workspaces-and-persistent-sessions) | Editor, ide, and mux modes, the session manager |
 | [Commands](#commands) | The command palette and every `:` command |
 | [Plugins](#plugins) | Process plugins and application views |
 | [Agent access to workspace context](#agent-access-to-workspace-context) | The built-in MCP adapter for AI agents |
@@ -94,7 +94,7 @@ reading from top to bottom.
 - Terminal panes running any interactive program — a shell, `htop`, `vim`, a
   coding agent — with scrollback, modal navigation over it, and a command that
   sends a buffer's selection to one as a single paste
-- Optional `--persistent` local workspace persistence for unsaved editor,
+- Optional `--mux` local workspace persistence for unsaved editor,
   language-service, and live terminal-session state
 - `$EDITOR`-compatible `--wait` requests with revision-safe local edits
 
@@ -283,7 +283,7 @@ compiler.
 
 ```powershell
 cargo build --release --locked
-.\target\release\runyte.exe --standalone README.md
+.\target\release\runyte.exe --ide README.md
 ```
 
 #### Not available on Windows
@@ -356,10 +356,10 @@ When one of these fails, recoverable edits are preserved.
   by path or ID is refused as ambiguous; use its name or pick the row.
 - **`:session-clean`** is available inside the editor. On Linux and macOS use
   `runyte --session-clean`.
-- **A bare `runyte`** with `workspace.mode: persistent` attaches only to a
-  project it can discover, and otherwise refuses without creating a workspace.
-  `-a` initializes the current directory; `--init` creates an exact standalone
-  workspace.
+- **A bare `runyte`** with `mode: mux` attaches only to a project it can
+  discover, and otherwise refuses without creating a workspace, as a bare `-a`
+  does. `-a DIRECTORY` makes that directory a workspace; `--init` only creates
+  one.
 - **`--serve`** stops the host when the process that launched it exits.
 - **Plugins** can request the `processes` capability for managed native helper
   processes.
@@ -378,20 +378,19 @@ When one of these fails, recoverable edits are preserved.
 | `runyte a.md src/main.rs` | Both files; the first is active |
 | `runyte +12:4 notes.md` | `notes.md` with the caret on line 12, column 4 |
 | `runyte -- +draft.md -notes.md` | Files whose names start with `+` or `-` |
-| `runyte --plain /etc/fstab` | That file in a plain session, even inside a workspace |
+| `runyte --editor /etc/fstab`, `runed /etc/fstab` | That file in [editor mode](#editor-mode), with no workspace |
 | `runyte --help` | Command-line options |
 
 Details:
 
-- **No workspace.** A file or directory launched where no Git repository or
-  `.runyte/` directory is found opens a
-  [plain session](#plain-sessions): Runyte as a simple editor, with no
-  workspace and nothing written beside the file.
+- **Workspaces.** `runyte FILE` opens the file in the workspace the current
+  directory belongs to. Outside any workspace it refuses and suggests
+  `runyte --init DIRECTORY`; use `runed FILE` to edit without one.
 
 - **About page.** A new persistent session starts on the about page too, so
   `runyte -a` before anything has been opened in that workspace shows it.
 - **Several files.** Runyte opens every text file given and leaves the first
-  active. Standalone launches show a stable `Opening workspace…` screen while
+  active. Editor and ide launches show a stable `Opening workspace…` screen while
   they load.
 - **Editable at once.** The first document frame is already editable. Syntax
   highlighting appears on its own when parsing finishes.
@@ -483,14 +482,14 @@ open the same retained special commit-detail buffer when a commit is selected.
 ### Global status line
 
 ```
- NOR │ standalone │ Workspace: /home/me/code/runyte [+]   412:17 · 34% │ 3 sel │ main ~1 │ rust-analyzer 0E 2W
+ NOR │ ide │ Workspace: /home/me/code/runyte [+]   412:17 · 34% │ 3 sel │ main ~1 │ rust-analyzer 0E 2W
 ```
 
 | Part | Meaning |
 | --- | --- |
 | `NOR` | The mode, in the current mode's caret colour (see [Mode carets](#mode-carets)). The rest of the row keeps the theme's ordinary background. |
-| `standalone` | The workspace mode. `standalone` keeps live state in the TUI process; `persistent` keeps it in a separate local process. These are the values of `workspace.mode`. A [plain session](#plain-sessions), which has no workspace, reads `plain`. |
-| `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. A plain session labels it `Directory: …`. |
+| `ide` | The mode: `ide` keeps live state in the TUI process, `ide+mux` keeps it in a persistent session, and `editor` has no workspace at all. See [Workspaces and persistent sessions](#workspaces-and-persistent-sessions). |
+| `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. [Editor mode](#editor-mode) labels it `Directory: …` and shows no Git information. |
 | `[+]` / `[STALE]` / `[RO]` | The active buffer has unsaved changes / the path it shows (a file or an explorer's directory) disagrees with the accepted baseline / is read-only. |
 | `412:17 · 34%` | Cursor line and column, and how far through the buffer it is. |
 | `3 sel` | Selection count, shown above one. |
@@ -626,7 +625,7 @@ In the popup:
 - `Ctrl-n` and `Ctrl-p` scroll without affecting the pending keys. In Normal
   and Select, Up and Down scroll too, unless that arrow completes a binding.
 - Scroll controls appear in the title when the entries do not fit.
-- Up to three columns are used when complete rows fit. Standalone and attached
+- Up to three columns are used when complete rows fit. Ide-mode and attached
   persistent clients use the same layout.
 
 #### Contextual help (`Space ?`)
@@ -689,7 +688,7 @@ scratch text.
 - **Views:** scratch, generated, and editable explorer buffers versus terminal
   pane content. You open the explorer, return with `Alt-o`, create a terminal,
   and close that terminal session through its manager.
-- **Final lessons:** `Ctrl-o`/`Ctrl-i` jump history, the standalone/persistent
+- **Final lessons:** `Ctrl-o`/`Ctrl-i` jump history, the ide/mux
   boundary, and pointers to `:help` and `Space ?`.
 
 | Command | Effect |
@@ -802,7 +801,7 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 
 | Key | Action |
 | --- | --- |
-| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (persistent mode) |
+| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (mux mode) |
 | `h` / `j` / `k` / `l`; `Left` / `Down` / `Up` / `Right` | Move left, down, up, right |
 | `w` / `b` / `e` | Next word / previous word / word end |
 | `W` / `B` / `E` | Long-word variants |
@@ -1025,7 +1024,7 @@ The keys shared by Insert and Replace modes:
 
 | Key | Action |
 | --- | --- |
-| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (persistent mode) |
+| `Shift-Left` / `Shift-Right` | Visit the previous / next running persistent session (mux mode) |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 | `Backspace` / `Shift-Backspace`; `Delete` | Delete to the previous indentation stop in leading whitespace, otherwise the previous character / delete the next character |
 | `Alt-Backspace` / `Alt-Delete` | Delete the previous / next word |
@@ -1716,14 +1715,14 @@ Opening one asks which program should have it instead of loading it as text.
 | `:close[!]` or `:c[!]`, `Space b c` | Close the active buffer in place; `!` explicitly discards unsaved text; terminals are refused |
 | `:write-buffer-close` (`:wbc`) | Save and close the buffer in place |
 | `:window-close` or `:wc` | Close the active pane, but refuse the last pane |
-| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit standalone or stop the persistent session and return to a previous running session, with unsaved-change protection |
-| `:quit-all[!]` or `:qa[!]` | Exit standalone or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
+| `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit ide mode or stop the persistent session and return to a previous running session, with unsaved-change protection |
+| `:quit-all[!]` or `:qa[!]` | Exit ide mode or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 | `:write-quit` (`:wq`) | Save, then close the pane or quit from the last one |
 
 - Closing a buffer keeps every pane. Each pane that showed it returns to its
   own most recently used live buffer, or a scratch buffer when none remains.
-- Quitting in persistent mode is described under
+- Quitting in mux mode is described under
   [Quitting and detaching](#quitting-and-detaching).
 - Neither `:close[!]` nor any `:quit…` command ends a terminal session; see
   [Managing terminal sessions](#managing-terminal-sessions).
@@ -1731,7 +1730,7 @@ Opening one asks which program should have it instead of loading it as text.
 ### The Finder
 
 `Space f` opens the Finder: one ranked list of files below the project root,
-open buffers, and terminal sessions. In a [plain session](#plain-sessions) it
+open buffers, and terminal sessions. In [editor mode](#editor-mode) it
 covers the active file's or explorer's directory instead, and names it in the
 title.
 
@@ -2598,7 +2597,7 @@ showing it.
 
 | Command | Runs |
 | --- | --- |
-| `:terminal` (`:term`, `:t`), `Space t n`, `Ctrl-w t` | `$SHELL` on Unix, `%COMSPEC%` (else `cmd.exe`) on Windows, in the editor working directory (in a [plain session](#plain-sessions), the active file's or explorer's directory) |
+| `:terminal` (`:term`, `:t`), `Space t n`, `Ctrl-w t` | `$SHELL` on Unix, `%COMSPEC%` (else `cmd.exe`) on Windows, in the editor working directory. Not available in [editor mode](#editor-mode). |
 | `:terminal htop` | That command line |
 | `:terminal-file-directory [command]` | From the active file's parent |
 | `:terminal-directory-root [command]` | From the active explorer's root |
@@ -2663,7 +2662,7 @@ Every key belongs to the program except:
 | `Ctrl-\` | Leave to live Normal mode |
 | `Ctrl-w` | Start the window prefix |
 | `Ctrl-h/j/k/l` | Move between panes, only with `editor.fast_pane_keys` on |
-| `Shift-Left` / `Shift-Right` | Visit the previous / next running session, in persistent mode (remappable) |
+| `Shift-Left` / `Shift-Right` | Visit the previous / next running session, in mux mode (remappable) |
 
 - `Escape`, `Ctrl-c`, `Ctrl-o`, `Space`, and ordinary keys reach the child
   unchanged.
@@ -2862,7 +2861,7 @@ Sessions live as long as the workspace-host process that owns them:
 | Reattaching | Machine failure |
 
 `:detach` leaves persistent terminal children running without signalling them.
-In standalone and persistent modes alike, quitting refuses while a terminal
+In ide and mux modes alike, quitting refuses while a terminal
 runs.
 
 ### Emulation and limits
@@ -2912,7 +2911,7 @@ enabled: colour depth and palette rendering belong to each attached client.
 - Resizing does not reflow wrapped lines. Emulators disagree about what a
   resized wrapped line should become, and a wrong guess corrupts a live
   full-screen program worse than truncation does.
-- Windows provides standalone and persistent ConPTY terminals.
+- Windows provides ide-mode and mux-mode ConPTY terminals.
 
 
 ## Git
@@ -3180,7 +3179,7 @@ Remote
 | --- | --- |
 | `Enter` | Check out this local or remote branch locally |
 | `Tab n` | Start a new branch here and switch to it |
-| `Tab w` | Create a worktree for this branch; attach in persistent mode |
+| `Tab w` | Create a worktree for this branch; attach in mux mode |
 | `Tab d` | Compare committed tips with this branch |
 | `Tab D` | Delete this local branch, with its worktree and session, after a confirmation |
 | `Tab f` | Fetch this cached remote branch or this local branch's upstream |
@@ -3283,7 +3282,7 @@ branch.
 - On an untracked remote row, it creates the suggested tracking branch
   directly in the new worktree. A remote with several trackers asks which to
   use.
-- In persistent mode the new worktree is attached at once. In standalone mode
+- In mux mode the new worktree is attached at once. In ide mode
   you stay in the current workspace.
 
 ### Worktrees
@@ -3294,7 +3293,7 @@ repository: linked, detached, locked, prunable, and bare.
 | Key | Action in the worktree list |
 | --- | --- |
 | `Enter` | Attach to this root's persistent session, starting it if necessary |
-| `Tab n` | Name a new branch at this checkout's tip and create its worktree; attach in persistent mode |
+| `Tab n` | Name a new branch at this checkout's tip and create its worktree; attach in mux mode |
 | `Tab d` | Compare committed tips with this worktree |
 | `Tab D` | Remove this worktree and its session after confirmation; keep its branch |
 | `Space g r` | Re-read the registered worktrees |
@@ -3308,8 +3307,8 @@ servers.
 
 | Mode | Enter | `Tab n` |
 | --- | --- | --- |
-| Persistent | Detaches the TUI and attaches to the destination's host (starting it if needed). The old host keeps its buffers and terminals. | Creates the worktree and attaches at once |
-| Standalone | Explains that attaching needs `workspace.mode: persistent` | Creates the worktree and stays in the current workspace |
+| Mux | Detaches the TUI and attaches to the destination's host (starting it if needed). The old host keeps its buffers and terminals. | Creates the worktree and attaches at once |
+| Ide | Explains that attaching needs mux mode | Creates the worktree and stays in the current workspace |
 
 #### Removing a worktree
 
@@ -3351,7 +3350,7 @@ Escape keeps it.
    the digit it used. This happens whether or not a host was running.
 
 Stopping the session is part of removal, not a `session` command, so it
-happens in standalone mode too: a standalone editor cannot attach to a
+happens in ide mode too: an ide-mode editor cannot attach to a
 session, but it can still find and stop one running on the worktree.
 
 ### Committed comparisons
@@ -3998,7 +3997,7 @@ apart from `enable` and the `servers` wrapper.
 | `:lsp-status` | Show servers that started or failed |
 | `:service-health` | Show whether the active document has a configured and attached server |
 
-`lsp.enable` is decided at startup. To turn LSP on or off, reopen standalone
+`lsp.enable` is decided at startup. To turn LSP on or off, reopen an ide-mode
 Runyte, or restart a persistent session with
 `runyte --session-restart [WORKSPACE]` (passing the same `--config PATH` if
 the host used a non-default one).
@@ -4017,7 +4016,7 @@ language servers may run there.
 | Choice | Lasts |
 | --- | --- |
 | **Keep LSP disabled** (default) | — |
-| **Allow LSP once** | Until the standalone editor or persistent host stops |
+| **Allow LSP once** | Until the ide-mode editor or persistent host stops |
 | **Always allow LSP** | Remembered for this exact workspace |
 | Escape | Dismisses without changing permission; on a first visit LSP stays off |
 
@@ -4241,13 +4240,23 @@ including the one being edited.
 
 ## Workspaces and persistent sessions
 
-A **workspace** is one project directory and its editor scope. It exists in
-both modes:
+Runyte runs in one of three modes. The status line names the one in use, and a
+session keeps its mode until it ends.
 
-| Mode | Where live editor state lives | After the TUI exits |
-| --- | --- | --- |
-| **Standalone** (default) | The TUI process | Gone |
-| **Persistent** | A local host process, the **persistent session** | Kept: open and unsaved buffers, selections, registers, syntax state, diagnostics, Git projections, language-server processes, and terminal sessions |
+| Mode | Flag | Workspace | After the TUI exits |
+| --- | --- | --- | --- |
+| **editor** | `--editor`, or the `runed` command | None: edits files and directories anywhere | Gone |
+| **ide** (default) | `--ide` | Yes, with Git, language servers, MCP, plugins, and terminals | Gone |
+| **mux** (`ide+mux`) | `--mux`, `-a` | Yes, as in ide, kept by a local host process, the **persistent session** | Kept: open and unsaved buffers, selections, registers, syntax state, diagnostics, Git projections, language-server processes, and terminal sessions |
+
+The `mode` setting chooses the mode for launches that give no mode option; it
+is `ide` unless set otherwise. The launch directory never changes the mode.
+
+A **workspace** is one project directory and its editor scope: a Git
+repository, or a directory holding the workspace state directory (`.runyte/`),
+found by walking up from the launch directory. ide and mux need one. Outside a
+workspace they refuse with
+`no workspace here; run runyte --init DIRECTORY to create one`.
 
 Persistent sessions work on Unix and Windows; see
 [Windows support](#windows-support) for the Windows differences.
@@ -4256,37 +4265,40 @@ Persistent sessions work on Unix and Windows; see
 
 | Command | Effect |
 | --- | --- |
-| `runyte` | Open the workspace discovered from the current directory, in the mode set by `workspace.mode` |
-| `runyte --persistent`, `runyte -a` | Attach to the current project's persistent session, starting it if needed |
+| `runyte` | Open the workspace discovered from the current directory, in the mode set by `mode` |
+| `runyte --mux`, `runyte -a` | Attach to the current project's persistent session, starting it if needed |
 | `runyte -a WORKSPACE` | Attach to a named session from any directory, starting it if needed |
-| `runyte --standalone` | Standalone, overriding `workspace.mode: persistent` |
-| `runyte --init /path/to/project` | Make that exact directory a standalone workspace root and open it |
+| `runyte --ide` | ide mode, overriding the `mode` setting |
 | `runyte DIRECTORY` | Open that directory in the workspace discovered from the current directory |
-| `runyte --plain TARGET` | Open a file or directory in a [plain session](#plain-sessions), with no workspace |
+| `runyte --init /path/to/project` | Make that exact directory a workspace and exit |
 | `runyte --serve` | Run the host in the foreground |
 
 **Finding the workspace.** Runyte walks up from the launch directory to a Git
-root, or else to a workspace state directory (`.runyte/`). If neither exists,
-a launch naming a file or directory opens a [plain session](#plain-sessions),
-and a bare `runyte` asks where project data should live. See
+root, or else to a workspace state directory (`.runyte/`). See
 [Where workspace state lives](#where-workspace-state-lives).
 
-**`--init`** creates the configured state directory (`.runyte/` by default)
-when absent, then opens that directory.
+**`--init DIRECTORY`** creates the configured state directory (`.runyte/` by
+default) in exactly that directory, prints how to open it, and exits without
+starting the editor:
 
-- An existing state directory is used as is, never reset or removed.
+```
+initialized a workspace in /path/to/project
+open it with: runyte /path/to/project   or   runyte --mux /path/to/project
+```
+
+- An existing state directory is used as is, never reset or removed, and the
+  output says it is already a workspace.
 - It picks the named directory even when an ancestor has its own state
   directory.
-- Use it only when the directory itself must be the standalone workspace root.
-  `runyte DIRECTORY` does not change the workspace.
+- It refuses a state directory that would overlap your configuration or cache
+  directories.
 
-**`workspace.mode: persistent`** makes a bare `runyte` attach like
-`runyte -a`.
+**`mode: mux`** makes a bare `runyte` attach like `runyte -a`.
 
-- Launches naming a target — a file or a directory, including `runyte .` — stay
-  standalone, so their relative paths and `+LINE[:COLUMN]` positions keep
-  ordinary meaning.
-- `--persistent` reads its argument as a workspace, not a file.
+- Launches naming a target — a file or a directory, including `runyte .` — run
+  in ide mode in this process, so their relative paths and
+  `+LINE[:COLUMN]` positions keep ordinary meaning.
+- `--mux` reads its argument as a workspace, not a file.
 
 **`runyte -a WORKSPACE`** uses the same selector as the lifecycle commands (see
 [Selecting a session](#selecting-a-session)).
@@ -4294,53 +4306,46 @@ when absent, then opens that directory.
 - A session that is not running is started first.
 - An existing directory unknown to the catalog names that exact directory:
   Runyte creates its state directory if needed and starts its session.
-- A bare explicit `runyte -a` does the same for the current directory when no
-  workspace is discoverable there.
+  `:session-attach DIRECTORY` and the explorer's `Tab s` do the same.
+- A bare `runyte -a` uses the workspace of the current directory, and refuses
+  when there is none.
 
 **Only one interactive TUI** may be attached at a time. Separate control
 connections can still manage the host.
 
-### Plain sessions
+### Editor mode
 
-A **plain session** is a standalone session with no workspace: Runyte as a
-simple editor for a configuration file or a system directory. It is never
-persistent, because a persistent session is the live state of one workspace.
+**Editor mode** is Runyte as a simple editor for a configuration file or a
+system directory: one process with no workspace. Start it with
+`runyte --editor [FILE or DIRECTORY]`, or with `runed`, which is the same
+program under another name and is always editor mode, whatever the `mode`
+setting says. `runed` rejects `--ide`, `--mux`, and the other options that
+would choose a mode or a workspace.
 
-| Launch | Workspace found | No workspace found |
-| --- | --- | --- |
-| `runyte FILE...` | Standalone in that workspace | Plain, file open |
-| `runyte DIR`, `runyte .` | Standalone in that workspace, explorer | Plain, explorer |
-| `runyte` | Follows `workspace.mode` | Asks where project data should live |
-| `runyte -a` | Persistent | Makes the current directory a workspace, persistent |
-| `runyte --init DIR` | Standalone at exactly `DIR` | Same |
-| `runyte --plain FILE/DIR` | Plain | Plain |
-| A file or directory, run as root | Plain, unless `--init` or `-a` is given | Plain |
+The installer puts `runed` beside `runyte` as a link, and the release archives
+include it (a copy, `runed.exe`, in the Windows zip). After `cargo install`,
+add it yourself, for example `ln -s runyte ~/.cargo/bin/runed`.
 
-"Workspace found" means a Git repository or a `.runyte/` directory in the
-launch directory or above it. A Git checkout is a workspace without `.runyte/`.
-Running as root never adopts a workspace for a file or directory target, so
-`sudo runyte` cannot leave root-owned files in a repository you own. For the
-same reason `--wait`, which opens files through a persistent session, refuses
-to run as root.
-
-**What a plain session keeps:** editing, keys, your configuration and theme,
+**What editor mode keeps:** editing, keys, your configuration and theme,
 syntax highlighting, undo, registers and the clipboard, safe saves, splits,
-help, `:open` with path completion, the editable explorer with reviewed
-filesystem plans, and terminals.
+help, `:open` with path completion, the directory tree, and the editable
+explorer with reviewed filesystem plans.
 
 **What it leaves out entirely:** the `.runyte/` directory, the diagnostic log
 (unless `--log PATH` is given), the recent-workspace list, persistent sessions,
-Git (no repository discovery, gutter marks, or Git views, even for a file inside
-a checkout), language servers, MCP, and plugins. Their commands report
-`needs a workspace; use :workspace-init`, and help and key hints grey them out.
-Pasting an image is refused too, because pasted images live in `.runyte/`.
+Git (no repository discovery, status-line branch, gutter marks, or Git views,
+even for a file inside a checkout), language servers, MCP, plugins, and
+integrated terminals. Their commands report `not available in editor mode`,
+and help and key hints grey them out. Pasting an image is refused too, because
+pasted images live in `.runyte/`. A session in editor mode stays in it; start
+`runyte` again for a workspace.
 
 **Search covers the directory in front of you.** `Space f`, `Space / f`, the
 all-files Finder, and the project content searches (`Space / s`, `Space / /`,
 `:fuzzy-grep`) search below the active file's or explorer's directory instead
 of a project root, and their titles and prompts name that directory, as in
-`search /etc/nginx: `. Because that directory
-may be anywhere, these searches are contained:
+`search /etc/nginx: `. Because that directory may be anywhere, these searches
+are contained:
 
 - They stay on the filesystem they start on, so mounts such as `/proc` below
   `/` are not entered.
@@ -4349,35 +4354,33 @@ may be anywhere, these searches are contained:
 - They refuse to start at `/` or inside a virtual filesystem such as `/proc`,
   `/sys`, or `/dev`; open a narrower directory instead.
 
-`g f` resolves relative paths beside the active file only, and `:terminal`
-starts in the active file's or explorer's directory.
+`g f` resolves relative paths beside the active file only.
 
-**The status line** reads `plain` where it otherwise reads `standalone` or
-`persistent`, and labels the directory `Directory:` rather than `Workspace:`.
+**The status line** reads `editor` where it otherwise reads `ide` or
+`ide+mux`, labels the directory `Directory:` rather than `Workspace:`, and
+shows no Git information.
 
-**`:workspace-init [DIRECTORY]`** turns a plain session into a workspace
-without restarting it: like `--init`, it creates `.runyte/` in exactly the
-active file's or explorer's directory, or in `DIRECTORY`, makes that directory
-the working directory, and the session stays standalone. Git, language servers, plugins, and MCP then start as they would
-for a standalone launch in that workspace. Use `runyte -a` there later for a
-persistent session. The diagnostic log is not moved into the new workspace; a
-plain session that should keep one is started with `--log PATH`.
+**Running as root,** Runyte runs only in editor mode: `--ide`, `--mux`,
+`--wait`, `--serve`, and a configured `ide` or `mux` mode refuse and point to
+`runed` and `sudoedit`, because they would leave root-owned runtime state in a
+workspace another account owns.
 
 #### Editing system files with sudo
 
-1. Point `SUDO_EDITOR` at an installed `runyte` in your shell profile:
+1. Set `SUDO_EDITOR` to `runed` in your shell profile:
 
    ```sh
-   export SUDO_EDITOR="runyte --plain"
+   export SUDO_EDITOR=runed
    ```
 
-   Use a binary on `PATH` rather than a path into a build directory such as
-   `target/release/runyte`, which breaks after a clean or during a rebuild.
+   Use the installed `runed` on `PATH` rather than a path into a build
+   directory such as `target/release`, which breaks after a clean or during a
+   rebuild.
 2. Edit single files with `sudoedit /etc/fstab`. sudo copies the file to a
    temporary path, runs Runyte as you with your own configuration and theme,
    and copies the result back as root after you quit. Quitting without saving
    leaves the file unchanged. Runyte itself never runs as root.
-3. Use `sudo runyte /etc` only for what `sudoedit` cannot do: renaming, moving,
+3. Use `sudo runed /etc` only for what `sudoedit` cannot do: renaming, moving,
    or deleting files in system directories through the explorer. Runyte then
    runs as root, the filesystem plan says `as root` in its title, and deletions
    go to root's trash (or the mount's trash directory), not yours. Runyte finds
@@ -4387,7 +4390,7 @@ plain session that should keep one is started with `--log PATH`.
 
 ### Quitting and detaching
 
-| Command | Standalone | Persistent |
+| Command | ide | mux |
 | --- | --- | --- |
 | `:quit` from the last pane | Exits | Stops a clean session and returns the TUI to the previously visited running session |
 | `:quit-all` | Exits | The same, whatever the pane count |
@@ -4425,11 +4428,11 @@ individually remapped ones are listed separately.
 terminal children. Switching away is always safe, because the old host keeps
 them.
 
-**In standalone mode** (Unix) there is no host, so the session namespace is
+**In ide mode** (Unix) there is no host, so the session namespace is
 inert rather than a set of commands that each refuse. `Space Space` and
 `Space 1`–`Space 9` are greyed in the key hints, `:session-list`,
 `:session-attach`, `:session-stop`, and `:session-rename` are greyed in the
-command palette, and invoking one answers `needs workspace.mode: persistent`.
+command palette, and invoking one answers `needs mux mode`.
 
 ### The session manager
 
@@ -4763,14 +4766,14 @@ switches the outer TUI to that directory.
 - The command returns to the shell without starting a nested TUI; switching
   back returns to that shell.
 - The route checks the owning host, terminal, and caller, and reports the
-  attachment or its error. Stale, detached, or standalone parent contexts get
+  attachment or its error. Stale, detached, or ide-mode parent contexts get
   an actionable error.
 - Outside integrated terminals, launching works as usual.
 
 ### Managing sessions from the command line
 
 ```sh
-runyte --persistent [WORKSPACE]         # or runyte -a [WORKSPACE]
+runyte --mux [WORKSPACE]                # or runyte -a [WORKSPACE]
 runyte --session-stop [WORKSPACE]       # or runyte -s [WORKSPACE]
 runyte --session-restart [WORKSPACE]
 runyte --session-rename WORKSPACE NAME
@@ -4951,7 +4954,7 @@ persistent session, even from another working directory or a temporary path.
 - The caller resumes only after every requested file completes; closing one
   of several keeps it waiting.
 - The parent host authenticates the exact terminal process and attachment. A
-  copied, stale, or standalone parent marker is refused.
+  copied, stale, or ide-mode parent marker is refused.
 - Completion and refusal never submit Enter or approve an editor prompt.
 
 | Command | Result |
@@ -5109,7 +5112,7 @@ from your PowerShell profile:
 - The capability belongs to the client, not the host: a client launched
   without the wrapper is refused even if an earlier one had it.
 - On Windows, the frontend writes the handoff after restoring the terminal.
-- In persistent mode `:quit-here` stops the session after the same checks as
+- In mux mode `:quit-here` stops the session after the same checks as
   `:quit`. Use `:detach` to keep the host running.
 
 
@@ -5247,7 +5250,7 @@ The working directory starts where Runyte was launched.
 | `:quit-here!` | `qh!` | Discard changes, quit, and return there |
 | `:write-quit` | `wq` | Save, then close the pane or quit from the last one |
 | `:detach` | | Disconnect this persistent TUI while keeping all editor state |
-| `:session-list` | `sl` | Open the session manager (Unix persistent mode or Windows native controls) |
+| `:session-list` | `sl` | Open the session manager (Unix mux mode or Windows native controls) |
 | `:session-attach WORKSPACE` | `attach` | Attach to another workspace's persistent session |
 | `:session-stop [WORKSPACE]` | | Stop a clean persistent session |
 | `:session-rename WORKSPACE NAME` | | Rename a persistent session |
@@ -5480,7 +5483,7 @@ minutes per grant.
 - An owner that does not acknowledge expiry or cancellation is stopped, with
   its managed helpers cleaned up.
 - `:q!` does not bypass this. Stop the owner in `:plugins` before quitting, or
-  `:detach` in persistent mode to leave it running. A forced persistent-session
+  `:detach` in mux mode to leave it running. A forced persistent-session
   stop remains available.
 
 **Settings and state.** Applications can read their configured settings and
@@ -5585,7 +5588,7 @@ frontend. Repeated input, pasted text, macros, and MCP clients cannot approve
 access or terminal text. Each terminal proposal still needs its own native
 approval and inserts text **without Enter**.
 
-The server works with standalone and persistent workspaces on Linux, macOS,
+The server works with ide-mode and mux-mode workspaces on Linux, macOS,
 and Windows. Detached hosts support content reads and buffer edits, but cannot
 approve terminal insertion until a native frontend is attached.
 
@@ -5628,7 +5631,7 @@ cache.
   approval.
 - These are the nine MCP tools. Pane listing, selection and viewport reads,
   and immutable snapshots are not exposed by the MCP adapter.
-- Granted detached persistent workspaces and running standalone editors are
+- Granted detached persistent workspaces and running ide-mode editors are
   discoverable without attaching a TUI or changing focus. Terminal approval
   needs an attached native frontend.
 - After permission changes, run `find_resources` again. Handles belong to one
@@ -5746,7 +5749,7 @@ written.
 `:log-open` opens the log of the process that owns this workspace as a
 read-only `[log]` buffer, searchable, splittable, and scrollable as usual.
 
-- In persistent mode that is the host's `host.log`. No client-side trace is
+- In mux mode that is the host's `host.log`. No client-side trace is
   opened or merged.
 - `:service-health` names the owner role, active level, resolved path, and any
   logger failure.
@@ -5807,10 +5810,11 @@ Log ownership follows editor-state ownership:
 
 | Mode | Owner | File |
 | --- | --- | --- |
-| Standalone | the TUI process | `.runyte/standalone-<pid>.log` |
-| Persistent | the host process | `.runyte/host.log` |
+| ide | the TUI process | `.runyte/standalone-<pid>.log` |
+| mux | the host process | `.runyte/host.log` |
+| editor | the TUI process, only with `--log PATH` | that path |
 
-- A standalone name includes the process ID because several standalone editors
+- An ide-mode name includes the process ID because several ide-mode editors
   may open one workspace; two can never write or rotate the same file.
 - A host has one name because exactly one host serves a workspace, and it
   keeps logging while no TUI is attached.
@@ -5883,8 +5887,8 @@ identify a failing local operation. Review a log before sharing it.
 - The owning process rotates, both while running and at startup when it
   inherits a full file, so a long-lived or often-restarted host cannot grow
   without bound.
-- Before opening its own default log, a standalone process keeps the four
-  newest logs of exited standalone processes and removes older ones with their
+- Before opening its own default log, an ide-mode process keeps the four
+  newest logs of exited ide-mode processes and removes older ones with their
   `.1` files. Logs of live processes are never pruned.
 - Producers never wait for disk. Records go through a bounded queue to one
   background writer and are dropped rather than delaying input, rendering,
@@ -6002,7 +6006,7 @@ says so when you save them:
 | --- | --- |
 | `editor.mouse` | Mouse capture is set up when the terminal is opened. |
 | `lsp.enable` | Language servers are started or suppressed at startup. |
-| `workspace.mode` | Standalone or persistent launch is chosen before the editor starts. The saved value applies to future bare launches. |
+| `mode` | The launch mode is chosen before the editor starts. The saved value applies to future launches. |
 
 The `keys` section is never written by this page. Edit it in the file.
 
@@ -6089,7 +6093,7 @@ section. Key dispatch, help, and key hints are rebuilt together, with each
 running plugin's keys laid back over them.
 
 **What keeps its startup value:** `editor.mouse`, `lsp.enable`,
-`workspace.mode`, `workspace.state`, and `workspace.state_anchor`. The status
+`mode`, `workspace.state`, and `workspace.state_anchor`. The status
 line names them as needing a restart. The `[config]` page shows the file's
 value as saved, while the editor keeps using the startup value.
 
@@ -6166,7 +6170,7 @@ file-only.
 
 | Setting | Default | Values | What it does |
 | --- | --- | --- | --- |
-| `workspace.mode` | `standalone` | `standalone`, `persistent` | What a bare `runyte` launch does. `persistent` starts or reuses the project's host. Restart required. |
+| `mode` | `ide` | `editor`, `ide`, `mux` | The mode of a launch with no `--editor`, `--ide`, or `--mux`. `editor` needs no workspace; `mux` makes a bare `runyte` start or reuse the project's host. The deprecated `workspace.mode` (`standalone`, `persistent`) is still read, with a notification naming its replacement. Restart required. |
 | `workspace.session_strip` | `auto` | `auto`, `always`, `hidden` | When to show the row of running persistent sessions. `auto` shows it when more than one is running. |
 | `workspace.idle_retirement_minutes` | `0` | 0–43200 | Minutes a clean, unattached host stays alive. `0` keeps hosts running. Applies without restarting the host. |
 | `workspace.state` | `.runyte` | path | Where the workspace keeps runtime state. `workspace.root` is an accepted alias. See [Where workspace state lives](#where-workspace-state-lives). |
@@ -6318,17 +6322,16 @@ Runyte finds the workspace directory by walking up from the launch directory:
 1. It looks for a Git repository root.
 2. If there is none, it looks for the configured relative state directory
    (`.runyte/` by default).
-3. If neither exists, a launch naming a file or directory opens a
-   [plain session](#plain-sessions) and creates nothing. A bare `runyte` asks
-   where project data should live; nothing is created until you confirm a
-   location.
+3. If neither exists, there is no workspace: ide and mux refuse and suggest
+   `runyte --init DIRECTORY`, and nothing is created. [Editor
+   mode](#editor-mode) needs no workspace.
 
-Confirming creates the state directory, so later launches find the same
-workspace without asking.
+`runyte --init DIRECTORY` creates the state directory, so later launches find
+the same workspace.
 
-Because discovery walks upward, confirming your home directory makes it the
+Because discovery walks upward, initializing your home directory makes it the
 workspace for every directory below it that has no Git repository and no state
-directory of its own. The prompt warns about this before you confirm.
+directory of its own.
 
 #### Windows state anchor
 
@@ -6360,7 +6363,7 @@ services. It shows:
 - the diagnostic log's owner, level, path, and any failure.
 
 It only probes paths, so it still works when every optional service is
-missing. In persistent mode the `log` row describes the host that owns the
+missing. In mux mode the `log` row describes the host that owns the
 workspace, not the client that opened the report.
 
 The report is an informational overlay: arrows and paging scroll it, and

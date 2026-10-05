@@ -3,8 +3,13 @@
 # Copy to ~/.config/runyte/config.yaml.
 #
 # Run :config-reload after editing this file to apply it to a running editor.
-# editor.mouse, lsp.enable, workspace.mode, and workspace.state are read at
-# startup and are reported as needing a restart instead.
+# editor.mouse, lsp.enable, mode, and workspace.state are read at startup and
+# are reported as needing a restart instead.
+#
+# The mode a launch without --editor, --ide, or --mux runs in: ide (the
+# default), editor, or mux. mux makes a bare `runyte` start or reuse this
+# project's host and attach to it; launches naming a file stay in ide.
+mode: ide
 editor:
   line_numbers: true
   tab_width: 4
@@ -44,9 +49,6 @@ workspace:
   # Running persistent sessions: auto (more than one), always, or hidden.
   session_strip: auto
   state: .runyte
-  # standalone is the default. persistent makes a bare `runyte` start or reuse
-  # this project's host and attach to it.
-  mode: standalone
   # A clean host with no TUI and no --wait request retires after this many
   # minutes. Zero, the default, disables retirement; set a positive interval
   # to clean up idle hosts automatically.

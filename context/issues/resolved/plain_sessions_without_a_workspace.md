@@ -133,6 +133,15 @@ against. Off Unix, a contained scan has no filesystem boundary or
 virtual-filesystem detection, only the filesystem-root refusal and the entry
 cap.
 
+Superseded: the launch-directory rules above were replaced by explicitly
+chosen modes, recorded in `context/issues/editor_ide_and_mux_modes.md`. A
+plain session is now editor mode (`runyte --editor`, or `runed`), chosen only
+by flag, configuration or program name and without terminals; ide and mux
+refuse outside a workspace instead of falling back; `:workspace-init`, the
+mid-session upgrade and `--plain` were removed. The scan guards, the
+directory-scoped search and the capability-based refusals described here are
+what editor mode is built from.
+
 ## Report
 
 Every launch resolves a workspace before the editor opens. Discovery walks up

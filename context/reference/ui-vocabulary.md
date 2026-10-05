@@ -6,7 +6,7 @@ them, regardless of which extensibility direction is chosen.
 
 - **Runyte screen** — the complete terminal surface owned by Runyte.
 - **Startup presentation** — the stable, document-free Runyte screen shown by
-  a standalone launch while its initial editor state is built. It says
+  an editor or ide launch while its initial editor state is built. It says
   `Opening workspace…` and is replaced once by the first complete editor frame;
   it never previews unhighlighted document text or changes layout while work is
   pending.
@@ -69,8 +69,8 @@ them, regardless of which extensibility direction is chosen.
   title, not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
   meanings and order as the pane title.
-  The session word after the mode is `standalone`, `persistent`, or `plain`.
-  A plain session has no workspace, so its directory is labelled `Directory:`
+  The session word after the mode is `ide`, `ide+mux`, or `editor`. Editor
+  mode has no workspace, so its directory is labelled `Directory:`
   rather than `Workspace:`; the frontend chooses the word, not the snapshot.
   A long-running background action temporarily replaces the ordinary fields
   with its action name, target or query, elapsed time, optional cancellation
@@ -197,7 +197,7 @@ them, regardless of which extensibility direction is chosen.
   somewhere other than the project root. So an unfiltered finder at the
   project root reads `all files`, an ignore-aware one below or outside it
   reads that root's path, and one that is both reads `all files in <path>`.
-  A plain session has no project root, so its finders always name the
+  Editor mode has no project root, so its finders always name the
   directory they cover — `<path>` or `all files in <path>` — because that
   directory follows the active file or explorer. **Name mode** merges files, open buffers, and terminal sessions by
   resource identity. **Content mode** merges file lines, authoritative
@@ -417,7 +417,7 @@ The session manager is the first list with a legend.
   clear filter` only while there is a filter, `1-9 attach` only while the
   filter is empty in a persistent editor, `Ctrl-t preview` only on a list with
   a preview, and a chord whose command is unavailable (a persistent-session
-  chord in a standalone editor, Git worktrees outside a repository) not at all.
+  chord in an ide-mode editor, Git worktrees outside a repository) not at all.
 - **One spelling per command.** Each command is named by its primary
   binding; the arrow and paging keys that reach the same moves are platform
   spellings and are left out. Paired commands share an entry:
@@ -472,10 +472,10 @@ process that saw it is gone. It is neither a notification surface nor an audit
 trail, and an actionable failure still reaches the person through the ordinary
 surfaces whether or not a record was written.
 
-Ownership follows editor-state ownership. A standalone editor owns
+Ownership follows editor-state ownership. An ide-mode editor owns
 `standalone-<pid>.log`; a persistent host owns `host.log`. Both sit beneath the
 resolved runtime workspace state root, normally `.runyte/`, never under
-Git-tracked context. A plain session has no state root and keeps no log
+Git-tracked context. Editor mode has no state root and keeps no log
 unless it was started with an explicit `--log PATH`. A client never appends to a host's file and never forwards
 records over the local protocol.
 
@@ -485,11 +485,11 @@ ordinary buffer with normal movement, selection, search, splits, jump history,
 and buffer management, and it uses the global binding scope because it has no
 row actions of its own. It is a point-in-time projection, re-read by running
 the command again rather than refreshed in place, and it opens the log of the
-process that holds the workspace — in persistent mode, the host's.
+process that holds the workspace — in mux mode, the host's.
 
 The `log` row of the service-health report names the owner role, the active
 level, the resolved path, and any logger initialization or write failure. In
-persistent mode those are host facts, so a newly attached client sees how the
+mux mode those are host facts, so a newly attached client sees how the
 process holding its workspace is actually logging rather than the flags its own
 launch carried.
 
@@ -529,7 +529,7 @@ publication refuses and asks the user to choose again; its path or name cannot
 redirect the action. Unix and stopped rows retain project identity. The Windows
 manager reads rows from its owned native service. In a persistent editor, Enter
 or Tab > Open visits a selected compatible running publication or starts the
-selected stopped row through its exact identity. A standalone editor retains a
+selected stopped row through its exact identity. An ide-mode editor retains a
 control-only manager. If refresh loses
 the selected publication key, the manager requires explicit row movement before
 another action. The menu also offers Rename, Renumber, Close, and confirmed

@@ -21,7 +21,7 @@ Runyte can do **quite a lot**:
 - plugins written in any language
 - LSP support (code analysis, formatting, jumping between functions and variables)
 - Tree-sitter support for 31 languages
-- optional persistent mode (attach/detach while keeping all terminals running and unsaved buffers waiting)
+- three modes: `ide` for a project, `ide+mux` to attach and detach while terminals keep running and unsaved buffers wait, and `editor` (`runed`) for quick edits anywhere
 - word completion based on text from all open buffers
 - smart file path completion (searching from current buffer and from project dir)
 
@@ -122,19 +122,22 @@ keeps running, but keys go to Runyte. Press `Ctrl-\` again to review the
 output. This freezes a snapshot of the output, which you can move around,
 search with `s` or `/`, and copy with `y`. Press `i` to go back to Insert mode.
 
-## Standalone and persistent modes
+## Modes
 
-By default Runyte runs in standalone mode. When you quit, you stop its process.
-The standalone mode is suitable for quick file edits or when you want to work
-in a single workspace (directory).
+Runyte runs in one of three modes, chosen by a flag or by the `mode` setting.
+The status line names the one you are in.
 
-Runyte also supports persistent mode in which you can attach/detach from
-your session or quickly switch to other workspaces. This mode is for you
-if you want to work on multiple projects or Git worktrees simultaneously.
-A local **host** keeps the workspace alive while a **client** provides the
-terminal interface.
+| Mode | Start with | What you get |
+| --- | --- | --- |
+| `ide` (default) | `runyte` | A workspace: Git, language servers, MCP, plugins, and terminals. Quitting stops it. |
+| `ide+mux` | `runyte --mux`, or `runyte -a` | The same workspace kept alive by a local **host** while a **client** provides the terminal interface, so you can detach, reattach, and switch between projects or Git worktrees. |
+| `editor` | `runyte --editor`, or `runed` | Editing files and directories anywhere, with no workspace, Git, language servers, MCP, plugins, or terminals. |
 
-Start Runyte in persistent mode with:
+`ide` and `ide+mux` need a workspace: a Git repository, or a directory you
+initialized with `runyte --init DIRECTORY`. Outside one they say so instead of
+starting.
+
+Start Runyte in mux mode with:
 
 ```sh
 runyte -a  # attach to a session or start a new one
@@ -147,20 +150,20 @@ There are multiple ways to create a new session when you are already in Runyte:
 
 Switch between sessions with `Space Space`, or with `Shift-Left` and `Shift-Right`.
 
-## Quick edits outside a project
+## Quick edits with runed
 
-Open a file or directory where there is no Git repository or `.runyte/`
-directory, such as `runyte /etc/hosts`, and Runyte starts a **plain
-session**: a simple editor with no workspace. It writes nothing beside the
-file and starts no Git, language server, plugin, or MCP integration. The
-status line reads `plain`, and the Finder searches the directory you are in.
-`--plain` does the same from inside a project, and `:workspace-init` turns a
-plain session into a workspace later.
+`runed` is Runyte in editor mode, whatever your configuration says. It edits a
+file or browses a directory anywhere, writes nothing beside it, and the Finder
+searches the directory you are in. The installer puts `runed` next to
+`runyte`; after `cargo install`, add it yourself with
+`ln -s runyte ~/.cargo/bin/runed`.
 
-For system files, use `sudoedit` with Runyte as the editor:
+Use it wherever a program asks for an editor, and with `sudoedit` for system
+files:
 
 ```sh
-export SUDO_EDITOR="runyte --plain"
+export EDITOR=runed
+export SUDO_EDITOR=runed
 sudoedit /etc/fstab
 ```
 
