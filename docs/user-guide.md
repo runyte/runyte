@@ -4361,8 +4361,8 @@ are contained:
 shows no Git information.
 
 **Running as root,** Runyte runs only in editor mode: `--ide`, `--mux`,
-`--wait`, `--serve`, and a configured `ide` or `mux` mode refuse and point to
-`runed` and `sudoedit`, because they would leave root-owned runtime state in a
+`--wait`, `--serve`, `--init`, and a configured `ide` or `mux` mode refuse and
+point to `runed` and `sudoedit`, because they would leave root-owned runtime state in a
 workspace another account owns.
 
 #### Editing system files with sudo
@@ -4760,7 +4760,9 @@ These routes initialize or reuse the exact directory's persistent session and
 keep the source host and its terminal processes.
 
 **From inside an integrated terminal**, `cd ../worktree` then `runyte -a`
-switches the outer TUI to that directory.
+switches the outer TUI to that directory's workspace, a Git worktree here.
+Outside any workspace it refuses; `runyte -a DIRECTORY` names a directory to
+make one.
 
 - Relative arguments resolve from the shell's directory.
 - The command returns to the shell without starting a nested TUI; switching

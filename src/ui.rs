@@ -2932,7 +2932,7 @@ impl SessionMode {
         }
     }
 
-    /// What the directory after the mode is. A plain session has no
+    /// What the directory after the mode is. Editor mode has no
     /// workspace, so the same path is only the directory it works in.
     fn directory_label(self) -> &'static str {
         match self {
@@ -5925,7 +5925,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_session_names_itself_in_the_rendered_status_row() {
+    fn editor_mode_names_itself_in_the_rendered_status_row() {
         let mut app = App::new(Config::default(), None).unwrap();
         let workspace = rendered(&mut app, 160, 8);
         assert!(workspace.contains("│ ide │ Workspace: "), "{workspace:?}");

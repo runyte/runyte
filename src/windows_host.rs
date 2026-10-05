@@ -456,6 +456,8 @@ pub(super) async fn run(
     )?;
     let mut app =
         App::new_in_project_with_deferred_syntax(config, arguments.targets, project, startup)?;
+    let startup_config = app.config.clone();
+    app.note_config_deprecations(&startup_config);
     app.set_quit_directory_handoff(false);
     if let Some(path) = config_path.as_deref() {
         app.note_loaded_config(path);

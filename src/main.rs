@@ -184,8 +184,12 @@ use runyte::workspace::{
 };
 
 fn main() -> Result<()> {
+    // `runed` is `runyte --editor`, so `runed mcp` opens a file named mcp
+    // just as `runyte --editor mcp` does; editor mode has no MCP.
     #[cfg(any(unix, windows))]
-    if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp") {
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp")
+        && !runyte::launch::started_as_runed()
+    {
         return runyte::mcp::run(std::env::args_os().skip(2));
     }
     let mut startup = StartupTrace::new();
@@ -1798,7 +1802,6 @@ async fn run(
     } else {
         None
     };
-    let config_warnings = config.deprecation_warnings();
     let mut app = if editor {
         App::new_editor_with_deferred_syntax(
             config,
@@ -1815,14 +1818,8 @@ async fn run(
         )?
     };
     app.note_running_as_root(running_as_root);
-    for warning in config_warnings {
-        app.push_notification(NotificationDraft::new(
-            NotificationSeverity::Warning,
-            "Configuration",
-            "Deprecated setting",
-            warning,
-        ));
-    }
+    let startup_config = app.config.clone();
+    app.note_config_deprecations(&startup_config);
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -2348,10 +2345,14 @@ fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMo
 
 /// Whether this launch runs in editor mode: standalone, with no workspace.
 /// `--editor` asks for it, and so does `mode: editor` when no mode option is
-/// given; the launch directory never decides.
+/// given and nothing names a workspace; the launch directory never decides.
 fn launch_is_editor(arguments: &LaunchArguments, configured: RunMode) -> bool {
     arguments.mode == LaunchMode::Standalone
-        && (arguments.editor || (!arguments.mode_explicit && configured == RunMode::Editor))
+        && (arguments.editor
+            || (!arguments.mode_explicit
+                && configured == RunMode::Editor
+                && arguments.project_root.is_none()
+                && arguments.init.is_none()))
 }
 
 /// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
@@ -2385,17 +2386,18 @@ fn initialize_workspace(
     Ok(())
 }
 
-/// Refuses every mode but editor as root. `ide`, `mux`, `--wait` and a
-/// foreground host all belong to a workspace, and as root they would leave
-/// root-owned runtime state in a workspace some other account owns.
+/// Refuses every mode but editor as root. `ide`, `mux`, `--wait`, `--init`
+/// and a foreground host all belong to a workspace, and as root they would
+/// leave root-owned runtime state in a workspace some other account owns.
 fn refuse_workspace_modes_as_root(
     arguments: &LaunchArguments,
     editor: bool,
     running_as_root: bool,
 ) -> Result<()> {
     let workspace_mode = match arguments.mode {
-        // `--init` only creates a directory; it opens no workspace.
-        LaunchMode::Standalone => !editor && arguments.init.is_none(),
+        // `--init` opens nothing, but the state directory it creates would be
+        // root's inside a project another account owns.
+        LaunchMode::Standalone => !editor,
         LaunchMode::Persistent | LaunchMode::Wait | LaunchMode::Serve => true,
         _ => false,
     };
@@ -4965,6 +4967,24 @@ fn apply_editor_damage(
 }
 
 #[cfg(unix)]
+/// What a `-a` from inside an integrated terminal asks the outer TUI to
+/// attach to. A named selector goes as typed, and may name a directory that
+/// becomes a workspace. Without one it is the shell directory's own
+/// workspace: sending the bare directory would let the outer TUI make it a
+/// workspace, which a bare `-a` never does.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn parent_attach_selector(
+    selector: Option<&Path>,
+    directory: &Path,
+    configured_state: &Path,
+) -> Result<PathBuf> {
+    match selector {
+        Some(selector) => Ok(selector.to_path_buf()),
+        None => project_root::discover(directory, configured_state)?
+            .context(project_root::NO_WORKSPACE_HERE),
+    }
+}
+
 async fn run_parent_request(
     arguments: &LaunchArguments,
     context: runyte::workspace::parent::ParentContext,
@@ -4978,10 +4998,10 @@ async fn run_parent_request(
         .await
         .context("owning Runyte host did not answer")??;
     if arguments.mode == LaunchMode::Persistent {
-        let selector = arguments
-            .workspace_selector
-            .as_deref()
-            .unwrap_or(&directory);
+        let state = Config::load(arguments.config.as_deref())?.0.workspace.state;
+        let selector =
+            parent_attach_selector(arguments.workspace_selector.as_deref(), &directory, &state)?;
+        let selector = selector.as_path();
         control
             .send(&ClientRequest::ParentAttach {
                 terminal: context.terminal,
@@ -6553,10 +6573,9 @@ fn start_host_services(
     let (native_catalog_handle, native_catalog_owner, native_catalog_events) =
         spawn_native_catalog(app, native_catalog);
     let git_events = if editor { None } else { start_git_service(app) };
-    // The manager is spawned either way so the loop has its channel, but a
-    // session in editor mode never attaches it: no document is offered to it and no
-    // server process starts. `:workspace-init` replaces it with one rooted
-    // at the new workspace.
+    // The manager is spawned either way so the loop has its channel, but
+    // editor mode never attaches it: no document is offered to it and no
+    // server process starts.
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);
@@ -8804,6 +8823,12 @@ mod tests {
         assert!(!is_editor(&["--ide", "/etc/fstab"], RunMode::Editor));
         assert!(!is_editor(&["--mux"], RunMode::Editor));
         assert!(!is_editor(&["--wait", "note.txt"], RunMode::Editor));
+        // Options that name a workspace are not overridden by the default.
+        assert!(!is_editor(
+            &["--project-root", "/work", "note.txt"],
+            RunMode::Editor
+        ));
+        assert!(!is_editor(&["--init", "/work/new"], RunMode::Editor));
     }
 
     /// An editor-mode host starts none of the services that assume a workspace.
@@ -8894,6 +8919,33 @@ mod tests {
         assert!(output.is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_bare_parent_attachment_uses_the_existing_workspace_and_creates_none() {
+        let root = TestRuntimeRoot::new("parent-selector").unwrap();
+        let state = std::path::Path::new(".runyte");
+        let plain = root.path().join("plain");
+        std::fs::create_dir(&plain).unwrap();
+
+        let error = super::parent_attach_selector(None, &plain, state).unwrap_err();
+        assert!(error.to_string().contains("no workspace here"), "{error}");
+        assert!(!plain.join(".runyte").exists());
+
+        let project = root.path().join("project");
+        std::fs::create_dir_all(project.join(".runyte")).unwrap();
+        std::fs::create_dir(project.join("src")).unwrap();
+        assert_eq!(
+            super::parent_attach_selector(None, &project.join("src"), state).unwrap(),
+            project.canonicalize().unwrap()
+        );
+
+        // A named selector is the caller's decision and passes unchanged.
+        assert_eq!(
+            super::parent_attach_selector(Some(&plain), &project, state).unwrap(),
+            plain
+        );
+    }
+
     #[test]
     fn root_runs_only_editor_mode() {
         let parse = |arguments: &[&str]| {
@@ -8906,6 +8958,7 @@ mod tests {
             &["--mux"][..],
             &["--wait", "/etc/hosts"][..],
             &["--serve"][..],
+            &["--init", "/srv/project"][..],
         ] {
             let arguments = parse(arguments);
             let editor = super::launch_is_editor(&arguments, RunMode::Ide);
@@ -8920,11 +8973,7 @@ mod tests {
                 "{arguments:?}"
             );
         }
-        for arguments in [
-            &["--editor", "/etc/hosts"][..],
-            &["--session-list"][..],
-            &["--init", "/srv/project"][..],
-        ] {
+        for arguments in [&["--editor", "/etc/hosts"][..], &["--session-list"][..]] {
             let arguments = parse(arguments);
             let editor = super::launch_is_editor(&arguments, RunMode::Ide);
             assert!(

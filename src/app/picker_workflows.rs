@@ -105,7 +105,7 @@ impl App {
 
     /// The project finder. Without a workspace it covers the directory the
     /// active buffer or explorer shows instead, bounded as every scan in a
-    /// plain session is.
+    /// editor mode is.
     pub(super) fn open_project_picker(&mut self) -> Result<()> {
         let root = self.search_root();
         let scope = self.ignoring_scan_scope(root.clone());

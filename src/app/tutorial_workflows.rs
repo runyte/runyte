@@ -101,6 +101,7 @@ impl App {
             terminal: None,
             scratch_selection: Selection::point(0),
             scratch_mode: Mode::Normal,
+            editor_mode: self.is_editor_mode(),
         });
         self.open_tutorial_motion_picker();
         self.refresh_tutorial_document();
@@ -325,6 +326,13 @@ impl App {
     fn advance_tutorial_lesson(&mut self, lesson: u8) {
         let Some(state) = self.tutorial.as_mut() else {
             return;
+        };
+        // Editor mode offers no terminals, so the two lessons that start and
+        // close one could never be completed there.
+        let lesson = if state.editor_mode && matches!(lesson, 13 | 14) {
+            15
+        } else {
+            lesson
         };
         state.lesson = lesson;
         state.last_action = None;

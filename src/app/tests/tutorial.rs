@@ -519,3 +519,26 @@ fn tutorial_sessions_opens_the_last_lesson_ready_to_be_worked() {
         "persistent tutorial token\n"
     );
 }
+
+#[test]
+fn editor_mode_skips_the_terminal_lessons_and_ends_on_the_modes() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enter_editor_mode();
+    app.execute_command("tutorial").unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.tutorial_state().unwrap().editor_mode);
+    app.tutorial.as_mut().unwrap().lesson = 11;
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    assert_eq!(app.tutorial_state().unwrap().lesson, 12);
+
+    key(&mut app, KeyCode::Char('o'), Modifiers::ALT);
+
+    // Lessons 13 and 14 start and close a terminal, which editor mode has not.
+    assert_eq!(app.tutorial_state().unwrap().lesson, 15);
+    let mut last = app.tutorial_state().unwrap().clone();
+    last.lesson = crate::tutorial::LAST_LESSON;
+    let text = crate::tutorial::render(&last, false);
+    assert!(text.contains("This tutorial runs in editor mode"), "{text}");
+    assert!(!text.contains(":detach now"), "{text}");
+}

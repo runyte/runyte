@@ -68,6 +68,10 @@ pub struct TutorialState {
     pub terminal: Option<TerminalId>,
     pub scratch_selection: Selection,
     pub scratch_mode: Mode,
+    /// Started in editor mode, which has no terminals and no sessions: the
+    /// two terminal lessons are skipped, and the last lesson explains the
+    /// modes instead of a persistent session.
+    pub editor_mode: bool,
 }
 
 pub const LAST_LESSON: u8 = 18;
@@ -124,6 +128,7 @@ fn render_template(state: &TutorialState, persistent: bool) -> String {
         16 => "JUMP HISTORY: BACKWARD\n\nThe previous file-end motion recorded where the caret started.\nCtrl-o walks backward through the pane's detailed jump history.\nUnlike Alt-o, it may land at another position in the same buffer.\nPress Ctrl-o once to return to the earlier position in this scratch text.\nThe caret should move back to the first character of the first line.\nThe three lines themselves should remain unchanged by the jump.\nSearch results and structural navigation can also contribute useful jumps.\nRunyte keeps jump history per pane, matching the view where it was made.\nThe lesson checks the command and exact destination before advancing.".to_owned(),
         17 => "JUMP HISTORY: FORWARD\n\nAfter a backward jump, the same history has a forward direction.\nPress Ctrl-i once to revisit the end-of-file position you just left.\nThe caret should return to the final valid position in the scratch buffer.\nThis does not create another edit, buffer, pane, or terminal session.\nSome legacy terminals cannot distinguish Ctrl-i from the Tab key.\nOn those terminals the forward jump has no separate reachable key.\nRunyte requests keyboard disambiguation where the terminal supports it.\nAlt-i is different: it skips positions until it reaches another buffer.\nThe persistent-session boundary is the final guided lesson.".to_owned(),
         18 if state.awaiting_reattach => "PERSISTENT SESSIONS\n\nThe interactive client detached successfully from the workspace host.\nThe host still owns this lesson, both panes, selections, and scratch text.\nIt also retains live terminal sessions while no TUI client is attached.\nNo buffer or pane was closed when the client detached.\nReturn to the shell from which you launched the persistent workspace.\nReattach to this workspace with the following command:\n\n    runyte --mux\n\nA new interactive attachment completes the lesson and opens Next steps.\nThis is not crash, reboot, or machine-failure storage.".to_owned(),
+        18 if state.editor_mode => "MODES\n\nThis tutorial runs in editor mode, which has no workspace.\nEditor mode edits files and directories anywhere, without Git, language servers,\nMCP, plugins, terminals, or persistent sessions; the terminal lessons were skipped.\nRun `runyte` inside a Git repository or an initialized workspace for ide mode,\nand `runyte --mux` to keep that workspace alive while no TUI is attached.\n`runyte --init DIRECTORY` makes a directory a workspace.\n\nNEXT STEPS\nRun :help to read the complete Runyte manual and its topic index.\nPress {binding:Space ?} in each view for contextual behavior and its exact active keys.".to_owned(),
         18 if persistent => "PERSISTENT SESSIONS\n\nThis tutorial is owned by the persistent workspace host, not by this TUI.\nThe host retains open buffers, unsaved edits, panes, selections, and terminals.\nIts state remains available while an interactive client is detached.\nRun :detach now to leave the client without stopping the workspace host.\nThen reattach from a shell with `runyte --mux`.\nThe lesson completes only after a new interactive TUI attaches to this host.\nDetaching is distinct from closing a buffer, pane, or terminal session.\nPersistent state is not crash, reboot, or machine-failure storage.\nAfter reattachment, the tutorial ends with links for further exploration.".to_owned(),
         18 => "PERSISTENT SESSIONS\n\nThis workspace runs in ide mode, so its editor state belongs to this TUI process.\nThe :detach command is unavailable because there is no separate workspace host.\nA persistent session can retain buffers, panes, selections, and live terminals.\nTo try the hands-on detach lesson, exit and launch `runyte --mux`.\nThen run `:tutorial sessions` to open this lesson directly in that workspace.\nPersistent sessions are not crash, reboot, or machine-failure storage.\n\nNEXT STEPS\nRun :help to read the complete Runyte manual and its topic index.\nPress {binding:Space ?} in each view for contextual behavior and its exact active keys.".to_owned(),
         _ => "NEXT STEPS\n\nYou have practised modes, motions, characterwise and whole-line selections.\nYou used search and multiple carets to edit several targets together.\nYou explored generated, scratch, and editable explorer buffer types.\nYou moved among panes and buffers and opened and closed a terminal session.\n{binding:Space n} opens Navigator; {binding:Ctrl-w n} also works in Terminal Insert.\n{binding:Ctrl-w p} returns to the previous destination in this pane.\nYou also walked jump history and crossed the persistent-session boundary.\nRun :help to open the complete Runyte manual and its topic index.\nUse :help <topic> when you already know the subject you want to revisit.\nPress {binding:Space ?} in each view for its contextual behavior and exact active keys.\nRun `:tutorial reset` whenever you want to practise these lessons again.".to_owned(),
@@ -154,6 +159,7 @@ mod tests {
             terminal: None,
             scratch_selection: Selection::default(),
             scratch_mode: Mode::Normal,
+            editor_mode: false,
         }
     }
 
@@ -170,6 +176,9 @@ mod tests {
                 let mut awaiting = state.clone();
                 awaiting.awaiting_reattach = true;
                 crate::key_spelling::assert_authored_template(&render_template(&awaiting, true));
+                let mut editor = state.clone();
+                editor.editor_mode = true;
+                crate::key_spelling::assert_authored_template(&render_template(&editor, false));
             }
         }
     }

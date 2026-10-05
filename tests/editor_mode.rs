@@ -268,3 +268,21 @@ fn runed_is_editor_mode_whatever_the_configuration_says() {
         "{stderr}"
     );
 }
+
+#[test]
+fn runed_mcp_opens_a_file_rather_than_the_mcp_adapter() {
+    let owner = TestRuntimeRoot::new("runed-mcp").unwrap();
+    let directory = owner.join("etc");
+    fs::create_dir_all(&directory).unwrap();
+    let runed = owner.join("runed");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_runyte"), &runed).unwrap();
+
+    // Followed by a binary file, the target named mcp fails the launch while
+    // opening targets, which the MCP adapter would never reach.
+    fs::write(directory.join("mcp"), [0u8, 1]).unwrap();
+    fs::write(directory.join("other.bin"), [0u8, 2]).unwrap();
+    let output = run(&runed, &owner, &directory, &["mcp", "other.bin"]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("binary"), "{stderr}");
+}

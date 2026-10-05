@@ -58,7 +58,7 @@ visible location, without claiming to reproduce its shape or blink phase.
 
 `--config` supplies a complete scene configuration instead of the generated
 theme/LSP-disabled config. Repeat `--arg` for Runyte arguments; use
-`--arg=--persistent` for values starting with a dash. `--help` lists all options.
+`--arg=--mux` for values starting with a dash. `--help` lists all options.
 Put custom demo configuration in a separate temporary settings directory, not
 the parent of the demo workspace: Runyte rejects overlapping per-user and
 project storage roots.

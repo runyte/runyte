@@ -2014,7 +2014,7 @@ fn clip_fragment_cell_range(fragment: &str, start: usize, limit: usize) -> Strin
 
 impl App {
     /// The prompt's leading label. Project search has no workspace to name
-    /// in a plain session, so it names the directory it will cover instead.
+    /// in editor mode, so it names the directory it will cover instead.
     fn prompt_prefix(&self) -> String {
         if let PromptKind::GlobalSearch(mode) = self.prompt_kind
             && self.is_editor_mode()

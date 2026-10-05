@@ -47,6 +47,8 @@ fn direct_native_attachment_starts_retains_and_refuses_takeover() {
     )
     .unwrap();
     fs::write(project.join("note.txt"), "original\n").unwrap();
+    // A bare -a attaches only to an existing workspace; it creates none.
+    fs::create_dir(project.join(".runyte")).unwrap();
     fs::create_dir(project.join("nested")).unwrap();
     fs::create_dir(project.join("nested/.runyte")).unwrap();
     let _cleanup = HostCleanup {

@@ -32,6 +32,20 @@ impl App {
         self.editor_mode
     }
 
+    /// Reports each deprecated spelling `config` still uses, naming what
+    /// replaces it. Called for the configuration a process starts with and
+    /// for each one `:config-reload` reads.
+    pub fn note_config_deprecations(&mut self, config: &crate::config::Config) {
+        for warning in config.deprecation_warnings() {
+            self.push_notification(crate::notification::NotificationDraft::new(
+                crate::notification::NotificationSeverity::Warning,
+                "Configuration",
+                "Deprecated setting",
+                warning,
+            ));
+        }
+    }
+
     /// Records whether the editor process runs as root. Injected rather than
     /// read here so tests can cover both answers.
     pub fn note_running_as_root(&mut self, running_as_root: bool) {

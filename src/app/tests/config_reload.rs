@@ -183,6 +183,29 @@ fn a_resolvable_theme_is_adopted_by_the_editor_and_its_terminals() {
 }
 
 #[test]
+fn a_reload_reports_a_deprecated_mode_spelling_and_names_its_replacement() {
+    let (mut app, path) = editor("deprecated-mode.yaml", "mode: ide\n");
+    let deprecated = |app: &App| {
+        app.notifications()
+            .entries()
+            .iter()
+            .filter(|entry| entry.title == "Deprecated setting")
+            .map(|entry| entry.body.clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(deprecated(&app).is_empty());
+
+    fs::write(&path, "workspace:\n  mode: persistent\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+
+    assert_eq!(
+        deprecated(&app),
+        ["workspace.mode is deprecated; replace it with mode: mux"]
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn a_setting_read_at_startup_stays_effective_and_is_reported_as_saved() {
     let (mut app, path) = editor("startup-bound.yaml", "workspace:\n  mode: standalone\n");
     assert_eq!(app.config.mode(), RunMode::Ide);

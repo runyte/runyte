@@ -153,6 +153,9 @@ impl App {
         let history_limit_changed =
             effective.notifications.history_limit != self.config.notifications.history_limit;
 
+        // Read from the file as written, before restart-bound keys were put
+        // back, so a deprecated spelling added since startup is reported.
+        self.note_config_deprecations(&loaded);
         self.persisted_config = loaded;
         self.config = effective;
         self.config_file_read = true;

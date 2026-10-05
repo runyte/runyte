@@ -111,10 +111,8 @@ impl LaunchArguments {
 
     pub fn parse() -> Result<Self> {
         let mut arguments = std::env::args_os();
-        let started_as_runed = arguments
-            .next()
-            .is_some_and(|program| is_runed(std::path::Path::new(&program)));
-        if started_as_runed {
+        arguments.next();
+        if started_as_runed() {
             Self::parse_as_runed(arguments)
         } else {
             Self::parse_from(arguments)
@@ -450,6 +448,13 @@ impl LaunchArguments {
         parsed.mode_explicit = mode_explicit;
         Ok(parsed)
     }
+}
+
+/// Whether this process was started under the name `runed`.
+pub fn started_as_runed() -> bool {
+    std::env::args_os()
+        .next()
+        .is_some_and(|program| is_runed(std::path::Path::new(&program)))
 }
 
 /// Whether `program` names the `runed` link to this binary. Only the file

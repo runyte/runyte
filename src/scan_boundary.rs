@@ -2,7 +2,7 @@
 
 //! Where a recursive scan begun from an arbitrary directory may go.
 //!
-//! A project scan starts at a project root someone chose. A plain session's
+//! A project scan starts at a project root someone chose. An editor-mode
 //! search starts wherever the reader happens to be — `/etc`, a home
 //! directory, `/` — so it is contained: it refuses to start from the root of
 //! the filesystem tree or from a virtual filesystem, never crosses onto

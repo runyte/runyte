@@ -27,7 +27,8 @@ A report is most useful when it includes:
 
 - The output of `runyte --version`, the operating system, and the terminal
   emulator, including any multiplexer such as tmux.
-- Whether the workspace was standalone or opened with `--persistent`.
+- Which mode Runyte ran in: `editor`, `ide`, or `ide+mux`, as the status line
+  shows.
 - The exact keys pressed, what happened, and what you expected instead.
 - The smallest file, configuration, or project that reproduces it.
 - Relevant lines from the diagnostic log (`:log-open`) or from

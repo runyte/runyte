@@ -452,7 +452,7 @@ impl WorkspaceHost {
         &self.identity
     }
 
-    /// Which workspace-scoped services this host has started. A plain session
+    /// Which workspace-scoped services this host has started. Editor mode
     /// starts none of them; a workspace session starts each one available.
     pub fn workspace_services_started(&self) -> WorkspaceServicesStarted {
         let (git, language_servers, session_catalog) = self.app.workspace_ports_attached();
