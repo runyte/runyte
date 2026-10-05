@@ -4966,13 +4966,12 @@ fn apply_editor_damage(
     Ok(true)
 }
 
-#[cfg(unix)]
 /// What a `-a` from inside an integrated terminal asks the outer TUI to
 /// attach to. A named selector goes as typed, and may name a directory that
 /// becomes a workspace. Without one it is the shell directory's own
 /// workspace: sending the bare directory would let the outer TUI make it a
 /// workspace, which a bare `-a` never does.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg(unix)]
 fn parent_attach_selector(
     selector: Option<&Path>,
     directory: &Path,
@@ -4985,6 +4984,7 @@ fn parent_attach_selector(
     }
 }
 
+#[cfg(unix)]
 async fn run_parent_request(
     arguments: &LaunchArguments,
     context: runyte::workspace::parent::ParentContext,
