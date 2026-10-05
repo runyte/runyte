@@ -1603,7 +1603,9 @@ async fn run(
     }
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the
-    // shell was in would place a host outside the project it serves.
+    // shell was in would place a host outside the project it serves. Only the
+    // Unix host launch below reads it.
+    #[cfg(unix)]
     let working_directory = if attaching_elsewhere {
         project_root.clone()
     } else {
