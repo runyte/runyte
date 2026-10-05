@@ -41,7 +41,7 @@ def main():
         ('c', output / 'todo-c', []),
     ]:
         plugins.append({'id': f'todo-{language}', 'enabled': True, 'api': 'runyte-1',
-                        'runyte': '>=0.3.0, <0.4.0',
+                        'runyte': '>=0.3.0, <0.5.0',
                         'executable': str(executable), 'args': arguments, 'capabilities': ['views']})
     config = output / 'config.yaml'
     config.write_text(json.dumps({'plugins': plugins}, indent=2) + '\n', encoding='utf-8')

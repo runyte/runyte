@@ -57,7 +57,7 @@ The host then sends the stable `hello` envelope and the client registers using
 the ordinary field names:
 
 ```json
-{"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"Local bridge","commands":[],"required_features":["runyte.context.v1"],"optional_features":[],"required_capabilities":["terminal_read"],"optional_capabilities":["editor_context_read"]}
+{"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"Local bridge","commands":[],"required_features":["runyte.context.v1"],"optional_features":[],"required_capabilities":["terminal_read"],"optional_capabilities":["editor_context_read"]}
 ```
 
 The host checks the release range against its actual version and negotiates

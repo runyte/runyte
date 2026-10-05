@@ -30,7 +30,7 @@ plugins:
   - id: jobs
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/jobs.py]
     capabilities: [jobs]
@@ -658,7 +658,7 @@ plugins:
   - id: files
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/files.py]
     capabilities: [views, filesystem, documents, interaction, jobs]
@@ -1232,7 +1232,7 @@ plugins:
   - id: sftp
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /path/to/sftp-env/bin/python
     args:
       - /path/to/runyte/docs/plugins/sftp.py
@@ -1331,7 +1331,7 @@ plugins:
   - id: ftp
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /usr/bin/python3
     args:
       - /path/to/runyte/docs/plugins/ftp.py
@@ -1892,7 +1892,7 @@ plugins:
   - id: media
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/media.py]
     capabilities: [views, processes, activity, jobs]
@@ -2049,7 +2049,7 @@ plugins:
   - id: preferences
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /usr/bin/python3
     args: [/path/to/runyte/docs/plugins/preferences.py]
     capabilities: [settings, state, views]

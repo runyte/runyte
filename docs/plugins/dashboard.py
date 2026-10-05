@@ -10,7 +10,7 @@ app = Application('Dashboard', [
     {'name': 'reverse', 'alias': 'dashboard-reverse', 'description': 'Reverse rows atomically', 'context': 'view'},
     {'name': 'inspect', 'alias': 'dashboard-inspect', 'description': 'Show selected row detail', 'context': 'view'},
     {'name': 'verify', 'alias': 'dashboard-verify', 'description': 'Read and verify one immutable model', 'context': 'view'},
-], ['views'], runyte='>=0.3.0, <0.4.0',
+], ['views'], runyte='>=0.3.0, <0.5.0',
     optional_features=['view-action-presentation', 'view-metadata'])
 for command in app.commands:
     command['presentation'] = {

@@ -8,14 +8,14 @@ import select
 import time
 
 VERSION = 'runyte-1'
-RUNYTE_RANGE = '>=0.3.0, <0.4.0'
+RUNYTE_RANGE = '>=0.3.0, <0.5.0'
 
 
 def supported_host(version):
     # Fixed release-line check for this example, not a general range parser.
     if not isinstance(version, str) or len(version) > 256:
         return False
-    match = re.fullmatch(r'0\.3\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version)
+    match = re.fullmatch(r'0\.[34]\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version)
     return match is not None and int(match[1]) <= (1 << 64) - 1
 
 LIMIT = 1024 * 1024

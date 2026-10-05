@@ -35,7 +35,7 @@ for name, capabilities in [
     ('jobs', ['jobs']),
 ]:
     plugins.append({
-        'id': name, 'enabled': True, 'api': 'runyte-1', 'runyte': '>=0.3.0, <0.4.0',
+        'id': name, 'enabled': True, 'api': 'runyte-1', 'runyte': '>=0.3.0, <0.5.0',
         'executable': python,
         'args': [str(checkout / 'docs' / 'plugins' / (name + '.py'))],
         'capabilities': capabilities,
@@ -95,7 +95,7 @@ from application import Application
 
 app = Application('Example', [
     {'name': 'show', 'alias': 'example', 'description': 'Show the example page', 'context': 'workspace'},
-], ['views'], runyte='>=0.3.0, <0.4.0')
+], ['views'], runyte='>=0.3.0, <0.5.0')
 
 def show(context):
     result = app.request('view.create', model={

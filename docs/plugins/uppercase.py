@@ -6,7 +6,7 @@ from application import Application, PluginError
 app = Application('Uppercase', [
     {'name': 'uppercase', 'alias': 'uppercase', 'description': 'Uppercase every selection',
      'context': 'buffer'},
-], ['text', 'selections'], runyte='>=0.3.0, <0.4.0')
+], ['text', 'selections'], runyte='>=0.3.0, <0.5.0')
 
 
 def uppercase(context):

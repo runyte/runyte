@@ -16,7 +16,7 @@ import sys
 
 VERSION = 'runyte-1'
 FEATURE = 'runyte.context.v1'
-RUNYTE_RANGE = '>=0.3.0, <0.4.0'
+RUNYTE_RANGE = '>=0.3.0, <0.5.0'
 FRAME_BYTES = 2 * 1024 * 1024
 SCOPES = frozenset(('terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose'))
 ERROR_CODES = frozenset(('invalid_argument', 'unsupported', 'capability_denied', 'not_found', 'closed',

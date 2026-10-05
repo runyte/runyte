@@ -65,7 +65,7 @@ plugins:
   - id: todo-python
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /absolute/path/to/python3
     args: [/absolute/path/to/runyte/docs/plugins/todo/python/todo.py]
     capabilities: [views]

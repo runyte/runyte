@@ -172,7 +172,7 @@ class UppercaseTests(unittest.TestCase):
         self.send(HOST[0])
         registration = self.read()
         self.assertEqual(registration['version'], 'runyte-1')
-        self.assertEqual(registration['runyte'], '>=0.3.0, <0.4.0')
+        self.assertEqual(registration['runyte'], '>=0.3.0, <0.5.0')
         self.assertEqual(registration['required_capabilities'], ['text', 'selections'])
         self.assertEqual(registration['commands'][0]['context'], 'buffer')
         self.send({**HOST[1], 'commands': ['plugin.case.uppercase'],

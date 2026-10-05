@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
 const VERSION: &str = "runyte-1";
-const RUNYTE_RANGE: &str = ">=0.3.0, <0.4.0";
+const RUNYTE_RANGE: &str = ">=0.3.0, <0.5.0";
 
 // Fixed release-line check for this example, not a general range parser.
 fn supported_host(version: &str) -> bool {
@@ -22,12 +22,15 @@ fn supported_host(version: &str) -> bool {
     }) {
         return false;
     }
-    core.strip_prefix("0.3.").is_some_and(|patch| {
-        !patch.is_empty()
-            && (patch == "0" || !patch.starts_with('0'))
-            && patch.bytes().all(|b| b.is_ascii_digit())
-            && patch.parse::<u64>().is_ok()
-    })
+    ["0.3.", "0.4."]
+        .iter()
+        .find_map(|prefix| core.strip_prefix(prefix))
+        .is_some_and(|patch| {
+            !patch.is_empty()
+                && (patch == "0" || !patch.starts_with('0'))
+                && patch.bytes().all(|b| b.is_ascii_digit())
+                && patch.parse::<u64>().is_ok()
+        })
 }
 const LIMIT: usize = 1024 * 1024;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;

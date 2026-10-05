@@ -2,11 +2,11 @@
 // Stable v1 without an SDK: Node built-ins, continuous bounded reader, async handlers.
 // Run with `node docs/plugins/tasks.mjs`; stdout belongs exclusively to the protocol.
 const VERSION = 'runyte-1';
-const RUNYTE_RANGE = '>=0.3.0, <0.4.0';
-// This example supports one release line; it does not implement a range language.
+const RUNYTE_RANGE = '>=0.3.0, <0.5.0';
+// This example supports two release lines; it does not implement a range language.
 function supportedHost(version) {
   if (typeof version !== 'string' || version.length > 256) return false;
-  const match = /^0\.3\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+  const match = /^0\.[34]\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
   return match !== null && match[0] === version && BigInt(match[1]) <= 18446744073709551615n;
 }
 const LIMIT = 1024 * 1024;

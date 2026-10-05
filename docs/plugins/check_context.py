@@ -59,7 +59,7 @@ class Host:
                 if not raw:
                     return
                 self.frames.append(json.loads(raw))
-                self.send(connection, {'type': 'registered', 'runyte': '>=0.3.0, <0.4.0', 'features': [FEATURE],
+                self.send(connection, {'type': 'registered', 'runyte': '>=0.3.0, <0.5.0', 'features': [FEATURE],
                                        'commands': [], 'capabilities': self.scopes, 'limits': {'line_bytes': FRAME_BYTES}})
                 while raw := reader.readline():
                     request = json.loads(raw)

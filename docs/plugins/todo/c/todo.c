@@ -16,7 +16,7 @@
 
 #define LIMIT (1024 * 1024)
 #define VERSION "runyte-1"
-#define RUNYTE_RANGE ">=0.3.0, <0.4.0"
+#define RUNYTE_RANGE ">=0.3.0, <0.5.0"
 typedef struct json_object J;
 enum Stage { NONE, CREATE, SHOW, PUBLISH };
 static J *tasks, *candidate;
@@ -29,7 +29,7 @@ static double deadline;
 
 // Fixed release-line check for this example, not a general range parser.
 static bool supported_host(const char *version) {
-    if (strlen(version) > 256 || strncmp(version, "0.3.", 4)) return false;
+    if (strlen(version) > 256 || (strncmp(version, "0.3.", 4) && strncmp(version, "0.4.", 4))) return false;
     const char *patch = version + 4;
     if (*patch < '0' || *patch > '9' || (*patch == '0' && patch[1] >= '0' && patch[1] <= '9')) return false;
     uint64_t value = 0;

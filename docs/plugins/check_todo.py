@@ -91,7 +91,8 @@ class TodoChecks:
         cases = [
             ('0.3.0', True), ('0.3.9', True), ('0.3.0+build.01-x', True),
             ('0.3.18446744073709551615', True),
-            ('0.2.999', False), ('0.4.0', False), ('1.0.0', False),
+            ('0.4.0', True), ('0.4.9+build.1', True),
+            ('0.2.999', False), ('0.5.0', False), ('1.0.0', False),
             ('0.3.0-rc.1', False), ('0.3.1-dev+build', False),
             ('0.3.01', False), ('00.3.0', False), ('0.03.0', False),
             ('0.3', False), ('0.3.0.1', False), ('0.3.-1', False),
@@ -115,7 +116,7 @@ class TodoChecks:
                         self.assertTrue(line, 'Compatible host was refused')
                         registration = json.loads(line)
                         VALIDATOR.validate(registration)
-                        self.assertEqual(registration['runyte'], '>=0.3.0, <0.4.0')
+                        self.assertEqual(registration['runyte'], '>=0.3.0, <0.5.0')
                         self.assertEqual(registration['required_features'], [])
                         self.assertEqual(registration['optional_features'], [])
                     else:

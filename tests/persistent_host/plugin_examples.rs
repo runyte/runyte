@@ -209,7 +209,7 @@ impl Programs {
             "args": args,
         });
         entry["api"] = "runyte-1".into();
-        entry["runyte"] = ">=0.3.0, <0.4.0".into();
+        entry["runyte"] = ">=0.3.0, <0.5.0".into();
         entry["capabilities"] = example.capabilities.into();
         entry
     }
