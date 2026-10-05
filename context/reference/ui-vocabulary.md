@@ -65,8 +65,10 @@ them, regardless of which extensibility direction is chosen.
   mode, workspace directory, active-buffer state, cursor/progress, selection
   count, Git/LSP summaries, long-running action progress, and unread
   notification counts. Its leftmost mode label follows the current mode's
-  caret role; the rest of the row keeps the ordinary theme background. The pane
-  title, not this row, owns active-buffer identity.
+  caret role; the rest of the row keeps the ordinary theme background. The
+  cursor position is prefixed with `↪` while `editor.soft_wrap` is enabled;
+  the marker matches the gutter's soft-wrap continuation arrow. The pane title,
+  not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
   meanings and order as the pane title.
   The session word after the mode is `ide`, `ide+mux`, or `editor`. Editor

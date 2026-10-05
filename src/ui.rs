@@ -3062,7 +3062,8 @@ fn draw_normal_status(
     // The progress percentage joins the cursor with a middle dot rather than a
     // bar: it is another reading of the same position, not a separate field.
     let right = format!(
-        " {}:{} · {}%{}{} ",
+        " {}{}:{} · {}%{}{} ",
+        if status.soft_wrap { "↪ " } else { "" },
         status.cursor.row + 1,
         status.cursor.col + 1,
         status.progress_percent(),
@@ -5557,6 +5558,7 @@ mod tests {
             external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
             read_only: false,
             cursor: Position::new(41, 7),
+            soft_wrap: false,
             line_count: 100,
             selection_count: 1,
             lsp_summary: Some("rust-analyzer 0E 1W".to_owned()),
@@ -7259,6 +7261,27 @@ mod tests {
             !screen.contains("gruvbox"),
             "the theme name belongs to Space o t, not the status line: {screen:?}"
         );
+    }
+
+    #[test]
+    fn soft_wrap_toggle_marks_the_status_position() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let before = rendered(&mut app, 80, 8);
+        assert!(before.contains(" 1:1 · 100%"), "{before:?}");
+        assert!(!before.contains("↪ 1:1"), "{before:?}");
+
+        for key in [' ', 'p', 's'] {
+            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
+        }
+        let enabled = rendered(&mut app, 80, 8);
+        assert!(enabled.contains("↪ 1:1 · 100%"), "{enabled:?}");
+
+        for key in [' ', 'p', 's'] {
+            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
+        }
+        let disabled = rendered(&mut app, 80, 8);
+        assert!(disabled.contains(" 1:1 · 100%"), "{disabled:?}");
+        assert!(!disabled.contains("↪ 1:1"), "{disabled:?}");
     }
 
     #[test]

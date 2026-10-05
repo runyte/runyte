@@ -492,6 +492,7 @@ open the same retained special commit-detail buffer when a commit is selected.
 | `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. [Editor mode](#editor-mode) labels it `Directory: …` and shows no Git information. |
 | `[+]` / `[STALE]` / `[RO]` | The active buffer has unsaved changes / the path it shows (a file or an explorer's directory) disagrees with the accepted baseline / is read-only. |
 | `412:17 · 34%` | Cursor line and column, and how far through the buffer it is. |
+| `↪ 412:17 · 34%` | The same position with `editor.soft_wrap` enabled. The arrow matches the soft-wrap continuation marker in the gutter. |
 | `3 sel` | Selection count, shown above one. |
 | `main ~1` | Git branch and outstanding changes. See [Status line and gutter](#status-line-and-gutter). |
 | `rust-analyzer 0E 2W` | Language-server summary. |
@@ -1337,6 +1338,7 @@ offsets, selections, wrapping, and saved files are unchanged. The setting is
 #### Soft wrap
 
 `Space p s` toggles `editor.soft_wrap` for this session.
+When enabled, the global status line shows `↪` before the cursor position.
 
 - Wrapping follows the live pane width, including after a resize. It does not
   use the hard-wrap width and never changes the text.

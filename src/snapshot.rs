@@ -689,6 +689,8 @@ pub struct StatusSnapshot {
     pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
     pub cursor: Position,
+    /// Whether the session's soft-wrap setting is enabled.
+    pub soft_wrap: bool,
     /// Rows in the buffer the cursor sits in, so a frontend can say how far
     /// through it the cursor is without reaching back into the buffer.
     pub line_count: usize,
@@ -955,6 +957,7 @@ impl App {
                 },
                 read_only: terminal.is_none() && buffer.is_read_only(),
                 cursor: terminal.map_or_else(|| active.cursor(buffer), |(cursor, _, _)| cursor),
+                soft_wrap: self.config.editor.soft_wrap,
                 line_count: terminal.map_or_else(|| buffer.len_lines(), |(_, lines, _)| lines),
                 selection_count: terminal.map_or(active.selection.len(), |(_, _, count)| count),
                 lsp_summary: self.lsp_summary(),
@@ -2625,6 +2628,7 @@ mod tests {
             external_file_status: ExternalFileStatus::Synchronized,
             read_only: false,
             cursor: Position { row, col: 0 },
+            soft_wrap: false,
             line_count,
             selection_count: 1,
             lsp_summary: None,
