@@ -21,6 +21,20 @@ command = "/path/to/runyte"
 args = ["mcp", "--identity", "agent"]
 ```
 
+### Codex and Claude Code
+
+Add Runyte to both clients with the same `agent` identity:
+
+```sh
+codex mcp add runyte -- /path/to/runyte mcp --identity agent
+claude mcp add --scope user --transport stdio runyte -- /path/to/runyte mcp --identity agent
+```
+
+Check the saved configurations with `codex mcp list` and `claude mcp list`.
+Restart any already-running agent session after adding the server. Each client
+starts its own MCP process, but both use the same Runyte permission grant for
+`agent` in a workspace. Grant it with `:mcp agent` as described below.
+
 Use the absolute path to your Runyte binary. Windows uses the same
 arguments with an absolute path to `runyte.exe`. `runyte mcp --help` describes
 the options. `--timeout 2` sets the per-host deadline (0.1–10 seconds).
