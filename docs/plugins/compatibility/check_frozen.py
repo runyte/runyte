@@ -145,7 +145,7 @@ def run_external(checkout, binary, row, expected_version):
     if actual != expected_version:
         raise ValueError('Built host version disagrees with the candidate gate')
     if not ReleaseRange(row['runyte']).contains(actual):
-        raise ValueError('Frozen acceptance lane excludes host ' + actual + '; a breaking-release migration needs an explicit rejection scenario and a new accepted plugin profile')
+        raise ValueError('Frozen acceptance lane excludes host ' + actual + '; use an explicit rejection scenario')
     print(f"External {row['id']}={row['revision']} SDK={row['sdk_revision']} host={actual} expected=accept", flush=True)
     # A fresh interpreter prevents an already-imported current application.py
     # from replacing the external plugin's vendored application in sys.modules.
@@ -153,6 +153,40 @@ def run_external(checkout, binary, row, expected_version):
     subprocess.run([sys.executable, '-I', '-B', str(Path(__file__).resolve()), '--external-suite',
                     str(checkout), str(binary), str(checkout / row['files']['sdk']['path']),
                     json.dumps(row['native_tests'])], cwd=checkout, env=environment, check=True)
+
+
+def reject_old_ru_time(checkout, binary, row, expected_version, profile, root):
+    """Prove the retained 0.3 plugin refuses 0.4 before registration."""
+    from check_inventory import verify_checkout
+    from application import ReleaseRange
+    checkout, binary = checkout.resolve(), binary.resolve()
+    verify_checkout(checkout, row)
+    actual = host_version(binary)
+    if actual != expected_version or ReleaseRange(row['runyte']).contains(actual):
+        raise ValueError('Rejected frozen profile must be outside the exact host version')
+    if row['id'] != 'ru-time-v1' or row['repository'] != 'runyte/ru-time':
+        raise ValueError('No rejection scenario is defined for ' + row['id'])
+    fixtures = read_fixtures(root / profile['files']['fixtures']['path'])
+    hello = next(fixture['message'] for fixture in fixtures
+                 if fixture['direction'] == 'host' and fixture['message'].get('type') == 'hello')
+    with tempfile.TemporaryDirectory(prefix='runyte-frozen-rejection-') as temporary:
+        temporary = Path(temporary)
+        environment = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
+        for name in ('HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
+                     'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'):
+            directory = temporary / name.lower()
+            directory.mkdir(mode=0o700)
+            environment[name] = str(directory)
+        database = temporary / 'tasks.sqlite3'
+        result = subprocess.run([sys.executable, '-B', str(checkout / 'time_plugin.py'),
+                                 '--database', str(database)],
+                                input=json.dumps({**hello, 'host_version': actual}) + '\n',
+                                cwd=checkout, env=environment, capture_output=True, text=True,
+                                timeout=10)
+        if (result.returncode == 0 or result.stdout or database.exists()
+                or 'outside ' + row['runyte'] not in result.stderr):
+            raise ValueError('Retained ru-time did not reject the out-of-range host before registration')
+    print(f"External {row['id']}={row['revision']} host={actual} expected=reject", flush=True)
 
 
 def verify_loaded_sdk(expected):
@@ -209,10 +243,20 @@ def main():
     if any(value is not None for value in (args.checkout, args.host_bin, args.host_version)):
         if any(value is None for value in (args.checkout, args.host_bin, args.host_version)):
             parser.error('External checks require --checkout, --host-bin and --host-version together')
+        from application import ReleaseRange
+        if not any(ReleaseRange(plugin['runyte']).contains(args.host_version)
+                   for plugin in inventory['plugins']):
+            raise ValueError('No frozen plugin profile accepts host ' + args.host_version)
         rows = [row for row in inventory['plugins'] if row['id'] == args.plugin]
         if len(rows) != 1:
             parser.error('Requested plugin is absent from the inventory')
-        run_external(args.checkout, args.host_bin, rows[0], args.host_version)
+        row = rows[0]
+        if ReleaseRange(row['runyte']).contains(args.host_version):
+            run_external(args.checkout, args.host_bin, row, args.host_version)
+        else:
+            profiles = {profile['id']: profile for profile in inventory['profiles']}
+            reject_old_ru_time(args.checkout, args.host_bin, row, args.host_version,
+                               profiles[row['profile']], args.inventory.resolve().parent)
 
 
 if __name__ == '__main__':

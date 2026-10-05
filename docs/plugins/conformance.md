@@ -129,8 +129,10 @@ Required Linux/macOS jobs retain the existing conformance, real-example startup,
 Rust behavior and coverage checks. `plugin-inventory` verifies full source SHAs,
 file digests and vendored provenance in
 [`hosts-and-clients.json`](compatibility/hosts-and-clients.json). Each retained
-external plugin runs its standard suite and explicitly named native tests in a
-required matrix cell. A fresh isolated interpreter prevents the current SDK
+external plugin whose range includes the candidate runs its standard suite and
+explicitly named native tests in a required matrix cell. A retained plugin
+outside that range must refuse the candidate before registration. A fresh
+isolated interpreter prevents the current SDK
 from substituting for the vendored one; the runner checks the loaded SDK origin
 and enables ru-time’s pinned-schema wire checks only for this gate. A missing
 binary, missing test or skipped native test fails that cell. `check_frozen.py` also validates old plugin frames against the current
@@ -148,26 +150,27 @@ Actual ru-time subprocess tests reject hosts outside its declared range.
 
 The separate moving-head ru-time job stays advisory. It can reveal future work;
 it cannot replace a retained profile or authorize a release. Adding a new release
-profile preserves older supported profiles. Runyte owns within-range host
+profile preserves older profiles as rejection evidence and requires at least one
+accepted frozen plugin for each candidate. Runyte owns within-range host
 regressions, ru-time owns new plugin regressions and support-floor claims, and
 fetch/build failures are infrastructure failures rather than compatibility success.
 
-Before package version 0.3.0, `candidate.py` stages an isolated source tree and
-lets Cargo update only the root version to 0.3.0. It records this construction as
-`bootstrap-candidate`; on stable package versions it uses the exact checkout.
-To reproduce initial native acceptance, run the commands below in the candidate
+For development CI before the 0.4.0 release commit, `candidate.py` stages an
+isolated source tree and lets Cargo update only the root version to 0.4.0. It
+records this construction as `bootstrap-candidate`; at 0.4.0 or later it uses
+the exact checkout. This candidate is development evidence only. To reproduce
+native acceptance, run the commands below in the candidate
 source directory printed by the tool, retaining an absolute `CARGO_TARGET_DIR`:
 
 ```sh
-python3 docs/plugins/compatibility/candidate.py --destination /tmp/runyte-candidate
+python3 docs/plugins/compatibility/candidate.py --candidate-version 0.4.0 --destination /tmp/runyte-candidate
 python3 docs/plugins/compatibility/check_inventory.py --verify-upstream
 python3 docs/plugins/compatibility/check_frozen.py
 ```
 
 The checker needs `jsonschema`; external execution additionally takes `--checkout`,
 `--host-bin` and `--host-version`. It verifies the external checkout before running
-it. Pins must be publicly fetchable before CI/release acceptance. First candidates
-are labeled honestly; no published older stable host exists at bootstrap. The
+it. Pins must be publicly fetchable before CI/release acceptance. The
 first actual release and later compatible releases extend the plugin's independent
 oldest/newest host inventory. Exact-release-commit CI is required before publishing,
 as specified in [the release runbook](../../context/reference/releasing.md).

@@ -39,7 +39,9 @@ class CandidateTests(unittest.TestCase):
         self.calls.append(command)
         self.assertEqual(command, ['cargo', 'check', '--lib'])
         staged = kwargs['cwd']
-        (staged / 'Cargo.lock').write_text(candidate.replace_lock_version(LOCK, '0.2.4', '0.3.0'))
+        old = candidate.package_version((self.source / 'Cargo.toml').read_text())
+        new = candidate.package_version((staged / 'Cargo.toml').read_text())
+        (staged / 'Cargo.lock').write_text(candidate.replace_lock_version((self.source / 'Cargo.lock').read_text(), old, new))
         return types.SimpleNamespace(returncode=0)
 
     def test_bootstrap_copies_untracked_source_and_preserves_checkout_and_modes(self):
@@ -76,6 +78,28 @@ class CandidateTests(unittest.TestCase):
             self.assertFalse((self.root / 'unused').exists())
             self.assertEqual((self.source / 'Cargo.toml').read_text(), manifest)
         self.assertEqual(self.calls, [])
+
+    def test_next_minor_candidate_stages_only_until_the_release_bump(self):
+        manifest = candidate.replace_package_version(MANIFEST, '0.3.6')
+        lock = candidate.replace_lock_version(LOCK, '0.2.4', '0.3.6')
+        (self.source / 'Cargo.toml').write_text(manifest)
+        (self.source / 'Cargo.lock').write_text(lock)
+        result = candidate.prepare(self.source, self.root / 'candidate', self.cargo, '0.4.0')
+        self.assertEqual(result['host_version'], '0.4.0')
+        self.assertEqual(result['mode'], 'bootstrap-candidate')
+        self.assertEqual(candidate.package_version((Path(result['source']) / 'Cargo.toml').read_text()), '0.4.0')
+        self.assertEqual((self.source / 'Cargo.toml').read_text(), manifest)
+        self.assertEqual((self.source / 'Cargo.lock').read_text(), lock)
+        (self.source / 'Cargo.toml').write_text(candidate.replace_package_version(manifest, '0.4.0'))
+        exact = candidate.prepare(self.source, self.root / 'unused', self.cargo, '0.4.0')
+        self.assertEqual(exact['mode'], 'exact')
+        self.assertEqual(exact['source'], str(self.source.resolve()))
+        self.assertFalse((self.root / 'unused').exists())
+
+    def test_candidate_version_must_be_final_and_complete(self):
+        for version in ('0.4', '0.4.0-rc.1', '0.4.0+build', 'not-a-version'):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                candidate.prepare(self.source, self.root / 'candidate', self.cargo, version)
 
     def test_dependency_drift_fails_and_removes_only_the_owned_staging_directory(self):
         def drift(command, **kwargs):
@@ -233,6 +257,27 @@ class IsolationTests(unittest.TestCase):
             self.assertTrue(execute.call_args.kwargs['check'])
             self.assertEqual(execute.call_args.kwargs['env']['RU_TIME_VALIDATE_SCHEMA'], '1')
             self.assertEqual(os.environ.get('RU_TIME_VALIDATE_SCHEMA'), previous_schema)
+
+    def test_retained_ru_time_must_refuse_an_out_of_range_host_before_registration(self):
+        with tempfile.TemporaryDirectory(prefix='runyte-rejection-test-') as temporary:
+            root = Path(temporary)
+            fixture = root / 'fixtures.json'
+            fixture.write_text(json.dumps([{'direction': 'host', 'message':
+                                            {'type': 'hello', 'host_version': '0.3.0'}}]))
+            row = {'id': 'ru-time-v1', 'repository': 'runyte/ru-time',
+                   'revision': 'review-fixture', 'runyte': '>=0.3.0, <0.4.0'}
+            profile = {'files': {'fixtures': {'path': fixture.name}}}
+            refused = subprocess.CompletedProcess([], 1, '', 'host outside >=0.3.0, <0.4.0')
+            with patch.object(check_inventory, 'verify_checkout'), patch.object(check_frozen, 'host_version', return_value='0.4.0'), patch.object(check_frozen.subprocess, 'run', return_value=refused) as execute:
+                check_frozen.reject_old_ru_time(root, root / 'runyte', row, '0.4.0', profile, root)
+            self.assertEqual(json.loads(execute.call_args.kwargs['input'])['host_version'], '0.4.0')
+            self.assertEqual(execute.call_args.kwargs['env']['PYTHONDONTWRITEBYTECODE'], '1')
+            for result in (subprocess.CompletedProcess([], 0, '', ''),
+                           subprocess.CompletedProcess([], 1, '{"type":"register"}', refused.stderr),
+                           subprocess.CompletedProcess([], 1, '', 'unrelated failure')):
+                with self.subTest(result=result), patch.object(check_inventory, 'verify_checkout'), patch.object(check_frozen, 'host_version', return_value='0.4.0'), patch.object(check_frozen.subprocess, 'run', return_value=result):
+                    with self.assertRaisesRegex(ValueError, 'did not reject'):
+                        check_frozen.reject_old_ru_time(root, root / 'runyte', row, '0.4.0', profile, root)
 
 
 class DiagnosticTests(unittest.TestCase):

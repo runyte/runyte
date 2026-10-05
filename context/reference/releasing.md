@@ -147,7 +147,7 @@ The example version below is 0.2.1. Substitute the real one.
    external job is advisory and cannot replace immutable acceptance.
 
    The compatibility jobs must report `mode: exact` and exercise the version in
-   this release commit. A temporary 0.3.0 bootstrap candidate is development
+   this release commit. A staged minor-version candidate is development
    evidence only. No required native test may be skipped, and every referenced
    repository SHA must be fetchable independently. Publish the reviewed source
    pins before cutting this release; never rewrite a frozen client to repair a

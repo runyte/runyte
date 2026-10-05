@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Prepare a real versioned stable candidate without changing the checkout.
+"""Prepare a real versioned candidate without changing the checkout.
 
-Only the pre-stable bootstrap stages source. At and after 0.3.0, gates use the
-actual checked-out package version and source. No runtime version override exists.
+Development CI may stage the next minor release from a checkout whose package
+version has not yet been bumped. Release CI uses the exact versioned checkout.
+No runtime version override exists.
 """
 import argparse
 import json
@@ -70,13 +71,18 @@ def intended_files(source, run=subprocess.run):
         yield original, path
 
 
-def prepare(source, destination, run=subprocess.run):
+def prepare(source, destination, run=subprocess.run, candidate_version=None):
     source = Path(source).resolve()
     manifest = (source / 'Cargo.toml').read_text(encoding='utf-8')
     original_version = package_version(manifest)
     core = tuple(map(int, VERSION.fullmatch(original_version).groups()))
     mode = 'exact'
-    if core < (0, 3, 0):
+    target_version = candidate_version or FLOOR
+    target = VERSION.fullmatch(target_version)
+    if target is None or '-' in target_version or '+' in target_version:
+        raise ValueError('Candidate version must be a final semantic version')
+    target_core = tuple(map(int, target.groups()))
+    if core < target_core:
         destination = Path(destination).resolve()
         if destination == source or destination.is_relative_to(source):
             raise ValueError('Candidate destination must be outside the source checkout')
@@ -88,8 +94,8 @@ def prepare(source, destination, run=subprocess.run):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(original, target, follow_symlinks=False)
             lock = (destination / 'Cargo.lock').read_text(encoding='utf-8')
-            expected_lock = replace_lock_version(lock, original_version, FLOOR)
-            (destination / 'Cargo.toml').write_text(replace_package_version(manifest, FLOOR), encoding='utf-8')
+            expected_lock = replace_lock_version(lock, original_version, target_version)
+            (destination / 'Cargo.toml').write_text(replace_package_version(manifest, target_version), encoding='utf-8')
             # Cargo owns lockfile updates. Only the candidate package version may
             # differ; dependency drift fails this bootstrap rather than hiding it.
             run(['cargo', 'check', '--lib'], cwd=destination, check=True)
@@ -118,9 +124,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[3])
     parser.add_argument('--destination', required=True, type=Path)
+    parser.add_argument('--candidate-version', help='Stage this final release version only while the checkout is older')
     parser.add_argument('--github-output', type=Path)
     args = parser.parse_args()
-    result = prepare(args.source, args.destination)
+    result = prepare(args.source, args.destination, candidate_version=args.candidate_version)
     if args.github_output:
         write_outputs(result, args.github_output)
     print(json.dumps(result, sort_keys=True))

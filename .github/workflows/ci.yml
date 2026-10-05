@@ -197,9 +197,9 @@ jobs:
       - name: Test compatibility gate tools
         run: python3 -m unittest discover -s docs/plugins/compatibility -p 'test_*.py' -v
 
-      - name: Prepare the exact host or pre-stable candidate
+      - name: Prepare the exact host or 0.4 candidate
         id: candidate
-        run: python3 docs/plugins/compatibility/candidate.py --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
+        run: python3 docs/plugins/compatibility/candidate.py --candidate-version 0.4.0 --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
 
       - name: Install Linux example backends
         if: runner.os == 'Linux'
@@ -270,9 +270,9 @@ jobs:
         with:
           key: ru-time-${{ matrix.os }}
 
-      - name: Prepare the exact host or pre-stable candidate
+      - name: Prepare the exact host or 0.4 candidate
         id: candidate
-        run: python3 docs/plugins/compatibility/candidate.py --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
+        run: python3 docs/plugins/compatibility/candidate.py --candidate-version 0.4.0 --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,9 +328,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: frozen-${{ matrix.os }}-${{ matrix.plugin.revision }}
-      - name: Prepare the exact host or pre-stable candidate
+      - name: Prepare the exact host or 0.4 candidate
         id: candidate
-        run: python3 docs/plugins/compatibility/candidate.py --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
+        run: python3 docs/plugins/compatibility/candidate.py --candidate-version 0.4.0 --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.plugin.repository }}
