@@ -160,3 +160,41 @@ fn editor_mode_with_an_explicit_log_still_writes_it() {
     assert!(text.contains("ERROR"), "{text}");
     assert!(!directory.join(".runyte").exists());
 }
+
+#[test]
+fn init_creates_a_workspace_and_exits_without_opening_it() {
+    let owner = TestRuntimeRoot::new("init-only").unwrap();
+    let directory = owner.join("project");
+    fs::create_dir_all(&directory).unwrap();
+    let root = directory.canonicalize().unwrap();
+
+    // Null stdin and no terminal: initializing must need neither.
+    let output = runyte(&owner, &owner, &["--init", directory.to_str().unwrap()]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(root.join(".runyte").is_dir());
+    assert!(
+        stdout.contains(&format!("initialized a workspace in {}", root.display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("runyte --mux"), "{stdout}");
+
+    // The workspace now satisfies an ide launch from inside it.
+    let targets = binary_targets(&root);
+    let ide = runyte(&owner, &root, &targets);
+    let stderr = String::from_utf8_lossy(&ide.stderr);
+    assert!(!stderr.contains("no workspace here"), "{stderr}");
+
+    let again = runyte(&owner, &owner, &["--init", directory.to_str().unwrap()]);
+    assert!(again.status.success());
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("is already a workspace"),
+        "{}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+}

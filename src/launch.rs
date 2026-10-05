@@ -367,8 +367,8 @@ impl LaunchArguments {
             "--init does not accept file targets"
         );
         ensure!(
-            parsed.init.is_none() || parsed.mode == LaunchMode::Standalone,
-            "--init is available only in standalone mode"
+            parsed.init.is_none() || !mode_explicit,
+            "--init only creates a workspace and opens nothing, so it takes no mode option"
         );
         ensure!(
             parsed.mode != LaunchMode::Wait || !parsed.targets.is_empty(),
@@ -713,10 +713,11 @@ mod tests {
 
         assert!(LaunchArguments::parse_from(["--init".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--init".into(), "".into()]).is_err());
-        for mode in ["--mux", "--serve"] {
+        for mode in ["--mux", "--serve", "--ide", "--editor", "--wait"] {
             assert!(
                 LaunchArguments::parse_from([mode.into(), "--init".into(), "/work/new".into(),])
-                    .is_err()
+                    .is_err(),
+                "{mode}"
             );
         }
         assert!(

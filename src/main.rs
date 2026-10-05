@@ -1512,6 +1512,17 @@ async fn run(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
+    // `--init` makes a workspace and stops there. Opening one is a separate
+    // launch, so initializing never also decides how to edit in it.
+    if let Some(requested) = arguments.init.take() {
+        return initialize_workspace(
+            &requested,
+            &launch_directory,
+            &config.workspace.state,
+            &reserved_user_roots,
+            &mut io::stdout().lock(),
+        );
+    }
     startup.mark(StartupPhase::ProjectResolutionStarted);
     // `-a WORKSPACE` names the workspace outright, so the project this process
     // serves is resolved from the selector rather than from the directory the
@@ -1539,62 +1550,45 @@ async fn run(
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
-    let initializing = arguments.init.is_some();
     let running_as_root = effective_user_is_root();
     refuse_workspace_modes_as_root(&arguments, running_as_root)?;
     let editor = launch_is_editor(&arguments);
-    let project_root = match arguments.init.take() {
-        Some(requested) => {
-            let requested = if requested.is_absolute() {
-                requested
-            } else {
-                launch_directory.join(requested)
-            };
-            let project_root = project_root::initialize(
-                &requested,
-                &config.workspace.state,
-                &reserved_user_roots,
-            )?;
-            startup.mark(StartupPhase::ProjectResolvedAutomatically);
-            project_root
-        }
+    let project_root = match arguments.project_root.take() {
         // Editor mode has no workspace. The launch directory stands in as
         // the root that relative paths are displayed against; nothing
         // project-scoped reads it and its state directory is never made.
-        None if editor => {
+        _ if editor => {
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             launch_directory.clone()
         }
-        None if attaching_elsewhere => {
+        _ if attaching_elsewhere => {
             let project_root = selected_workspace.expect("selector resolved a workspace");
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
         // `-a` with no selector uses the workspace the launch directory
         // belongs to. Naming a directory creates one; this does not.
-        None if attaching_current => {
+        _ if attaching_current => {
             let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
                 .context(project_root::NO_WORKSPACE_HERE)?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None => match arguments.project_root.take() {
-            // A caller that has already resolved the workspace states it outright.
-            // Rediscovering it here would be a second, independent answer to a
-            // question that has one right answer per launch, and a detached host
-            // has no terminal on which to be asked it again.
-            Some(requested) => {
-                let project_root = resolve_requested_project_root(&launch_directory, &requested)?;
+        // A caller that has already resolved the workspace states it outright.
+        // Rediscovering it here would be a second, independent answer to a
+        // question that has one right answer per launch, and a detached host
+        // has no terminal on which to be asked it again.
+        Some(requested) => {
+            let project_root = resolve_requested_project_root(&launch_directory, &requested)?;
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project_root
+        }
+        None => match project_root::discover(&launch_directory, &config.workspace.state)? {
+            Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 project_root
             }
-            None => match project_root::discover(&launch_directory, &config.workspace.state)? {
-                Some(project_root) => {
-                    startup.mark(StartupPhase::ProjectResolvedAutomatically);
-                    project_root
-                }
-                None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
-            },
+            None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
         },
     };
     let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
@@ -1604,19 +1598,11 @@ async fn run(
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the
     // shell was in would place a host outside the project it serves.
-    let working_directory = if initializing || attaching_elsewhere {
+    let working_directory = if attaching_elsewhere {
         project_root.clone()
     } else {
         launch_directory.clone()
     };
-    if initializing {
-        std::env::set_current_dir(&working_directory).with_context(|| {
-            format!(
-                "cannot enter initialized workspace {}",
-                working_directory.display()
-            )
-        })?;
-    }
     #[cfg(unix)]
     let recorded_workspace = if editor {
         None
@@ -2358,6 +2344,37 @@ fn launch_is_editor(arguments: &LaunchArguments) -> bool {
     arguments.mode == LaunchMode::Standalone && arguments.editor
 }
 
+/// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
+/// accepts one that already is, and says how to open it.
+fn initialize_workspace(
+    requested: &Path,
+    launch_directory: &Path,
+    configured_state: &Path,
+    reserved_user_roots: &[PathBuf],
+    output: &mut impl Write,
+) -> Result<()> {
+    let requested = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        launch_directory.join(requested)
+    };
+    let existed = requested
+        .canonicalize()
+        .is_ok_and(|root| project_root::resolve_state_root(&root, configured_state).is_dir());
+    let project_root = project_root::initialize(&requested, configured_state, reserved_user_roots)?;
+    let root = project_root.display();
+    if existed {
+        writeln!(output, "{root} is already a workspace")?;
+    } else {
+        writeln!(output, "initialized a workspace in {root}")?;
+    }
+    writeln!(
+        output,
+        "open it with: runyte {root}   or   runyte --mux {root}"
+    )?;
+    Ok(())
+}
+
 /// Refuses every mode but editor as root. `ide`, `mux`, `--wait` and a
 /// foreground host all belong to a workspace, and as root they would leave
 /// root-owned runtime state in a workspace some other account owns.
@@ -2366,7 +2383,8 @@ fn refuse_workspace_modes_as_root(
     running_as_root: bool,
 ) -> Result<()> {
     let workspace_mode = match arguments.mode {
-        LaunchMode::Standalone => !arguments.editor,
+        // `--init` only creates a directory; it opens no workspace.
+        LaunchMode::Standalone => !arguments.editor && arguments.init.is_none(),
         LaunchMode::Persistent | LaunchMode::Wait | LaunchMode::Serve => true,
         _ => false,
     };
@@ -8825,6 +8843,58 @@ mod tests {
             .send(runyte::lsp::LspCommand::Shutdown);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn init_reports_a_new_and_an_existing_workspace() {
+        let root = TestRuntimeRoot::new("init-report").unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let canonical = project.canonicalize().unwrap();
+        let state = std::path::Path::new(".runyte");
+
+        let mut output = Vec::new();
+        super::initialize_workspace(
+            std::path::Path::new("project"),
+            root.path(),
+            state,
+            &[],
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            format!(
+                "initialized a workspace in {0}\nopen it with: runyte {0}   or   runyte --mux {0}\n",
+                canonical.display()
+            )
+        );
+        assert!(canonical.join(".runyte").is_dir());
+
+        let mut output = Vec::new();
+        super::initialize_workspace(&canonical, root.path(), state, &[], &mut output).unwrap();
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .starts_with(&format!("{} is already a workspace\n", canonical.display()))
+        );
+
+        // Per-user storage stays protected, as it was when --init also opened
+        // the editor.
+        let reserved = root.path().join("config");
+        let mut output = Vec::new();
+        assert!(
+            super::initialize_workspace(
+                &canonical,
+                root.path(),
+                &reserved.join("state"),
+                std::slice::from_ref(&reserved),
+                &mut output,
+            )
+            .is_err()
+        );
+        assert!(output.is_empty());
+    }
+
     #[test]
     fn root_runs_only_editor_mode() {
         let parse = |arguments: &[&str]| {
@@ -8849,7 +8919,11 @@ mod tests {
                 "{arguments:?}"
             );
         }
-        for arguments in [&["--editor", "/etc/hosts"][..], &["--session-list"][..]] {
+        for arguments in [
+            &["--editor", "/etc/hosts"][..],
+            &["--session-list"][..],
+            &["--init", "/srv/project"][..],
+        ] {
             assert!(
                 super::refuse_workspace_modes_as_root(&parse(arguments), true).is_ok(),
                 "{arguments:?}"
