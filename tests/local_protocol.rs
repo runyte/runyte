@@ -2748,10 +2748,6 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         })
         .await
         .unwrap();
-    assert!(matches!(
-        response(&mut interactive).await,
-        HostResponse::Frame { .. }
-    ));
     // Frames are asynchronous presentation, not command acknowledgements.
     // The ordered buffer response establishes that :wbc actually closed the
     // target, and the disk check establishes that it saved the intended text.
