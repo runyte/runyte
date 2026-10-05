@@ -387,11 +387,7 @@ fn native_persistent_wait_fixture() {
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     // An explicit --wait selects the same persistent workspace regardless of
     // the bare-launch mode preference.
-    std::fs::write(
-        &config,
-        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n",
-    )
-    .unwrap();
+    std::fs::write(&config, "lsp:\n  enable: false\nmode: mux\n").unwrap();
     let first = FIRST_NAME;
     let second = SECOND_NAME;
     std::fs::write(project.join(first), "WAIT_FIRST_MARKER\n").unwrap();

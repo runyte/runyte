@@ -144,11 +144,7 @@ fn logging_fixture() {
     );
     fs::create_dir(root.join("config")).unwrap();
     let config = root.join("config/config.yaml");
-    fs::write(
-        &config,
-        "workspace:\n  mode: standalone\nlsp:\n  enable: false\n",
-    )
-    .unwrap();
+    fs::write(&config, "mode: ide\nlsp:\n  enable: false\n").unwrap();
     run_editor(&root.join("normal"), &config, false);
     run_editor(&root.join("degraded"), &config, true);
     let (sender, events) = mpsc::channel();

@@ -57,9 +57,12 @@ const STARTUP_BOUND: &[StartupBound] = &[
         restore: |loaded, running| loaded.lsp.enable = running.lsp.enable,
     },
     StartupBound {
-        key: "workspace.mode",
-        differs: |loaded, running| loaded.workspace.mode != running.workspace.mode,
-        restore: |loaded, running| loaded.workspace.mode = running.workspace.mode,
+        key: "mode",
+        differs: |loaded, running| loaded.mode() != running.mode(),
+        restore: |loaded, running| {
+            loaded.mode = running.mode;
+            loaded.workspace.mode = running.workspace.mode;
+        },
     },
     StartupBound {
         key: "workspace.state",

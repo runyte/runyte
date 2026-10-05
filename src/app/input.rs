@@ -4946,7 +4946,7 @@ impl App {
                         | SettingType::Boolean
                         | SettingType::Theme
                         | SettingType::SessionStrip
-                        | SettingType::WorkspaceMode
+                        | SettingType::RunMode
                         | SettingType::ExplorerSort
                         | SettingType::Indent => {
                             self.action_failed("this setting must be chosen from its list");

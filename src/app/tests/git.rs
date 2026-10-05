@@ -734,7 +734,7 @@ fn worktree_view_preserves_path_selection_and_switches_only_in_persistent_mode()
     app.buffers[file_buffer].apply(&Transaction::insert(0, "unsaved"));
     app.open_selected_worktree();
     assert!(app.take_workspace_switch().is_none());
-    assert!(app.status.contains("workspace.mode: persistent"));
+    assert!(app.status.contains("needs mux mode"));
 
     app.enable_persistent_session();
 

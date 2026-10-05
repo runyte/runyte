@@ -32,7 +32,7 @@ use crate::{
         CommandExecutionContext, CommandId, CommandInvocation, CommandSpec, CommandUnavailable,
         EditorCommand, HelpInvocation, InvocationParameters, resolve_command,
     },
-    config::{self, Config, Theme, ThemeAppearance, WorkspaceMode},
+    config::{self, Config, RunMode, Theme, ThemeAppearance},
     content_alignment::{ContentAlignment, ContentLayout},
     diff::{Alignment, Side},
     diff_view::{DiffSession, DiffSide, MAX_DIFF_BYTES},

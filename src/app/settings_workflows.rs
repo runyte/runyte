@@ -7,8 +7,8 @@ use super::{
     ActionFeedback, ActiveGrammar, App, Buffer, CommandOutcome, DefaultColors, FailureClass,
     InputGrammar, ListAction, ListPicker, Mode, NotificationCenter, NotificationCounts,
     NotificationDraft, NotificationSeverity, Path, PickerItem, PreviewPolicy, PromptKind, Result,
-    Selection, ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId, SettingPreview,
-    SettingType, SettingValue, SettingsView, Theme, ThemeAppearance, WorkspaceMode, fs,
+    RunMode, Selection, ServiceHealthEntry, ServiceHealthSnapshot, ServiceState, SettingId,
+    SettingPreview, SettingType, SettingValue, SettingsView, Theme, ThemeAppearance, fs,
     outcome_clause, persist_setting, registry_failure_summary, startup_status,
 };
 use crate::{
@@ -310,7 +310,7 @@ impl App {
             SettingId::GitRefreshIntervalSeconds => {
                 SettingValue::Integer(self.config.git.refresh_interval_seconds)
             }
-            SettingId::WorkspaceMode => SettingValue::WorkspaceMode(self.config.workspace.mode),
+            SettingId::RunMode => SettingValue::RunMode(self.config.mode()),
             _ => setting.configured_value(&self.config),
         }
     }
@@ -488,10 +488,10 @@ impl App {
                 .copied()
                 .map(SettingValue::SessionStrip)
                 .collect(),
-            SettingType::WorkspaceMode => WorkspaceMode::ALL
+            SettingType::RunMode => RunMode::ALL
                 .iter()
                 .copied()
-                .map(SettingValue::WorkspaceMode)
+                .map(SettingValue::RunMode)
                 .collect(),
             SettingType::ExplorerSort => ExplorerSort::ALL
                 .iter()
@@ -652,7 +652,7 @@ impl App {
             }
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
-            | SettingValue::WorkspaceMode(_)
+            | SettingValue::RunMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)
@@ -761,7 +761,7 @@ impl App {
             }
             SettingValue::Boolean(_)
             | SettingValue::Integer(_)
-            | SettingValue::WorkspaceMode(_)
+            | SettingValue::RunMode(_)
             | SettingValue::SessionStrip(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)

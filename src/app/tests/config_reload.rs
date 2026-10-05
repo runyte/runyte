@@ -8,7 +8,7 @@
 //! plugin lifecycle is the host's half and is covered beside it.
 
 use super::*;
-use crate::config::{IndentStyle, WorkspaceMode};
+use crate::config::{IndentStyle, RunMode};
 use crate::keymap::{Key, KeySequence, Lookup};
 use crate::lsp::LspCommand;
 
@@ -185,7 +185,7 @@ fn a_resolvable_theme_is_adopted_by_the_editor_and_its_terminals() {
 #[test]
 fn a_setting_read_at_startup_stays_effective_and_is_reported_as_saved() {
     let (mut app, path) = editor("startup-bound.yaml", "workspace:\n  mode: standalone\n");
-    assert_eq!(app.config.workspace.mode, WorkspaceMode::Standalone);
+    assert_eq!(app.config.mode(), RunMode::Ide);
 
     fs::write(
         &path,
@@ -195,18 +195,15 @@ fn a_setting_read_at_startup_stays_effective_and_is_reported_as_saved() {
     app.execute_command("config-reload").unwrap();
 
     // Effective values are what this process is actually doing.
-    assert_eq!(app.config.workspace.mode, WorkspaceMode::Standalone);
+    assert_eq!(app.config.mode(), RunMode::Ide);
     assert!(app.config.editor.mouse);
     // Saved values are what the file now says, so the settings page offers them.
-    assert_eq!(
-        app.persisted_config.workspace.mode,
-        WorkspaceMode::Persistent
-    );
+    assert_eq!(app.persisted_config.mode(), RunMode::Mux);
     assert!(!app.persisted_config.editor.mouse);
     assert!(!app.status_error, "{}", app.status);
     assert!(
         app.status
-            .contains("restart required for editor.mouse, workspace.mode"),
+            .contains("restart required for editor.mouse, mode"),
         "{}",
         app.status
     );

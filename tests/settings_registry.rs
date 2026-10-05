@@ -10,7 +10,7 @@
 
 use runyte::{
     command::GrammarKind,
-    config::{Config, ExplorerSort, IndentStyle, SessionStripVisibility, WorkspaceMode},
+    config::{Config, ExplorerSort, IndentStyle, RunMode, SessionStripVisibility},
     settings::{SettingId, SettingRegistry, SettingType, SettingValue},
 };
 
@@ -41,15 +41,13 @@ fn other_value(setting: SettingId, current: &SettingValue, config: &Config) -> S
                 SessionStripVisibility::Always
             })
         }
-        (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(value)) => {
-            SettingValue::WorkspaceMode(
-                WorkspaceMode::ALL
-                    .iter()
-                    .copied()
-                    .find(|candidate| candidate != value)
-                    .expect("a second workspace mode"),
-            )
-        }
+        (SettingType::RunMode, SettingValue::RunMode(value)) => SettingValue::RunMode(
+            RunMode::ALL
+                .iter()
+                .copied()
+                .find(|candidate| candidate != value)
+                .expect("a second workspace mode"),
+        ),
         (SettingType::ExplorerSort, SettingValue::ExplorerSort(value)) => {
             SettingValue::ExplorerSort(
                 ExplorerSort::ALL
@@ -90,7 +88,7 @@ fn wrong_typed_value(setting: SettingId) -> SettingValue {
         | SettingType::Integer { .. }
         | SettingType::Theme
         | SettingType::SessionStrip
-        | SettingType::WorkspaceMode
+        | SettingType::RunMode
         | SettingType::ExplorerSort
         | SettingType::Indent
         | SettingType::Text => SettingValue::Boolean(true),
@@ -221,8 +219,8 @@ fn only_the_enumerated_setting_types_offer_values_to_choose_from() {
                 assert_eq!(allowed, names, "{key}");
             }
             SettingType::SessionStrip => assert_eq!(allowed, ["auto", "always", "hidden"], "{key}"),
-            SettingType::WorkspaceMode => {
-                let modes = WorkspaceMode::ALL
+            SettingType::RunMode => {
+                let modes = RunMode::ALL
                     .iter()
                     .map(ToString::to_string)
                     .collect::<Vec<_>>();

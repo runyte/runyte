@@ -2130,7 +2130,7 @@ fn persistent_launch_without_controlling_terminal_helper() {
 /// `--mux` means "keep this workspace alive and show its TUI", which is
 /// answerable whether or not one is running, so it starts the missing host
 /// itself rather than failing at connect. This runs under the default
-/// standalone `workspace.mode`, where the start used to be skipped entirely.
+/// standalone `mode`, where the start used to be skipped entirely.
 ///
 /// The helper starts a fresh session before it execs the client, so Crossterm
 /// cannot reopen the test runner's `/dev/tty`. Entering raw mode therefore

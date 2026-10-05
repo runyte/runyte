@@ -198,3 +198,31 @@ fn init_creates_a_workspace_and_exits_without_opening_it() {
         String::from_utf8_lossy(&again.stdout)
     );
 }
+
+#[test]
+fn a_configured_editor_mode_needs_no_workspace_and_a_mode_option_overrides_it() {
+    let owner = TestRuntimeRoot::new("configured-editor").unwrap();
+    let directory = owner.join("etc");
+    fs::create_dir_all(&directory).unwrap();
+    let targets = binary_targets(&directory);
+    let config = owner.join("editor.yaml");
+    fs::write(&config, "mode: editor\nlsp:\n  enable: false\n").unwrap();
+    let config = config.to_str().unwrap();
+
+    let editor = runyte(
+        &owner,
+        &directory,
+        &["--config", config, targets[0], targets[1]],
+    );
+    let stderr = String::from_utf8_lossy(&editor.stderr);
+    assert!(stderr.contains("binary"), "{stderr}");
+    assert!(!directory.join(".runyte").exists());
+
+    let ide = runyte(
+        &owner,
+        &directory,
+        &["--config", config, "--ide", targets[0], targets[1]],
+    );
+    let stderr = String::from_utf8_lossy(&ide.stderr);
+    assert!(stderr.contains("no workspace here"), "{stderr}");
+}

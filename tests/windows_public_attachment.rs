@@ -43,7 +43,7 @@ fn direct_native_attachment_starts_retains_and_refuses_takeover() {
     let config = config_dir.join("config.yaml");
     fs::write(
         &config,
-        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n  idle_retirement_minutes: 0\n",
+        "lsp:\n  enable: false\nmode: mux\nworkspace:\n  idle_retirement_minutes: 0\n",
     )
     .unwrap();
     fs::write(project.join("note.txt"), "original\n").unwrap();
@@ -101,11 +101,7 @@ fn integrated_terminal_wait_uses_exact_parent_and_completes_each_file() {
     let cache = root.create_private_dir("cache").unwrap();
     let context = root.create_private_dir("context").unwrap();
     let config = config_dir.join("config.yaml");
-    fs::write(
-        &config,
-        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n",
-    )
-    .unwrap();
+    fs::write(&config, "lsp:\n  enable: false\nmode: mux\n").unwrap();
     fs::write(project.join("first.txt"), "FIRST_WAIT_MARKER\n").unwrap();
     fs::write(project.join("second.txt"), "SECOND_WAIT_MARKER\n").unwrap();
     let _cleanup = HostCleanup {
@@ -162,11 +158,7 @@ fn native_manager_visits_selected_live_publication_and_refuses_stale_row() {
     let context = root.create_private_dir("context").unwrap();
     root.create_private_dir("inventory").unwrap();
     let config = config_dir.join("config.yaml");
-    fs::write(
-        &config,
-        "lsp:\n  enable: false\nworkspace:\n  mode: persistent\n",
-    )
-    .unwrap();
+    fs::write(&config, "lsp:\n  enable: false\nmode: mux\n").unwrap();
     fs::write(source.join("source.txt"), "SOURCE_VISIT_MARKER\n").unwrap();
     fs::write(
         destination.join("destination.txt"),
@@ -544,7 +536,7 @@ fn public_persistent_attachment_fixture() {
     assert!(!undiscovered.status.success());
     assert!(
         String::from_utf8_lossy(&undiscovered.stderr)
-            .contains("workspace.mode: persistent requires a discoverable project"),
+            .contains("no workspace here; run runyte --init DIRECTORY to create one"),
         "{}",
         String::from_utf8_lossy(&undiscovered.stderr)
     );

@@ -3939,7 +3939,7 @@ impl App {
         }
         #[cfg(unix)]
         if matches!(chosen, Some(ListAction::Workspace(_))) && !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs mux mode");
             return Ok(());
         }
         #[cfg(unix)]

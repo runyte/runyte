@@ -1123,7 +1123,7 @@ fn a_standalone_teardown_may_stop_a_session_the_session_commands_would_refuse() 
     // The typed command still refuses, because it addresses a host this
     // workspace does not have.
     app.execute_command("session-stop").unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert_eq!(app.status, "needs mux mode");
 
     // The teardown's own stop is not that command, and gets as far as the
     // service. This app has none attached, which is how far it can get here;
@@ -1354,18 +1354,18 @@ fn standalone_refuses_every_session_command_including_the_manager() {
     // The manager addresses a host a standalone workspace does not have, so it
     // is inert rather than a list whose every row refuses.
     app.execute_command("sl").unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert_eq!(app.status, "needs mux mode");
     assert!(app.list.is_none(), "standalone opened the session manager");
 
     app.execute_command(&format!("session-attach {}", root.display()))
         .unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert_eq!(app.status, "needs mux mode");
     assert!(app.take_workspace_switch().is_none());
     app.execute_command("session-stop").unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert_eq!(app.status, "needs mux mode");
     app.execute_command(&format!("session-rename {} other", root.display()))
         .unwrap();
-    assert_eq!(app.status, "needs workspace.mode: persistent");
+    assert_eq!(app.status, "needs mux mode");
 
     // The whole namespace reads as unavailable wherever it is discovered,
     // rather than only answering once a key has been pressed.
@@ -1379,7 +1379,7 @@ fn standalone_refuses_every_session_command_including_the_manager() {
         let spec = crate::command::resolve_command(name).unwrap();
         assert_eq!(
             capabilities.command_availability(spec).reason(),
-            Some("needs workspace.mode: persistent"),
+            Some("needs mux mode"),
             "{name} should be unavailable in standalone mode"
         );
     }
@@ -2494,7 +2494,7 @@ fn direct_session_bindings_follow_the_leader_and_require_persistent_mode() {
     key(&mut app, KeyCode::Char('x'), Modifiers::CONTROL);
     press(&mut app, '4');
     assert!(app.take_workspace_switch().is_none());
-    assert!(app.status.contains("persistent"), "{}", app.status);
+    assert!(app.status.contains("mux mode"), "{}", app.status);
     assert!(app.list.is_none());
     assert!(matches!(
         app.keymap.lookup(Mode::Normal, &crate::keymap::KeySequence::from([
@@ -3028,7 +3028,7 @@ fn workspace_switch_requests_are_platform_guarded_persistent_and_preserve_dirty_
     );
     assert!(!app.request_workspace_switch_for_platform(destination.clone(), true));
     assert!(app.take_workspace_switch().is_none());
-    assert!(app.status.contains("workspace.mode: persistent"));
+    assert!(app.status.contains("needs mux mode"));
 
     app.open_file(file).unwrap();
     let buffer = app.active().buffer;

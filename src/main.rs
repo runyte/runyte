@@ -67,7 +67,7 @@ use runyte::{
         CommandCategory, CommandExecutionContext, CommandInvocation, CommandInvocationError,
         EditorCommand,
     },
-    config::{self, Config, WorkspaceMode},
+    config::{self, Config, RunMode},
     external_open, file_monitor, file_picker,
     git::{GitCliProvider, GitService, GitServiceEvent},
     git_monitor,
@@ -1243,7 +1243,7 @@ async fn run(
         && arguments.init.is_none()
     {
         let loaded = Config::load(arguments.config.as_deref())?;
-        if uses_automatic_persistent_mode(&arguments, loaded.0.workspace.mode) {
+        if uses_automatic_persistent_mode(&arguments, loaded.0.mode()) {
             arguments.mode = LaunchMode::Persistent;
         }
         native_preloaded_config = Some(loaded);
@@ -1474,18 +1474,23 @@ async fn run(
     };
     #[cfg(not(windows))]
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
-    let automatic_persistent = uses_automatic_persistent_mode(&arguments, config.workspace.mode);
+    let automatic_persistent = uses_automatic_persistent_mode(&arguments, config.mode());
     if automatic_persistent {
         #[cfg(unix)]
         {
             arguments.mode = LaunchMode::Persistent;
         }
         #[cfg(all(not(unix), not(windows)))]
-        anyhow::bail!("workspace.mode: persistent is not supported on this platform");
+        anyhow::bail!("mode: mux is not supported on this platform");
         #[cfg(windows)]
         unreachable!("automatic Windows persistent launch returned through native attachment");
     }
     startup.mark(StartupPhase::ConfigLoaded);
+    // Decided before anything resolves a workspace: `-a DIRECTORY` may
+    // create one, and as root that must not happen at all.
+    let running_as_root = effective_user_is_root();
+    let editor = launch_is_editor(&arguments, config.mode());
+    refuse_workspace_modes_as_root(&arguments, editor, running_as_root)?;
     let launch_directory = std::env::current_dir()?;
     arguments.cwd_file = arguments
         .cwd_file
@@ -1550,9 +1555,6 @@ async fn run(
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
-    let running_as_root = effective_user_is_root();
-    refuse_workspace_modes_as_root(&arguments, running_as_root)?;
-    let editor = launch_is_editor(&arguments);
     let project_root = match arguments.project_root.take() {
         // Editor mode has no workspace. The launch directory stands in as
         // the root that relative paths are displayed against; nothing
@@ -1634,7 +1636,7 @@ async fn run(
                     // Persistent mode means "put a TUI on this workspace's
                     // host", which is answerable whether or not one is already
                     // running. Starting the missing host here is what a bare
-                    // launch under `workspace.mode: persistent` has always
+                    // launch under `mode: mux` has always
                     // done.
                     if connect_control(&endpoint).await.is_err() {
                         let startup = HostStartup::new(std::env::current_exe()?, "attached")
@@ -1796,6 +1798,7 @@ async fn run(
     } else {
         None
     };
+    let config_warnings = config.deprecation_warnings();
     let mut app = if editor {
         App::new_editor_with_deferred_syntax(
             config,
@@ -1812,6 +1815,14 @@ async fn run(
         )?
     };
     app.note_running_as_root(running_as_root);
+    for warning in config_warnings {
+        app.push_notification(NotificationDraft::new(
+            NotificationSeverity::Warning,
+            "Configuration",
+            "Deprecated setting",
+            warning,
+        ));
+    }
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -2322,10 +2333,7 @@ fn about_invocation() -> Result<CommandInvocation, CommandInvocationError> {
     CommandInvocation::editor(EditorCommand::ShowAbout, CommandExecutionContext::default())
 }
 
-fn uses_automatic_persistent_mode(
-    arguments: &LaunchArguments,
-    workspace_mode: WorkspaceMode,
-) -> bool {
+fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMode) -> bool {
     // The persistent default is deliberately a bare-launch convenience. A
     // target may carry a caller-relative path or an initial caret position,
     // and the attach protocol does not represent all of those launch
@@ -2335,13 +2343,15 @@ fn uses_automatic_persistent_mode(
         && arguments.targets.is_empty()
         && arguments.init.is_none()
         && !arguments.editor
-        && workspace_mode == WorkspaceMode::Persistent
+        && configured == RunMode::Mux
 }
 
 /// Whether this launch runs in editor mode: standalone, with no workspace.
-/// Only `--editor` asks for it; the launch directory never decides.
-fn launch_is_editor(arguments: &LaunchArguments) -> bool {
-    arguments.mode == LaunchMode::Standalone && arguments.editor
+/// `--editor` asks for it, and so does `mode: editor` when no mode option is
+/// given; the launch directory never decides.
+fn launch_is_editor(arguments: &LaunchArguments, configured: RunMode) -> bool {
+    arguments.mode == LaunchMode::Standalone
+        && (arguments.editor || (!arguments.mode_explicit && configured == RunMode::Editor))
 }
 
 /// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
@@ -2380,11 +2390,12 @@ fn initialize_workspace(
 /// root-owned runtime state in a workspace some other account owns.
 fn refuse_workspace_modes_as_root(
     arguments: &LaunchArguments,
+    editor: bool,
     running_as_root: bool,
 ) -> Result<()> {
     let workspace_mode = match arguments.mode {
         // `--init` only creates a directory; it opens no workspace.
-        LaunchMode::Standalone => !arguments.editor && arguments.init.is_none(),
+        LaunchMode::Standalone => !editor && arguments.init.is_none(),
         LaunchMode::Persistent | LaunchMode::Wait | LaunchMode::Serve => true,
         _ => false,
     };
@@ -7696,7 +7707,7 @@ mod tests {
     use runyte::launch::LaunchArguments;
     use runyte::{
         app::App,
-        config::{Config, WorkspaceMode},
+        config::{Config, RunMode},
         input::{InputEvent, KeyCode, KeyStroke, Modifiers, PointerEvent, PointerEventKind},
         key_hints::KeyHintState,
         tui::input::convert_event,
@@ -8762,49 +8773,37 @@ mod tests {
         let explicit_standalone = LaunchArguments::parse_from(["--ide".into()]).unwrap();
         let init = LaunchArguments::parse_from(["--init".into(), "project".into()]).unwrap();
 
-        assert!(uses_automatic_persistent_mode(
-            &bare,
-            WorkspaceMode::Persistent
-        ));
-        assert!(!uses_automatic_persistent_mode(
-            &file,
-            WorkspaceMode::Persistent
-        ));
-        assert!(!uses_automatic_persistent_mode(
-            &directory,
-            WorkspaceMode::Persistent
-        ));
-        assert!(!uses_automatic_persistent_mode(
-            &positioned,
-            WorkspaceMode::Persistent
-        ));
+        assert!(uses_automatic_persistent_mode(&bare, RunMode::Mux));
+        assert!(!uses_automatic_persistent_mode(&file, RunMode::Mux));
+        assert!(!uses_automatic_persistent_mode(&directory, RunMode::Mux));
+        assert!(!uses_automatic_persistent_mode(&positioned, RunMode::Mux));
         assert!(!uses_automatic_persistent_mode(
             &explicit_standalone,
-            WorkspaceMode::Persistent
+            RunMode::Mux
         ));
-        assert!(!uses_automatic_persistent_mode(
-            &init,
-            WorkspaceMode::Persistent
-        ));
-        assert!(!uses_automatic_persistent_mode(
-            &bare,
-            WorkspaceMode::Standalone
-        ));
+        assert!(!uses_automatic_persistent_mode(&init, RunMode::Mux));
+        assert!(!uses_automatic_persistent_mode(&bare, RunMode::Ide));
     }
 
     #[test]
-    fn only_the_editor_flag_selects_editor_mode() {
+    fn editor_mode_comes_from_the_flag_or_the_configured_default() {
         let parse = |arguments: &[&str]| {
             LaunchArguments::parse_from(arguments.iter().map(|argument| (*argument).into()))
                 .unwrap()
         };
-        assert!(super::launch_is_editor(&parse(&["--editor", "/etc/fstab"])));
-        assert!(super::launch_is_editor(&parse(&["--editor"])));
-        // The launch directory never decides: a target alone is ide mode,
-        // which then needs a workspace.
-        assert!(!super::launch_is_editor(&parse(&["/etc/fstab"])));
-        assert!(!super::launch_is_editor(&parse(&["--ide", "/etc/fstab"])));
-        assert!(!super::launch_is_editor(&parse(&["--mux"])));
+        let is_editor =
+            |arguments: &[&str], configured| super::launch_is_editor(&parse(arguments), configured);
+        assert!(is_editor(&["--editor", "/etc/fstab"], RunMode::Ide));
+        assert!(is_editor(&["--editor"], RunMode::Mux));
+        // The launch directory never decides: a target alone takes the
+        // configured mode, which is ide unless set otherwise.
+        assert!(!is_editor(&["/etc/fstab"], RunMode::Ide));
+        assert!(is_editor(&["/etc/fstab"], RunMode::Editor));
+        assert!(is_editor(&[], RunMode::Editor));
+        // A mode option overrides the configured default.
+        assert!(!is_editor(&["--ide", "/etc/fstab"], RunMode::Editor));
+        assert!(!is_editor(&["--mux"], RunMode::Editor));
+        assert!(!is_editor(&["--wait", "note.txt"], RunMode::Editor));
     }
 
     /// An editor-mode host starts none of the services that assume a workspace.
@@ -8908,14 +8907,16 @@ mod tests {
             &["--wait", "/etc/hosts"][..],
             &["--serve"][..],
         ] {
-            let error = super::refuse_workspace_modes_as_root(&parse(arguments), true)
+            let arguments = parse(arguments);
+            let editor = super::launch_is_editor(&arguments, RunMode::Ide);
+            let error = super::refuse_workspace_modes_as_root(&arguments, editor, true)
                 .expect_err("a workspace mode is refused as root");
             assert!(
                 error.to_string().contains("runed"),
                 "{arguments:?}: {error}"
             );
             assert!(
-                super::refuse_workspace_modes_as_root(&parse(arguments), false).is_ok(),
+                super::refuse_workspace_modes_as_root(&arguments, editor, false).is_ok(),
                 "{arguments:?}"
             );
         }
@@ -8924,20 +8925,23 @@ mod tests {
             &["--session-list"][..],
             &["--init", "/srv/project"][..],
         ] {
+            let arguments = parse(arguments);
+            let editor = super::launch_is_editor(&arguments, RunMode::Ide);
             assert!(
-                super::refuse_workspace_modes_as_root(&parse(arguments), true).is_ok(),
+                super::refuse_workspace_modes_as_root(&arguments, editor, true).is_ok(),
                 "{arguments:?}"
             );
         }
+        // A configured editor default is editor mode as root too.
+        let target = parse(&["/etc/hosts"]);
+        let editor = super::launch_is_editor(&target, RunMode::Editor);
+        assert!(super::refuse_workspace_modes_as_root(&target, editor, true).is_ok());
     }
 
     #[test]
     fn editor_keeps_a_bare_launch_off_the_persistent_default() {
         let editor = LaunchArguments::parse_from(["--editor".into()]).unwrap();
-        assert!(!uses_automatic_persistent_mode(
-            &editor,
-            WorkspaceMode::Persistent
-        ));
+        assert!(!uses_automatic_persistent_mode(&editor, RunMode::Mux));
     }
 
     #[test]

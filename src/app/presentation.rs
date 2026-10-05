@@ -2204,7 +2204,7 @@ impl App {
                         }
                         if *action == super::TerminalAction::OpenSessionDirectory {
                             let reason = if !self.persistent_session {
-                                Some("Needs workspace.mode: persistent")
+                                Some("Needs mux mode")
                             } else if self
                                 .terminals
                                 .get(menu.id)
@@ -2459,7 +2459,7 @@ impl App {
                         | SettingType::Boolean
                         | SettingType::Theme
                         | SettingType::SessionStrip
-                        | SettingType::WorkspaceMode
+                        | SettingType::RunMode
                         | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
                         SettingType::Indent => setting.descriptor().key.to_owned(),
                     },

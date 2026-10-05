@@ -850,12 +850,8 @@ mod tests {
             git_merge_continue: CommandAvailability::Available,
             git_conflict: CommandAvailability::Available,
             git_conflict_whole: CommandAvailability::Available,
-            persistent_session: CommandAvailability::Unavailable(
-                "needs workspace.mode: persistent".to_owned(),
-            ),
-            session_controls: CommandAvailability::Unavailable(
-                "needs workspace.mode: persistent".to_owned(),
-            ),
+            persistent_session: CommandAvailability::Unavailable("needs mux mode".to_owned()),
+            session_controls: CommandAvailability::Unavailable("needs mux mode".to_owned()),
             workspace: CommandAvailability::Unavailable(
                 crate::service_health::EDITOR_MODE_REASON.to_owned(),
             ),

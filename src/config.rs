@@ -27,6 +27,10 @@ pub use paths::default_config_root;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// The mode a launch without a mode option runs in. `None` falls back
+    /// to the deprecated `workspace.mode`, then to `ide`; read it through
+    /// [`Config::mode`].
+    pub mode: Option<RunMode>,
     pub plugins: Vec<crate::plugin::PluginConfig>,
     pub editor: EditorConfig,
     pub indentation: crate::indentation::Overrides,
@@ -233,7 +237,9 @@ pub struct WorkspaceConfig {
     /// On Windows, the OS-known-folder boundary beneath which durable plugin
     /// state may be created. Omission keeps the full-ancestry durability path.
     pub state_anchor: Option<WorkspaceStateAnchor>,
-    pub mode: WorkspaceMode,
+    /// Deprecated spelling of the top-level `mode`, kept so existing files
+    /// still choose the mode they always did.
+    pub mode: Option<LegacyWorkspaceMode>,
     pub session_strip: SessionStripVisibility,
     /// Minutes a clean host with no client or wait request remains alive.
     /// Zero disables automatic retirement.
@@ -247,12 +253,32 @@ pub enum WorkspaceStateAnchor {
     LocalAppData,
 }
 
+/// What a launch provides: editing with no workspace, a workspace, or a
+/// workspace kept alive in a persistent session.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum WorkspaceMode {
+pub enum RunMode {
+    Editor,
     #[default]
+    Ide,
+    Mux,
+}
+
+/// The values `workspace.mode` accepted before it became `mode`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LegacyWorkspaceMode {
     Standalone,
     Persistent,
+}
+
+impl From<LegacyWorkspaceMode> for RunMode {
+    fn from(mode: LegacyWorkspaceMode) -> Self {
+        match mode {
+            LegacyWorkspaceMode::Standalone => Self::Ide,
+            LegacyWorkspaceMode::Persistent => Self::Mux,
+        }
+    }
 }
 
 /// Visibility of the running persistent-session navigation row.
@@ -279,16 +305,17 @@ impl fmt::Display for SessionStripVisibility {
     }
 }
 
-impl WorkspaceMode {
-    pub const ALL: &'static [Self] = &[Self::Standalone, Self::Persistent];
+impl RunMode {
+    pub const ALL: &'static [Self] = &[Self::Editor, Self::Ide, Self::Mux];
 }
 
-impl fmt::Display for WorkspaceMode {
+impl fmt::Display for RunMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Standalone => formatter.write_str("standalone"),
-            Self::Persistent => formatter.write_str("persistent"),
-        }
+        formatter.write_str(match self {
+            Self::Editor => "editor",
+            Self::Ide => "ide",
+            Self::Mux => "mux",
+        })
     }
 }
 
@@ -889,6 +916,7 @@ fn built_in_themes() -> HashMap<String, ThemeDefinition> {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            mode: None,
             editor: EditorConfig::default(),
             indentation: crate::indentation::Overrides::default(),
             workspace: WorkspaceConfig::default(),
@@ -947,7 +975,7 @@ impl Default for WorkspaceConfig {
         Self {
             state: PathBuf::from(".runyte"),
             state_anchor: None,
-            mode: WorkspaceMode::Standalone,
+            mode: None,
             session_strip: SessionStripVisibility::Auto,
             idle_retirement_minutes: 0,
         }
@@ -1050,6 +1078,29 @@ impl Default for ThemeDefinition {
 }
 
 impl Config {
+    /// The mode a launch without a mode option runs in.
+    pub fn mode(&self) -> RunMode {
+        self.mode
+            .or_else(|| self.workspace.mode.map(RunMode::from))
+            .unwrap_or_default()
+    }
+
+    /// What the configuration still spells in a deprecated way, as sentences
+    /// naming the replacement.
+    pub fn deprecation_warnings(&self) -> Vec<String> {
+        let Some(legacy) = self.workspace.mode else {
+            return Vec::new();
+        };
+        vec![if self.mode.is_some() {
+            "workspace.mode is ignored because mode is set; remove workspace.mode".to_owned()
+        } else {
+            format!(
+                "workspace.mode is deprecated; replace it with mode: {}",
+                RunMode::from(legacy)
+            )
+        }]
+    }
+
     pub fn load(path: Option<&Path>) -> Result<(Self, Option<PathBuf>)> {
         let path = path.map(Path::to_path_buf).or_else(default_config_path);
         let Some(path) = path else {
@@ -1700,7 +1751,8 @@ mod tests {
     fn workspace_state_defaults_and_accepts_the_original_root_spelling() {
         assert_eq!(Config::default().workspace.state, PathBuf::from(".runyte"));
         assert_eq!(Config::default().workspace.state_anchor, None);
-        assert_eq!(Config::default().workspace.mode, WorkspaceMode::Standalone);
+        assert_eq!(Config::default().mode(), RunMode::Ide);
+        assert_eq!(Config::default().workspace.mode, None);
         assert_eq!(Config::default().workspace.idle_retirement_minutes, 0);
 
         let renamed: Config = serde_yaml::from_str("workspace:\n  state: .state\n").unwrap();
@@ -1714,8 +1766,32 @@ mod tests {
         let persistent: Config =
             serde_yaml::from_str("workspace:\n  mode: persistent\n  idle_retirement_minutes: 30\n")
                 .unwrap();
-        assert_eq!(persistent.workspace.mode, WorkspaceMode::Persistent);
+        assert_eq!(persistent.mode(), RunMode::Mux);
         assert_eq!(persistent.workspace.idle_retirement_minutes, 30);
+
+        let current: Config = serde_yaml::from_str("mode: editor\n").unwrap();
+        assert_eq!(current.mode(), RunMode::Editor);
+        assert!(current.deprecation_warnings().is_empty());
+        assert!(serde_yaml::from_str::<Config>("mode: standalone\n").is_err());
+
+        // The old key keeps choosing what it chose, and says what replaces it.
+        let legacy: Config = serde_yaml::from_str("workspace:\n  mode: standalone\n").unwrap();
+        assert_eq!(legacy.mode(), RunMode::Ide);
+        assert_eq!(
+            legacy.deprecation_warnings(),
+            ["workspace.mode is deprecated; replace it with mode: ide"]
+        );
+        assert_eq!(
+            persistent.deprecation_warnings(),
+            ["workspace.mode is deprecated; replace it with mode: mux"]
+        );
+        let both: Config =
+            serde_yaml::from_str("mode: editor\nworkspace:\n  mode: persistent\n").unwrap();
+        assert_eq!(both.mode(), RunMode::Editor);
+        assert_eq!(
+            both.deprecation_warnings(),
+            ["workspace.mode is ignored because mode is set; remove workspace.mode"]
+        );
 
         let anchored: Config = serde_yaml::from_str(
             "workspace:\n  state: C:/Users/example/project/.runyte\n  state_anchor: local-app-data\n",

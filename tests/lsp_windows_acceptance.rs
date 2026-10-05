@@ -355,7 +355,7 @@ fn until(events: &mpsc::Receiver<PtyEvent>, screen: &mut Emulator, marker: &str)
 
 fn frontend(root: &Path, project: &Path) {
     let config = root.join("config/editor.yaml");
-    fs::write(&config, "workspace:\n  mode: standalone\nlsp:\n  enable: true\n  rust:\n    command: runyte-intentionally-missing-language-server\n").unwrap();
+    fs::write(&config, "mode: ide\nlsp:\n  enable: true\n  rust:\n    command: runyte-intentionally-missing-language-server\n").unwrap();
     let (send, events) = mpsc::channel();
     let terminal = Pty::spawn(
         Path::new(env!("CARGO_BIN_EXE_runyte")).as_os_str(),

@@ -2401,7 +2401,9 @@ fn restart_required_setting_is_saved_without_claiming_a_live_transition() {
 }
 
 #[test]
-fn workspace_mode_is_visible_and_saved_for_future_launches_only() {
+fn run_mode_is_visible_and_saved_for_future_launches_only() {
+    // A file still using the deprecated key shows the mode it selects, and
+    // saving writes the current key, which takes precedence from then on.
     let path = temporary("settings-workspace-mode.yaml");
     fs::write(&path, "workspace:\n  mode: standalone\n").unwrap();
     let (config, _) = Config::load(Some(&path)).unwrap();
@@ -2410,11 +2412,11 @@ fn workspace_mode_is_visible_and_saved_for_future_launches_only() {
     app.open_settings_buffer();
 
     let row = (0..app.active_buffer().len_lines())
-        .find(|row| app.active_buffer().setting_at(*row) == Some(SettingId::WorkspaceMode))
+        .find(|row| app.active_buffer().setting_at(*row) == Some(SettingId::RunMode))
         .unwrap();
-    assert!(app.active_buffer().line_string(row).contains("standalone"));
+    assert!(app.active_buffer().line_string(row).contains("ide"));
 
-    app.open_setting_values(SettingId::WorkspaceMode);
+    app.open_setting_values(SettingId::RunMode);
     let persistent = app
         .list_actions
         .iter()
@@ -2422,7 +2424,7 @@ fn workspace_mode_is_visible_and_saved_for_future_launches_only() {
             matches!(
                 action,
                 ListAction::SettingValue {
-                    value: SettingValue::WorkspaceMode(WorkspaceMode::Persistent),
+                    value: SettingValue::RunMode(RunMode::Mux),
                     ..
                 }
             )
@@ -2431,28 +2433,27 @@ fn workspace_mode_is_visible_and_saved_for_future_launches_only() {
     app.list.as_mut().unwrap().selected = persistent;
     app.preview_selected_setting_value();
     assert_eq!(
-        app.config.workspace.mode,
-        WorkspaceMode::Standalone,
+        app.config.mode(),
+        RunMode::Ide,
         "the launch mode was already selected before App construction"
     );
 
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
-    assert_eq!(app.config.workspace.mode, WorkspaceMode::Standalone);
-    assert_eq!(
-        app.persisted_config.workspace.mode,
-        WorkspaceMode::Persistent
-    );
+    assert_eq!(app.config.mode(), RunMode::Ide);
+    assert_eq!(app.persisted_config.mode(), RunMode::Mux);
     assert!(app.status.contains("restart Runyte to apply"));
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
-        "workspace:\n  mode: persistent\n"
+        "workspace:\n  mode: standalone\nmode: mux\n"
     );
     app.open_settings_buffer();
     let row = (0..app.active_buffer().len_lines())
-        .find(|row| app.active_buffer().setting_at(*row) == Some(SettingId::WorkspaceMode))
+        .find(|row| app.active_buffer().setting_at(*row) == Some(SettingId::RunMode))
         .unwrap();
-    assert!(app.active_buffer().line_string(row).contains("persistent"));
+    assert!(app.active_buffer().line_string(row).contains("mux"));
+    let (saved, _) = Config::load(Some(&path)).unwrap();
+    assert_eq!(saved.mode(), RunMode::Mux);
     fs::remove_file(path).unwrap();
 }
 

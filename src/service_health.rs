@@ -32,7 +32,7 @@ pub const PERSISTENT_SESSION_UNSUPPORTED_REASON: &str =
 /// A standalone editor owns no durable host, so the whole namespace — the
 /// manager included — has nothing to address. Naming the setting rather than
 /// the mode says what to change.
-pub const PERSISTENT_SESSION_STANDALONE_REASON: &str = "needs workspace.mode: persistent";
+pub const PERSISTENT_SESSION_STANDALONE_REASON: &str = "needs mux mode";
 
 /// Reason editor mode — standalone, with no workspace — gives for every
 /// command it does not offer: Git, language servers, MCP, plugins, sessions

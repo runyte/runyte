@@ -21,7 +21,7 @@ use crate::{
     command::GrammarKind,
     config::{
         Config, DEFAULT_THEME, ExplorerSort, IndentStyle, MAX_GIT_REFRESH_INTERVAL_SECONDS,
-        MAX_IDLE_RETIREMENT_MINUTES, SessionStripVisibility, WorkspaceMode,
+        MAX_IDLE_RETIREMENT_MINUTES, RunMode, SessionStripVisibility,
     },
     syntax::{Scope, Span},
 };
@@ -60,7 +60,7 @@ pub enum SettingId {
     EditorCommandModeDim,
     EditorTerminalThemeColors,
     EditorAutoCloseTerminal,
-    WorkspaceMode,
+    RunMode,
     SessionStrip,
     WorkspaceIdleRetirementMinutes,
     Theme,
@@ -75,7 +75,7 @@ pub enum SettingValue {
     Grammar(GrammarKind),
     Boolean(bool),
     Integer(usize),
-    WorkspaceMode(WorkspaceMode),
+    RunMode(RunMode),
     SessionStrip(SessionStripVisibility),
     ExplorerSort(ExplorerSort),
     Indent(IndentStyle),
@@ -91,7 +91,7 @@ pub enum SettingType {
         maximum: usize,
     },
     Theme,
-    WorkspaceMode,
+    RunMode,
     SessionStrip,
     ExplorerSort,
     Indent,
@@ -378,11 +378,11 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
-        id: SettingId::WorkspaceMode,
-        key: "workspace.mode",
-        title: "Workspace mode",
-        description: "Default bare launches to standalone or persistent mode",
-        value_type: SettingType::WorkspaceMode,
+        id: SettingId::RunMode,
+        key: "mode",
+        title: "Mode",
+        description: "Default launches to editor, ide, or mux mode",
+        value_type: SettingType::RunMode,
         preview: PreviewPolicy::RestartRequired,
         persistence: PersistencePolicy::ConfigFile,
     },
@@ -481,7 +481,7 @@ impl SettingId {
         Self::EditorCommandModeDim,
         Self::EditorTerminalThemeColors,
         Self::EditorAutoCloseTerminal,
-        Self::WorkspaceMode,
+        Self::RunMode,
         Self::SessionStrip,
         Self::WorkspaceIdleRetirementMinutes,
         Self::Theme,
@@ -567,7 +567,7 @@ impl SettingId {
             }
             Self::EditorExplorerSort => SettingValue::ExplorerSort(config.editor.explorer_sort),
             Self::EditorExplorerDetails => SettingValue::Boolean(config.editor.explorer_details),
-            Self::WorkspaceMode => SettingValue::WorkspaceMode(config.workspace.mode),
+            Self::RunMode => SettingValue::RunMode(config.mode()),
             Self::SessionStrip => SettingValue::SessionStrip(config.workspace.session_strip),
             Self::WorkspaceIdleRetirementMinutes => {
                 SettingValue::Integer(config.workspace.idle_retirement_minutes)
@@ -593,9 +593,7 @@ impl SettingId {
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            SettingType::WorkspaceMode => {
-                WorkspaceMode::ALL.iter().map(ToString::to_string).collect()
-            }
+            SettingType::RunMode => RunMode::ALL.iter().map(ToString::to_string).collect(),
             SettingType::ExplorerSort => {
                 ExplorerSort::ALL.iter().map(ToString::to_string).collect()
             }
@@ -612,7 +610,7 @@ impl SettingId {
         match (self.descriptor().value_type, value) {
             (SettingType::Grammar, SettingValue::Grammar(_))
             | (SettingType::Boolean, SettingValue::Boolean(_))
-            | (SettingType::WorkspaceMode, SettingValue::WorkspaceMode(_))
+            | (SettingType::RunMode, SettingValue::RunMode(_))
             | (SettingType::SessionStrip, SettingValue::SessionStrip(_))
             | (SettingType::ExplorerSort, SettingValue::ExplorerSort(_)) => Ok(()),
             (SettingType::Indent, SettingValue::Indent(_)) => Ok(()),
@@ -730,8 +728,8 @@ impl SettingId {
             (Self::SessionStrip, SettingValue::SessionStrip(value)) => {
                 config.workspace.session_strip = *value;
             }
-            (Self::WorkspaceMode, SettingValue::WorkspaceMode(value)) => {
-                config.workspace.mode = *value;
+            (Self::RunMode, SettingValue::RunMode(value)) => {
+                config.mode = Some(*value);
             }
             (Self::WorkspaceIdleRetirementMinutes, SettingValue::Integer(value)) => {
                 config.workspace.idle_retirement_minutes = *value;
@@ -751,7 +749,7 @@ impl fmt::Display for SettingType {
                 write!(formatter, "an integer from {minimum} through {maximum}")
             }
             Self::Theme => formatter.write_str("a theme name"),
-            Self::WorkspaceMode => formatter.write_str("a workspace mode"),
+            Self::RunMode => formatter.write_str("a mode"),
             Self::SessionStrip => formatter.write_str("a session-strip visibility"),
             Self::ExplorerSort => formatter.write_str("an explorer order"),
             Self::Indent => formatter.write_str("an indent style"),
@@ -766,7 +764,7 @@ impl fmt::Display for SettingValue {
             Self::Grammar(value) => value.fmt(formatter),
             Self::Boolean(value) => value.fmt(formatter),
             Self::Integer(value) => value.fmt(formatter),
-            Self::WorkspaceMode(value) => value.fmt(formatter),
+            Self::RunMode(value) => value.fmt(formatter),
             Self::SessionStrip(value) => value.fmt(formatter),
             Self::ExplorerSort(value) => formatter.write_str(value.label()),
             Self::Indent(value) => value.fmt(formatter),
@@ -1382,7 +1380,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::Grammar(value) => value.to_string(),
         SettingValue::Boolean(value) => value.to_string(),
         SettingValue::Integer(value) => value.to_string(),
-        SettingValue::WorkspaceMode(value) => value.to_string(),
+        SettingValue::RunMode(value) => value.to_string(),
         SettingValue::SessionStrip(value) => value.to_string(),
         SettingValue::ExplorerSort(value) => value.to_string(),
         SettingValue::Indent(value) => value.to_string(),
@@ -1702,12 +1700,12 @@ mod tests {
             SettingValue::Boolean(true)
         );
         assert_eq!(
-            SettingId::WorkspaceMode.configured_value(&config),
-            SettingValue::WorkspaceMode(WorkspaceMode::Standalone)
+            SettingId::RunMode.configured_value(&config),
+            SettingValue::RunMode(RunMode::Ide)
         );
         assert_eq!(
-            SettingId::WorkspaceMode.allowed_values(&config),
-            vec!["standalone", "persistent"]
+            SettingId::RunMode.allowed_values(&config),
+            vec!["editor", "ide", "mux"]
         );
         assert_eq!(
             SettingId::Theme.allowed_values(&config),
@@ -1984,22 +1982,22 @@ mod tests {
     }
 
     #[test]
-    fn workspace_mode_persists_as_a_typed_unquoted_yaml_choice() {
+    fn run_mode_persists_as_a_typed_unquoted_top_level_choice() {
         let directory = TempDir::new();
         let path = directory.path("config.yaml");
         fs::write(&path, "# keep\nworkspace:\n  state: .editor-state # mine\n").unwrap();
 
         let config = persist_setting(
             &path,
-            SettingId::WorkspaceMode,
-            &SettingValue::WorkspaceMode(WorkspaceMode::Persistent),
+            SettingId::RunMode,
+            &SettingValue::RunMode(RunMode::Mux),
         )
         .unwrap();
 
-        assert_eq!(config.workspace.mode, WorkspaceMode::Persistent);
+        assert_eq!(config.mode(), RunMode::Mux);
         assert_eq!(
             fs::read_to_string(path).unwrap(),
-            "# keep\nworkspace:\n  state: .editor-state # mine\n  mode: persistent\n"
+            "# keep\nworkspace:\n  state: .editor-state # mine\nmode: mux\n"
         );
     }
 

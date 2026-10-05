@@ -1000,7 +1000,7 @@ impl App {
             return false;
         }
         if !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs mux mode");
             return false;
         }
         self.invalidate_unsubmitted_merge_review();
@@ -1021,7 +1021,7 @@ impl App {
             return false;
         }
         if !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs mux mode");
             return false;
         }
         self.invalidate_unsubmitted_merge_review();
@@ -1421,7 +1421,7 @@ impl App {
     #[cfg(unix)]
     pub(super) fn stop_session(&mut self, selector: PathBuf) {
         if !self.persistent_session {
-            self.action_failed("stopping sessions needs workspace.mode: persistent");
+            self.action_failed("stopping sessions needs mux mode");
             return;
         }
         let _ = self.request_session_stop(selector, false);
@@ -1430,7 +1430,7 @@ impl App {
     #[cfg(unix)]
     pub(super) fn stop_selected_session(&mut self, selection: WorkspaceSelection, force: bool) {
         if !self.persistent_session {
-            self.action_failed("stopping sessions needs workspace.mode: persistent");
+            self.action_failed("stopping sessions needs mux mode");
             return;
         }
         let Ok(Some(index)) = self.workspace_row_index(&selection) else {
@@ -1725,7 +1725,7 @@ impl App {
             return;
         }
         if !self.persistent_session {
-            self.action_failed("opening a persistent session needs workspace.mode: persistent");
+            self.action_failed("opening a persistent session needs mux mode");
             return;
         }
         self.session_navigation.directory = Some(SessionDirectoryChooser {
@@ -1980,7 +1980,7 @@ impl App {
     /// Shared numbered-session action for the leader and the session manager.
     pub(super) fn attach_numbered_session(&mut self, digit: char) {
         if !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs mux mode");
             return;
         }
         #[cfg(any(unix, windows))]
@@ -2023,7 +2023,7 @@ impl App {
             return;
         }
         if !self.persistent_session {
-            self.action_failed("attaching sessions needs workspace.mode: persistent");
+            self.action_failed("attaching sessions needs mux mode");
             return;
         }
         self.invalidate_unsubmitted_merge_review();
@@ -2039,7 +2039,7 @@ impl App {
         #[cfg(any(unix, windows))]
         {
             if !self.persistent_session {
-                self.action_failed("session navigation needs workspace.mode: persistent");
+                self.action_failed("session navigation needs mux mode");
                 return;
             }
             let selections = self
