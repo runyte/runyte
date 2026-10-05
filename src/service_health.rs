@@ -34,13 +34,11 @@ pub const PERSISTENT_SESSION_UNSUPPORTED_REASON: &str =
 /// the mode says what to change.
 pub const PERSISTENT_SESSION_STANDALONE_REASON: &str = "needs workspace.mode: persistent";
 
-/// Reason a plain session — standalone, with no workspace — gives for every
-/// command that needs one: Git, language servers, MCP, plugins and sessions.
-/// It names the command that changes the answer.
-pub const PLAIN_SESSION_REASON: &str = "needs a workspace; use :workspace-init";
-
-/// Reason a session that has a workspace gives for adding one.
-pub const WORKSPACE_PRESENT_REASON: &str = "this session already has a workspace";
+/// Reason editor mode — standalone, with no workspace — gives for every
+/// command it does not offer: Git, language servers, MCP, plugins, sessions
+/// and terminals. A running session never changes mode, so it names the mode
+/// rather than a way out of it.
+pub const EDITOR_MODE_REASON: &str = "not available in editor mode";
 
 /// Projects the persistent-session boundary through injectable values so both
 /// halves of the policy can be covered on a Unix development host.
@@ -93,7 +91,7 @@ pub struct AppCapabilitySnapshot {
     pub persistent_session: CommandAvailability,
     pub session_controls: CommandAvailability,
     pub workspace: CommandAvailability,
-    pub plain_session: CommandAvailability,
+    pub terminals: CommandAvailability,
 }
 
 impl AppCapabilitySnapshot {
@@ -122,7 +120,7 @@ impl AppCapabilitySnapshot {
             CommandCapability::PersistentSession => self.persistent_session.clone(),
             CommandCapability::SessionControls => self.session_controls.clone(),
             CommandCapability::Workspace => self.workspace.clone(),
-            CommandCapability::PlainSession => self.plain_session.clone(),
+            CommandCapability::Terminals => self.terminals.clone(),
         }
     }
 }
@@ -333,7 +331,7 @@ mod tests {
                 PERSISTENT_SESSION_UNSUPPORTED_REASON.to_owned(),
             ),
             workspace: CommandAvailability::Available,
-            plain_session: CommandAvailability::Unavailable(WORKSPACE_PRESENT_REASON.to_owned()),
+            terminals: CommandAvailability::Available,
         };
         let outline = crate::command::resolve_command("outline").unwrap();
         let status = crate::command::resolve_command("lsp-status").unwrap();

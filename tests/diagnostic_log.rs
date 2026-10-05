@@ -210,7 +210,7 @@ async fn runyte_bounded(root: &Path, arguments: &[&str]) -> std::process::Output
 fn standalone_that_fails(root: &Path, extra: &[&str]) -> std::process::Output {
     fs::write(root.join("first.bin"), [0u8, 1, 2, 3]).unwrap();
     fs::write(root.join("second.bin"), [0u8, 4, 5, 6]).unwrap();
-    let mut arguments = vec!["--standalone", "--project-root", root.to_str().unwrap()];
+    let mut arguments = vec!["--ide", "--project-root", root.to_str().unwrap()];
     arguments.extend_from_slice(extra);
     arguments.push("first.bin");
     arguments.push("second.bin");
@@ -494,7 +494,7 @@ fn concurrent_standalone_processes_never_share_a_writable_log() {
     fs::write(root.join("first.bin"), [0u8, 1, 2, 3]).unwrap();
     fs::write(root.join("second.bin"), [0u8, 4, 5, 6]).unwrap();
     let arguments = [
-        "--standalone",
+        "--ide",
         "--project-root",
         root.to_str().unwrap(),
         "first.bin",
@@ -600,7 +600,7 @@ fn an_invalid_explicit_destination_fails_startup_clearly() {
     let output = runyte(
         &root,
         &[
-            "--standalone",
+            "--ide",
             "--project-root",
             root.to_str().unwrap(),
             "--log",
@@ -1122,7 +1122,7 @@ fn the_top_level_failure_record_never_carries_a_propagated_error_chain() {
     let trace = root.join(SECRET).join("input.trace");
     let output = bundled_runyte(&root)
         .args([
-            "--standalone",
+            "--ide",
             "--project-root",
             root.to_str().unwrap(),
             "--log",

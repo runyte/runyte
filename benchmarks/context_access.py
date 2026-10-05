@@ -78,7 +78,7 @@ class Session(plugins.Session):
         self.reaped = self.closed_fd = False
         self.origin_ns = time.monotonic_ns()
         self.origin = time.perf_counter()
-        argv = [str(binary), '--standalone', '--project-root', str(self.project),
+        argv = [str(binary), '--ide', '--project-root', str(self.project),
                 '--config', str(config), str(self.fixture)]
         self.pid, self.fd = plugins.spawn(argv, self.env, str(self.project))
 

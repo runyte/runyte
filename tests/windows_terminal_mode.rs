@@ -77,7 +77,7 @@ fn terminal_mode_fixture() {
     let editor = Pty::spawn_in_context(
         Path::new(env!("CARGO_BIN_EXE_runyte")).as_os_str(),
         &[
-            "--standalone".into(),
+            "--ide".into(),
             "--config".into(),
             config.display().to_string(),
         ],

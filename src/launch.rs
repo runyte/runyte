@@ -69,8 +69,9 @@ pub struct LaunchArguments {
     /// The workspace this process serves, when the caller has already resolved
     /// it. Discovery and its non-Git prompt are skipped in favour of this.
     pub project_root: Option<PathBuf>,
-    /// Open the targets without a workspace even when one would be found.
-    pub plain: bool,
+    /// Editor mode: no workspace, Git, language servers, MCP, plugins or
+    /// terminals. Set by `--editor`, or by running the binary as `runed`.
+    pub editor: bool,
     pub help: bool,
     pub version: bool,
     pub json: bool,
@@ -162,17 +163,20 @@ impl LaunchArguments {
             match display.as_ref() {
                 "-h" | "--help" => parsed.help = true,
                 "-V" | "--version" => parsed.version = true,
-                "--standalone" => {
-                    set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?
+                // Editor and ide mode are both one standalone process; only
+                // the editor flag says that process has no workspace.
+                "--editor" => {
+                    set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?;
+                    parsed.editor = true;
                 }
+                "--ide" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?,
                 "--serve" => set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Serve)?,
-                "--plain" => parsed.plain = true,
                 // A bare `-a` attaches to the workspace found from the
                 // current directory. A trailing selector names one outright,
                 // in the same grammar `:session-attach` already accepts, so
                 // attaching from anywhere is one launch
                 // rather than a launch followed by an editor switch.
-                "-a" | "--persistent" => {
+                "-a" | "--mux" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Persistent)?
                 }
                 "--context-list" => set_mode(
@@ -355,12 +359,8 @@ impl LaunchArguments {
             "--init cannot be combined with --project-root"
         );
         ensure!(
-            !parsed.plain || parsed.mode == LaunchMode::Standalone,
-            "--plain is available only in standalone mode"
-        );
-        ensure!(
-            !parsed.plain || (parsed.init.is_none() && parsed.project_root.is_none()),
-            "--plain opens no workspace, so it cannot be combined with --init or --project-root"
+            !parsed.editor || (parsed.init.is_none() && parsed.project_root.is_none()),
+            "--editor opens no workspace, so it cannot be combined with --init or --project-root"
         );
         ensure!(
             parsed.init.is_none() || parsed.targets.is_empty(),
@@ -430,7 +430,7 @@ fn utf8_option_value(value: Option<OsString>, missing: &str) -> Result<String> {
 }
 
 fn set_mode(current: &mut LaunchMode, explicit: &mut bool, requested: LaunchMode) -> Result<()> {
-    ensure!(!*explicit, "workspace modes are mutually exclusive");
+    ensure!(!*explicit, "launch modes are mutually exclusive");
     *current = requested;
     *explicit = true;
     Ok(())
@@ -487,7 +487,7 @@ mod tests {
             vec!["--context-list"],
             vec!["--json"],
             vec!["--context-list", "--json", "file"],
-            vec!["--context-list", "--json", "--standalone"],
+            vec!["--context-list", "--json", "--ide"],
             vec!["--context-list", "--json", "--json"],
             vec!["--context-list", "--json", "--config", "unused.yaml"],
             vec!["--context-list", "--json", "--project-root", "/tmp"],
@@ -581,7 +581,7 @@ mod tests {
                 .mode,
             LaunchMode::Serve
         );
-        for spelling in ["--persistent", "-a"] {
+        for spelling in ["--mux", "-a"] {
             assert_eq!(
                 LaunchArguments::parse_from([spelling.into()]).unwrap().mode,
                 LaunchMode::Persistent
@@ -594,7 +594,7 @@ mod tests {
             LaunchMode::Wait
         );
         assert!(LaunchArguments::parse_from(["--wait".into()]).is_err());
-        assert!(LaunchArguments::parse_from(["--serve".into(), "--persistent".into()]).is_err());
+        assert!(LaunchArguments::parse_from(["--serve".into(), "--mux".into()]).is_err());
         // Attachment is spelled as the mode it selects. The colon command's
         // name is not a second spelling of it on the command line.
         assert!(LaunchArguments::parse_from(["--session-attach".into()]).is_err());
@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn persistent_mode_takes_a_workspace_selector() {
-        for spelling in ["--persistent", "-a"] {
+        for spelling in ["--mux", "-a"] {
             let selected = LaunchArguments::parse_from([spelling.into(), "a1b2c3".into()]).unwrap();
             assert_eq!(selected.mode, LaunchMode::Persistent);
             assert_eq!(selected.workspace_selector, Some(PathBuf::from("a1b2c3")));
@@ -661,41 +661,47 @@ mod tests {
     }
 
     #[test]
-    fn plain_is_a_standalone_option_that_opens_no_workspace() {
-        let parsed = LaunchArguments::parse_from(["--plain".into(), "/etc/fstab".into()]).unwrap();
-        assert!(parsed.plain);
-        assert_eq!(parsed.mode, LaunchMode::Standalone);
-        assert_eq!(parsed.targets, [LaunchTarget::new("/etc/fstab")]);
-        assert!(
-            !LaunchArguments::parse_from(["note.txt".into()])
-                .unwrap()
-                .plain
-        );
-        assert!(
-            LaunchArguments::parse_from(["--standalone".into(), "--plain".into()])
-                .unwrap()
-                .plain
-        );
+    fn editor_ide_and_mux_select_the_launch_mode() {
+        let parse = |arguments: &[&str]| {
+            LaunchArguments::parse_from(arguments.iter().map(|argument| (*argument).into()))
+        };
+        let editor = parse(&["--editor", "/etc/fstab"]).unwrap();
+        assert!(editor.editor);
+        assert!(editor.mode_explicit);
+        assert_eq!(editor.mode, LaunchMode::Standalone);
+        assert_eq!(editor.targets, [LaunchTarget::new("/etc/fstab")]);
 
-        for mode in ["--persistent", "--serve", "--wait", "--session-list"] {
-            assert!(
-                LaunchArguments::parse_from([mode.into(), "--plain".into(), "note.txt".into()])
-                    .is_err(),
-                "{mode} --plain"
-            );
+        let ide = parse(&["--ide", "note.txt"]).unwrap();
+        assert!(!ide.editor);
+        assert!(ide.mode_explicit);
+        assert_eq!(ide.mode, LaunchMode::Standalone);
+
+        for spelling in ["--mux", "-a"] {
+            let mux = parse(&[spelling]).unwrap();
+            assert!(!mux.editor);
+            assert_eq!(mux.mode, LaunchMode::Persistent);
         }
-        assert!(
-            LaunchArguments::parse_from(["--plain".into(), "--init".into(), "/work/new".into()])
-                .is_err()
-        );
-        assert!(
-            LaunchArguments::parse_from([
-                "--plain".into(),
-                "--project-root".into(),
-                "/work".into(),
-            ])
-            .is_err()
-        );
+
+        let default = parse(&["note.txt"]).unwrap();
+        assert!(!default.editor);
+        assert!(!default.mode_explicit);
+
+        for pair in [
+            ["--editor", "--ide"],
+            ["--editor", "--mux"],
+            ["--ide", "--mux"],
+            ["--editor", "--wait"],
+            ["--editor", "--serve"],
+            ["--editor", "--session-list"],
+        ] {
+            assert!(parse(&pair).is_err(), "{pair:?}");
+        }
+        assert!(parse(&["--editor", "--init", "/work/new"]).is_err());
+        assert!(parse(&["--editor", "--project-root", "/work"]).is_err());
+        for removed in ["--plain", "--standalone", "--persistent"] {
+            let error = parse(&[removed]).unwrap_err();
+            assert!(error.to_string().contains("unknown option"), "{removed}");
+        }
     }
 
     #[test]
@@ -707,7 +713,7 @@ mod tests {
 
         assert!(LaunchArguments::parse_from(["--init".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--init".into(), "".into()]).is_err());
-        for mode in ["--persistent", "--serve"] {
+        for mode in ["--mux", "--serve"] {
             assert!(
                 LaunchArguments::parse_from([mode.into(), "--init".into(), "/work/new".into(),])
                     .is_err()
@@ -828,18 +834,12 @@ mod tests {
                 .mode_explicit
         );
         assert!(
-            LaunchArguments::parse_from(["--standalone".into()])
+            LaunchArguments::parse_from(["--ide".into()])
                 .unwrap()
                 .mode_explicit
         );
 
-        for mode in [
-            "--session-restart",
-            "--session-stop",
-            "-s",
-            "--persistent",
-            "-a",
-        ] {
+        for mode in ["--session-restart", "--session-stop", "-s", "--mux", "-a"] {
             let selected = LaunchArguments::parse_from([mode.into(), "/work/api".into()]).unwrap();
             assert_eq!(
                 selected.workspace_selector,
@@ -858,10 +858,7 @@ mod tests {
             LaunchArguments::parse_from(["--session-stop".into(), "one".into(), "two".into(),])
                 .is_err()
         );
-        assert!(
-            LaunchArguments::parse_from(["--persistent".into(), "one".into(), "two".into()])
-                .is_err()
-        );
+        assert!(LaunchArguments::parse_from(["--mux".into(), "one".into(), "two".into()]).is_err());
         assert!(LaunchArguments::parse_from(["--session-list".into(), "file".into()]).is_err());
         assert!(
             LaunchArguments::parse_from(["--session-stop-all".into(), "workspace".into()]).is_err()
@@ -870,7 +867,7 @@ mod tests {
             LaunchArguments::parse_from(["--session-clean".into(), "workspace".into()]).is_err()
         );
         assert!(LaunchArguments::parse_from(["--force".into()]).is_err());
-        assert!(LaunchArguments::parse_from(["--persistent".into(), "--force".into()]).is_err());
+        assert!(LaunchArguments::parse_from(["--mux".into(), "--force".into()]).is_err());
     }
 
     #[test]
@@ -941,7 +938,7 @@ mod tests {
                 LaunchArguments::parse_from([mode.into(), "--include-hidden".into()]).unwrap();
             assert!(parsed.include_hidden);
         }
-        for mode in ["--standalone", "--serve", "--session-stop"] {
+        for mode in ["--ide", "--serve", "--session-stop"] {
             assert!(LaunchArguments::parse_from([mode.into(), "--include-hidden".into()]).is_err());
         }
     }
@@ -951,9 +948,7 @@ mod tests {
         let parsed =
             LaunchArguments::parse_from(["--serve".into(), "--detached-host".into()]).unwrap();
         assert!(parsed.detached_host);
-        assert!(
-            LaunchArguments::parse_from(["--standalone".into(), "--detached-host".into()]).is_err()
-        );
+        assert!(LaunchArguments::parse_from(["--ide".into(), "--detached-host".into()]).is_err());
     }
 
     use std::ffi::OsString;

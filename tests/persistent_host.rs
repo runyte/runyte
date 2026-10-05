@@ -2121,13 +2121,13 @@ fn persistent_launch_without_controlling_terminal_helper() {
     );
     let error = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
-        .arg("--persistent")
+        .arg("--mux")
         .current_dir(root)
         .exec();
     panic!("persistent launch helper could not exec Runyte: {error}");
 }
 
-/// `--persistent` means "keep this workspace alive and show its TUI", which is
+/// `--mux` means "keep this workspace alive and show its TUI", which is
 /// answerable whether or not one is running, so it starts the missing host
 /// itself rather than failing at connect. This runs under the default
 /// standalone `workspace.mode`, where the start used to be skipped entirely.
@@ -2183,7 +2183,7 @@ async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_termin
     let listed = String::from_utf8(listing.stdout).unwrap();
     assert!(
         listed.contains(&endpoint.id()[..ABBREVIATED_WORKSPACE_ID]) && listed.contains("running"),
-        "--persistent did not leave a running workspace\nlisting: {listed}\nstderr: {}",
+        "--mux did not leave a running workspace\nlisting: {listed}\nstderr: {}",
         String::from_utf8_lossy(&persistent.stderr)
     );
     assert_cli_success(&shutdown);

@@ -768,7 +768,7 @@ mod tests {
             "vim",
             "ru",
             "runyte --wait",
-            "runyte --standalone",
+            "runyte --ide",
             "runyte --config custom.yaml",
             "env runyte",
             "'runyte",

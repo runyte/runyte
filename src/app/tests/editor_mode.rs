@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::{file_picker::ScanScope, service_health::PLAIN_SESSION_REASON};
+use crate::{file_picker::ScanScope, service_health::EDITOR_MODE_REASON};
 
-// -- Plain sessions ----------------------------------------------------
+// -- Editor mode -------------------------------------------------------
 //
 // A standalone session with no workspace. These cover the editor half: what
-// is refused, what search covers, and how a workspace is added later. The
-// launch decision is covered beside it in `src/main.rs`.
+// is refused and what search covers. The launch decision is covered beside
+// it in `src/main.rs`.
 
-/// A plain app whose launch directory is `root`, with `file` open.
-fn plain_app(root: &Path, file: &Path) -> App {
+/// An editor-mode app whose launch directory is `root`, with `file` open.
+fn editor_app(root: &Path, file: &Path) -> App {
     let mut app = App::new_in_isolated_project(
         root,
         HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
@@ -18,13 +18,13 @@ fn plain_app(root: &Path, file: &Path) -> App {
         ))))),
     )
     .unwrap();
-    app.enter_plain_session();
+    app.enter_editor_mode();
     app.open_file(file.to_path_buf()).unwrap();
     app
 }
 
 /// `root/etc/nginx/nginx.conf` with a sibling, plus a file directly in
-/// `root` that a project-wide search would find and a plain one must not.
+/// `root` that a project-wide search would find and an editor-mode one must not.
 fn system_tree(name: &str) -> (PathBuf, PathBuf) {
     let root = temporary(name);
     fs::create_dir_all(root.join("etc/nginx/sites")).unwrap();
@@ -37,9 +37,9 @@ fn system_tree(name: &str) -> (PathBuf, PathBuf) {
 }
 
 #[test]
-fn a_plain_session_reports_workspace_services_as_needing_a_workspace() {
-    let (root, file) = system_tree("plain-capabilities");
-    let app = plain_app(&root, &file);
+fn editor_mode_reports_workspace_services_as_unavailable() {
+    let (root, file) = system_tree("editor-capabilities");
+    let app = editor_app(&root, &file);
     let capabilities = app.command_capabilities();
     for availability in [
         &capabilities.lsp_manager,
@@ -51,7 +51,7 @@ fn a_plain_session_reports_workspace_services_as_needing_a_workspace() {
         &capabilities.persistent_session,
         &capabilities.session_controls,
     ] {
-        assert_eq!(availability.reason(), Some(PLAIN_SESSION_REASON));
+        assert_eq!(availability.reason(), Some(EDITOR_MODE_REASON));
     }
 
     let mut workspace = App::new_in_isolated_project(
@@ -64,15 +64,15 @@ fn a_plain_session_reports_workspace_services_as_needing_a_workspace() {
     workspace.open_file(file).unwrap();
     assert_ne!(
         workspace.command_capabilities().git_project.reason(),
-        Some(PLAIN_SESSION_REASON)
+        Some(EDITOR_MODE_REASON)
     );
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn git_language_server_mcp_plugin_and_session_commands_refuse_in_a_plain_session() {
-    let (root, file) = system_tree("plain-refusals");
-    let mut app = plain_app(&root, &file);
+fn git_language_server_mcp_plugin_session_and_terminal_commands_refuse_in_editor_mode() {
+    let (root, file) = system_tree("editor-refusals");
+    let mut app = editor_app(&root, &file);
     for command in [
         "git-status",
         "git-refresh",
@@ -83,6 +83,8 @@ fn git_language_server_mcp_plugin_and_session_commands_refuse_in_a_plain_session
         "plugins",
         "session-list",
         "session-stop",
+        "terminal",
+        "terminal-file-directory",
     ] {
         app.status.clear();
         let outcome = app.execute_command(command).unwrap();
@@ -90,23 +92,23 @@ fn git_language_server_mcp_plugin_and_session_commands_refuse_in_a_plain_session
             matches!(outcome, CommandOutcome::Unavailable(_)),
             "{command}: {outcome:?}"
         );
-        assert_eq!(app.status, PLAIN_SESSION_REASON, "{command}");
+        assert_eq!(app.status, EDITOR_MODE_REASON, "{command}");
     }
 
     // A key binding reaches the same refusal as the typed command.
     app.status.clear();
     app.execute_editor_command(EditorCommand::GotoDefinition)
         .unwrap();
-    assert_eq!(app.status, PLAIN_SESSION_REASON);
+    assert_eq!(app.status, EDITOR_MODE_REASON);
     assert!(!root.join(".runyte").exists());
     assert!(!root.join("etc/nginx/.runyte").exists());
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn the_plain_finder_covers_the_active_directory_and_names_it() {
-    let (root, file) = system_tree("plain-finder");
-    let mut app = plain_app(&root, &file);
+fn the_editor_mode_finder_covers_the_active_directory_and_names_it() {
+    let (root, file) = system_tree("editor-finder");
+    let mut app = editor_app(&root, &file);
 
     app.open_project_picker().unwrap();
     let picker = app.picker.as_ref().unwrap();
@@ -139,9 +141,9 @@ fn the_plain_finder_covers_the_active_directory_and_names_it() {
 }
 
 #[test]
-fn plain_project_search_is_rooted_at_the_active_directory() {
-    let (root, file) = system_tree("plain-search");
-    let mut app = plain_app(&root, &file);
+fn editor_mode_project_search_is_rooted_at_the_active_directory() {
+    let (root, file) = system_tree("editor-search");
+    let mut app = editor_app(&root, &file);
     assert_eq!(app.search_root(), root.join("etc/nginx"));
 
     let nginx = root.join("etc/nginx");
@@ -178,9 +180,9 @@ fn plain_project_search_is_rooted_at_the_active_directory() {
 }
 
 #[test]
-fn goto_file_in_a_plain_session_does_not_resolve_against_the_launch_directory() {
-    let (root, file) = system_tree("plain-goto-file");
-    let mut app = plain_app(&root, &file);
+fn goto_file_in_editor_mode_does_not_resolve_against_the_launch_directory() {
+    let (root, file) = system_tree("editor-goto-file");
+    let mut app = editor_app(&root, &file);
     let directory = Some(root.join("etc/nginx"));
     assert!(
         app.literal_navigation_candidates("outside.txt", directory.clone())
@@ -191,7 +193,7 @@ fn goto_file_in_a_plain_session_does_not_resolve_against_the_launch_directory() 
         [root.join("etc/nginx/sites/default")]
     );
 
-    app.plain = false;
+    app.editor_mode = false;
     assert_eq!(
         app.literal_navigation_candidates("outside.txt", directory),
         [root.join("outside.txt")]
@@ -200,72 +202,8 @@ fn goto_file_in_a_plain_session_does_not_resolve_against_the_launch_directory() 
 }
 
 #[test]
-fn workspace_init_gives_a_plain_session_a_workspace_at_the_active_directory() {
-    let (root, file) = system_tree("plain-workspace-init");
-    let mut app = plain_app(&root, &file);
-    assert!(!app.take_workspace_services_request());
-
-    app.execute_command("workspace-init").unwrap();
-
-    let nginx = root.join("etc/nginx");
-    assert!(nginx.join(".runyte").is_dir());
-    assert!(!root.join(".runyte").exists());
-    assert!(!app.is_plain());
-    assert_eq!(app.project_root, nginx);
-    assert_eq!(app.state_root, nginx.join(".runyte"));
-    assert_eq!(app.working_directory, nginx);
-    assert!(app.take_workspace_services_request());
-    assert!(!app.take_workspace_services_request(), "taken once");
-    assert_ne!(
-        app.command_capabilities().git_project.reason(),
-        Some(PLAIN_SESSION_REASON)
-    );
-
-    // A second initialization has nothing to do.
-    app.execute_command("workspace-init").unwrap();
-    assert!(
-        app.status.contains("already has a workspace"),
-        "{}",
-        app.status
-    );
-    assert!(!app.take_workspace_services_request());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn workspace_init_accepts_an_explicit_directory() {
-    let (root, file) = system_tree("plain-workspace-init-explicit");
-    let mut app = plain_app(&root, &file);
-
-    app.execute_command(&format!("workspace-init {}", root.join("etc").display()))
-        .unwrap();
-
-    assert!(root.join("etc/.runyte").is_dir());
-    assert!(!root.join("etc/nginx/.runyte").exists());
-    assert_eq!(app.project_root, root.join("etc"));
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn workspace_init_reports_a_directory_it_cannot_use() {
-    let (root, file) = system_tree("plain-workspace-init-missing");
-    let mut app = plain_app(&root, &file);
-
-    app.execute_command(&format!(
-        "workspace-init {}",
-        root.join("missing").display()
-    ))
-    .unwrap();
-
-    assert!(app.is_plain());
-    assert!(!app.take_workspace_services_request());
-    assert!(!root.join("missing").exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn the_filesystem_plan_says_when_it_runs_as_root() {
-    let root = temporary("plain-root-plan");
+    let root = temporary("editor-root-plan");
     fs::create_dir_all(&root).unwrap();
     let snapshot = crate::fs_plan::DirectorySnapshot::read(&root).unwrap();
     let desired = vec![crate::fs_plan::DesiredEntry::create(
@@ -296,26 +234,9 @@ fn the_filesystem_plan_says_when_it_runs_as_root() {
 }
 
 #[test]
-fn workspace_init_gives_the_host_the_new_workspace_identity() {
-    let (root, file) = system_tree("plain-workspace-init-identity");
-    let mut host = crate::workspace::WorkspaceHost::new(plain_app(&root, &file));
-    assert_eq!(host.identity().root(), root);
-
-    host.app_mut()
-        .initialize_workspace(Some(root.join("etc/nginx")));
-    host.refresh_workspace_identity();
-
-    // Context registration pairs this identity with the editor's project
-    // root, and the two must name the same workspace.
-    assert_eq!(host.identity().root(), root.join("etc/nginx"));
-    assert_eq!(host.identity().root(), host.app().project_root);
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn workspace_only_and_plain_only_commands_grey_out_in_the_other_session() {
-    let (root, file) = system_tree("plain-greying");
-    let mut app = plain_app(&root, &file);
+fn editor_mode_greys_out_workspace_and_terminal_commands() {
+    let (root, file) = system_tree("editor-greying");
+    let app = editor_app(&root, &file);
     let availability = |app: &App, name: &str| {
         let spec = crate::command::resolve_command(name).unwrap();
         app.command_capabilities().command_availability(spec)
@@ -326,44 +247,40 @@ fn workspace_only_and_plain_only_commands_grey_out_in_the_other_session() {
         "plugins",
         "plugin-stop",
         "plugin-restart",
+        "terminal",
+        "terminal-file-directory",
     ] {
         assert_eq!(
             availability(&app, name).reason(),
-            Some(PLAIN_SESSION_REASON),
+            Some(EDITOR_MODE_REASON),
             "{name}"
         );
     }
-    assert!(availability(&app, "workspace-init").is_available());
 
-    app.execute_command("workspace-init").unwrap();
-    for name in ["mcp", "lsp-trust", "plugins"] {
-        assert!(availability(&app, name).is_available(), "{name}");
+    let mut workspace = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    workspace.open_file(file).unwrap();
+    for name in ["mcp", "plugins", "terminal"] {
+        assert!(availability(&workspace, name).is_available(), "{name}");
     }
-    assert_eq!(
-        availability(&app, "workspace-init").reason(),
-        Some(crate::service_health::WORKSPACE_PRESENT_REASON)
-    );
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn workspace_init_protects_the_loaded_configuration_directory() {
-    // `--config` named a file outside the default configuration directory,
-    // and `workspace.state` points inside that file's directory. `--init`
-    // refuses this; so must `:workspace-init`, which only knows about the
-    // loaded configuration through the roots startup hands it.
-    let (root, file) = system_tree("plain-workspace-init-config");
-    let config = root.join("custom-config");
-    fs::create_dir_all(&config).unwrap();
-    let mut app = plain_app(&root, &file);
-    app.config.workspace.state = config.join("state");
-    app.note_reserved_user_roots(vec![config.clone()]);
+fn no_path_starts_a_terminal_in_editor_mode() {
+    // The explorer's and context actions reach `open_terminal_at` without a
+    // command of their own, so it refuses by itself too.
+    let (root, file) = system_tree("editor-terminal");
+    let mut app = editor_app(&root, &file);
 
-    app.execute_command("workspace-init").unwrap();
+    app.open_terminal_at(None, root.clone());
 
-    assert!(app.is_plain());
-    assert!(!app.take_workspace_services_request());
-    assert!(!config.join("state").exists());
-    assert_eq!(app.reserved_user_roots(), [config]);
+    assert_eq!(app.status, EDITOR_MODE_REASON);
+    assert!(app.active_terminal().is_none());
     fs::remove_dir_all(root).unwrap();
 }

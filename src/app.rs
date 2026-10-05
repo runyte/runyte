@@ -279,10 +279,10 @@ mod movement;
 mod navigation_workflows;
 use navigation_workflows::DestinationScope;
 mod diff_work;
+mod editor_mode;
 mod indentation_workflows;
 mod picker_workflows;
 pub(crate) mod pipe;
-mod plain_session;
 mod plugin_documents;
 mod plugin_filesystem;
 pub(crate) mod plugin_interaction;
@@ -2738,7 +2738,7 @@ struct PendingWorkspaceSearch {
     pattern: String,
     mode: SearchMode,
     started_at: Instant,
-    /// The directory a plain session's search covers, kept with the request
+    /// The directory an editor-mode search covers, kept with the request
     /// because the results buffer it opens has no directory of its own.
     /// `None` for a workspace search, which covers the project root.
     directory: Option<PathBuf>,
@@ -3030,23 +3030,15 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
-    /// A standalone session with no workspace. `project_root` then only names
-    /// the launch directory, which relative paths are displayed against;
-    /// nothing scoped to a project reads it, and `state_root` is never
-    /// created. Every workspace-scoped service checks this instead.
-    plain: bool,
-    /// Set by `:workspace-init` once the state directory exists. The event
-    /// loop owns the services a workspace needs and starts them on its next
-    /// turn.
-    workspace_services_requested: bool,
+    /// Editor mode: a standalone session with no workspace. `project_root`
+    /// then only names the launch directory, which relative paths are
+    /// displayed against; nothing scoped to a project reads it, and
+    /// `state_root` is never created. Every workspace-scoped service checks
+    /// this instead.
+    editor_mode: bool,
     /// Whether the editor process runs as root. Captured once at launch so
     /// confirmations that act on the filesystem can say so.
     running_as_root: bool,
-    /// Per-user Runyte storage a workspace state directory must not overlap:
-    /// the loaded configuration's directory and the cache. Startup injects
-    /// the list it validated the launch against, resolved from the launch
-    /// directory, so `:workspace-init` checks exactly what `--init` would.
-    reserved_user_roots: Vec<PathBuf>,
     /// Resolved once from the configured OS-known-folder policy. Plugin state
     /// workers receive this captured boundary rather than re-reading ambient
     /// paths after the workspace owner starts.
@@ -3307,11 +3299,7 @@ impl App {
     pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
         let launch_directory = std::env::current_dir()?;
         let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no Git repository or existing project workspace directory found; choose and confirm a project directory"
-            )
-        })?;
+            .ok_or_else(|| anyhow::anyhow!(project_root::NO_WORKSPACE_HERE))?;
         Self::new_in_project_with_targets(config, targets, project_root)
     }
 
@@ -3378,10 +3366,10 @@ impl App {
         )
     }
 
-    /// A plain session: standalone, with no workspace. `launch_directory`
+    /// Editor mode: standalone, with no workspace. `launch_directory`
     /// only anchors displayed relative paths; its state directory is neither
     /// validated nor created, because nothing will be written there.
-    pub fn new_plain_with_deferred_syntax(
+    pub fn new_editor_with_deferred_syntax(
         config: Config,
         targets: Vec<LaunchTarget>,
         launch_directory: impl AsRef<Path>,
@@ -3462,7 +3450,7 @@ impl App {
         programs: ProgramCache,
         ports: HostPorts,
         defer_syntax: bool,
-        plain: bool,
+        editor_mode: bool,
     ) -> Result<Self> {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
@@ -3473,7 +3461,7 @@ impl App {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        if !plain {
+        if !editor_mode {
             project_root::validate_state_root(&state_root, &reserved_user_roots)?;
         }
         let registry = Arc::new(Registry::new());
@@ -3654,10 +3642,8 @@ impl App {
             prompt_revision: 0,
             project_root,
             state_root,
-            plain,
-            workspace_services_requested: false,
+            editor_mode,
             running_as_root: false,
-            reserved_user_roots,
             plugin_state_anchor,
             git: GitTracker::new(),
             diff_worker: diff_work::Worker::new(),

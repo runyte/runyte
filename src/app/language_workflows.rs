@@ -839,7 +839,7 @@ impl App {
             if let Some(directory) = self.buffer_directory(buffer) {
                 directories.push(directory.join(requested));
             }
-            if !self.is_plain() {
+            if !self.is_editor_mode() {
                 directories.push(self.project_root.join(requested));
             }
         }
@@ -1184,14 +1184,14 @@ impl App {
                 })
             })
             .collect();
-        let directory = self.is_plain().then(|| root.clone());
+        let directory = self.is_editor_mode().then(|| root.clone());
         let request = WorkspaceSearchRequest {
             id,
             root,
             matcher,
             show_hidden: self.config.editor.show_hidden_files,
             open_buffers,
-            contained: self.is_plain(),
+            contained: self.is_editor_mode(),
         };
         self.pending_workspace_search = Some(super::PendingWorkspaceSearch {
             id,

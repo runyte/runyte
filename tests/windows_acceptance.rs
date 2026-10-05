@@ -74,14 +74,6 @@ impl Console {
         }
     }
     fn until(&mut self, needle: &str) {
-        self.until_with_row_separator(needle, "\n");
-    }
-    fn until_prompt(&mut self, needle: &str) {
-        // Setup prompts precede the editor's framed screen and may wrap in
-        // the middle of their marker when the temporary path is long.
-        self.until_with_row_separator(needle, "");
-    }
-    fn until_with_row_separator(&mut self, needle: &str, separator: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !(0..self.screen.rows())
             .filter_map(|row| self.screen.grid().line(row))
@@ -92,7 +84,7 @@ impl Console {
                     .collect::<String>()
             })
             .collect::<Vec<_>>()
-            .join(separator)
+            .join("\n")
             .contains(needle)
         {
             match self
@@ -155,39 +147,24 @@ fn native_editor_console_fixture() {
         root.join("context")
     );
     let project = root.join("project");
-    // Force the setup confirmation marker to span two rows, as happened with
-    // the longer temp path on CI. Adjust geometry rather than lengthening cwd.
-    let prompt_prefix = format!(
-        "Save Runyte project data in {}? ",
-        project.join(".runyte").display()
-    );
-    let columns =
-        u16::try_from(unicode_width::UnicodeWidthStr::width(prompt_prefix.as_str()) + 2).unwrap();
     let config = root.join("config/config.yaml");
-    std::fs::create_dir_all(&project).unwrap();
+    // An ide launch needs a workspace; the state directory makes one.
+    std::fs::create_dir_all(project.join(".runyte")).unwrap();
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "lsp:\n  enable: false\n").unwrap();
     let file = project.join("unicode note.txt");
     std::fs::write(&file, "original\r\n").unwrap();
-    // A launch naming a file outside any workspace opens a plain session
-    // without asking, so the setup question is reached by a bare launch and
-    // the file is opened once the workspace exists.
     let mut editor = Console::spawn(
         Path::new(env!("CARGO_BIN_EXE_runyte")),
         &[
-            "--standalone".into(),
+            "--ide".into(),
             "--config".into(),
             config.display().to_string(),
+            file.display().to_string(),
         ],
         &project,
-        columns,
+        120,
     );
-    editor.until_prompt("Project directory [");
-    editor.send("\r");
-    editor.until_prompt("[y/N]:");
-    editor.send("y\r");
-    editor.until("NOR");
-    editor.send(":open \"unicode note.txt\"\r");
     editor.until("original");
     editor.until("NOR");
     // In Normal mode this must never execute :quit! or its following line.

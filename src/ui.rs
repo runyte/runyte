@@ -862,8 +862,8 @@ fn render_editor_frame(
         frame,
         &app.theme,
         &snapshot.status,
-        if app.is_plain() {
-            SessionMode::Plain
+        if app.is_editor_mode() {
+            SessionMode::Editor
         } else {
             SessionMode::Standalone
         },
@@ -2919,16 +2919,16 @@ enum SessionMode {
     Standalone,
     /// This TUI is attached to a workspace host running elsewhere.
     Persistent,
-    /// A standalone process with no workspace at all.
-    Plain,
+    /// Editor mode: a standalone process with no workspace at all.
+    Editor,
 }
 
 impl SessionMode {
     fn label(self) -> &'static str {
         match self {
-            Self::Standalone => "standalone",
-            Self::Persistent => "persistent",
-            Self::Plain => "plain",
+            Self::Standalone => "ide",
+            Self::Persistent => "ide+mux",
+            Self::Editor => "editor",
         }
     }
 
@@ -2937,7 +2937,7 @@ impl SessionMode {
     fn directory_label(self) -> &'static str {
         match self {
             Self::Standalone | Self::Persistent => "Workspace",
-            Self::Plain => "Directory",
+            Self::Editor => "Directory",
         }
     }
 }
@@ -5635,7 +5635,7 @@ mod tests {
         let line = rendered_status_line(&status, 120);
 
         assert!(
-            line.starts_with(" NOR │ standalone │ Workspace: /project/runyte [+]"),
+            line.starts_with(" NOR │ ide │ Workspace: /project/runyte [+]"),
             "{line:?}"
         );
         assert!(line.contains("42:8 · 41% │ 3 sel"), "{line:?}");
@@ -5690,7 +5690,7 @@ mod tests {
         status.workspace_number = Some(1);
         let numbered = rendered_status_line_for(&status, SessionMode::Persistent, 120);
         assert!(
-            numbered.starts_with(" NOR │ persistent │ Workspace: /project/runyte "),
+            numbered.starts_with(" NOR │ ide+mux │ Workspace: /project/runyte "),
             "{numbered:?}"
         );
         assert!(!numbered.contains("[S1]"), "{numbered:?}");
@@ -5707,19 +5707,19 @@ mod tests {
 
         let standalone = rendered_status_line_for(&status, SessionMode::Standalone, 120);
         let persistent = rendered_status_line_for(&status, SessionMode::Persistent, 120);
-        let plain = rendered_status_line_for(&status, SessionMode::Plain, 120);
+        let plain = rendered_status_line_for(&status, SessionMode::Editor, 120);
 
         assert!(
-            standalone.starts_with(" NOR │ standalone │ Workspace: /project/runyte "),
+            standalone.starts_with(" NOR │ ide │ Workspace: /project/runyte "),
             "{standalone:?}"
         );
         assert!(
-            persistent.starts_with(" NOR │ persistent │ Workspace: /project/runyte "),
+            persistent.starts_with(" NOR │ ide+mux │ Workspace: /project/runyte "),
             "{persistent:?}"
         );
         // Without a workspace the path is only where the session works.
         assert!(
-            plain.starts_with(" NOR │ plain │ Directory: /project/runyte "),
+            plain.starts_with(" NOR │ editor │ Directory: /project/runyte "),
             "{plain:?}"
         );
     }
@@ -5788,10 +5788,10 @@ mod tests {
         // Wide enough to leave the path the same budget it had before the
         // session role joined the prefix, so this still clips where a wide
         // character would be split rather than somewhere easier.
-        let line = rendered_status_line(&status, 62);
+        let line = rendered_status_line(&status, 55);
 
         assert!(
-            line.starts_with(" NOR │ standalone │ Workspace: .../母 "),
+            line.starts_with(" NOR │ ide │ Workspace: .../母 "),
             "{line:?}"
         );
         assert!(line.ends_with(" 42:8 · 41% "), "{line:?}");
@@ -5928,15 +5928,12 @@ mod tests {
     fn a_plain_session_names_itself_in_the_rendered_status_row() {
         let mut app = App::new(Config::default(), None).unwrap();
         let workspace = rendered(&mut app, 160, 8);
-        assert!(
-            workspace.contains("│ standalone │ Workspace: "),
-            "{workspace:?}"
-        );
+        assert!(workspace.contains("│ ide │ Workspace: "), "{workspace:?}");
 
-        app.enter_plain_session();
+        app.enter_editor_mode();
         let plain = rendered(&mut app, 160, 8);
-        assert!(plain.contains("│ plain │ Directory: "), "{plain:?}");
-        assert!(!plain.contains("standalone"), "{plain:?}");
+        assert!(plain.contains("│ editor │ Directory: "), "{plain:?}");
+        assert!(!plain.contains(" ide "), "{plain:?}");
     }
 
     #[test]

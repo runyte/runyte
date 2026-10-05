@@ -1129,7 +1129,7 @@ fn termination_signal_restores_the_terminal_and_preserves_its_exit_status() {
     let config = default_config(&root);
     let (mut child, master, initial) = spawn_in_pty_with_initial_termios(
         bundled_runyte()
-            .args(["--standalone", "--config"])
+            .args(["--ide", "--config"])
             .arg(config)
             .arg("note.txt")
             .current_dir(&root)
@@ -1199,7 +1199,7 @@ async fn standalone_terminal_input_edits_and_quits_through_the_real_event_loop()
     let config = default_config(&root);
     let (child, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .args(["--standalone", "--config"])
+            .args(["--ide", "--config"])
             .arg(config)
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
@@ -1249,7 +1249,7 @@ async fn standalone_event_loop_drains_integrated_terminal_output_before_quitting
     let config = default_config(&root);
     let (child, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .args(["--standalone", "--config"])
+            .args(["--ide", "--config"])
             .arg(config)
             .arg("note.txt")
             .current_dir(&root)
@@ -1283,7 +1283,7 @@ async fn document_open_presents_startup_before_the_document_frame() {
     let config = default_config(&root);
     let (child, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .args(["--standalone", "--config"])
+            .args(["--ide", "--config"])
             .arg(config)
             .arg("note.txt")
             .current_dir(&root)
@@ -1325,7 +1325,7 @@ async fn named_pipe_startup_refuses_without_a_writer_and_restores_the_terminal()
     assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
     let (child, terminal, initial) = spawn_in_pty_with_initial_termios(
         bundled_runyte()
-            .args(["--standalone", "--config"])
+            .args(["--ide", "--config"])
             .arg(config)
             .arg("unsupported.lua")
             .current_dir(&root)
@@ -2627,7 +2627,7 @@ async fn killing_the_host_fails_an_attached_persistent_tui() {
     let mut control = connect_control(&endpoint).await;
     let (tui, terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -3329,7 +3329,7 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
     let mut destination = connect_control(&linked_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -3428,7 +3428,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -3505,7 +3505,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     let mut source = connect_control(&source_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -4906,7 +4906,7 @@ async fn end_of_stream(client: &mut LocalClient) -> bool {
 }
 
 /// Switching between workspaces must stay in one process. The previous
-/// arrangement spawned a child `runyte --persistent` and blocked on it, so moving
+/// arrangement spawned a child `runyte --mux` and blocked on it, so moving
 /// from one workspace to another and back again stacked processes and quitting
 /// unwound a stack instead of ending the session.
 #[tokio::test]
@@ -4955,7 +4955,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     let mut destination = connect_control(&linked_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir()),
@@ -5079,7 +5079,7 @@ async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exit
     }
     let (client, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&roots[0])
             .env("XDG_RUNTIME_DIR", runtime.path())
             .env("XDG_CACHE_HOME", &cache),
@@ -5125,7 +5125,7 @@ async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exit
     // With no other running session, quitting the remaining one exits.
     let (client, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&roots[0])
             .env("XDG_RUNTIME_DIR", runtime.path())
             .env("XDG_CACHE_HOME", &cache),
@@ -5617,7 +5617,7 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
     let mut target = connect_control(&destination_endpoint).await;
     let (switcher, mut terminal) = spawn_in_pty(
         bundled_runyte()
-            .arg("--persistent")
+            .arg("--mux")
             .current_dir(&root)
             .env("XDG_RUNTIME_DIR", test_runtime_dir())
             .env("XDG_CACHE_HOME", test_cache_dir())

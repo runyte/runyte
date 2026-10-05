@@ -198,6 +198,9 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
         || row.description.to_string(),
         |target| match target {
             BindingTarget::Editor(EditorCommand::OpenFilePicker) => "open finder".to_owned(),
+            BindingTarget::Editor(EditorCommand::OpenTerminalSelectedDirectory) => {
+                "terminal in selected dir".to_owned()
+            }
             BindingTarget::Editor(EditorCommand::ResolveConflictLiteralMarkers) => {
                 "resolve literal markers".to_owned()
             }
@@ -216,9 +219,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
     }
 
     let compact_availability = match (&row.unavailable_reason, row.availability) {
-        (Some(reason), _) if reason == crate::service_health::PLAIN_SESSION_REASON => {
-            " no workspace"
-        }
+        (Some(reason), _) if reason == crate::service_health::EDITOR_MODE_REASON => " no workspace",
         (Some(_), _) => match row.capability {
             Some(crate::command::CommandCapability::Syntax) => {
                 if row.unavailable_reason.as_deref() == Some("Syntax is still parsing") {
@@ -245,7 +246,7 @@ pub fn key_hint_description(row: &KeyHintRow) -> String {
             Some(crate::command::CommandCapability::PersistentSession) => " persistent only",
             Some(crate::command::CommandCapability::SessionControls) => " session controls",
             Some(crate::command::CommandCapability::Workspace) => " no workspace",
-            Some(crate::command::CommandCapability::PlainSession) => " has a workspace",
+            Some(crate::command::CommandCapability::Terminals) => " unavailable",
             None => " unavailable",
         },
         (_, BindingAvailability::Implemented) => "",
@@ -856,10 +857,10 @@ mod tests {
                 "needs workspace.mode: persistent".to_owned(),
             ),
             workspace: CommandAvailability::Unavailable(
-                crate::service_health::PLAIN_SESSION_REASON.to_owned(),
+                crate::service_health::EDITOR_MODE_REASON.to_owned(),
             ),
-            plain_session: CommandAvailability::Unavailable(
-                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
+            terminals: CommandAvailability::Unavailable(
+                crate::service_health::EDITOR_MODE_REASON.to_owned(),
             ),
         };
         let assert_fits = |row: &KeyHintRow| {
@@ -888,7 +889,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 409, "the command inventory changed");
+        assert_eq!(targets.len(), 408, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
@@ -1034,9 +1035,7 @@ mod tests {
             persistent_session: CommandAvailability::Available,
             session_controls: CommandAvailability::Available,
             workspace: CommandAvailability::Available,
-            plain_session: CommandAvailability::Unavailable(
-                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
-            ),
+            terminals: CommandAvailability::Available,
         };
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());
@@ -1093,9 +1092,7 @@ mod tests {
             session_controls: persistent_session.clone(),
             persistent_session,
             workspace: CommandAvailability::Available,
-            plain_session: CommandAvailability::Unavailable(
-                crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
-            ),
+            terminals: CommandAvailability::Available,
         };
         let manager_row = |capabilities: &AppCapabilitySnapshot| {
             let mut hints = KeyHintState::default();

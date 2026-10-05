@@ -2017,7 +2017,7 @@ impl App {
     /// in a plain session, so it names the directory it will cover instead.
     fn prompt_prefix(&self) -> String {
         if let PromptKind::GlobalSearch(mode) = self.prompt_kind
-            && self.is_plain()
+            && self.is_editor_mode()
         {
             let flavour = match mode {
                 crate::app::SearchMode::Insensitive => "",

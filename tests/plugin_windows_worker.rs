@@ -522,7 +522,8 @@ mod native {
 
     fn public_lifecycle(root: &Path) {
         let project = root.join("project");
-        fs::create_dir(&project).unwrap();
+        // An ide launch needs a workspace; the state directory makes one.
+        fs::create_dir_all(project.join(".runyte")).unwrap();
         let executable =
             serde_json::to_string(&std::env::current_exe().unwrap().to_string_lossy()).unwrap();
         let fixture_root = serde_json::to_string(&root.to_string_lossy()).unwrap();
@@ -534,7 +535,7 @@ mod native {
         )).unwrap();
         let (sender, events) = blocking::channel();
         let args = vec![
-            "--standalone".into(),
+            "--ide".into(),
             "--config".into(),
             config.display().to_string(),
         ];
@@ -557,13 +558,6 @@ mod native {
         let startup_deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let screen = console.screen_text();
-            if screen.contains("Project directory [") {
-                console.send("\r");
-                console.until_text("[y/N]:");
-                console.send("y\r");
-                console.until_text("NOR");
-                break;
-            }
             if screen.contains(" NOR ") {
                 break;
             }

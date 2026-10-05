@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Plain sessions, exercised through the real launch path.
+//! Editor mode and the workspace requirement of ide and mux mode, exercised
+//! through the real launch path.
 //!
 //! A standalone launch that names two binary files fails while opening its
 //! targets: after the workspace decision and logging, but before it needs a
-//! terminal. That makes the decision observable without a PTY. A launch that
-//! still resolved a workspace from a directory with none would instead stop at
-//! the project-directory question, which a null stdin cannot answer.
+//! terminal. That makes the decision observable without a PTY.
 
 #![cfg(unix)]
 
@@ -73,78 +72,87 @@ fn standalone_logs(state: &Path) -> Vec<String> {
 }
 
 #[test]
-fn a_file_launch_outside_any_workspace_opens_without_asking_or_writing_state() {
-    let owner = TestRuntimeRoot::new("plain-launch").unwrap();
+fn a_launch_outside_any_workspace_refuses_and_points_to_init() {
+    let owner = TestRuntimeRoot::new("ide-outside-workspace").unwrap();
     let directory = owner.join("etc");
     fs::create_dir_all(&directory).unwrap();
     let targets = binary_targets(&directory);
 
-    let output = runyte(&owner, &directory, &targets);
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "the binary targets fail the launch"
-    );
-    assert!(
-        !stderr.contains("Project directory") && !stderr.contains("not confirmed"),
-        "a file launch with no workspace must not ask for one: {stderr}"
-    );
-    assert!(
-        !directory.join(".runyte").exists(),
-        "a plain session creates no state directory"
-    );
+    for arguments in [
+        &[][..],
+        &targets[..],
+        &["--ide", targets[0]][..],
+        &["--mux"][..],
+    ] {
+        let output = runyte(&owner, &directory, arguments);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{arguments:?}");
+        assert!(
+            stderr.contains("no workspace here; run runyte --init DIRECTORY to create one"),
+            "{arguments:?}: {stderr}"
+        );
+        assert!(!stderr.contains("Project directory"), "{stderr}");
+        assert!(!directory.join(".runyte").exists(), "{arguments:?}");
+    }
 }
 
 #[test]
-fn a_bare_launch_outside_any_workspace_still_asks() {
-    let owner = TestRuntimeRoot::new("plain-bare-launch").unwrap();
-    let directory = owner.join("empty");
+fn editor_mode_opens_outside_any_workspace_without_writing_state() {
+    let owner = TestRuntimeRoot::new("editor-outside-workspace").unwrap();
+    let directory = owner.join("etc");
     fs::create_dir_all(&directory).unwrap();
+    let targets = binary_targets(&directory);
 
-    let output = runyte(&owner, &directory, &[]);
+    let output = runyte(&owner, &directory, &["--editor", targets[0], targets[1]]);
 
+    // The launch got as far as opening its targets, which is where two
+    // binary files fail it; a refused workspace would have stopped earlier.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
-    assert!(stderr.contains("No Git repository"), "{stderr}");
-    assert!(stderr.contains("not confirmed"), "{stderr}");
+    assert!(stderr.contains("binary"), "{stderr}");
     assert!(!directory.join(".runyte").exists());
 }
 
 #[test]
-fn plain_keeps_a_launch_inside_a_workspace_out_of_its_state() {
-    let owner = TestRuntimeRoot::new("plain-in-workspace").unwrap();
+fn editor_mode_keeps_a_launch_inside_a_workspace_out_of_its_state() {
+    let owner = TestRuntimeRoot::new("editor-in-workspace").unwrap();
     let project = owner.join("project");
     let state = project.join(".runyte");
     fs::create_dir_all(&state).unwrap();
     let targets = binary_targets(&project);
 
-    let plain = runyte(&owner, &project, &["--plain", targets[0], targets[1]]);
-    assert!(!plain.status.success());
+    let editor = runyte(&owner, &project, &["--editor", targets[0], targets[1]]);
+    assert!(!editor.status.success());
     assert_eq!(
         standalone_logs(&state),
         Vec::<String>::new(),
-        "--plain writes no log into the workspace it was launched in"
+        "editor mode writes no log into the workspace it was launched in"
     );
 
-    // The same launch without --plain belongs to the workspace and logs there.
+    // The same launch in ide mode belongs to the workspace and logs there.
     let workspace = runyte(&owner, &project, &targets);
     assert!(!workspace.status.success());
     assert_eq!(standalone_logs(&state).len(), 1);
 }
 
 #[test]
-fn plain_with_an_explicit_log_still_writes_it() {
-    let owner = TestRuntimeRoot::new("plain-explicit-log").unwrap();
+fn editor_mode_with_an_explicit_log_still_writes_it() {
+    let owner = TestRuntimeRoot::new("editor-explicit-log").unwrap();
     let directory = owner.join("etc");
     fs::create_dir_all(&directory).unwrap();
     let targets = binary_targets(&directory);
-    let log = owner.join("plain.log");
+    let log = owner.join("editor.log");
 
     let output = runyte(
         &owner,
         &directory,
-        &["--log", log.to_str().unwrap(), targets[0], targets[1]],
+        &[
+            "--editor",
+            "--log",
+            log.to_str().unwrap(),
+            targets[0],
+            targets[1],
+        ],
     );
 
     assert!(!output.status.success());

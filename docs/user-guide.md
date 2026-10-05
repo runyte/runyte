@@ -5252,7 +5252,6 @@ The working directory starts where Runyte was launched.
 | `:session-stop [WORKSPACE]` | | Stop a clean persistent session |
 | `:session-rename WORKSPACE NAME` | | Rename a persistent session |
 | `:session-clean` | | Clean verified stopped session history (Windows) |
-| `:workspace-init [DIRECTORY]` | | Give a plain session a workspace at the active directory, or at DIRECTORY |
 
 #### Terminal commands
 
@@ -7007,7 +7006,6 @@ with `{ command: name, argument: text }`.
 | `session-stop` | `session-stop [workspace]` | Stop a clean persistent session |
 | `session-rename` | `session-rename <workspace> <name>` | Rename a persistent session |
 | `session-clean` | `session-clean` | Clean verified stopped session history |
-| `workspace-init` | `workspace-init [directory]` | Make a directory this plain session's workspace |
 | `diff-disk` | `diff-disk` | Compare the active file buffer with a fresh disk observation |
 | `diff-remote` | `diff-remote` | Compare the active provider document with a fresh read-only remote snapshot |
 | `diff-this` | `diff-this` | Compare this buffer with the next one marked |

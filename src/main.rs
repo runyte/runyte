@@ -1237,17 +1237,13 @@ async fn run(
     #[cfg(windows)]
     let mut native_preloaded_config = None;
     #[cfg(windows)]
-    let mut automatic_native_persistent = false;
-    #[cfg(windows)]
     if arguments.mode == LaunchMode::Standalone
         && !arguments.mode_explicit
         && arguments.targets.is_empty()
         && arguments.init.is_none()
     {
         let loaded = Config::load(arguments.config.as_deref())?;
-        automatic_native_persistent =
-            uses_automatic_persistent_mode(&arguments, loaded.0.workspace.mode);
-        if automatic_native_persistent {
+        if uses_automatic_persistent_mode(&arguments, loaded.0.workspace.mode) {
             arguments.mode = LaunchMode::Persistent;
         }
         native_preloaded_config = Some(loaded);
@@ -1257,22 +1253,21 @@ async fn run(
     if arguments.mode == LaunchMode::Persistent {
         if let Some(context) = runyte::workspace::parent::ParentContext::from_environment()? {
             let directory = std::env::current_dir()?;
-            let discovered = if automatic_native_persistent && arguments.project_root.is_none() {
-                Some(
-                    project_root::discover(
-                        &directory,
-                        &native_preloaded_config
-                            .as_ref()
-                            .expect("automatic persistent mode loaded configuration")
-                            .0
-                            .workspace
-                            .state,
-                    )?
-                    .context("workspace.mode: persistent requires a discoverable project; use -a to initialize the current directory")?,
-                )
-            } else {
-                None
-            };
+            // With no selector the attachment uses the launch directory's own
+            // workspace. Naming a directory may create one; this may not.
+            let discovered =
+                if arguments.workspace_selector.is_none() && arguments.project_root.is_none() {
+                    let state = match native_preloaded_config.as_ref() {
+                        Some((config, _)) => config.workspace.state.clone(),
+                        None => Config::load(arguments.config.as_deref())?.0.workspace.state,
+                    };
+                    Some(
+                        project_root::discover(&directory, &state)?
+                            .context(project_root::NO_WORKSPACE_HERE)?,
+                    )
+                } else {
+                    None
+                };
             let selector = match (
                 arguments.workspace_selector.as_deref(),
                 arguments.project_root.as_deref(),
@@ -1294,7 +1289,6 @@ async fn run(
             startup,
             native_termination,
             native_preloaded_config,
-            automatic_native_persistent,
         )
         .await;
     }
@@ -1541,17 +1535,14 @@ async fn run(
         None
     };
     let attaching_elsewhere = selected_workspace.is_some();
-    let initializing_current_attachment = arguments.mode == LaunchMode::Persistent
+    let attaching_current = arguments.mode == LaunchMode::Persistent
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
     let initializing = arguments.init.is_some();
     let running_as_root = effective_user_is_root();
-    refuse_wait_as_root(&arguments, running_as_root)?;
-    let plain = launch_is_plain(&arguments, attaching_elsewhere, running_as_root, || {
-        project_root::discover(&launch_directory, &config.workspace.state)
-            .map(|root| root.is_some())
-    })?;
+    refuse_workspace_modes_as_root(&arguments, running_as_root)?;
+    let editor = launch_is_editor(&arguments);
     let project_root = match arguments.init.take() {
         Some(requested) => {
             let requested = if requested.is_absolute() {
@@ -1567,10 +1558,10 @@ async fn run(
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        // A plain session has no workspace. The launch directory stands in
-        // as the root that relative paths are displayed against; nothing
+        // Editor mode has no workspace. The launch directory stands in as
+        // the root that relative paths are displayed against; nothing
         // project-scoped reads it and its state directory is never made.
-        None if plain => {
+        None if editor => {
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             launch_directory.clone()
         }
@@ -1579,14 +1570,11 @@ async fn run(
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None if initializing_current_attachment => {
-            let requested = project_root::discover(&launch_directory, &config.workspace.state)?
-                .unwrap_or_else(|| launch_directory.clone());
-            let project_root = project_root::initialize(
-                &requested,
-                &config.workspace.state,
-                &reserved_user_roots,
-            )?;
+        // `-a` with no selector uses the workspace the launch directory
+        // belongs to. Naming a directory creates one; this does not.
+        None if attaching_current => {
+            let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
+                .context(project_root::NO_WORKSPACE_HERE)?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -1605,23 +1593,12 @@ async fn run(
                     startup.mark(StartupPhase::ProjectResolvedAutomatically);
                     project_root
                 }
-                None => {
-                    let project_root = project_root::prompt(
-                        &launch_directory,
-                        &config.workspace.state,
-                        &reserved_user_roots,
-                        runyte::app::user_home_directory().as_deref(),
-                        &mut io::stdin().lock(),
-                        &mut io::stderr().lock(),
-                    )?;
-                    startup.mark(StartupPhase::ProjectResolvedAfterPrompt);
-                    project_root
-                }
+                None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
             },
         },
     };
     let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
-    if !plain {
+    if !editor {
         project_root::validate_state_root(&state_root, &reserved_user_roots)?;
     }
     // A selected workspace does not contain the launch directory, so the host
@@ -1641,7 +1618,7 @@ async fn run(
         })?;
     }
     #[cfg(unix)]
-    let recorded_workspace = if plain {
+    let recorded_workspace = if editor {
         None
     } else if arguments.mode == LaunchMode::Standalone {
         record_recent_workspace(&project_root).ok().flatten()
@@ -1737,23 +1714,23 @@ async fn run(
     } else {
         LogRole::Standalone
     };
-    // A plain session keeps no log unless one was asked for: its default
-    // place is the state directory, which a plain session never creates.
-    let logging_failure = if plain && arguments.log.is_none() {
+    // Editor mode keeps no log unless one was asked for: its default
+    // place is the state directory, which editor mode never creates.
+    let logging_failure = if editor && arguments.log.is_none() {
         None
     } else {
         initialize_logging(
             &arguments,
             role,
             &state_root,
-            (!plain).then_some(project_root.as_path()),
+            (!editor).then_some(project_root.as_path()),
         )?
     };
     log_info!(
         "process",
         "runyte {} started", env!("CARGO_PKG_VERSION");
         "role" => role,
-        "workspace" => if plain { "none".to_owned() } else { workspace_id(&project_root) },
+        "workspace" => if editor { "none".to_owned() } else { workspace_id(&project_root) },
         "root" => project_root.display()
     );
     log_debug!(
@@ -1833,8 +1810,8 @@ async fn run(
     } else {
         None
     };
-    let mut app = if plain {
-        App::new_plain_with_deferred_syntax(
+    let mut app = if editor {
+        App::new_editor_with_deferred_syntax(
             config,
             arguments.targets,
             project_root.clone(),
@@ -1849,7 +1826,6 @@ async fn run(
         )?
     };
     app.note_running_as_root(running_as_root);
-    app.note_reserved_user_roots(reserved_user_roots.clone());
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -1932,9 +1908,9 @@ async fn run(
     // Optional services start only after the standalone editor is usable.
     // Their initialization must never hide first-frame latency.
     // The native catalog describes the workspace this editor serves, and a
-    // plain session serves none.
+    // session in editor mode serves none.
     #[cfg(windows)]
-    let native_catalog = if plain {
+    let native_catalog = if editor {
         None
     } else {
         standalone_native_catalog_config(&mut app, &reserved_user_roots)
@@ -1990,11 +1966,6 @@ async fn run(
         key_hints.expire_at(Instant::now());
         if app.should_quit {
             break;
-        }
-        // Checked here rather than beside the command that asks, because
-        // several branches below `continue` past the end of the loop body.
-        if app.take_workspace_services_request() {
-            start_workspace_services(&mut app, &mut services, config_path.as_deref());
         }
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
@@ -2377,51 +2348,31 @@ fn uses_automatic_persistent_mode(
     !arguments.mode_explicit
         && arguments.targets.is_empty()
         && arguments.init.is_none()
-        && !arguments.plain
+        && !arguments.editor
         && workspace_mode == WorkspaceMode::Persistent
 }
 
-/// Whether this launch runs as a plain session: standalone, with no
-/// workspace.
-///
-/// `--plain` asks for one outright. Otherwise a launch that names a file or
-/// directory goes plain when no workspace is found from the launch
-/// directory, rather than stopping to ask where project data should live,
-/// and always when the editor runs as root, so that root never adopts — and
-/// writes runtime state into — a workspace some other account owns. A bare
-/// launch keeps asking: it is a request to open a project. `--init`,
-/// `--project-root` and a persistent attachment each name a workspace and
-/// are never plain. `discovered` is only consulted when its answer matters.
-fn launch_is_plain(
-    arguments: &LaunchArguments,
-    attaching_elsewhere: bool,
-    running_as_root: bool,
-    discovered: impl FnOnce() -> io::Result<bool>,
-) -> io::Result<bool> {
-    if arguments.mode != LaunchMode::Standalone
-        || arguments.init.is_some()
-        || arguments.project_root.is_some()
-        || attaching_elsewhere
-    {
-        return Ok(false);
-    }
-    if arguments.plain {
-        return Ok(true);
-    }
-    if arguments.targets.is_empty() {
-        return Ok(false);
-    }
-    Ok(running_as_root || !discovered()?)
+/// Whether this launch runs in editor mode: standalone, with no workspace.
+/// Only `--editor` asks for it; the launch directory never decides.
+fn launch_is_editor(arguments: &LaunchArguments) -> bool {
+    arguments.mode == LaunchMode::Standalone && arguments.editor
 }
 
-/// Refuses `--wait` as root. It opens its files through the workspace's
-/// persistent session, starting one if needed, so as root it would leave a
-/// root-owned host and state directory in whatever workspace the launch
-/// directory belongs to — which a plain session exists to prevent.
-fn refuse_wait_as_root(arguments: &LaunchArguments, running_as_root: bool) -> Result<()> {
+/// Refuses every mode but editor as root. `ide`, `mux`, `--wait` and a
+/// foreground host all belong to a workspace, and as root they would leave
+/// root-owned runtime state in a workspace some other account owns.
+fn refuse_workspace_modes_as_root(
+    arguments: &LaunchArguments,
+    running_as_root: bool,
+) -> Result<()> {
+    let workspace_mode = match arguments.mode {
+        LaunchMode::Standalone => !arguments.editor,
+        LaunchMode::Persistent | LaunchMode::Wait | LaunchMode::Serve => true,
+        _ => false,
+    };
     anyhow::ensure!(
-        !(running_as_root && arguments.mode == LaunchMode::Wait),
-        "--wait is not available as root, because it would start a root-owned persistent session; use sudoedit, or open the file with runyte FILE for a plain session"
+        !(running_as_root && workspace_mode),
+        "as root, runyte runs only in editor mode; use runed FILE, or sudoedit FILE"
     );
     Ok(())
 }
@@ -3898,7 +3849,7 @@ fn terminal_color_depth() -> ui::TerminalColorDepth {
 /// Attaches, and keeps attaching wherever the editor asks to go next.
 ///
 /// One process for the whole session. The previous arrangement replaced the
-/// re-exec by spawning a child `runyte --persistent` and blocking on it, so moving
+/// re-exec by spawning a child `runyte --mux` and blocking on it, so moving
 /// from one workspace to another and back again stacked processes and quitting
 /// unwound a stack.
 #[cfg(unix)]
@@ -5558,7 +5509,6 @@ async fn run_native_persistent(
     startup_trace: &mut StartupTrace,
     termination: &mut TerminationSignals,
     preloaded_config: Option<(Config, Option<PathBuf>)>,
-    automatic: bool,
 ) -> Result<()> {
     anyhow::ensure!(
         arguments.targets.is_empty() && arguments.init.is_none(),
@@ -5595,13 +5545,8 @@ async fn run_native_persistent(
     let current = if arguments.workspace_selector.is_none() {
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
-            None => match project_root::discover(&directory, &config.workspace.state)? {
-                Some(root) => root,
-                None if automatic => anyhow::bail!(
-                    "workspace.mode: persistent requires a discoverable project; use -a to initialize the current directory"
-                ),
-                None => resolve_requested_project_root(&directory, &directory)?,
-            },
+            None => project_root::discover(&directory, &config.workspace.state)?
+                .context(project_root::NO_WORKSPACE_HERE)?,
         })
     } else {
         None
@@ -6545,16 +6490,16 @@ fn start_host_services(
     persistent: bool,
     #[cfg(windows)] native_catalog: Option<NativeCatalogConfig>,
 ) -> Result<HostServices> {
-    // A plain session starts none of the services that assume a workspace:
+    // Editor mode starts none of the services that assume a workspace:
     // no agent context endpoint, session catalog, Git, language server or
     // plugin. Their receivers are left closed or absent, which the event
     // loop already treats as a service that is not running.
-    let plain = app.is_plain();
+    let editor = app.is_editor_mode();
     // Windows context initialization is the only fallible service setup below.
     // Complete it before spawning or transferring ownership of any other
     // service so an initialization error has no background owners to abandon.
     #[cfg(unix)]
-    let context_events = if plain {
+    let context_events = if editor {
         tokio::sync::mpsc::channel(1).1
     } else {
         app.start_context(if persistent {
@@ -6564,7 +6509,7 @@ fn start_host_services(
         })
     };
     #[cfg(windows)]
-    let context_events = if plain {
+    let context_events = if editor {
         tokio::sync::mpsc::channel(1).1
     } else {
         app.start_context(if persistent {
@@ -6578,15 +6523,15 @@ fn start_host_services(
     #[cfg(windows)]
     let (native_catalog_handle, native_catalog_owner, native_catalog_events) =
         spawn_native_catalog(app, native_catalog);
-    let git_events = if plain { None } else { start_git_service(app) };
+    let git_events = if editor { None } else { start_git_service(app) };
     // The manager is spawned either way so the loop has its channel, but a
-    // plain session never attaches it: no document is offered to it and no
+    // session in editor mode never attaches it: no document is offered to it and no
     // server process starts. `:workspace-init` replaces it with one rooted
     // at the new workspace.
     let (language_servers, lsp_events) =
         lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
     startup.mark(StartupPhase::LspManagerSpawned);
-    if !plain {
+    if !editor {
         #[cfg(any(unix, windows))]
         app.configure_lsp_trust(
             runyte::external_open::cache_root().map(|root| root.join("lsp-trust")),
@@ -6605,7 +6550,7 @@ fn start_host_services(
     git_monitor.sync(app.git_monitor_repository());
     app.attach_word_index(word_index::spawn());
     #[cfg(unix)]
-    let workspace_events = if plain {
+    let workspace_events = if editor {
         None
     } else {
         Some(start_workspace_service(app, config_path))
@@ -6615,7 +6560,7 @@ fn start_host_services(
     let terminal_events = app
         .take_terminal_events()
         .expect("terminal output is claimed once, when services start");
-    let plugin_events = if plain { None } else { app.start_plugins() };
+    let plugin_events = if editor { None } else { app.start_plugins() };
     let pipe_events = app.start_pipe_service();
     #[cfg(windows)]
     let _ = config_path;
@@ -6759,59 +6704,6 @@ fn start_workspace_service(
         }
     });
     receiver
-}
-
-/// Starts what a plain session left off once `:workspace-init` has given it a
-/// workspace: the same services a standalone launch in that workspace starts.
-///
-/// The session stays standalone. Diagnostic logging is not moved into the new
-/// state directory; a logger is installed once per process.
-fn start_workspace_services(
-    app: &mut WorkspaceHost,
-    services: &mut HostServices,
-    config_path: Option<&Path>,
-) {
-    app.refresh_workspace_identity();
-    #[cfg(unix)]
-    {
-        services.context_events =
-            app.start_context(runyte::workspace::context::storage::HostMode::Standalone);
-    }
-    #[cfg(windows)]
-    match app.start_context(runyte::workspace::context::storage::HostMode::Standalone) {
-        Ok(events) => services.context_events = events,
-        Err(error) => app.report_host_error(format!("agent context could not start: {error}")),
-    }
-    services.git_events = start_git_service(app);
-    services.git_monitor.sync(app.git_monitor_repository());
-    services.language_servers.send(LspCommand::Shutdown);
-    let (language_servers, lsp_events) =
-        lsp::spawn(app.config.lsp.clone(), app.project_root.clone());
-    #[cfg(any(unix, windows))]
-    app.configure_lsp_trust(runyte::external_open::cache_root().map(|root| root.join("lsp-trust")));
-    app.attach_lsp(language_servers.clone());
-    services.language_servers = language_servers;
-    services.lsp_events = lsp_events;
-    #[cfg(unix)]
-    {
-        services.workspace_events = Some(start_workspace_service(app, config_path));
-        let recorded = record_recent_workspace(&app.project_root).ok().flatten();
-        app.note_workspace_number(recorded.and_then(|recorded| recorded.number));
-    }
-    // Windows session controls come from the native catalog, which a plain
-    // launch left unstarted; a standalone launch in this workspace starts it.
-    #[cfg(windows)]
-    {
-        let reserved_user_roots = app.reserved_user_roots().to_vec();
-        let config = standalone_native_catalog_config(app, &reserved_user_roots);
-        let (handle, owner, events) = spawn_native_catalog(app, config);
-        services.native_catalog = handle;
-        services.native_catalog_owner = owner;
-        services.native_catalog_events = events;
-    }
-    #[cfg(not(unix))]
-    let _ = config_path;
-    services.plugin_events = app.start_plugins();
 }
 
 #[cfg(not(windows))]
@@ -7397,29 +7289,35 @@ USAGE:
 
 OPTIONS:
     -c, --config PATH    Use a specific YAML config
-        --init DIRECTORY Make DIRECTORY the exact standalone workspace root
-                         and open it
-        --plain          Open the targets without a workspace, even inside one
+        --init DIRECTORY Make DIRECTORY a workspace and exit without opening it
     -v, --verbose        Raise the diagnostic log level; repeat for more
         --log PATH       Write the diagnostic log to PATH instead
     -h, --help           Print help
     -V, --version        Print version
 
 MODES:
-    A workspace is one project directory plus its live editor state. Standalone
-    mode keeps that state in the TUI process. Persistent mode keeps it alive
-    between TUIs. Windows supports explicit -a/--persistent attachment.
+    Runyte runs in one of three modes, chosen by a flag or by the mode
+    setting, ide by default. The launch directory never changes the mode.
 
-        --standalone     Use standalone mode, overriding configuration
+        --editor         Edit files and directories with no workspace: no Git,
+                         language servers, MCP, plugins or terminals. Running
+                         the binary as runed is the same as runyte --editor
+        --ide            Work in the workspace found from the launch directory,
+                         with Git, language servers, MCP, plugins and terminals
+    -a, --mux [WORKSPACE]
+                         ide in a persistent session that outlives the TUI.
+                         Attach to the selected or current session, starting it
+                         if needed. A WORKSPACE directory that is not yet a
+                         workspace becomes one
         --wait FILE...   Open through a persistent session and wait for every
                          requested buffer to complete. On Windows, an ordinary
                          shell uses the current project's session; an
                          authenticated integrated terminal uses its parent
-    -a, --persistent [WORKSPACE]
-                         Attach to the selected or current session, starting it
-                         if needed. If WORKSPACE is omitted, use the workspace
-                         found from the current directory, or make that
-                         directory a workspace when none is found
+
+    A workspace is a Git repository or a directory holding .runyte, found from
+    the launch directory or above it. Without one, ide and mux refuse; create
+    one with runyte --init DIRECTORY. As root only editor mode runs; for system
+    files set SUDO_EDITOR=runed and use sudoedit.
 
 AGENT CONTEXT:
         mcp [--identity NAME] [--timeout SECONDS]
@@ -7433,8 +7331,8 @@ AGENT CONTEXT:
 
 PERSISTENT SESSIONS:
     A persistent session is the durable local process and retained editor state
-    associated with one workspace. CLI listing also works from standalone mode;
-    session commands inside the editor need workspace.mode: persistent.
+    associated with one workspace. CLI listing also works from ide mode;
+    session commands inside the editor need mux mode.
     Windows CLI supports list, rename, selected stop, stop-all, clean and restart
     for native persistent sessions. The standalone session manager provides
     list, rename and stop controls. Stop requires WORKSPACE on the Windows CLI.
@@ -7465,8 +7363,9 @@ PERSISTENT SESSIONS:
 DIAGNOSTICS:
     Runyte keeps a small local log of warnings, errors, and, when asked, more
     detailed lifecycle events. The process that owns editor state owns the
-    file: a standalone editor writes .runyte/standalone-<pid>.log, a persistent
-    session writes .runyte/host.log. At most 4 MiB is kept in the active file
+    file: an ide-mode editor writes .runyte/standalone-<pid>.log, a persistent
+    session writes .runyte/host.log, and editor mode keeps none unless --log
+    names one. At most 4 MiB is kept in the active file
     and 4 MiB in one previous file beside it. A standalone launch keeps the
     four newest logs left by exited standalone processes and removes older
     active and previous files without touching a live owner's log.
@@ -7495,23 +7394,10 @@ TARGETS:
     +LINE[:COLUMN] FILE  Open FILE and place its caret at a one-based position
     -- FILE...           Treat every remaining argument as a literal path
 
-    Naming a target always runs standalone, so its relative path and caret
-    position keep their ordinary meaning: workspace.mode: persistent changes
-    only a bare runyte, and --persistent reads its argument as a workspace
-    rather than a file. Use --init to make a directory the exact standalone
-    workspace root. --wait uses a persistent session on Unix and Windows.
-
-PLAIN SESSIONS:
-    A target launched where no Git repository or .runyte directory is found
-    opens a plain session instead of asking where project data should live:
-    standalone, with no workspace. It writes no .runyte directory or log, and
-    starts no Git, language server, plugin, MCP or persistent session. The
-    Finder and project search cover the active directory. --plain asks for one
-    inside a workspace too. A file or directory opened as root is always
-    plain, and --wait refuses to run as root.
-    :workspace-init gives a plain session a workspace without restarting.
-
-    For system files, set SUDO_EDITOR=\"runyte --plain\" and use sudoedit.
+    Naming a target runs ide or editor mode in this process, so its relative
+    path and caret position keep their ordinary meaning: mode: mux changes
+    only a bare runyte, and --mux reads its argument as a workspace rather
+    than a file. --wait uses a persistent session on Unix and Windows.
 
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.
@@ -8835,7 +8721,7 @@ mod tests {
     #[test]
     fn targetless_launches_open_about_but_paths_keep_their_meaning() {
         let bare = LaunchArguments::parse_from([]).unwrap();
-        let explicit_standalone = LaunchArguments::parse_from(["--standalone".into()]).unwrap();
+        let explicit_standalone = LaunchArguments::parse_from(["--ide".into()]).unwrap();
         let directory = LaunchArguments::parse_from([".".into()]).unwrap();
         let file = LaunchArguments::parse_from(["file.txt".into()]).unwrap();
         let server = LaunchArguments::parse_from(["--serve".into()]).unwrap();
@@ -8855,7 +8741,7 @@ mod tests {
         let file = LaunchArguments::parse_from(["note.txt".into()]).unwrap();
         let directory = LaunchArguments::parse_from([".".into()]).unwrap();
         let positioned = LaunchArguments::parse_from(["+4:2".into(), "note.txt".into()]).unwrap();
-        let explicit_standalone = LaunchArguments::parse_from(["--standalone".into()]).unwrap();
+        let explicit_standalone = LaunchArguments::parse_from(["--ide".into()]).unwrap();
         let init = LaunchArguments::parse_from(["--init".into(), "project".into()]).unwrap();
 
         assert!(uses_automatic_persistent_mode(
@@ -8889,58 +8775,21 @@ mod tests {
     }
 
     #[test]
-    fn a_launch_is_plain_only_with_targets_and_no_workspace_or_when_asked() {
+    fn only_the_editor_flag_selects_editor_mode() {
         let parse = |arguments: &[&str]| {
             LaunchArguments::parse_from(arguments.iter().map(|argument| (*argument).into()))
                 .unwrap()
         };
-        let found = || Ok(true);
-        let missing = || Ok(false);
-        let unasked = || -> std::io::Result<bool> { panic!("discovery is not needed here") };
-
-        // A file or directory with no workspace goes plain instead of asking.
-        assert!(super::launch_is_plain(&parse(&["/etc/fstab"]), false, false, missing).unwrap());
-        assert!(super::launch_is_plain(&parse(&["/etc"]), false, false, missing).unwrap());
-        // Inside a workspace the same launch keeps it.
-        assert!(!super::launch_is_plain(&parse(&["note.txt"]), false, false, found).unwrap());
-        // A bare launch keeps asking for a project.
-        assert!(!super::launch_is_plain(&parse(&[]), false, false, unasked).unwrap());
-
-        // --plain wins over a workspace, and needs no discovery.
-        assert!(
-            super::launch_is_plain(&parse(&["--plain", "note.txt"]), false, false, unasked)
-                .unwrap()
-        );
-        assert!(super::launch_is_plain(&parse(&["--plain"]), false, false, unasked).unwrap());
-
-        // Root never adopts a workspace for a file or directory target.
-        assert!(super::launch_is_plain(&parse(&["note.txt"]), false, true, unasked).unwrap());
-        assert!(!super::launch_is_plain(&parse(&[]), false, true, unasked).unwrap());
-
-        // Launches that name a workspace are never plain.
-        for arguments in [
-            &["--init", "/work/new"][..],
-            &["--project-root", "/work", "note.txt"][..],
-            &["-a"][..],
-            &["--serve"][..],
-        ] {
-            assert!(
-                !super::launch_is_plain(&parse(arguments), false, true, unasked).unwrap(),
-                "{arguments:?}"
-            );
-        }
-        assert!(!super::launch_is_plain(&parse(&["note.txt"]), true, true, unasked).unwrap());
-
-        // A discovery failure is the launch's failure, not a silent answer.
-        assert!(
-            super::launch_is_plain(&parse(&["note.txt"]), false, false, || Err(
-                std::io::Error::other("unreadable")
-            ))
-            .is_err()
-        );
+        assert!(super::launch_is_editor(&parse(&["--editor", "/etc/fstab"])));
+        assert!(super::launch_is_editor(&parse(&["--editor"])));
+        // The launch directory never decides: a target alone is ide mode,
+        // which then needs a workspace.
+        assert!(!super::launch_is_editor(&parse(&["/etc/fstab"])));
+        assert!(!super::launch_is_editor(&parse(&["--ide", "/etc/fstab"])));
+        assert!(!super::launch_is_editor(&parse(&["--mux"])));
     }
 
-    /// A plain host starts none of the services that assume a workspace.
+    /// An editor-mode host starts none of the services that assume a workspace.
     /// Nothing here reaches per-user storage: the services that would are
     /// exactly the ones that must stay off.
     #[cfg(unix)]
@@ -8948,7 +8797,7 @@ mod tests {
     async fn a_plain_host_starts_no_workspace_service() {
         let root = TestRuntimeRoot::new("plain-host-services").unwrap();
         let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
-        app.enter_plain_session();
+        app.enter_editor_mode();
         let mut host = WorkspaceHost::new(app);
 
         let mut services = super::start_host_services(
@@ -8977,20 +8826,42 @@ mod tests {
     }
 
     #[test]
-    fn wait_is_refused_as_root_and_nowhere_else() {
-        let wait = LaunchArguments::parse_from(["--wait".into(), "/etc/hosts".into()]).unwrap();
-        let error = super::refuse_wait_as_root(&wait, true).unwrap_err();
-        assert!(error.to_string().contains("sudoedit"), "{error}");
-        assert!(super::refuse_wait_as_root(&wait, false).is_ok());
-        let file = LaunchArguments::parse_from(["/etc/hosts".into()]).unwrap();
-        assert!(super::refuse_wait_as_root(&file, true).is_ok());
+    fn root_runs_only_editor_mode() {
+        let parse = |arguments: &[&str]| {
+            LaunchArguments::parse_from(arguments.iter().map(|argument| (*argument).into()))
+                .unwrap()
+        };
+        for arguments in [
+            &["/etc/hosts"][..],
+            &["--ide", "/etc/hosts"][..],
+            &["--mux"][..],
+            &["--wait", "/etc/hosts"][..],
+            &["--serve"][..],
+        ] {
+            let error = super::refuse_workspace_modes_as_root(&parse(arguments), true)
+                .expect_err("a workspace mode is refused as root");
+            assert!(
+                error.to_string().contains("runed"),
+                "{arguments:?}: {error}"
+            );
+            assert!(
+                super::refuse_workspace_modes_as_root(&parse(arguments), false).is_ok(),
+                "{arguments:?}"
+            );
+        }
+        for arguments in [&["--editor", "/etc/hosts"][..], &["--session-list"][..]] {
+            assert!(
+                super::refuse_workspace_modes_as_root(&parse(arguments), true).is_ok(),
+                "{arguments:?}"
+            );
+        }
     }
 
     #[test]
-    fn plain_keeps_a_bare_launch_off_the_persistent_default() {
-        let plain = LaunchArguments::parse_from(["--plain".into()]).unwrap();
+    fn editor_keeps_a_bare_launch_off_the_persistent_default() {
+        let editor = LaunchArguments::parse_from(["--editor".into()]).unwrap();
         assert!(!uses_automatic_persistent_mode(
-            &plain,
+            &editor,
             WorkspaceMode::Persistent
         ));
     }

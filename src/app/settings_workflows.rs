@@ -137,10 +137,10 @@ impl App {
 
         let buffer_id = self.active().buffer;
         let language = self.language_of(buffer_id);
-        let (lsp_state, lsp_detail) = if self.is_plain() {
+        let (lsp_state, lsp_detail) = if self.is_editor_mode() {
             (
                 ServiceState::Disabled,
-                crate::service_health::PLAIN_SESSION_REASON.to_owned(),
+                crate::service_health::EDITOR_MODE_REASON.to_owned(),
             )
         } else if !self.config.lsp.enable {
             (ServiceState::Disabled, "disabled in settings".to_owned())
@@ -235,7 +235,7 @@ impl App {
     /// is opened or aggregated.
     pub(super) fn open_log_buffer(&mut self) {
         let Some(status) = crate::log::status() else {
-            self.action_failed(if self.is_plain() {
+            self.action_failed(if self.is_editor_mode() {
                 "a session without a workspace keeps no diagnostic log; start it with --log PATH"
             } else {
                 "no diagnostic log is installed for this process"

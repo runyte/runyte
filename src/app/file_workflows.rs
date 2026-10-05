@@ -318,7 +318,7 @@ impl App {
                 unresolved.push(directory.join(&requested));
             }
             // Without a workspace there is no project root to resolve against.
-            if !self.is_plain() {
+            if !self.is_editor_mode() {
                 unresolved.push(self.project_root.join(requested));
             }
         }

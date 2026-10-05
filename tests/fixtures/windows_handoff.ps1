@@ -98,7 +98,7 @@ if ($Mode -eq 'ReadFailure' -or $Mode -eq 'LocationFailure') {
 } elseif ($Mode -eq 'Failure') {
     # The wrapper must preserve a real nonzero native exit without ending the
     # PowerShell caller. A missing explicitly named config fails before editing.
-    runyte --standalone --config ([IO.Path]::Combine($env:RUNYTE_HANDOFF_ROOT, 'missing.yaml')) -- $env:RUNYTE_HANDOFF_TARGET
+    runyte --ide --config ([IO.Path]::Combine($env:RUNYTE_HANDOFF_ROOT, 'missing.yaml')) -- $env:RUNYTE_HANDOFF_TARGET
 } elseif ($Mode -eq 'Persistent' -or $Mode -eq 'PersistentDirect') {
     # The test ConPTY helper marks itself as a standalone editor child. This
     # branch models a PowerShell launched directly by the user instead.
@@ -109,7 +109,7 @@ if ($Mode -eq 'ReadFailure' -or $Mode -eq 'LocationFailure') {
         runyte -a --config $env:RUNYTE_HANDOFF_CONFIG --project-root ([IO.Path]::Combine($env:RUNYTE_HANDOFF_ROOT, 'project'))
     }
 } else {
-    runyte --standalone --config $env:RUNYTE_HANDOFF_CONFIG --project-root (Get-Location).ProviderPath -- $env:RUNYTE_HANDOFF_TARGET
+    runyte --ide --config $env:RUNYTE_HANDOFF_CONFIG --project-root (Get-Location).ProviderPath -- $env:RUNYTE_HANDOFF_TARGET
 }
 $runyteResult = @{
     code = $global:LASTEXITCODE

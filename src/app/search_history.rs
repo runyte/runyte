@@ -98,10 +98,10 @@ impl App {
         }
         // Pasted images live in the workspace state directory, which a plain
         // session never creates.
-        if self.is_plain() {
+        if self.is_editor_mode() {
             self.mark_unavailable(format!(
                 "pasting an image {}",
-                crate::service_health::PLAIN_SESSION_REASON
+                crate::service_health::EDITOR_MODE_REASON
             ));
             return;
         }

@@ -468,16 +468,6 @@ impl WorkspaceHost {
         }
     }
 
-    /// Takes the identity of the workspace the editor now serves. A plain
-    /// session is given a workspace by `:workspace-init`, and its identity
-    /// was captured from the launch directory, which need not be the new
-    /// root. Context registration and anything else keyed by workspace
-    /// identity must use the new one, so this runs before their services
-    /// start.
-    pub fn refresh_workspace_identity(&mut self) {
-        self.identity = WorkspaceIdentity::from_canonical(self.app.project_root.clone());
-    }
-
     pub fn app(&self) -> &App {
         &self.app
     }

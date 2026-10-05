@@ -469,7 +469,7 @@ fn standalone_session_lesson_states_the_real_boundary() {
     let state = app.tutorial_state().unwrap();
     let instructions = app.buffers[state.instruction_buffer].to_string();
     assert!(instructions.contains("standalone workspace"));
-    assert!(instructions.contains("runyte --persistent"));
+    assert!(instructions.contains("runyte --mux"));
     assert!(instructions.contains("not crash, reboot, or machine-failure storage"));
 }
 

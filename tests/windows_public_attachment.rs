@@ -481,7 +481,7 @@ fn public_persistent_attachment_fixture() {
     first.until("Xoriginal");
 
     let standalone = vec![
-        "--standalone".into(),
+        "--ide".into(),
         "--config".into(),
         config.display().to_string(),
     ];
@@ -501,7 +501,7 @@ fn public_persistent_attachment_fixture() {
     target_editor.exit(0);
 
     let occupied = vec![
-        "--persistent".into(),
+        "--mux".into(),
         project.display().to_string(),
         "-v".into(),
         "--config".into(),

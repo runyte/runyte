@@ -281,8 +281,8 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     ] {
         assert!(!help.contains(spelling), "help still contains {spelling}");
     }
-    assert!(help.contains("--standalone"));
-    assert!(help.contains("--persistent"));
+    assert!(help.contains("--ide"));
+    assert!(help.contains("--mux"));
     assert!(help.contains("-l, --session-list"));
     assert!(help.contains("--include-hidden"));
     assert!(help.contains("--session-clean"));

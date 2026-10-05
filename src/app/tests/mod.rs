@@ -187,6 +187,7 @@ mod diff_latency;
 mod directory_tree;
 mod editing;
 mod editing_and_buffers;
+mod editor_mode;
 mod external_dispatch;
 mod git;
 mod git_comparison;
@@ -202,7 +203,6 @@ mod markdown_tables;
 mod mouse_autoscroll;
 mod navigation_and_files;
 mod paste_many_selections;
-mod plain_session;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;
 #[cfg(not(windows))]

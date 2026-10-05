@@ -482,7 +482,7 @@ fn native_persistent_wait_fixture() {
     for args in [
         vec!["--wait"],
         vec!["--wait", "+2", second],
-        vec!["--wait", "--standalone", second],
+        vec!["--wait", "--ide", second],
         vec!["--wait", "--config", "missing.yaml", second],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_runyte"))

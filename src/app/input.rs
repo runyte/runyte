@@ -375,18 +375,12 @@ impl App {
                 persistent_session_availability(cfg!(unix), self.persistent_session)
             },
             workspace: CommandAvailability::Available,
-            plain_session: if self.is_plain() {
-                CommandAvailability::Available
-            } else {
-                CommandAvailability::Unavailable(
-                    crate::service_health::WORKSPACE_PRESENT_REASON.to_owned(),
-                )
-            },
+            terminals: CommandAvailability::Available,
         };
         // Without a workspace these services were never started, and the
         // reason that helps is the one naming how to get a workspace rather
         // than whichever service-level detail happens to be observed.
-        if let Some(plain) = self.plain_capability() {
+        if let Some(plain) = self.editor_mode_capability() {
             for capability in [
                 &mut snapshot.lsp_manager,
                 &mut snapshot.lsp_document,
@@ -400,6 +394,7 @@ impl App {
                 &mut snapshot.persistent_session,
                 &mut snapshot.session_controls,
                 &mut snapshot.workspace,
+                &mut snapshot.terminals,
             ] {
                 *capability = plain.clone();
             }
@@ -4303,7 +4298,7 @@ impl App {
             self.mark_unavailable(reason);
             return Ok(());
         }
-        if self.refuse_in_plain_session(CommandId::Editor(command)) {
+        if self.refuse_in_editor_mode(CommandId::Editor(command)) {
             return Ok(());
         }
 
@@ -5555,7 +5550,7 @@ impl App {
             self.mark_unavailable(reason);
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
-        if self.refuse_in_plain_session(id) {
+        if self.refuse_in_editor_mode(id) {
             return Ok(CommandOutcome::Unavailable(self.status.clone()));
         }
         if let CommandId::Plugin(id) = id {
@@ -5993,17 +5988,13 @@ impl App {
             self.hide_directory_tree();
             return Ok(());
         }
-        if self.refuse_in_plain_session(CommandId::Colon(command)) {
+        if self.refuse_in_editor_mode(CommandId::Colon(command)) {
             return Ok(());
         }
 
         match (command, parameters) {
             (Colon::ChangeDirectory, InvocationParameters::Path(path)) => {
                 self.change_directory(path)
-            }
-            (Colon::WorkspaceInit, InvocationParameters::OptionalPath(path)) => {
-                self.initialize_workspace(path);
-                Ok(())
             }
             (Colon::SessionAttach, InvocationParameters::Path(path)) => {
                 if self.reject_unavailable_persistent_session(

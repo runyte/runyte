@@ -103,7 +103,7 @@ impl Console {
     fn spawn(binary: &Path, project: &Path, config: &Path, file: &Path) -> Self {
         let (sender, events) = mpsc::channel();
         let arguments = vec![
-            "--standalone".into(),
+            "--ide".into(),
             "--project-root".into(),
             project.to_string_lossy().into_owned(),
             "--config".into(),

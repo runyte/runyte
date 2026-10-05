@@ -119,7 +119,7 @@ class NativeEditor:
                 self.host.kill()
                 self.host.wait(timeout=5)
                 raise
-        arguments = [str(binary), '--persistent' if persistent else '--standalone',
+        arguments = [str(binary), '--mux' if persistent else '--ide',
                      '--project-root', str(project), '--config', str(config)]
         if not persistent:
             arguments.append('note.txt')

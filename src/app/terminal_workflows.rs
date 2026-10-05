@@ -85,20 +85,17 @@ impl App {
     /// The argument is a command line, split the way a shell would split it.
     /// With nothing given it runs `$SHELL`, which is what "open a terminal"
     /// means everywhere else.
-    ///
-    /// A workspace terminal starts in the editor's working directory. A plain
-    /// session has no project to be at the top of, so its terminal starts
-    /// where the reader is: the active file's or explorer's directory.
     pub(super) fn open_terminal(&mut self, command: Option<String>) {
-        let directory = if self.is_plain() {
-            self.active_directory()
-        } else {
-            self.working_directory.clone()
-        };
-        self.open_terminal_at(command, directory);
+        self.open_terminal_at(command, self.working_directory.clone());
     }
 
     pub(super) fn open_terminal_at(&mut self, command: Option<String>, directory: PathBuf) {
+        // Every way of starting a terminal ends here, including the explorer
+        // and context actions that are not commands of their own.
+        if self.is_editor_mode() {
+            self.mark_unavailable(crate::service_health::EDITOR_MODE_REASON);
+            return;
+        }
         let request = match self.terminal_request(command, directory) {
             Ok(request) => request,
             Err(error) => {
