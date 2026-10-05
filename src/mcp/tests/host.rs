@@ -92,7 +92,7 @@ impl Host {
                         .await;
                         return;
                     }
-                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.3.5","features":[wire::FEATURE],"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":[wire::FEATURE],"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &hello, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()
@@ -105,7 +105,7 @@ impl Host {
                     {
                         return;
                     }
-                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.4.0","commands":[],"features":[wire::FEATURE],"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":[wire::FEATURE],"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &registered, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()

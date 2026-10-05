@@ -20,6 +20,7 @@ use tokio::{
 
 trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
+const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 struct Connection {
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
@@ -121,7 +122,7 @@ impl Connection {
             ));
         }
         use crate::plugin::compatibility::{ReleaseRange, Version};
-        let supported = ReleaseRange::parse(">=0.3.0, <0.4.0").unwrap();
+        let supported = ReleaseRange::parse(SUPPORTED_HOSTS).unwrap();
         if !hello["host_version"]
             .as_str()
             .and_then(|v| Version::parse(v).ok())
@@ -133,7 +134,7 @@ impl Connection {
             ));
         }
         connection.limits(&hello)?;
-        let reply = connection.exchange(&json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0",
+        let reply = connection.exchange(&json!({"type":"register","version":"runyte-1","runyte":SUPPORTED_HOSTS,
             "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":[],
             "required_capabilities":[],"optional_capabilities":wire::CAPABILITIES})).await?;
         if reply["type"] == "registration_error" {
@@ -145,7 +146,7 @@ impl Connection {
         if reply["type"] != "registered"
             || reply["features"] != json!([wire::FEATURE])
             || reply["commands"] != json!([])
-            || reply["runyte"] != ">=0.3.0, <0.4.0"
+            || reply["runyte"] != SUPPORTED_HOSTS
         {
             return Err(Failure::new(
                 "unsupported",

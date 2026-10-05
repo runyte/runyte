@@ -335,6 +335,8 @@ class EditorFixture(unittest.TestCase):
         for project in self.projects:
             project.mkdir()
             (project / 'note.txt').write_text('ORIGINAL_BUFFER_MARKER\n')
+            subprocess.run([str(self.binary), '--init', str(project)], env=self.env,
+                           cwd=project, check=True, capture_output=True, text=True)
         for identity in ('codex', 'claude'):
             seed_identity(self.root / 'ctx', identity, self.projects)
         self.config = self.root / 'config' / 'config.yaml'

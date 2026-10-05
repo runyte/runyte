@@ -53,6 +53,11 @@ Development CI stages a 0.4.0 candidate from the current source without
 editing its checkout. Release CI must use the exact 0.4.0 package version and
 source commit under the release runbook.
 
+The bundled examples and MCP adapter admit both 0.3 and 0.4 hosts with
+`>=0.3.0, <0.5.0`; their wire contract is unchanged. Native example registration
+and the two-client MCP suite run against the staged 0.4 host in CI. The MCP
+fixture initializes its temporary workspaces before launching ide or mux.
+
 The optional `input-path-completion` feature adds `completion: "local-path"`
 to text fields in native prompts and forms. Hosts require negotiation before
 accepting the property; plugins omit it for older hosts. This changes neither
