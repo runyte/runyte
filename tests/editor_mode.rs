@@ -31,7 +31,16 @@ fn process_dir(owner: &Path, kind: &str) -> PathBuf {
 /// pointed into `owner`, so nothing reaches the person's configuration,
 /// runtime registry, or cache.
 fn runyte(owner: &Path, directory: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_runyte"))
+    run(
+        Path::new(env!("CARGO_BIN_EXE_runyte")),
+        owner,
+        directory,
+        arguments,
+    )
+}
+
+fn run(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -> Output {
+    Command::new(program)
         .args(arguments)
         .current_dir(directory)
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
@@ -225,4 +234,37 @@ fn a_configured_editor_mode_needs_no_workspace_and_a_mode_option_overrides_it() 
     );
     let stderr = String::from_utf8_lossy(&ide.stderr);
     assert!(stderr.contains("no workspace here"), "{stderr}");
+}
+
+#[test]
+fn runed_is_editor_mode_whatever_the_configuration_says() {
+    let owner = TestRuntimeRoot::new("runed").unwrap();
+    let directory = owner.join("etc");
+    fs::create_dir_all(&directory).unwrap();
+    let targets = binary_targets(&directory);
+    // The installer's link, pointing at the built binary rather than at an
+    // executable this test wrote.
+    let runed = owner.join("runed");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_runyte"), &runed).unwrap();
+    let config = owner.join("mux.yaml");
+    fs::write(&config, "mode: mux\n").unwrap();
+    let config = config.to_str().unwrap();
+
+    let editor = run(
+        &runed,
+        &owner,
+        &directory,
+        &["--config", config, targets[0], targets[1]],
+    );
+    let stderr = String::from_utf8_lossy(&editor.stderr);
+    assert!(stderr.contains("binary"), "{stderr}");
+    assert!(!directory.join(".runyte").exists());
+
+    let refused = run(&runed, &owner, &directory, &["--ide", targets[0]]);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success());
+    assert!(
+        stderr.contains("runed always runs in editor mode"),
+        "{stderr}"
+    );
 }

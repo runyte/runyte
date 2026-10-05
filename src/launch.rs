@@ -110,7 +110,37 @@ impl LaunchArguments {
     }
 
     pub fn parse() -> Result<Self> {
-        Self::parse_from(std::env::args_os().skip(1))
+        let mut arguments = std::env::args_os();
+        let started_as_runed = arguments
+            .next()
+            .is_some_and(|program| is_runed(std::path::Path::new(&program)));
+        if started_as_runed {
+            Self::parse_as_runed(arguments)
+        } else {
+            Self::parse_from(arguments)
+        }
+    }
+
+    /// Parses the arguments of a process started as `runed`, which is always
+    /// editor mode. It exists so `EDITOR` and `SUDO_EDITOR` can name editor
+    /// mode in one word, whatever the configured default is, so every option
+    /// that would select another mode or a workspace is refused rather than
+    /// quietly obeyed.
+    pub fn parse_as_runed(arguments: impl IntoIterator<Item = OsString>) -> Result<Self> {
+        let mut parsed = Self::parse_from(arguments)?;
+        if parsed.help || parsed.version {
+            return Ok(parsed);
+        }
+        ensure!(
+            parsed.mode == LaunchMode::Standalone
+                && (parsed.editor || !parsed.mode_explicit)
+                && parsed.init.is_none()
+                && parsed.project_root.is_none(),
+            "runed always runs in editor mode; use runyte for other modes and session commands"
+        );
+        parsed.editor = true;
+        parsed.mode_explicit = true;
+        Ok(parsed)
     }
 
     /// Parses `runyte [OPTIONS] [+LINE[:COLUMN] FILE]... [-- FILE...]`.
@@ -422,6 +452,18 @@ impl LaunchArguments {
     }
 }
 
+/// Whether `program` names the `runed` link to this binary. Only the file
+/// stem counts, so `runed.exe` and a path to the link both qualify.
+fn is_runed(program: &std::path::Path) -> bool {
+    program.file_stem().is_some_and(|stem| {
+        if cfg!(windows) {
+            stem.eq_ignore_ascii_case("runed")
+        } else {
+            stem == "runed"
+        }
+    })
+}
+
 fn utf8_option_value(value: Option<OsString>, missing: &str) -> Result<String> {
     value
         .ok_or_else(|| anyhow::anyhow!(missing.to_owned()))?
@@ -463,8 +505,11 @@ fn parse_nonzero(value: &str, name: &str, target: &str) -> Result<NonZeroUsize> 
 
 #[cfg(test)]
 mod tests {
-    use super::{LaunchArguments, LaunchMode, LaunchPosition, LaunchTarget};
-    use std::{num::NonZeroUsize, path::PathBuf};
+    use super::{LaunchArguments, LaunchMode, LaunchPosition, LaunchTarget, is_runed};
+    use std::{
+        num::NonZeroUsize,
+        path::{Path, PathBuf},
+    };
 
     fn position(line: usize, column: Option<usize>) -> LaunchPosition {
         LaunchPosition {
@@ -702,6 +747,53 @@ mod tests {
             let error = parse(&[removed]).unwrap_err();
             assert!(error.to_string().contains("unknown option"), "{removed}");
         }
+    }
+
+    #[test]
+    fn runed_is_always_editor_mode() {
+        let parse = |arguments: &[&str]| {
+            LaunchArguments::parse_as_runed(arguments.iter().map(|argument| (*argument).into()))
+        };
+        for arguments in [&["/etc/fstab"][..], &[][..], &["--editor", "note.txt"][..]] {
+            let parsed = parse(arguments).unwrap();
+            assert!(parsed.editor, "{arguments:?}");
+            assert!(
+                parsed.mode_explicit,
+                "the configured mode cannot override runed"
+            );
+            assert_eq!(parsed.mode, LaunchMode::Standalone);
+        }
+        assert!(parse(&["--log", "/tmp/editor.log", "x"]).unwrap().editor);
+        assert!(parse(&["--help"]).unwrap().help);
+        assert!(parse(&["--version"]).unwrap().version);
+        for arguments in [
+            &["--ide", "note.txt"][..],
+            &["--mux"][..],
+            &["-a", "project"][..],
+            &["--wait", "note.txt"][..],
+            &["--serve"][..],
+            &["--session-list"][..],
+            &["--init", "/work/new"][..],
+            &["--project-root", "/work", "note.txt"][..],
+        ] {
+            let error = parse(arguments).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("runed always runs in editor mode"),
+                "{arguments:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn runed_is_recognized_by_its_file_stem() {
+        assert!(is_runed(Path::new("runed")));
+        assert!(is_runed(Path::new("/usr/local/bin/runed")));
+        assert!(is_runed(Path::new("runed.exe")));
+        assert!(!is_runed(Path::new("runyte")));
+        assert!(!is_runed(Path::new("/opt/runed/runyte")));
+        assert!(!is_runed(Path::new("runed-old")));
     }
 
     #[test]

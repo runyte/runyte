@@ -75,7 +75,7 @@ class InstallerTests(unittest.TestCase):
         self.destination = self.home / ".local/bin/runyte"
         self.settings = {"os": "Linux", "arch": "x86_64", "libc": "glibc 2.35"}
         for tool in ("awk", "tar", "xz", "mktemp", "mkdir", "chmod", "mv", "rm",
-                     "sha256sum", "shasum"):
+                     "sha256sum", "shasum", "ln", "readlink"):
             path = shutil.which(tool)
             if path:
                 (self.bin / tool).symlink_to(path)
@@ -137,6 +137,29 @@ class InstallerTests(unittest.TestCase):
             self.install(piped=True)
             self.assertEqual(old.read(), PAYLOAD)
         self.assertEqual(self.destination.read_bytes(), b"new editor")
+
+    def test_runed_is_a_relative_link_to_runyte(self):
+        self.install()
+        runed = self.destination.with_name("runed")
+        self.assertTrue(runed.is_symlink())
+        self.assertEqual(os.readlink(runed), "runyte")
+        self.assertEqual(runed.read_bytes(), PAYLOAD)
+        # An update keeps the link, which follows the replaced executable.
+        self.make_archive(payload=b"new editor")
+        self.install()
+        self.assertEqual(os.readlink(runed), "runyte")
+        self.assertEqual(runed.read_bytes(), b"new editor")
+
+    def test_an_existing_runed_that_is_not_the_link_is_left_alone(self):
+        self.destination.parent.mkdir(parents=True, exist_ok=True)
+        runed = self.destination.with_name("runed")
+        runed.write_bytes(b"someone else's runed")
+        self.assertIn("unchanged", self.install().stdout)
+        self.assertEqual(runed.read_bytes(), b"someone else's runed")
+        runed.unlink()
+        runed.symlink_to("elsewhere")
+        self.assertIn("unchanged", self.install().stdout)
+        self.assertEqual(os.readlink(runed), "elsewhere")
 
     def test_pinned_version_custom_directory_and_bash(self):
         destination = self.home / "custom bin"

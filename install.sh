@@ -140,6 +140,19 @@ main() {
     mv -f "$stage" "$destination" || fail "Could not replace $destination"
     stage=
     printf 'Installed Runyte %s to %s\n' "$version" "$destination"
+    # runed is the same executable started under another name, which runs it
+    # as runyte --editor. A relative link keeps following updates in place.
+    # Anything else already called runed is someone else's and is left alone.
+    link=$install_dir/runed
+    if [ -L "$link" ] && [ "$(readlink "$link")" = runyte ]; then
+        :
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+        printf 'Left %s unchanged; runed would be a link to runyte.\n' "$link"
+    elif ln -s runyte "$link"; then
+        printf 'Linked %s to runyte for editor mode\n' "$link"
+    else
+        printf 'Could not create %s; runyte --editor works the same.\n' "$link"
+    fi
     case ":${PATH:-}:" in
         *":$install_dir:"*) ;;
         *) printf 'Add %s to your PATH to run it as runyte.\n' "$install_dir" ;;

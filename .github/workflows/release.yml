@@ -145,6 +145,8 @@ jobs:
 
           mkdir -p "$package_dir"
           install -m 0755 "target/${TARGET}/release/runyte" "$package_dir/runyte"
+          # runed is runyte started under another name, which means --editor.
+          ln -s runyte "$package_dir/runed"
           install -m 0644 \
             README.md \
             LICENSE \
@@ -160,6 +162,7 @@ jobs:
             "runyte-${VERSION}-${TARGET}"
           tar -tJf "$archive_path"
           "$package_dir/runyte" --version
+          "$package_dir/runed" --version
 
       - name: Package Windows archive
         if: runner.os == 'Windows'
@@ -173,6 +176,9 @@ jobs:
           $packageDir = Join-Path $env:RUNNER_TEMP $packageName
           New-Item -ItemType Directory -Path $packageDir | Out-Null
           Copy-Item -LiteralPath "target/$env:TARGET/release/runyte.exe" -Destination $packageDir
+          # A zip archive holds no links, so runed.exe is a copy; started as
+          # runed it runs as runyte --editor.
+          Copy-Item -LiteralPath "target/$env:TARGET/release/runyte.exe" -Destination (Join-Path $packageDir "runed.exe")
           Copy-Item -LiteralPath README.md, LICENSE, NOTICE, THIRD_PARTY_NOTICES.md, config.example.yaml -Destination $packageDir
           Copy-Item -LiteralPath licenses -Destination $packageDir -Recurse
           New-Item -ItemType Directory -Path "$packageDir/docs" | Out-Null

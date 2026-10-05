@@ -206,6 +206,10 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
     assert!(source.contains("runyte-${RELEASE_TAG}-${TARGET}.tar.xz"));
     assert!(source.contains("sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS"));
     assert!(source.contains("Compress-Archive -LiteralPath $packageDir"));
+    // Every archive provides runed beside runyte: a link where the format
+    // holds one, a copy in the Windows zip.
+    assert!(source.contains(r#"ln -s runyte "$package_dir/runed""#));
+    assert!(source.contains(r#"(Join-Path $packageDir "runed.exe")"#));
     assert!(source.contains("gh release upload \"$RELEASE_TAG\" dist/* --clobber"));
     assert!(!source.contains("${{ inputs.tag }}"));
     for required in [
