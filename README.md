@@ -157,6 +157,9 @@ file or browses a directory anywhere, writes nothing beside it, and the Finder
 searches the directory you are in. The installer puts `runed` next to
 `runyte`; after `cargo install`, add it yourself with
 `ln -s runyte ~/.cargo/bin/runed`.
+Runyte recognizes when it is launched as `runed`, so the symbolic link
+(e.g. `ln -s /path/to/runyte runed`) alone is enough to select editor mode,
+just like `runyte --editor`.
 
 Use it wherever a program asks for an editor, and with `sudoedit` for system
 files:
