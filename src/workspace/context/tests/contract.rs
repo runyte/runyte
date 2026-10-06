@@ -23,7 +23,7 @@ fn authentication_is_strict_and_does_not_accept_other_messages() {
 }
 
 fn registration() -> serde_json::Value {
-    json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"Local bridge",
+    json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"Local bridge",
         "required_features":[FEATURE],"optional_features":[],"commands":[],
         "required_capabilities":["terminal_read"],"optional_capabilities":["editor_context_read"]})
 }

@@ -76,7 +76,7 @@ fn authenticate(host: &mut WorkspaceHost, identity: &Identity, connection: u64) 
         frame(
             host,
             connection,
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"windows-host-fixture","commands":[],"required_capabilities":["terminal_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})
+            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"windows-host-fixture","commands":[],"required_capabilities":["terminal_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})
         )
         .value["type"],
         "registered"

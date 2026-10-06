@@ -272,7 +272,7 @@ class WindowTests(unittest.TestCase):
             config = (Path(editor.env['XDG_CONFIG_HOME']) / 'runyte/config.yaml').read_text()
             self.assertIn('docs/plugins/uppercase.py', config)
             self.assertIn('api: runyte-1', config)
-            self.assertIn('>=0.3.0, <0.4.0', config)
+            self.assertIn('>=0.3.0, <0.5.0', config)
             self.assertIn('capabilities: [text, selections]', config)
             self.assertNotIn('plugin_workload.py', config)
 

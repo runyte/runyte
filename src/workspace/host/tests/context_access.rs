@@ -65,7 +65,7 @@ fn authenticate(host: &mut WorkspaceHost, identity: &Identity, id: u64, scopes: 
     frame(
         host,
         id,
-        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"fixture","commands":[],"required_capabilities":scopes,"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
+        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":scopes,"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
     )
 }
 fn request(

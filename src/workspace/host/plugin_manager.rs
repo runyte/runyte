@@ -946,7 +946,10 @@ fn config_admission(config: &PluginConfig) -> Result<(), String> {
         return Err("Plugin requires explicit api: runyte-1; regenerate its configuration".into());
     }
     let range = plugin::compatibility::ReleaseRange::parse(&config.runyte).map_err(|_| {
-        "Missing or invalid Runyte range; use runyte: \">=0.3.0, <0.4.0\"".to_owned()
+        format!(
+            "Missing or invalid Runyte range; use runyte: \"{}\"",
+            plugin::compatibility::RECOMMENDED_RANGE
+        )
     })?;
     let version = plugin::compatibility::Version::parse(plugin::compatibility::HOST_VERSION)
         .map_err(|error| error.to_string())?;

@@ -3,6 +3,16 @@
 use super::*;
 
 #[test]
+fn the_recommended_range_admits_the_host_that_recommends_it() {
+    // The admission error tells authors to write RECOMMENDED_RANGE, so a
+    // version bump that leaves it behind would advise a range this host then
+    // refuses.
+    let range = ReleaseRange::parse(RECOMMENDED_RANGE).unwrap();
+    assert!(range.contains(&Version::parse(HOST_VERSION).unwrap()));
+    assert!(range.contains(&Version::parse(STABLE_VERSION).unwrap()));
+}
+
+#[test]
 fn shared_range_vectors_cover_release_boundaries_and_containment() {
     let vectors: serde_json::Value = serde_json::from_str(include_str!(
         "../../../docs/plugins/compatibility/ranges.json"

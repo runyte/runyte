@@ -172,7 +172,7 @@ async fn register(
         host,
         events,
         stream,
-        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"native-fixture","commands":[],"required_capabilities":scopes,"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
+        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"native-fixture","commands":[],"required_capabilities":scopes,"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
     )
     .await
 }
@@ -223,7 +223,7 @@ fn compiled_context_client() {
         );
         for value in [
             json!({"type":"authenticate","credential":credential}),
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"compiled-child","commands":[],"required_capabilities":["editor_context_read"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
+            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"compiled-child","commands":[],"required_capabilities":["editor_context_read"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
             request("child-list", "buffer.list", json!({"offset":0,"limit":10})),
         ] {
             let mut bytes = serde_json::to_vec(&value).unwrap();
@@ -365,7 +365,7 @@ async fn real_native_clients_enforce_credentials_and_requested_read_scopes() {
         &mut fixture.host,
         &mut fixture.events,
         &mut denied_scope,
-        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"denied-scope","commands":[],"required_capabilities":["buffer_edit"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
+        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"denied-scope","commands":[],"required_capabilities":["buffer_edit"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]}),
     )
     .await;
     assert_eq!(denied_registration["type"], "registration_error");

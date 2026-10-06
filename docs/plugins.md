@@ -26,7 +26,7 @@ plugins:
   - id: case
     enabled: true
     api: runyte-1
-    runyte: ">=0.3.0, <0.4.0"
+    runyte: ">=0.3.0, <0.5.0"
     executable: /absolute/path/to/python3
     args: [/absolute/path/to/plugins/uppercase.py]
     capabilities: [text, selections]
@@ -117,7 +117,7 @@ not establish ownership, freshness, authority or successful side effects.
 A text plugin's registration looks like:
 
 ```json
-{"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"Uppercase","commands":[{"name":"uppercase","alias":"uppercase","description":"Uppercase every selection","context":"buffer"}],"required_capabilities":["text","selections"],"optional_capabilities":[],"required_features":[],"optional_features":[]}
+{"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"Uppercase","commands":[{"name":"uppercase","alias":"uppercase","description":"Uppercase every selection","context":"buffer"}],"required_capabilities":["text","selections"],"optional_capabilities":[],"required_features":[],"optional_features":[]}
 ```
 
 ## Lifecycle and trust
