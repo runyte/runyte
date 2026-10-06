@@ -588,7 +588,8 @@ So the interaction line can say an action `failed` while its notification is
   successful hook or helper.
 - Successful asynchronous Git output updates the action echo while it is still
   current. Multiline output, or output whose echo has been superseded, is kept
-  as `INFO`.
+  as `INFO`. The `:lsp-status` report updates its echo the same way, and is
+  always kept as `INFO` as well.
 
 ### Help, hints, and the tutorial
 
@@ -3996,7 +3997,7 @@ apart from `enable` and the `servers` wrapper.
 | --- | --- |
 | `:config-reload` | Adopt new definitions; restart only languages whose definition changed |
 | `:lsp-restart [language]` | Restart a stopped server from the configuration already loaded. It does not re-read YAML, so it is the wrong command after editing the file. |
-| `:lsp-status` | Show servers that started or failed |
+| `:lsp-status` (`Space l ?`) | Report servers that started or failed. The report replaces the command's echo while that echo is still current; `:not` keeps the full report. |
 | `:service-health` | Show whether the active document has a configured and attached server |
 
 `lsp.enable` is decided at startup. To turn LSP on or off, reopen an ide-mode

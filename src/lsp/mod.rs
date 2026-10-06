@@ -831,7 +831,12 @@ pub enum LspCommand {
     Reconfigure(Box<LspConfig>),
     /// Restarts one language's server, or every stopped server when `None`.
     Restart(Option<String>),
-    Status,
+    /// Asks for the state of every started or failed server. The manager
+    /// answers with [`LspEvent::StatusReport`] carrying the same `action`,
+    /// an opaque editor identifier for the command that asked.
+    Status {
+        action: Option<u64>,
+    },
     Shutdown,
 }
 
@@ -876,6 +881,13 @@ pub enum LspEvent {
     Status {
         message: String,
         error: bool,
+    },
+    /// The answer to [`LspCommand::Status`], kept apart from
+    /// [`LspEvent::Status`] so the editor can tell a report it asked for from
+    /// unsolicited server messages.
+    StatusReport {
+        action: Option<u64>,
+        message: String,
     },
     /// An explicit restart retired a live process. This clears editor-side
     /// capability, document, and diagnostic state without reporting a crash.
@@ -1587,7 +1599,7 @@ async fn handle_command(
                 .await;
             }
         }
-        LspCommand::Status => {
+        LspCommand::Status { action } => {
             let mut lines: Vec<String> = servers
                 .values()
                 .map(|server| {
@@ -1610,9 +1622,9 @@ async fn handle_command(
             lines.sort();
             emit(
                 events,
-                LspEvent::Status {
+                LspEvent::StatusReport {
+                    action,
                     message: lines.join(" │ "),
-                    error: false,
                 },
             )
             .await;
@@ -3501,7 +3513,7 @@ mod tests {
             controls: Some(controls),
             permission: None,
         };
-        assert!(handle.send(LspCommand::Status));
+        assert!(handle.send(LspCommand::Status { action: None }));
         assert!(handle.send(LspCommand::Cancel { token: 7 }));
         assert!(handle.send(LspCommand::EditApplied {
             language: "rust".to_owned(),

@@ -6256,7 +6256,9 @@ impl App {
                 Ok(())
             }
             (Colon::LspStatus, InvocationParameters::None) => {
-                if !self.lsp_send(LspCommand::Status) {
+                if !self.lsp_send(LspCommand::Status {
+                    action: self.active_action_id,
+                }) {
                     self.status("language servers are not running");
                 }
                 Ok(())

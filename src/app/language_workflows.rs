@@ -1437,8 +1437,9 @@ impl App {
                     self.lsp_touch(buffer_id);
                 }
                 // A normal handshake is routine lifecycle, not retained
-                // feedback. Explicit :lsp-status output is an INFO
-                // notification; merely becoming ready stays silent.
+                // feedback. Explicit :lsp-status output arrives as
+                // `LspEvent::StatusReport`; merely becoming ready stays
+                // silent.
             }
             LspEvent::Diagnostics {
                 language,
@@ -1472,6 +1473,15 @@ impl App {
                 } else {
                     self.info_from("LSP", "Language server status", message);
                 }
+            }
+            LspEvent::StatusReport { action, message } => {
+                // The report answers a command the person just ran, so it
+                // takes over that command's echo while it is still current.
+                // The notification is kept either way: it holds the complete
+                // text when the interaction line has to cut it, and is the
+                // only record once later input has superseded the echo.
+                self.update_action_feedback(action, &message);
+                self.info_from("LSP", "Language server status", message);
             }
             LspEvent::Stopped { language, message } => {
                 // The boundary that knows both which server went away and what

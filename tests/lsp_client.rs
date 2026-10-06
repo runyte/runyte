@@ -471,12 +471,11 @@ async fn a_language_server_that_cannot_start_is_stopped_with_an_actionable_reaso
         stopped.1
     );
 
-    assert!(handle.send(LspCommand::Status));
+    assert!(handle.send(LspCommand::Status { action: None }));
     let status = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = events.recv().await.expect("the manager remains available");
-            if let LspEvent::Status { message, error } = event
-                && !error
+            if let LspEvent::StatusReport { message, .. } = event
                 && message.contains("cannot start")
             {
                 break message;
@@ -547,10 +546,13 @@ async fn a_malformed_initialize_result_stops_and_records_the_server() {
         .await;
     assert!(stopped.contains("failed to initialize"), "{stopped}");
 
-    assert!(harness.handle.send(LspCommand::Status));
+    assert!(harness.handle.send(LspCommand::Status { action: Some(7) }));
     let status = harness
         .next_matching(|event| match event {
-            LspEvent::Status { message, .. } => Some(message.clone()),
+            LspEvent::StatusReport {
+                action: Some(7),
+                message,
+            } => Some(message.clone()),
             _ => None,
         })
         .await;
@@ -1401,10 +1403,13 @@ async fn a_retired_connection_cannot_stop_its_replacement() {
     harness.ready().await;
     harness.settle().await;
 
-    assert!(harness.handle.send(LspCommand::Status));
+    assert!(harness.handle.send(LspCommand::Status { action: Some(7) }));
     let status = harness
         .next_matching(|event| match event {
-            LspEvent::Status { message, .. } => Some(message.clone()),
+            LspEvent::StatusReport {
+                action: Some(7),
+                message,
+            } => Some(message.clone()),
             _ => None,
         })
         .await;
@@ -1631,7 +1636,7 @@ async fn shutdown_stops_the_manager() {
     // Sending must fail rather than block.
     let mut refused = false;
     for _ in 0..8 {
-        if !harness.handle.send(LspCommand::Status) {
+        if !harness.handle.send(LspCommand::Status { action: None }) {
             refused = true;
             break;
         }
