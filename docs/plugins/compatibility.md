@@ -39,14 +39,14 @@ pass it explicitly to the maintained client:
 
 ```python
 app = Application('Example', commands, ['views'],
-                  runyte='>=0.3.0, <0.4.0')
+                  runyte='>=0.3.0, <0.5.0')
 ```
 
 Copy the same value into generated configuration:
 
 ```yaml
 api: runyte-1
-runyte: ">=0.3.0, <0.4.0"
+runyte: ">=0.3.0, <0.5.0"
 ```
 
 Runyte has no plugin manifest loader, bundle scan or metadata subprocess probe.

@@ -54,7 +54,11 @@ editing its checkout. Release CI must use the exact 0.4.0 package version and
 source commit under the release runbook.
 
 The bundled examples and MCP adapter admit both 0.3 and 0.4 hosts with
-`>=0.3.0, <0.5.0`; their wire contract is unchanged. Native example registration
+`>=0.3.0, <0.5.0`; their wire contract is unchanged. The documented
+configuration examples, the admission error's suggestion (`RECOMMENDED_RANGE`),
+the benchmark harness and the in-crate context fixtures use the same range.
+`STABLE_RANGE` stays `>=0.3.0, <0.4.0` because it is the acknowledgement in the
+shared wire fixtures. Native example registration
 and the two-client MCP suite run against the staged 0.4 host in CI. The MCP
 fixture initializes its temporary workspaces before launching ide or mux.
 

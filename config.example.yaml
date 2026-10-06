@@ -148,7 +148,7 @@ themes:
 #   - id: case
 #     enabled: true
 #     api: runyte-1
-#     runyte: ">=0.3.0, <0.4.0"
+#     runyte: ">=0.3.0, <0.5.0"
 #     capabilities: [text, selections]
 #     executable: /usr/bin/python3
 #     args: [/home/example/.local/share/runyte/plugins/uppercase.py]

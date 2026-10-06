@@ -109,7 +109,7 @@ async fn authenticate(
     )
     .await;
     assert_eq!(hello["type"], "hello");
-    let registered = exchange(host, events, &mut socket, json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"transport-fixture","commands":[],"required_capabilities":["terminal_read","editor_context_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})).await;
+    let registered = exchange(host, events, &mut socket, json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"transport-fixture","commands":[],"required_capabilities":["terminal_read","editor_context_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})).await;
     assert_eq!(registered["type"], "registered");
     socket
 }
@@ -132,7 +132,7 @@ async fn post_authentication_denial_is_delivered_before_connection_closes() {
     )
     .await;
     assert_eq!(hello["type"], "hello");
-    let denied=exchange(&mut host,&mut events,&mut socket,json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.4.0","name":"denied","commands":[],"required_capabilities":["editor_context_read","buffer_edit"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})).await;
+    let denied=exchange(&mut host,&mut events,&mut socket,json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"denied","commands":[],"required_capabilities":["editor_context_read","buffer_edit"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})).await;
     assert_eq!(denied["type"], "registration_error");
     assert_eq!(denied["code"], "capability_denied");
     assert!(host.context.readers.is_empty());

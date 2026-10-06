@@ -589,7 +589,7 @@ python3 benchmarks/plugins.py --before /path/to/retained/base/runyte \
 
 Build both binaries and finish tests before measuring. `--after` selects the
 current binary. Enabled workloads now require stable `runyte-1` and a host in
-`>=0.3.0, <0.4.0`; during the pre-release cutover, use the explicitly versioned
+`>=0.3.0, <0.5.0`; during the pre-release cutover, use the explicitly versioned
 candidate described in [plugin conformance](../docs/plugins/conformance.md).
 Historical result files retain the protocol labels and measurements they recorded. The harness requires at least ten startup samples and three
 independent idle windows of at least ten seconds. Representative startup fixtures

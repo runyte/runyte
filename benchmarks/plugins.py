@@ -260,7 +260,7 @@ class Session:
         config = 'lsp:\n  enable: false\nworkspace:\n  session_strip: hidden\n'
         if uppercase:
             config += ('plugins:\n  - id: case\n    enabled: true\n'
-                       '    api: runyte-1\n    runyte: ">=0.3.0, <0.4.0"\n'
+                       '    api: runyte-1\n    runyte: ">=0.3.0, <0.5.0"\n'
                        '    capabilities: [text, selections]\n'
                        f'    executable: {json.dumps(sys.executable)}\n'
                        f'    args: [{json.dumps(str(REPO / "docs/plugins/uppercase.py"))}]\n')
@@ -269,7 +269,7 @@ class Session:
             for owner in (['workload', 'quiet'] if quiet else ['workload']):
                 args = [str(HERE / 'plugin_workload.py'), '--evidence', str(self.evidence), '--owner', owner]
                 config += (f'  - id: {owner}\n    enabled: true\n    api: runyte-1\n'
-                           '    runyte: ">=0.3.0, <0.4.0"\n'
+                           '    runyte: ">=0.3.0, <0.5.0"\n'
                            '    capabilities: [views, jobs, processes]\n'
                            f'    executable: {json.dumps(sys.executable)}\n    args: {json.dumps(args)}\n')
         (config_dir / 'config.yaml').write_text(config)

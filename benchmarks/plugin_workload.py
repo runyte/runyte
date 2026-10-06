@@ -72,7 +72,7 @@ class Workload:
             ('publish', 'Publish maximum models during ordinary document edits'),
             ('checkpoint', 'Verify current benchmark workload admission'),
             ('probe', 'Respond from a quiet independent plugin'), ('end', 'Finish the benchmark workload'))]
-        self.app = ObservedApplication('Benchmark ' + owner, commands, ['views', 'jobs', 'processes'], runyte='>=0.3.0, <0.4.0')
+        self.app = ObservedApplication('Benchmark ' + owner, commands, ['views', 'jobs', 'processes'], runyte='>=0.3.0, <0.5.0')
         self.app.handlers = {'visible': lambda context: self.show(context, False),
                              'large': lambda context: self.show(context, True),
                              'job': lambda context: self.start(context, 'job'),

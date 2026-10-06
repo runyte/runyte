@@ -9,6 +9,9 @@ pub const MAX_RANGE_BYTES: usize = 256;
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STABLE_VERSION: &str = "0.3.0";
 pub const STABLE_RANGE: &str = ">=0.3.0, <0.4.0";
+/// The range the admission error tells plugin authors to declare. It must admit
+/// this host, unlike `STABLE_RANGE`, which is the frozen wire fixtures' value.
+pub const RECOMMENDED_RANGE: &str = ">=0.3.0, <0.5.0";
 
 pub fn negotiate_features(
     required: &BTreeSet<String>,
