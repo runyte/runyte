@@ -31,6 +31,12 @@ use super::{
     resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
+/// How soon a second left press on the same directory tree entry must follow
+/// the first to open it as Enter does. Terminals report presses, not double
+/// clicks, so the pairing is timed here.
+pub(super) const TREE_DOUBLE_CLICK_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
 impl App {
     pub(super) fn key_text(&self, template: &str) -> String {
         crate::key_spelling::resolve(template, self.keymap())
@@ -949,9 +955,14 @@ impl App {
         if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
             self.pointer_autoscroll = None;
         }
-        if matches!(event.kind, PointerEventKind::Down(_)) {
+        // Any press ends a pending tree double click; only a second press on
+        // the same tree entry below gets to complete it.
+        let previous_tree_click = if matches!(event.kind, PointerEventKind::Down(_)) {
             self.cancel_pointer_drag();
-        }
+            self.directory_tree_click.take()
+        } else {
+            None
+        };
         self.last_interaction = Instant::now();
         if self.mode == Mode::Command || self.has_input_overlay() {
             self.invalidate_all_partial_guards();
@@ -990,14 +1001,39 @@ impl App {
                     if event.row <= area.y {
                         return Ok(PointerOutcome::Unchanged);
                     }
+                    // As outside the tree, a press cancels any pending
+                    // prefix, which would otherwise outlive a double click.
+                    self.grammar.reset();
                     let row = usize::from(event.row.saturating_sub(area.y.saturating_add(1)));
+                    let mut double_click = false;
                     if let Some(selected) = view.tree_rows.get(row) {
+                        let now = self.last_interaction;
+                        double_click = previous_tree_click.is_some_and(|(path, at)| {
+                            &path == selected
+                                && now.saturating_duration_since(at) <= TREE_DOUBLE_CLICK_INTERVAL
+                        });
                         self.directory_tree.selected = selected.clone();
+                        // A third press starts a new pair rather than
+                        // toggling a directory straight back.
+                        if !double_click {
+                            self.directory_tree_click = Some((selected.clone(), now));
+                        }
                     }
-                    if !self.directory_tree.focused {
-                        self.directory_tree_previous_mode = self.mode;
-                        self.mode = Mode::Normal;
-                        self.directory_tree.focused = true;
+                    self.enter_directory_tree();
+                    if double_click {
+                        // Reported here rather than returned: a persistent
+                        // host publishes no frame for a failed pointer event,
+                        // and opening a file can fail where selecting cannot.
+                        if let Err(error) =
+                            self.execute_editor_command(EditorCommand::DirectoryTreeOpen)
+                        {
+                            self.action_failed(error.to_string());
+                        }
+                        // The bookkeeping `handle_input` does after a key that
+                        // may have opened a buffer.
+                        self.retire_detached_ephemeral_buffers();
+                        self.note_destination_activation();
+                        self.refresh_navigator();
                     }
                 }
                 PointerEventKind::ScrollUp => self

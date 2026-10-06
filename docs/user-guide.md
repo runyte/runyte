@@ -718,6 +718,7 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
 | Wheel | Scroll the pane under the pointer |
 | Drag a shared border | Resize the split |
 | Right-click a selection | Copy all selections to the system clipboard, like `Space c y` |
+| Double-click a directory tree row | Toggle the directory or open the file, like Enter |
 
 - **Autoscroll** follows visual rows, including soft wrapping and collapsed
   folds. Move back inside the pane or release the button to stop.
@@ -2185,8 +2186,13 @@ pane or a buffer.
 | `h` or Left | Collapse a directory, or select its parent |
 | Enter on a directory | Toggle expansion |
 | `Space r` | Refresh the selected directory |
+| Click | Select a row and focus the tree |
+| Double-click | Act as Enter: toggle a directory or open a file |
+| Wheel | Move the selection three rows |
 
-Digits choose destination panes (below), not counts.
+Digits choose destination panes (below), not counts. A double-click is two
+left presses on the same row within half a second; a third press starts a new
+pair rather than toggling the directory straight back.
 
 #### Tree actions
 
