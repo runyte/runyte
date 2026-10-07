@@ -184,6 +184,12 @@ pub enum GrammarNotice {
     SequenceCancelled,
     NoBinding(KeySequence),
     AwaitingCharacter(EditorCommand),
+    /// The first operand of a two-character command has arrived and the
+    /// second has not.
+    AwaitingSecondCharacter {
+        command: EditorCommand,
+        first: char,
+    },
     CharacterInputCancelled,
     ExpectedCharacter,
     InvalidRegister {
@@ -283,6 +289,8 @@ pub struct RunyteGrammar {
     count: Option<usize>,
     count_keys: KeySequence,
     awaiting_character: Option<(EditorCommand, usize)>,
+    /// The first operand of an awaited two-character command, once typed.
+    first_operand: Option<char>,
     awaiting_binding: Option<(KeySequence, BindingTarget)>,
 }
 
@@ -667,6 +675,8 @@ enum VimAwaiting {
     /// A character operand for a command reached through the shared keymap
     /// rather than through Vim's own vocabulary.
     NamespaceCharacter(EditorCommand, usize),
+    /// The second operand of such a command, after its first.
+    NamespaceSecondCharacter(EditorCommand, usize, char),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1023,6 +1033,7 @@ impl RunyteGrammar {
         context: GrammarContext<'_>,
     ) -> Result<GrammarOutput, CommandInvocationError> {
         if let Some((command, count)) = self.awaiting_character.take() {
+            let first = self.first_operand.take();
             if key.code == KeyCode::Escape {
                 self.awaiting_binding = None;
                 return Ok(GrammarOutput::one(EditorIntent::Notice(
@@ -1035,14 +1046,31 @@ impl RunyteGrammar {
                     GrammarNotice::ExpectedCharacter,
                 )));
             };
+            if command.takes_second_character() && first.is_none() {
+                self.awaiting_character = Some((command, count));
+                self.first_operand = Some(character);
+                if let Some((sequence, _)) = self.awaiting_binding.as_mut() {
+                    sequence.push(key);
+                }
+                return Ok(GrammarOutput::one(EditorIntent::Notice(
+                    GrammarNotice::AwaitingSecondCharacter {
+                        command,
+                        first: character,
+                    },
+                )));
+            }
             let resolved_binding = self.awaiting_binding.take().map(|(mut sequence, target)| {
                 sequence.push(key);
                 (sequence, target)
             });
             let execution = CommandExecutionContext::resolved(
                 NonZeroUsize::new(count).expect("character repetition is non-zero"),
-                Some(character),
+                Some(first.unwrap_or(character)),
             );
+            let execution = match first {
+                Some(_) => execution.with_second_character(character),
+                None => execution,
+            };
             return Ok(GrammarOutput {
                 intents: vec![EditorIntent::Command(CommandInvocation::editor(
                     command, execution,
@@ -1189,6 +1217,7 @@ impl InputGrammar for RunyteGrammar {
         self.count = None;
         self.count_keys.clear();
         self.awaiting_character = None;
+        self.first_operand = None;
         self.awaiting_binding = None;
     }
 }
@@ -1507,8 +1536,29 @@ impl VimGrammar {
                     Some(character),
                 )?)
             }
+            VimAwaiting::NamespaceCharacter(command, count) if command.takes_second_character() => {
+                self.awaiting = Some(VimAwaiting::NamespaceSecondCharacter(
+                    command, count, character,
+                ));
+                GrammarOutput::one(EditorIntent::Notice(
+                    GrammarNotice::AwaitingSecondCharacter {
+                        command,
+                        first: character,
+                    },
+                ))
+            }
             VimAwaiting::NamespaceCharacter(command, count) => {
                 GrammarOutput::one(Self::command(command, count, Some(character))?)
+            }
+            VimAwaiting::NamespaceSecondCharacter(command, count, first) => {
+                let execution = CommandExecutionContext::resolved(
+                    NonZeroUsize::new(count.max(1)).expect("Vim count is non-zero"),
+                    Some(first),
+                )
+                .with_second_character(character);
+                GrammarOutput::one(EditorIntent::Command(CommandInvocation::editor(
+                    command, execution,
+                )?))
             }
             VimAwaiting::TextObject(around) => {
                 let Some(object) = Self::syntax_object(character) else {
@@ -2304,7 +2354,8 @@ impl InputGrammar for VimGrammar {
 
     fn awaiting_character(&self) -> Option<EditorCommand> {
         self.awaiting.and_then(|awaiting| match awaiting {
-            VimAwaiting::NamespaceCharacter(command, _) => Some(command),
+            VimAwaiting::NamespaceCharacter(command, _)
+            | VimAwaiting::NamespaceSecondCharacter(command, _, _) => Some(command),
             VimAwaiting::Replace(_) => Some(EditorCommand::ReplaceChar),
             VimAwaiting::MotionCharacter(_, _, _)
             | VimAwaiting::Register
@@ -2694,6 +2745,125 @@ mod tests {
         );
         assert_eq!(invocation.execution().count(), Some(1));
         assert_eq!(invocation.execution().character(), Some('λ'));
+    }
+
+    #[test]
+    fn runyte_surround_replace_takes_two_character_operands() {
+        let mut grammar = RunyteGrammar::default();
+        for key in [Key::char('m'), Key::char('r')] {
+            translate_key(&mut grammar, Mode::Normal, BindingScope::Global, key);
+        }
+        assert_eq!(
+            grammar.awaiting_character(),
+            Some(EditorCommand::SurroundReplace)
+        );
+        assert_eq!(
+            only_intent(translate_key(
+                &mut grammar,
+                Mode::Normal,
+                BindingScope::Global,
+                Key::char('('),
+            )),
+            EditorIntent::Notice(GrammarNotice::AwaitingSecondCharacter {
+                command: EditorCommand::SurroundReplace,
+                first: '(',
+            })
+        );
+        assert_eq!(
+            grammar.awaiting_character(),
+            Some(EditorCommand::SurroundReplace),
+            "the second operand is still a character, not a binding"
+        );
+        let output = translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('m'),
+        );
+        assert_eq!(
+            output.resolved_binding,
+            Some((
+                KeySequence::from([
+                    Key::char('m'),
+                    Key::char('r'),
+                    Key::char('('),
+                    Key::char('m'),
+                ]),
+                BindingTarget::Editor(EditorCommand::SurroundReplace),
+            ))
+        );
+        let EditorIntent::Command(invocation) = only_intent(output) else {
+            panic!("expected command intent")
+        };
+        assert_eq!(
+            invocation.id(),
+            CommandId::Editor(EditorCommand::SurroundReplace)
+        );
+        assert_eq!(invocation.execution().character(), Some('('));
+        assert_eq!(invocation.execution().second_character(), Some('m'));
+        assert_eq!(grammar.awaiting_character(), None);
+
+        // Escape between the operands abandons both, and the next keys are
+        // bindings again rather than a replacement.
+        for key in [Key::char('m'), Key::char('r'), Key::char('(')] {
+            translate_key(&mut grammar, Mode::Normal, BindingScope::Global, key);
+        }
+        assert_eq!(
+            only_intent(translate_key(
+                &mut grammar,
+                Mode::Normal,
+                BindingScope::Global,
+                Key::plain(KeyCode::Escape),
+            )),
+            EditorIntent::Notice(GrammarNotice::CharacterInputCancelled)
+        );
+        assert_eq!(grammar.awaiting_character(), None);
+        for key in [Key::char('m'), Key::char('d')] {
+            translate_key(&mut grammar, Mode::Normal, BindingScope::Global, key);
+        }
+        let EditorIntent::Command(invocation) = only_intent(translate_key(
+            &mut grammar,
+            Mode::Normal,
+            BindingScope::Global,
+            Key::char('"'),
+        )) else {
+            panic!("expected command intent")
+        };
+        assert_eq!(
+            invocation.id(),
+            CommandId::Editor(EditorCommand::SurroundDelete)
+        );
+        assert_eq!(invocation.execution().character(), Some('"'));
+        assert_eq!(invocation.execution().second_character(), None);
+    }
+
+    #[test]
+    fn vim_namespace_commands_collect_a_second_character_operand() {
+        let mut grammar = VimGrammar {
+            awaiting: Some(VimAwaiting::NamespaceCharacter(
+                EditorCommand::SurroundReplace,
+                1,
+            )),
+            ..VimGrammar::default()
+        };
+        assert_eq!(
+            only_intent(translate_vim(&mut grammar, Mode::Normal, Key::char('['))),
+            EditorIntent::Notice(GrammarNotice::AwaitingSecondCharacter {
+                command: EditorCommand::SurroundReplace,
+                first: '[',
+            })
+        );
+        assert_eq!(
+            grammar.awaiting_character(),
+            Some(EditorCommand::SurroundReplace)
+        );
+        let EditorIntent::Command(invocation) =
+            only_intent(translate_vim(&mut grammar, Mode::Normal, Key::char('{')))
+        else {
+            panic!("expected command intent")
+        };
+        assert_eq!(invocation.execution().character(), Some('['));
+        assert_eq!(invocation.execution().second_character(), Some('{'));
     }
 
     #[test]

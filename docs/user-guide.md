@@ -857,6 +857,7 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 | `Space m …` | Record, replay, and list macros; see [Macros](#macros) |
 | `mm` | Jump to the matching bracket |
 | `m i …` / `m a …` | Select inside / around a word, paragraph, delimiter pair, function, type, or argument; see [Text objects](#text-objects) |
+| `m s …` / `m r … …` / `m d …` | Add / replace / delete the pair around each selection; see [Surround editing](#surround-editing) |
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 
@@ -1519,6 +1520,43 @@ parsing, or when the tree finds no pair (as inside a comment).
 
 **Functions, types, and arguments** need the syntax tree. Without one they say
 why and leave the selection alone.
+
+### Surround editing
+
+`m s`, `m r`, and `m d` add, replace, and delete the pair of quotes or
+brackets around each selection, as in Helix. The keys after them name the
+pairs.
+
+| Keys | Action |
+| --- | --- |
+| `m s` then a character | Surround each selection with that pair |
+| `m r` then two characters | Replace the surrounding pair named by the first with the pair named by the second |
+| `m d` then a character | Delete the surrounding pair |
+
+**Examples:**
+
+| Text and cursor | Keys | Result |
+| --- | --- | --- |
+| `name` with `name` selected | `m s "` | `"name"`, selected with its quotes |
+| `(a, b)` with the cursor on `b` | `m r ( [` | `[a, b]` |
+| `say("hi")` with the cursor on `h` | `m d "` | `say(hi)` |
+| `[x, {y}]` with the cursor on `y` | `m d m` | `[x, y]` |
+| `word` under the cursor | `m i w m s *` | `*word*` |
+
+- Either bracket names its pair: `(` and `)` both mean parentheses, as do
+  `[`/`]`, `{`/`}`, and `<`/`>`. Any other character is used on both sides, so
+  `m s *` and `m s |` work.
+- `m r` and `m d` find the pair as `m a` does, from the character under each
+  cursor: through the syntax tree first, then by a balanced scan of the text.
+  They know the seven pairs `m a` knows, `(`, `[`, `{`, `<`, `"`, `'`, and
+  `` ` ``, and `m` for the closest of any of them.
+- With a pair selected, as `m a (` leaves it, `m d (` deletes that pair rather
+  than the one outside it.
+- `m s` selects the result, delimiters included. `m r` and `m d` keep the
+  selection on the text it covered.
+- If any cursor has no surrounding pair, nothing changes and the status line
+  says so. Cursors inside the same pair edit it once.
+- `Esc` cancels while the keys are pending.
 
 ### Structural syntax
 
@@ -6781,6 +6819,9 @@ This is the list `:help key-actions` shows, grouped by topic.
 | Action | Modes | Position | Description |
 | --- | --- | --- | --- |
 | `replace-char` | N S | last | Replace selection with a character |
+| `surround-add` | N S | last | Surround selections with a pair |
+| `surround-replace` | N S | last | Replace the surrounding pair |
+| `surround-delete` | N S | last | Delete the surrounding pair |
 | `toggle-case` | N S | continue | Switch case of the selection |
 | `undo` | N S | continue | Undo the last change |
 | `redo` | N S | continue | Redo the last change |

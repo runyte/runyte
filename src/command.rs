@@ -446,10 +446,20 @@ macro_rules! editor_commands {
                         | Self::FindTillNextChar
                         | Self::FindTillPreviousChar
                         | Self::ReplaceChar
+                        | Self::SurroundAdd
+                        | Self::SurroundReplace
+                        | Self::SurroundDelete
                         | Self::SelectRegister
                         | Self::RecordMacro
                         | Self::ReplayMacro
                 )
+            }
+
+            /// Whether the command takes a second character operand after
+            /// its first, as `m r` names the pair to replace and then the
+            /// pair replacing it.
+            pub const fn takes_second_character(self) -> bool {
+                matches!(self, Self::SurroundReplace)
             }
 
             /// Whether the semantic command accepts a numeric address or
@@ -551,6 +561,9 @@ editor_commands! {
     OpenLineBelow => ("open-line-below", "Open a line below"),
     OpenLineAbove => ("open-line-above", "Open a line above"),
     ReplaceChar => ("replace-char", "Replace selection with a character"),
+    SurroundAdd => ("surround-add", "Surround selections with a pair"),
+    SurroundReplace => ("surround-replace", "Replace the surrounding pair"),
+    SurroundDelete => ("surround-delete", "Delete the surrounding pair"),
     ToggleCase => ("toggle-case", "Switch case of the selection"),
     SelectionUndo => ("selection-undo", "Undo the last selection change"),
     SelectionRedo => ("selection-redo", "Redo the last selection change"),
@@ -1027,6 +1040,9 @@ impl EditorCommand {
                 | Self::DeleteSelection
                 | Self::ChangeSelection
                 | Self::ReplaceChar
+                | Self::SurroundAdd
+                | Self::SurroundReplace
+                | Self::SurroundDelete
                 | Self::Save
                 | Self::DeleteWordBackward
                 | Self::DeleteWordForward
@@ -1171,6 +1187,9 @@ impl EditorCommand {
             | Self::OpenLineBelow
             | Self::OpenLineAbove
             | Self::ReplaceChar
+            | Self::SurroundAdd
+            | Self::SurroundReplace
+            | Self::SurroundDelete
             | Self::ToggleCase
             | Self::Undo
             | Self::Redo
@@ -2649,6 +2668,7 @@ pub enum InvocationParameters {
 pub struct CommandExecutionContext {
     count: Option<std::num::NonZeroUsize>,
     character: Option<char>,
+    second_character: Option<char>,
 }
 
 impl CommandExecutionContext {
@@ -2656,6 +2676,16 @@ impl CommandExecutionContext {
         Self {
             count: Some(count),
             character,
+            second_character: None,
+        }
+    }
+
+    /// The same context carrying the operand that followed the first, for a
+    /// command whose `takes_second_character` is true.
+    pub const fn with_second_character(self, character: char) -> Self {
+        Self {
+            second_character: Some(character),
+            ..self
         }
     }
 
@@ -2678,6 +2708,10 @@ impl CommandExecutionContext {
 
     pub const fn character(self) -> Option<char> {
         self.character
+    }
+
+    pub const fn second_character(self) -> Option<char> {
+        self.second_character
     }
 }
 
@@ -3095,6 +3129,14 @@ fn validate_editor_execution(
     execution: CommandExecutionContext,
 ) -> Result<(), CommandInvocationError> {
     match (command.takes_character(), execution.character()) {
+        (true, None) => return Err(CommandInvocationError::MissingCharacter(command)),
+        (false, Some(_)) => return Err(CommandInvocationError::UnexpectedCharacter(command)),
+        _ => {}
+    }
+    match (
+        command.takes_second_character(),
+        execution.second_character(),
+    ) {
         (true, None) => return Err(CommandInvocationError::MissingCharacter(command)),
         (false, Some(_)) => return Err(CommandInvocationError::UnexpectedCharacter(command)),
         _ => {}
@@ -4208,6 +4250,30 @@ mod tests {
             ),
             Err(CommandInvocationError::UnexpectedCharacter(
                 EditorCommand::MoveRight
+            ))
+        );
+
+        let from = CommandExecutionContext::resolved(one, Some('('));
+        assert!(
+            CommandInvocation::editor(
+                EditorCommand::SurroundReplace,
+                from.with_second_character('[')
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            CommandInvocation::editor(EditorCommand::SurroundReplace, from),
+            Err(CommandInvocationError::MissingCharacter(
+                EditorCommand::SurroundReplace
+            ))
+        );
+        assert_eq!(
+            CommandInvocation::editor(
+                EditorCommand::SurroundDelete,
+                from.with_second_character('[')
+            ),
+            Err(CommandInvocationError::UnexpectedCharacter(
+                EditorCommand::SurroundDelete
             ))
         );
     }

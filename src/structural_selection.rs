@@ -39,15 +39,9 @@ pub(crate) fn select_delimiter(
         .iter()
         .map(|range| {
             let requested = SyntaxRange::new(range.from(), range.to())?;
-            let structural = match syntax {
-                Some(syntax) => {
-                    syntax.enclosing_delimiter(text, registry, requested, pair, part)?
-                }
-                None => None,
-            };
-            let selected =
-                structural.or_else(|| lexical_enclosing_delimiter(text, requested, pair, part));
-            let Some(selected) = selected else {
+            let Some(selected) =
+                enclosing_delimiter(syntax, text, registry, requested, pair, part)?
+            else {
                 return Ok(*range);
             };
             changed = true;
@@ -59,6 +53,24 @@ pub(crate) fn select_delimiter(
         })
         .collect::<Result<Vec<_>, SyntaxError>>()?;
     Ok(changed.then(|| Selection::new(ranges, selection.primary_index())))
+}
+
+/// The pair enclosing one half-open `requested` range, resolved as
+/// [`select_delimiter`] resolves each of its ranges: through the syntax tree
+/// first, then by a balanced scan of the text.
+pub(crate) fn enclosing_delimiter(
+    syntax: Option<&DocumentSyntax>,
+    text: &Text,
+    registry: &Registry,
+    requested: SyntaxRange,
+    pair: Option<DelimiterPair>,
+    part: SyntaxObjectPart,
+) -> Result<Option<SyntaxRange>, SyntaxError> {
+    let structural = match syntax {
+        Some(syntax) => syntax.enclosing_delimiter(text, registry, requested, pair, part)?,
+        None => None,
+    };
+    Ok(structural.or_else(|| lexical_enclosing_delimiter(text, requested, pair, part)))
 }
 
 /// The smallest pair of any requested kind that a text scan finds around

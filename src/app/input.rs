@@ -2410,6 +2410,12 @@ impl App {
                 GrammarNotice::AwaitingCharacter(command) => {
                     self.status(command.metadata().description);
                 }
+                GrammarNotice::AwaitingSecondCharacter { command, first } => {
+                    self.status(match command {
+                        EditorCommand::SurroundReplace => format!("replace {first} with …"),
+                        _ => format!("{} {first} …", command.metadata().description),
+                    });
+                }
                 GrammarNotice::CharacterInputCancelled => {
                     self.status("character input cancelled");
                 }
@@ -4459,6 +4465,9 @@ impl App {
             | Command::FindTillNextChar
             | Command::FindTillPreviousChar
             | Command::ReplaceChar
+            | Command::SurroundAdd
+            | Command::SurroundReplace
+            | Command::SurroundDelete
             | Command::SelectRegister
             | Command::RecordMacro
             | Command::ReplayMacro => {
@@ -5879,11 +5888,28 @@ impl App {
                         ));
                         return Ok(());
                     }
+                    EditorCommand::SurroundAdd
+                    | EditorCommand::SurroundReplace
+                    | EditorCommand::SurroundDelete => {
+                        self.action_failed(format!(
+                            "surround editing needs a buffer · {} shows this pane's again",
+                            self.binding_label(EditorCommand::LeaveTerminal)
+                        ));
+                        return Ok(());
+                    }
                     _ => {}
                 }
             }
             match command {
                 EditorCommand::ReplaceChar => self.replace_with_char(character),
+                EditorCommand::SurroundAdd => self.surround_add(character),
+                EditorCommand::SurroundReplace => {
+                    let replacement = execution
+                        .second_character()
+                        .expect("validated invocation owns a second character");
+                    self.surround_replace(character, replacement)?;
+                }
+                EditorCommand::SurroundDelete => self.surround_delete(character)?,
                 EditorCommand::FindNextChar
                 | EditorCommand::FindPreviousChar
                 | EditorCommand::FindTillNextChar
