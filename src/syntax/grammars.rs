@@ -192,6 +192,20 @@ const TSX_FOLDS: QueryFragment = runyte(
     "Runyte TSX fold additions",
 );
 
+/// JSON and JSONC share one grammar and every query. `tree-sitter-json`
+/// already parses `//` and `/* */` comments as extras, so JSONC differs only in
+/// detection, its line-comment marker, and the name language servers see.
+const JSON_HIGHLIGHTS: QueryFragment = upstream(
+    tree_sitter_json::HIGHLIGHTS_QUERY,
+    "tree-sitter-json 0.24.8 highlights",
+);
+const JSON_INDENTATION: QueryFragment = runyte(
+    include_str!("queries/json/indentation.scm"),
+    "Runyte JSON indentation",
+);
+const JSON_FOLDS: QueryFragment =
+    runyte(include_str!("queries/json/folds.scm"), "Runyte JSON folds");
+
 /// Runyte-authored precedence repair for `tree-sitter-go 0.25.0`.
 ///
 /// The upstream query captures method names as functions before a blanket
@@ -1143,23 +1157,41 @@ pub(super) const BUILTIN_LANGUAGES: &[LanguageDefinition] = &[
         line_comment: None,
         grammar: tree_sitter_json::LANGUAGE,
         queries: LanguageQueries {
-            highlights: QuerySource::new(&[upstream(
-                tree_sitter_json::HIGHLIGHTS_QUERY,
-                "tree-sitter-json 0.24.8 highlights",
-            )]),
+            highlights: QuerySource::new(&[JSON_HIGHLIGHTS]),
             injections: QuerySource::EMPTY,
             locals: QuerySource::EMPTY,
         },
         text_objects: &[],
         outline: QuerySource::EMPTY,
-        indentation: QuerySource::new(&[runyte(
-            include_str!("queries/json/indentation.scm"),
-            "Runyte JSON indentation",
-        )]),
-        folds: QuerySource::new(&[runyte(
-            include_str!("queries/json/folds.scm"),
-            "Runyte JSON folds",
-        )]),
+        indentation: QuerySource::new(&[JSON_INDENTATION]),
+        folds: QuerySource::new(&[JSON_FOLDS]),
+    },
+    // Configuration files whose own tools document comments are JSONC even
+    // though they keep the `.json` extension. Exact names only: detection sees
+    // a file name, not its directory, so `.vscode/settings.json` is not among
+    // them.
+    LanguageDefinition {
+        name: "jsonc",
+        extensions: &["jsonc"],
+        filenames: &[
+            "tsconfig.json",
+            "jsconfig.json",
+            "devcontainer.json",
+            ".devcontainer.json",
+        ],
+        filename_prefixes: &[],
+        shebangs: &[],
+        line_comment: Some("//"),
+        grammar: tree_sitter_json::LANGUAGE,
+        queries: LanguageQueries {
+            highlights: QuerySource::new(&[JSON_HIGHLIGHTS]),
+            injections: QuerySource::EMPTY,
+            locals: QuerySource::EMPTY,
+        },
+        text_objects: &[],
+        outline: QuerySource::EMPTY,
+        indentation: QuerySource::new(&[JSON_INDENTATION]),
+        folds: QuerySource::new(&[JSON_FOLDS]),
     },
     LanguageDefinition {
         name: "toml",
@@ -1501,6 +1533,7 @@ mod tests {
                 ("make", &["mk", "mak"][..]),
                 ("ini", &["ini"][..]),
                 ("json", &["json"][..]),
+                ("jsonc", &["jsonc"][..]),
                 ("toml", &["toml"][..]),
                 ("yaml", &["yaml", "yml"][..]),
                 ("markdown", &["md", "markdown"][..]),
@@ -1588,6 +1621,20 @@ mod tests {
             .find(|definition| definition.name == "make")
             .unwrap();
         assert_eq!(make.filenames, &["Makefile", "makefile", "GNUmakefile"]);
+
+        let jsonc = BUILTIN_LANGUAGES
+            .iter()
+            .find(|definition| definition.name == "jsonc")
+            .unwrap();
+        assert_eq!(
+            jsonc.filenames,
+            &[
+                "tsconfig.json",
+                "jsconfig.json",
+                "devcontainer.json",
+                ".devcontainer.json"
+            ]
+        );
     }
 
     #[test]

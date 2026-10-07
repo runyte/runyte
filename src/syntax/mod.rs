@@ -3741,6 +3741,7 @@ mod tests {
             ("java", Some("//")),
             ("javascript", Some("//")),
             ("json", None),
+            ("jsonc", Some("//")),
             ("kotlin", Some("//")),
             ("lua", Some("--")),
             ("make", Some("#")),

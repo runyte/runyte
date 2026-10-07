@@ -919,6 +919,7 @@ fn indentation_and_folds_cover_the_truthful_language_matrix() {
         ("make", "all:\n\t@echo ok\n\t@echo done\n"),
         ("ini", "[editor]\nname=runyte\ncolor=blue\n"),
         ("json", "{\n    \"value\": 1\n}\n"),
+        ("jsonc", "{\n    // note\n    \"value\": 1\n}\n"),
         ("toml", "values = [\n    1,\n    2,\n]\n"),
         ("yaml", "root:\n  child: value\n  other: value\n"),
     ];
@@ -2884,6 +2885,74 @@ fn json_highlights_keys_strings_and_numbers() {
 }
 
 #[test]
+fn jsonc_file_detection_and_comment_marker() {
+    let registry = Registry::new();
+    let json = registry.language_for_name("json").unwrap();
+    let jsonc = registry.language_for_name("jsonc").unwrap();
+    assert_eq!(registry.line_comment(json), None);
+    assert_eq!(registry.line_comment(jsonc), Some("//"));
+    for path in [
+        "settings.jsonc",
+        "settings.JSONC",
+        "tsconfig.json",
+        "packages/app/jsconfig.json",
+        ".devcontainer/devcontainer.json",
+        ".devcontainer.json",
+    ] {
+        assert_eq!(
+            registry.language_for_path(Path::new(path)),
+            Some(jsonc),
+            "{path}"
+        );
+    }
+    // Detection sees only the file name, so ordinary `.json` names stay JSON
+    // even where the surrounding tool reads comments.
+    for path in [
+        "package.json",
+        ".vscode/settings.json",
+        "tsconfig.base.json",
+    ] {
+        assert_eq!(
+            registry.language_for_path(Path::new(path)),
+            Some(json),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn jsonc_highlights_line_and_block_comments_without_parse_errors() {
+    let source = "{\n    // compiler options\n    \"strict\": true, /* inline */\n    \"target\": \"es2022\"\n}\n";
+    let highlighted = scopes(source, "jsonc");
+    assert_scope(&highlighted, "// compiler options", "comment");
+    assert_scope(&highlighted, "/* inline */", "comment");
+    assert_scope(&highlighted, "true", "constant");
+
+    let (registry, text, syntax) = parse(source, "jsonc");
+    let indent = syntax
+        .newline_indent(&text, &registry, char_offset(source, "\n"))
+        .unwrap();
+    assert_eq!(registry.language_name(indent.language), "jsonc");
+    assert!(indent.issues.is_empty(), "{:?}", indent.issues);
+    assert!(indent.always_levels > 0);
+    assert!(!syntax.folds(&text, &registry).unwrap().items.is_empty());
+}
+
+#[test]
+fn jsonc_markdown_fence_uses_the_jsonc_language() {
+    let source = "# Config\n\n```jsonc\n{\n  // note\n  \"a\": 1\n}\n```\n";
+    let (registry, text, syntax) = parse(source, "markdown");
+    let node = syntax
+        .node_at(&text, &registry, char_offset(source, "\"a\""))
+        .unwrap()
+        .unwrap();
+    assert_eq!(registry.language_name(node.language), "jsonc");
+    assert!(spans_of(&syntax, &text, &registry).iter().any(|span| {
+        text.slice_string(span.from, span.to) == "// note" && span.scope.name() == "comment"
+    }));
+}
+
+#[test]
 fn toml_highlights_tables_and_values() {
     let scopes = scopes("# comment\n[package]\nname = \"runyte\"\n", "toml");
     assert_scope(&scopes, "# comment", "comment");
@@ -3099,6 +3168,7 @@ fn every_bundled_grammar_loads_without_error() {
         "make",
         "ini",
         "json",
+        "jsonc",
         "toml",
         "yaml",
         "markdown",
@@ -3405,6 +3475,8 @@ fn extensions_map_to_languages_case_insensitively() {
         ("GNUmakefile", "make"),
         ("Cargo.toml", "toml"),
         ("data.JSON", "json"),
+        ("config/settings.JSONC", "jsonc"),
+        ("web/tsconfig.json", "jsonc"),
         ("config.yml", "yaml"),
         ("README.md", "markdown"),
     ] {
