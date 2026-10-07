@@ -858,6 +858,7 @@ impl App {
             InputEvent::ClipboardPaste => {
                 if self.jump.take().is_some() {
                     self.status("jump cancelled");
+                    self.report_input_feedback();
                 } else if !overlay_owns_input
                     && self.active_terminal().is_none()
                     && self.mode != Mode::Command
@@ -991,6 +992,7 @@ impl App {
         {
             if self.jump.take().is_some() {
                 self.status("jump cancelled");
+                self.report_input_feedback();
             }
             match event.kind {
                 PointerEventKind::Down(PointerButton::Left) => {
@@ -1067,6 +1069,7 @@ impl App {
             PointerEventKind::Down(PointerButton::Left) => {
                 if self.jump.take().is_some() {
                     self.status("jump cancelled");
+                    self.report_input_feedback();
                 }
                 // A pointer press cancels any modal prefix/operator/register
                 // state before it establishes a new spatial interaction.
@@ -2112,6 +2115,7 @@ impl App {
         }
         if self.jump.take().is_some() {
             self.status("jump cancelled");
+            self.report_input_feedback();
             return Ok(());
         }
         self.hover = None;
@@ -2400,60 +2404,68 @@ impl App {
             EditorIntent::Range(RangeIntent::VimSearchWord { previous, count }) => {
                 self.search_selection_direction(previous, count.get());
             }
-            EditorIntent::Notice(notice) => match notice {
-                GrammarNotice::PendingSequence(sequence) => self.status(format!("{sequence} …")),
-                GrammarNotice::Count(count) => self.status(format!("{count} …")),
-                GrammarNotice::SequenceCancelled => self.status("key sequence cancelled"),
-                GrammarNotice::NoBinding(sequence) => {
-                    self.error_unretained(format!("No binding: {sequence}"));
+            EditorIntent::Notice(notice) => {
+                match notice {
+                    GrammarNotice::PendingSequence(sequence) => {
+                        self.status(format!("{sequence} …"))
+                    }
+                    GrammarNotice::Count(count) => self.status(format!("{count} …")),
+                    GrammarNotice::SequenceCancelled => self.status("key sequence cancelled"),
+                    GrammarNotice::NoBinding(sequence) => {
+                        self.error_unretained(format!("No binding: {sequence}"));
+                    }
+                    GrammarNotice::AwaitingCharacter(command) => {
+                        self.status(command.metadata().description);
+                    }
+                    GrammarNotice::AwaitingSecondCharacter { command, first } => {
+                        self.status(match command {
+                            EditorCommand::SurroundReplace => format!("replace {first} with …"),
+                            _ => format!("{} {first} …", command.metadata().description),
+                        });
+                    }
+                    GrammarNotice::CharacterInputCancelled => {
+                        self.status("character input cancelled");
+                    }
+                    GrammarNotice::ExpectedCharacter => self.action_failed("expected a character"),
+                    GrammarNotice::InvalidRegister {
+                        register,
+                        macros_only,
+                    } => self.action_failed(if macros_only {
+                        format!("macro register must be a-z, not '{register}'")
+                    } else {
+                        format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
+                    }),
+                    GrammarNotice::ActionSequenceCount => {
+                        self.action_failed("bindings with multiple actions do not support a count");
+                    }
+                    GrammarNotice::CountNotSupported(target) => {
+                        self.action_failed(format!(
+                            "{} does not support a count",
+                            target.description()
+                        ));
+                    }
+                    GrammarNotice::UnavailableBinding {
+                        target,
+                        availability,
+                    } => {
+                        let reason = availability
+                            .reason()
+                            .expect("unavailable grammar notice has a reason");
+                        let state = match availability {
+                            crate::keymap::BindingAvailability::Planned(_) => "planned",
+                            crate::keymap::BindingAvailability::Unsupported(_) => "unsupported",
+                            crate::keymap::BindingAvailability::Implemented => {
+                                unreachable!("implemented binding cannot be unavailable")
+                            }
+                        };
+                        self.action_failed(format!(
+                            "{} is {state}: {reason}",
+                            target.description()
+                        ));
+                    }
                 }
-                GrammarNotice::AwaitingCharacter(command) => {
-                    self.status(command.metadata().description);
-                }
-                GrammarNotice::AwaitingSecondCharacter { command, first } => {
-                    self.status(match command {
-                        EditorCommand::SurroundReplace => format!("replace {first} with …"),
-                        _ => format!("{} {first} …", command.metadata().description),
-                    });
-                }
-                GrammarNotice::CharacterInputCancelled => {
-                    self.status("character input cancelled");
-                }
-                GrammarNotice::ExpectedCharacter => self.action_failed("expected a character"),
-                GrammarNotice::InvalidRegister {
-                    register,
-                    macros_only,
-                } => self.action_failed(if macros_only {
-                    format!("macro register must be a-z, not '{register}'")
-                } else {
-                    format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
-                }),
-                GrammarNotice::ActionSequenceCount => {
-                    self.action_failed("bindings with multiple actions do not support a count");
-                }
-                GrammarNotice::CountNotSupported(target) => {
-                    self.action_failed(format!(
-                        "{} does not support a count",
-                        target.description()
-                    ));
-                }
-                GrammarNotice::UnavailableBinding {
-                    target,
-                    availability,
-                } => {
-                    let reason = availability
-                        .reason()
-                        .expect("unavailable grammar notice has a reason");
-                    let state = match availability {
-                        crate::keymap::BindingAvailability::Planned(_) => "planned",
-                        crate::keymap::BindingAvailability::Unsupported(_) => "unsupported",
-                        crate::keymap::BindingAvailability::Implemented => {
-                            unreachable!("implemented binding cannot be unavailable")
-                        }
-                    };
-                    self.action_failed(format!("{} is {state}: {reason}", target.description()));
-                }
-            },
+                self.report_input_feedback();
+            }
         }
         Ok(None)
     }
