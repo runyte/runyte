@@ -7135,9 +7135,10 @@ the accent, and foam and sky are what the palette lightens toward.
   just below ordinary text, and comments at 3.9:1.
 - They cannot soften further without text becoming hard to read on the shared
   Git diff grounds.
-- The mode carets run from the wave to dusk: turquoise Normal, then cyan, sky,
-  indigo, and an orchid Replace.
-- The only warm colours are the error red, which one-key jump labels share,
+- Mode carets and status labels use turquoise Normal, coral Insert, apricot
+  Select, indigo Command, and orchid Replace. Insert and Select take their
+  red/orange pairing from `terafox`, adjusted for the ocean grounds.
+- Other warm colours are the error red, which one-key jump labels share,
   the warning amber, and the Git gutter and diff colours every built-in theme
   shares.
 

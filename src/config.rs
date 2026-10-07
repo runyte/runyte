@@ -2686,6 +2686,16 @@ mod tests {
         for (variant, theme) in [("ocean-dark", &dark), ("ocean-light", &light)] {
             for (role, color) in roles(theme) {
                 let (red, green, blue) = color.channels().unwrap();
+                if role == "cursor_insert" || role == "cursor_select" {
+                    assert!(
+                        red > green && green > blue,
+                        "{variant} {role} should be warm"
+                    );
+                    assert!(contrast(color, theme.background) >= 4.5);
+                    assert_ne!(color, theme.cursor_normal);
+                    assert_ne!(theme.cursor_insert, theme.cursor_select);
+                    continue;
+                }
                 if role == "diagnostic.error" {
                     assert_eq!(color, theme.error);
                     continue;
@@ -2700,8 +2710,8 @@ mod tests {
                 );
             }
 
-            // The two warm colours, each named once and pinned here so a
-            // third cannot arrive without this test being rewritten.
+            // Error and warning retain their semantic warm colours alongside
+            // the warm Insert and Select carets.
             for (role, color) in [("error", theme.error), ("warning", theme.warning)] {
                 let (red, green, blue) = color.channels().unwrap();
                 assert!(
@@ -2834,20 +2844,18 @@ mod tests {
         assert_eq!(light.jump_text_muted, Color::Rgb(0x7b, 0x92, 0x9b));
         assert_eq!(order(dark.jump_text_muted), order(light.jump_text_muted));
 
-        // Normal is the accent turquoise, and the other carets walk from it
-        // toward dusk, so the five modes are told apart by hue alone without
-        // leaving the palette. Replace is the orchid a theme whose Normal
-        // reads as green is given, rather than a green answering Normal.
+        // Warm Insert and Select separate from turquoise Normal, while
+        // Command stays indigo and Replace stays orchid.
         assert_eq!(dark.cursor_normal, dark.accent);
         assert_eq!(dark.cursor_normal, Color::Rgb(0x00, 0xb6, 0xa2));
-        assert_eq!(dark.cursor_insert, Color::Rgb(0x69, 0xc3, 0xd0));
-        assert_eq!(dark.cursor_select, Color::Rgb(0x3f, 0x9d, 0xe9));
+        assert_eq!(dark.cursor_insert, Color::Rgb(0xef, 0x78, 0x74));
+        assert_eq!(dark.cursor_select, Color::Rgb(0xe8, 0xa1, 0x70));
         assert_eq!(dark.cursor_command, Color::Rgb(0x67, 0x7d, 0xea));
         assert_eq!(dark.cursor_replace, Color::Rgb(0xad, 0x81, 0xf3));
         assert_eq!(light.cursor_normal, light.accent);
         assert_eq!(light.cursor_normal, Color::Rgb(0x00, 0x59, 0x4c));
-        assert_eq!(light.cursor_insert, Color::Rgb(0x00, 0x44, 0x64));
-        assert_eq!(light.cursor_select, Color::Rgb(0x00, 0x53, 0xb1));
+        assert_eq!(light.cursor_insert, Color::Rgb(0x80, 0x40, 0x3e));
+        assert_eq!(light.cursor_select, Color::Rgb(0x58, 0x3d, 0x2b));
         assert_eq!(light.cursor_command, Color::Rgb(0x54, 0x55, 0xd6));
         assert_eq!(light.cursor_replace, Color::Rgb(0x74, 0x2e, 0xbd));
     }

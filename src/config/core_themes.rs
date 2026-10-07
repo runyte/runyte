@@ -599,20 +599,18 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // the palette keeps its order: keywords and strings a step below ordinary
     // text, calls and literals a step below those, comments at 3.9:1.
     //
-    // Two warm colours survive that discipline because the interface cannot
+    // Warm colours interrupt that discipline where the interface cannot
     // afford to have them blend into the water: the error red, which is also
     // the one-key jump label `built_in_jump_labels_are_red_and_one_neon_cyan_hue`
     // requires to be red, and the amber a warning is drawn in. Each is named
-    // once per variant so it reads as a decision rather than a leak. The Git
-    // gutter and diff grounds are the shared semantic palette every bundled
+    // once per variant. Insert and Select also use warm hues for recognition.
+    // The Git gutter and diff grounds are the shared semantic palette every bundled
     // theme carries, and the two-key jump labels are the shared neon cyan.
     //
-    // The mode carets walk one hue ladder from the wave to dusk — turquoise,
-    // cyan, sky, indigo, orchid — so the five are told apart by hue without
-    // leaving the palette. Normal is unset, which leaves it on the accent
-    // turquoise; because that reads as green to `default_replace_color`'s
-    // hue test, Replace is diverted to the orchid end of the ladder rather
-    // than to a green that would answer Normal.
+    // Mode carets separate turquoise Normal from coral Insert and apricot
+    // Select, softening Terafox's red/orange pairing to suit the ocean grounds.
+    // Command stays indigo and Replace orchid. Normal is unset, so it uses
+    // the accent; Replace is explicit to avoid the default green fallback.
     let ocean_dark_red = "#ff6b6b";
     themes.insert(
         "ocean-dark".into(),
@@ -635,9 +633,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // for both.
             command: None,
             cursor_normal: None,
-            cursor_insert: Some("#69c3d0".into()),
+            cursor_insert: Some("#ef7874".into()),
             cursor_replace: Some("#ad81f3".into()),
-            cursor_select: Some("#3f9de9".into()),
+            cursor_select: Some("#e8a170".into()),
             cursor_command: Some("#677dea".into()),
             cursor_secondary: None,
             directory: Some("#3f9de9".into()),
@@ -709,7 +707,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // ground is a shade below the palest foam for the same reason the text is
     // a shade above the deepest water: neither end of the pair should be the
     // brightest thing a reader looks at for an hour. See that theme for why
-    // the two warm colours are there and why Replace sits at the orchid end.
+    // the warm colours are there and why Replace stays orchid.
     let ocean_light_red = "#b0281f";
     themes.insert(
         "ocean-light".into(),
@@ -730,9 +728,9 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
             // Unset: see `ocean-dark`.
             command: None,
             cursor_normal: None,
-            cursor_insert: Some("#004464".into()),
+            cursor_insert: Some("#80403e".into()),
             cursor_replace: Some("#742ebd".into()),
-            cursor_select: Some("#0053b1".into()),
+            cursor_select: Some("#583d2b".into()),
             cursor_command: Some("#5455d6".into()),
             cursor_secondary: None,
             directory: Some("#0053b1".into()),
