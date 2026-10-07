@@ -12,6 +12,8 @@
 mode: ide
 editor:
   line_numbers: true
+  # Distances from the cursor; its own line keeps its absolute number.
+  relative_line_numbers: false
   tab_width: 4
   indent: spaces # or tabs; Tab inserts this style, Shift-Tab the other
   smart_newline: true # adds syntax indentation, continues Markdown lists, and aligns Tab below lists; false keeps only leading indent on Enter

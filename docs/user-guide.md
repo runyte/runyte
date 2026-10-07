@@ -6165,6 +6165,7 @@ file-only.
 | --- | --- | --- | --- |
 | `editor.grammar` | `runyte` | `runyte` (`helix` is an alias) | Editing grammar. The alias is for compatibility, not a promise of full Helix behavior. |
 | `editor.line_numbers` | `true` | boolean | Show line numbers beside editable buffers. |
+| `editor.relative_line_numbers` | `false` | boolean | Show document-line distances from each pane's cursor, keeping the cursor line absolute. Requires `editor.line_numbers`. Wrapped continuations keep their arrows; folded lines still count in distances. |
 | `editor.tab_width` | `4` | 1–16 | Display and indentation width of a tab. |
 | `editor.indent` | `spaces` | `spaces`, `tabs` | Style of new indentation. `Tab` inserts this style, `Shift-Tab` the other. |
 | `editor.smart_newline` | `true` | boolean | Add syntax indentation and continue Markdown lists on a new line. `false` keeps only the leading indent. |

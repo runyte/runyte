@@ -2784,3 +2784,47 @@ fn scratch_text_naming_its_own_language_is_not_rendered_as_markdown() {
 
     assert_eq!(app.key_binding_scope(), BindingScope::Global);
 }
+
+#[test]
+fn relative_line_numbers_preview_cancel_and_save() {
+    let path = temporary("relative-settings-preview.yaml");
+    let original = "# keep this comment\nunknown: kept\neditor:\n  relative_line_numbers: false\n";
+    fs::write(&path, original).unwrap();
+    let (config, _) = Config::load(Some(&path)).unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.note_loaded_config(&path);
+
+    app.open_setting_values(SettingId::EditorRelativeLineNumbers);
+    let enabled = app
+        .list_actions
+        .iter()
+        .position(|action| {
+            matches!(
+                action,
+                ListAction::SettingValue {
+                    value: SettingValue::Boolean(true),
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    app.list.as_mut().unwrap().selected = enabled;
+    app.preview_selected_setting_value();
+    assert!(app.config.editor.relative_line_numbers);
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(!app.config.editor.relative_line_numbers);
+
+    app.open_setting_values(SettingId::EditorRelativeLineNumbers);
+    app.list.as_mut().unwrap().selected = enabled;
+    app.preview_selected_setting_value();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("# keep this comment"));
+    assert!(saved.contains("unknown: kept"));
+    assert!(saved.contains("relative_line_numbers: true"));
+    assert!(app.config.editor.relative_line_numbers);
+    assert!(app.list.is_none());
+    fs::remove_file(path).unwrap();
+}

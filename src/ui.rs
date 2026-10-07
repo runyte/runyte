@@ -2600,7 +2600,10 @@ fn snapshot_line(
             spans.push(Span::styled(
                 format!(
                     "{:>digits$}",
-                    row.document_row + 1,
+                    pane.relative_line_origin
+                        .filter(|origin| *origin != row.document_row)
+                        .map_or(row.document_row + 1, |origin| origin
+                            .abs_diff(row.document_row)),
                     digits = pane.line_digits
                 ),
                 line_style,
@@ -6398,6 +6401,7 @@ mod tests {
                 maximized: None,
             },
             line_numbers: true,
+            relative_line_origin: None,
             line_digits: 3,
             signs: false,
             changes: false,
@@ -6465,6 +6469,7 @@ mod tests {
                 maximized: None,
             },
             line_numbers: false,
+            relative_line_origin: None,
             line_digits: 0,
             signs: false,
             changes: true,
@@ -6549,6 +6554,7 @@ mod tests {
                 maximized: None,
             },
             line_numbers: true,
+            relative_line_origin: None,
             line_digits: 2,
             signs: false,
             changes: true,
@@ -6635,6 +6641,7 @@ mod tests {
                 maximized: None,
             },
             line_numbers: true,
+            relative_line_origin: None,
             line_digits: 2,
             signs: false,
             changes: true,
@@ -6706,6 +6713,7 @@ mod tests {
                 maximized: None,
             },
             line_numbers: false,
+            relative_line_origin: None,
             line_digits: 0,
             signs: false,
             changes: false,
@@ -10001,6 +10009,35 @@ mod tests {
         assert!(screen.contains("klmnop"), "{screen:?}");
         assert_eq!(app.active().scroll_col, 0);
         assert_eq!(app.active().wrap_width, 10);
+    }
+
+    #[test]
+    fn relative_line_numbers_follow_cursor_and_preserve_wrap_markers() {
+        let mut config = Config::default();
+        assert!(!config.editor.relative_line_numbers);
+        config.editor.relative_line_numbers = true;
+        config.editor.soft_wrap = true;
+        config.editor.scroll_offset = 0;
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(
+            0,
+            "first\nsecond\nabcdefghijklmnop\nlast",
+        ));
+        app.panes.get_mut(&0).unwrap().selection = Selection::point(13);
+        let screen = rendered(&mut app, 16, 10);
+        for expected in [
+            "2 │ first",
+            "1 │ second",
+            "3 │ abcdefghij",
+            " ↪│ klmnop",
+            "1 │ last",
+        ] {
+            assert!(screen.contains(expected), "{expected}: {screen:?}");
+        }
+        app.config.editor.relative_line_numbers = false;
+        let screen = rendered(&mut app, 16, 10);
+        assert!(screen.contains("1 │ first"), "{screen:?}");
+        assert!(screen.contains("4 │ last"), "{screen:?}");
     }
 
     #[test]

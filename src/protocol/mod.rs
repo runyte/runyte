@@ -199,7 +199,8 @@ use crate::workspace::{
 // Version 70 adds semantic commit-network hash, HEAD and lane roles.
 // Version 71 adds the native merge review overlay kind and layout.
 // Version 72 adds the theme ANSI palette and live terminal colour setting.
-pub const VERSION: u32 = 72;
+// Version 73 carries each pane's relative line-number origin.
+pub const VERSION: u32 = 73;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1507,7 +1508,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 72);
+        assert_eq!(VERSION, 73);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

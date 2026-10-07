@@ -36,6 +36,7 @@ const COLUMN_GAP: &str = "  ";
 pub enum SettingId {
     EditorGrammar,
     EditorLineNumbers,
+    EditorRelativeLineNumbers,
     EditorTabWidth,
     EditorIndent,
     EditorAutoClose,
@@ -136,6 +137,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         key: "editor.line_numbers",
         title: "Line numbers",
         description: "Show line numbers beside editable buffers",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorRelativeLineNumbers,
+        key: "editor.relative_line_numbers",
+        title: "Relative line numbers",
+        description: "Show distances from each pane's cursor, keeping its line number absolute",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -457,6 +467,7 @@ impl SettingId {
     pub const ALL: &'static [Self] = &[
         Self::EditorGrammar,
         Self::EditorLineNumbers,
+        Self::EditorRelativeLineNumbers,
         Self::EditorTabWidth,
         Self::EditorIndent,
         Self::EditorAutoClose,
@@ -518,6 +529,9 @@ impl SettingId {
         match self {
             Self::EditorGrammar => SettingValue::Grammar(config.editor.grammar),
             Self::EditorLineNumbers => SettingValue::Boolean(config.editor.line_numbers),
+            Self::EditorRelativeLineNumbers => {
+                SettingValue::Boolean(config.editor.relative_line_numbers)
+            }
             Self::EditorTabWidth => SettingValue::Integer(config.editor.tab_width),
             Self::EditorIndent => SettingValue::Indent(config.editor.indent),
             Self::EditorAutoClose => SettingValue::Boolean(config.editor.auto_close),
@@ -646,6 +660,9 @@ impl SettingId {
             (Self::EditorGrammar, SettingValue::Grammar(value)) => config.editor.grammar = *value,
             (Self::EditorLineNumbers, SettingValue::Boolean(value)) => {
                 config.editor.line_numbers = *value;
+            }
+            (Self::EditorRelativeLineNumbers, SettingValue::Boolean(value)) => {
+                config.editor.relative_line_numbers = *value;
             }
             (Self::EditorTabWidth, SettingValue::Integer(value)) => {
                 config.editor.tab_width = *value;
