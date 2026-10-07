@@ -414,6 +414,7 @@ impl fmt::Display for IndentStyle {
 pub struct EditorConfig {
     pub grammar: GrammarKind,
     pub line_numbers: bool,
+    pub relative_line_numbers: bool,
     pub tab_width: usize,
     /// Character inserted by Tab, indent, and syntax-driven extra newline levels.
     pub indent: IndentStyle,
@@ -987,6 +988,7 @@ impl Default for EditorConfig {
         Self {
             grammar: GrammarKind::Runyte,
             line_numbers: true,
+            relative_line_numbers: false,
             tab_width: 4,
             indent: IndentStyle::Spaces,
             smart_newline: true,

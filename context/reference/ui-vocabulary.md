@@ -767,3 +767,10 @@ approval authority. Small terminals stack the footer actions when needed.
 `GitConflictFile` and `GitConflictMarkdown` are ordinary document contexts,
 with only contextual Tab actions added; the latter retains Markdown commands.
 The private bundled-client protocol version 71 adds this overlay kind/layout.
+
+Relative line numbers (`editor.relative_line_numbers`, off by default) show
+document-line distances from each pane's primary cursor. Its own line retains
+the absolute number; wrapped continuations retain arrows and folded document
+lines count toward distances. `editor.line_numbers` still controls gutter
+number visibility. Private bundled-client protocol version 73 carries the
+per-pane document-row origin, including when the cursor is outside the viewport.

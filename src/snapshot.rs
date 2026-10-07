@@ -542,6 +542,8 @@ pub struct PaneSnapshot {
     pub drawable: bool,
     pub title: PaneTitle,
     pub line_numbers: bool,
+    /// Document row used as the origin for relative gutter numbers.
+    pub relative_line_origin: Option<usize>,
     pub line_digits: usize,
     pub signs: bool,
     /// Whether this pane reserves a column for Git change marks.
@@ -792,6 +794,7 @@ struct PaneSnapshotKey {
     theme: Theme,
     tab_width: usize,
     line_numbers: bool,
+    relative_line_numbers: bool,
     render_whitespace: bool,
     command_mode_dim: bool,
     row_hints: RowHints,
@@ -1021,6 +1024,7 @@ impl App {
             theme: self.theme.clone(),
             tab_width: self.indentation_for(prepared.buffer_id).tab_width,
             line_numbers: self.config.editor.line_numbers,
+            relative_line_numbers: self.config.editor.relative_line_numbers,
             render_whitespace: self.config.editor.render_whitespace,
             command_mode_dim: self.config.editor.command_mode_dim,
             row_hints: buffer.row_hints(),
@@ -1098,6 +1102,7 @@ impl App {
                     maximized: self.maximized_view(prepared.pane_id),
                 },
                 line_numbers: false,
+                relative_line_origin: None,
                 line_digits: 0,
                 signs: false,
                 changes: false,
@@ -1151,6 +1156,11 @@ impl App {
                 maximized: self.maximized_view(prepared.pane_id),
             },
             line_numbers: self.config.editor.line_numbers,
+            relative_line_origin: self
+                .config
+                .editor
+                .relative_line_numbers
+                .then_some(cursor.row),
             line_digits: prepared.line_digits,
             signs: prepared.signs,
             changes: prepared.changes,
@@ -3451,6 +3461,26 @@ mod tests {
                 .unwrap();
         }
         app
+    }
+
+    #[test]
+    fn relative_line_numbers_use_each_pane_cursor_and_invalidate_cached_panes() {
+        let mut app = split_snapshot_fixture(2);
+        let _ = prepared_snapshot(&mut app, 120, 40);
+        app.handle_key(crate::input::KeyStroke::char('j')).unwrap();
+        app.config.editor.relative_line_numbers = true;
+        let snapshot = prepared_snapshot(&mut app, 120, 40);
+        for pane in &snapshot.panes {
+            assert_eq!(pane.relative_line_origin, Some(usize::from(pane.active)));
+        }
+        app.config.editor.relative_line_numbers = false;
+        let snapshot = prepared_snapshot(&mut app, 120, 40);
+        assert!(
+            snapshot
+                .panes
+                .iter()
+                .all(|pane| pane.relative_line_origin.is_none())
+        );
     }
 
     #[test]

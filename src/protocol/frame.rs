@@ -223,6 +223,7 @@ impl EditorDamageFrame {
                 || old.drawable != new.drawable
                 || old.title != new.title
                 || old.line_numbers != new.line_numbers
+                || old.relative_line_origin != new.relative_line_origin
                 || old.line_digits != new.line_digits
                 || old.signs != new.signs
                 || old.changes != new.changes
@@ -1017,6 +1018,7 @@ mod tests {
                         maximized: None,
                     },
                     line_numbers: false,
+                    relative_line_origin: None,
                     line_digits: 0,
                     signs: false,
                     changes: false,
@@ -1271,6 +1273,21 @@ mod tests {
         let mut received = base;
         assert!(damage.apply(&mut received));
         assert_eq!(received, next);
+    }
+
+    #[test]
+    fn relative_line_numbers_round_trip_and_cursor_movement_repaints_gutters() {
+        let mut base = editor_frame(10);
+        base.editor.panes[0].relative_line_origin = Some(42);
+        let wire: HostFrame = serde_json::from_slice(&serde_json::to_vec(&base).unwrap()).unwrap();
+        assert_eq!(wire, base);
+        let core = crate::snapshot::EditorSnapshot::try_from(wire.editor.clone()).unwrap();
+        assert_eq!(core.panes[0].relative_line_origin, Some(42));
+        assert_eq!(EditorSnapshot::from(core), wire.editor);
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(11);
+        next.editor.panes[0].relative_line_origin = Some(43);
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
     }
 
     #[test]
@@ -1648,6 +1665,8 @@ pub struct PaneSnapshot {
     pub drawable: bool,
     pub title: PaneTitle,
     pub line_numbers: bool,
+    /// Document row used as the origin for relative gutter numbers.
+    pub relative_line_origin: Option<usize>,
     pub line_digits: usize,
     pub signs: bool,
     pub changes: bool,
@@ -1869,6 +1888,7 @@ impl From<core::PaneSnapshot> for PaneSnapshot {
             drawable: value.drawable,
             title: value.title.into(),
             line_numbers: value.line_numbers,
+            relative_line_origin: value.relative_line_origin,
             line_digits: value.line_digits,
             signs: value.signs,
             changes: value.changes,
@@ -1897,6 +1917,7 @@ impl TryFrom<PaneSnapshot> for core::PaneSnapshot {
             drawable: value.drawable,
             title: value.title.into(),
             line_numbers: value.line_numbers,
+            relative_line_origin: value.relative_line_origin,
             line_digits: value.line_digits,
             signs: value.signs,
             changes: value.changes,
