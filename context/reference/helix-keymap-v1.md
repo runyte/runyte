@@ -699,3 +699,24 @@ and hints continue to use the shared registry. No global defaults are added.
 buffer. Negotiated `view-help` replaces only that page's overview prose with a
 plugin-authored topic. Its action list and key tables still come from the
 registry that Tab, dispatch and hints read. No binding is added.
+
+## Experimental native window
+
+`--window` (the optional `native` feature) forwards keys through the existing
+frontend input boundary and registry. No default binding changes. A native PDF
+projection uses one logical row per page, so row motions select pages. Native
+window close requests `:qa`; it does not bypass dirty-buffer protection.
+
+
+The experimental native `Media` scope keeps PDF `j`/`k`, counts and file-boundary
+motions as page navigation. PageUp/PageDown and Ctrl-b/Ctrl-f move one PDF page.
+`+`/`=` and `-` zoom; `z f` fits; `z 1` uses actual raster pixels; `z h/j/k/l`
+pans and `z z` centers. Images use vertical motions for panning. `y`/Ctrl-c copy
+PDF text or a selected image region; `%` selects all and Escape clears it.
+These scoped commands, hints and help share the registry; ordinary text bindings
+are unchanged. Native mouse mappings are documented in the user guide.
+
+In media Select mode (`v`), `h/l` extend by PDF words and `j/k` by PDF text
+lines; images extend a rectangular selection corner. `v` stops extending and
+Escape clears the native selection and restores Normal mode. View commands
+under `z` continue panning in either mode.

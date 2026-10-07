@@ -1534,3 +1534,13 @@ coverage. Some inline test code is therefore part of both the instrumented
 denominator and the covered count. This baseline is useful for regression
 detection within the same setup, but its percentage should not be read as the
 share of production-only source that tests execute.
+
+
+## 2026-10-07 — native-window experiment
+
+Linux canonical `cargo llvm-cov --locked --workspace` (with summary output and
+four concurrent test threads) reports 92.01% lines: 148,278 covered of 161,158.
+The 89% floor is unchanged. The default-feature suite includes the media command
+and asynchronous presentation-boundary regressions. Optional GPUI rendering is
+validated separately by native adapter tests and the real-window acceptance
+harness; this number does not claim instrumented GUI coverage.

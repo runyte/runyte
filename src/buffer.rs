@@ -321,6 +321,8 @@ pub struct Buffer {
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub kind: BufferKind,
+    /// Source for a native read-only media projection, never a text save target.
+    pub media_path: Option<PathBuf>,
     directory: Option<DirectoryBuffer>,
     /// Branch/tag decorations for `BufferKind::GitLog` rows, keyed by buffer
     /// line. Read separately from the row's text so a ref name is never part
@@ -1856,6 +1858,7 @@ impl Buffer {
             kind: BufferKind::Scratch,
             directory: None,
             git_log_hints: HashMap::new(),
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: 0,
             saved_text: Some(Text::new()),
@@ -1886,6 +1889,7 @@ impl Buffer {
     fn from_opened_text(path: &Path, contents: String, disk_state: DiskState) -> Self {
         let text = Text::from_str(&contents);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2100,6 +2104,7 @@ impl Buffer {
         let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), view)?;
         let text = Text::from_str(&contents);
         Ok(Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2146,6 +2151,7 @@ impl Buffer {
         let text = Text::from_str(text);
         debug_assert_eq!(rows.len(), text.len_lines());
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2183,6 +2189,7 @@ impl Buffer {
         debug_assert!(diff_start <= text.chars().count());
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2270,6 +2277,7 @@ impl Buffer {
     pub fn commit_message(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2297,6 +2305,7 @@ impl Buffer {
     pub fn git_status(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2324,6 +2333,7 @@ impl Buffer {
     pub fn git_branches(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2351,6 +2361,7 @@ impl Buffer {
     pub fn git_worktrees(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2383,6 +2394,7 @@ impl Buffer {
     pub fn git_log(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2409,6 +2421,7 @@ impl Buffer {
     pub fn git_blame(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2435,6 +2448,7 @@ impl Buffer {
     pub fn git_stash(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2466,6 +2480,7 @@ impl Buffer {
     ) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2497,6 +2512,7 @@ impl Buffer {
     pub fn help(text: &str) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2523,6 +2539,7 @@ impl Buffer {
     pub fn settings(text: &str, rows: Vec<Option<SettingId>>) -> Self {
         let text = Text::from_str(text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),
@@ -2552,6 +2569,7 @@ impl Buffer {
     pub fn notifications(document: NotificationDocument) -> Self {
         let text = Text::from_str(&document.text);
         Self {
+            media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
             longest_line: text.longest_line_bytes(),
             saved_text: Some(text.clone()),

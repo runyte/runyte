@@ -39,6 +39,7 @@ default-run = "runyte"
 [features]
 default = []
 startup-timing = []
+native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard"]
 
 [[bin]]
 name = "runyte"
@@ -55,6 +56,12 @@ path = "benches/diagnostic_rows.rs"
 harness = false
 
 [dependencies]
+arboard = { version = "3.6", optional = true, features = ["wayland-data-control"] }
+roxmltree = { version = "0.20", optional = true }
+async-channel = { version = "2", optional = true }
+gpui = { version = "=0.2.2", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+tempfile = { version = "3", optional = true }
 anyhow = "1.0"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

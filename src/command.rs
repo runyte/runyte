@@ -726,6 +726,16 @@ editor_commands! {
     SearchPrevious => ("search-previous", "Select only the previous search match"),
     SearchSelection => ("search-selection", "Select every match of the selection or word"),
 
+    MediaZoomIn => ("media-zoom-in", "Zoom into the image or PDF"),
+    MediaZoomOut => ("media-zoom-out", "Zoom out of the image or PDF"),
+    MediaFit => ("media-fit", "Fit the image or PDF page in its pane"),
+    MediaActualSize => ("media-actual-size", "Show media at actual raster size"),
+    MediaPanLeft => ("media-pan-left", "Pan media left"),
+    MediaPanRight => ("media-pan-right", "Pan media right"),
+    MediaCopySelection => ("media-copy-selection", "Copy selected PDF text or image region"),
+    MediaClearSelection => ("media-clear-selection", "Clear the media selection"),
+    MediaSelectAll => ("media-select-all", "Select all PDF text or the whole image"),
+
     AlignViewCenter => ("align-view-center", "Center the cursor line in the view"),
     AlignViewTop => ("align-view-top", "Align the cursor line at the top"),
     AlignViewBottom => ("align-view-bottom", "Align the cursor line at the bottom"),
@@ -1300,7 +1310,16 @@ impl EditorCommand {
             | Self::OpenDirectoryFuzzyGrep
             | Self::GlobalSearch
             | Self::GlobalSearchRegex => CommandCategory::Search,
-            Self::AlignViewCenter
+            Self::MediaZoomIn
+            | Self::MediaZoomOut
+            | Self::MediaFit
+            | Self::MediaActualSize
+            | Self::MediaPanLeft
+            | Self::MediaPanRight
+            | Self::MediaCopySelection
+            | Self::MediaClearSelection
+            | Self::MediaSelectAll
+            | Self::AlignViewCenter
             | Self::AlignViewTop
             | Self::AlignViewBottom
             | Self::AlignViewMiddle

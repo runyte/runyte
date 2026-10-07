@@ -2883,6 +2883,9 @@ pub struct App {
     /// `PromptKind::ExternalProgram` is collecting one.
     pub external_target: Option<PathBuf>,
     pending_external_opens: Vec<external_opening::Pending>,
+    /// Allow the local graphical frontend to present read-only media buffers.
+    pub native_media: bool,
+    pub media_requests: std::collections::VecDeque<crate::media::ViewRequest>,
     /// Programs previously chosen for binary files and their persisted default.
     pub programs: ProgramCache,
     /// The mode the command palette was opened from.
@@ -3642,6 +3645,8 @@ impl App {
             path_listings: RefCell::default(),
             external_target: None,
             pending_external_opens: Vec::new(),
+            native_media: false,
+            media_requests: Default::default(),
             programs,
             prompt_origin_mode: Mode::Normal,
             prompt_revision: 0,

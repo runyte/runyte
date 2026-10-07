@@ -183,6 +183,9 @@ use runyte::workspace::{
     windows_startup::{self, HostStartup as NativeHostStartup},
 };
 
+#[cfg(feature = "native")]
+mod native_frontend;
+
 fn main() -> Result<()> {
     // `runed` is `runyte --editor`, so `runed mcp` opens a file named mcp
     // just as `runyte --editor mcp` does; editor mode has no MCP.
@@ -192,6 +195,29 @@ fn main() -> Result<()> {
     {
         return runyte::mcp::run(std::env::args_os().skip(2));
     }
+    #[cfg(feature = "native")]
+    if std::env::args_os()
+        .skip(1)
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--window")
+    {
+        let arguments = LaunchArguments::parse()?;
+        if arguments.window && !arguments.help && !arguments.version {
+            anyhow::ensure!(
+                !cfg!(windows),
+                "the native-window experiment currently supports Linux and macOS"
+            );
+            anyhow::ensure!(
+                arguments.mode == LaunchMode::Standalone,
+                "--window currently supports standalone ide and editor modes"
+            );
+            return native_frontend::launch(cli_main);
+        }
+    }
+    cli_main()
+}
+
+fn cli_main() -> Result<()> {
     let mut startup = StartupTrace::new();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1212,6 +1238,11 @@ async fn run(
     #[cfg(windows)] native_termination: &mut TerminationSignals,
 ) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
+    #[cfg(not(feature = "native"))]
+    anyhow::ensure!(
+        !arguments.window,
+        "--window requires cargo build --features native"
+    );
     #[cfg(unix)]
     let supervising_parent = HostSupervisor::for_launch(&arguments)?;
     let show_startup_about = starts_on_about(&arguments);
@@ -1761,14 +1792,15 @@ async fn run(
     // Unix preserves terminal state before installing its signal handler.
     // Windows already owns its console listeners from before launch parsing;
     // terminal restoration is handled by the guard during startup and exit.
-    let startup_restore = if arguments.mode == LaunchMode::Standalone {
+    let startup_restore = if arguments.mode == LaunchMode::Standalone && !arguments.window {
         Some(StartupSignalExit::arm())
     } else {
         None
     };
-    let mut standalone_termination = if startup_restore
-        .as_ref()
-        .is_some_and(std::result::Result::is_ok)
+    let mut standalone_termination = if arguments.window
+        || startup_restore
+            .as_ref()
+            .is_some_and(std::result::Result::is_ok)
     {
         #[cfg(windows)]
         {
@@ -1782,7 +1814,7 @@ async fn run(
         None
     };
     let mut startup_signal_exit = None;
-    let standalone_terminal = if arguments.mode == LaunchMode::Standalone {
+    let standalone_terminal = if arguments.mode == LaunchMode::Standalone && !arguments.window {
         let terminal = match startup_restore.expect("standalone startup terminal state") {
             Ok(restore) => match TerminalGuard::enter(mouse_enabled) {
                 Ok(guard) => {
@@ -1804,6 +1836,11 @@ async fn run(
     } else {
         None
     };
+    let native_targets = if arguments.window {
+        std::mem::take(&mut arguments.targets)
+    } else {
+        Vec::new()
+    };
     let mut app = if editor {
         App::new_editor_with_deferred_syntax(
             config,
@@ -1819,6 +1856,8 @@ async fn run(
             startup,
         )?
     };
+    app.native_media = arguments.window;
+    app.open_native_targets(native_targets)?;
     app.note_running_as_root(running_as_root);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
@@ -1843,6 +1882,7 @@ async fn run(
     // Standalone mode uses the same owner and command/event boundary that a
     // persistent process will host. No transport or daemon is required.
     let mut app = WorkspaceHost::new(app);
+    app.defer_frontend_presentation(arguments.window);
 
     if arguments.mode == LaunchMode::Serve {
         #[cfg(unix)]
@@ -1874,8 +1914,12 @@ async fn run(
     // The standalone resources were acquired before editor construction. Move
     // them into the interactive loop now that the persistent-host branch has
     // returned.
-    let color_depth = standalone_color_depth.expect("standalone terminal colour depth");
-    let _terminal = standalone_terminal.expect("standalone terminal guard")?;
+    let color_depth = if arguments.window {
+        ui::TerminalColorDepth::TrueColor
+    } else {
+        standalone_color_depth.expect("standalone terminal colour depth")
+    };
+    let _terminal = standalone_terminal.transpose()?;
     #[cfg(windows)]
     let termination = standalone_termination
         .take()
@@ -1885,7 +1929,10 @@ async fn run(
         .take()
         .expect("standalone termination signals");
     let backend = CrosstermBackend::new(stdout());
+    #[cfg(not(feature = "native"))]
     let mut terminal = Terminal::new(backend)?;
+    #[cfg(feature = "native")]
+    let mut terminal = native_frontend::Surface::new(backend, arguments.window)?;
     let mut received_signal = None;
     let mut key_hints = KeyHintState::default();
     if show_startup_about {
@@ -1893,7 +1940,11 @@ async fn run(
     }
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
+        #[cfg(feature = "native")]
+        native_frontend::update_media(app.app_mut());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
+        #[cfg(feature = "native")]
+        native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     startup.mark(StartupPhase::EditorFramePresented);
@@ -1931,14 +1982,23 @@ async fn run(
     // setup step is captured so the services below are joined during cleanup.
     terminal.draw(|frame| {
         let geometry = ui::frame_geometry(frame.area());
+        #[cfg(feature = "native")]
+        native_frontend::update_media(app.app_mut());
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
+        #[cfg(feature = "native")]
+        native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     // This is a signal-restoration guard on Unix and a unit value elsewhere.
     #[allow(clippy::drop_non_drop)]
     drop(startup_signal_exit.take());
     #[cfg(not(windows))]
-    let mut terminal_events = EventStream::new();
+    let mut terminal_events = {
+        #[cfg(feature = "native")]
+        { native_frontend::Events::new(arguments.window) }
+        #[cfg(not(feature = "native"))]
+        { EventStream::new() }
+    };
     #[cfg(windows)]
     let mut terminal_events = runyte::tui::windows_input::EventStream::new()?;
     let mut git_refresh_tick = tokio::time::interval(MAINTENANCE_INTERVAL);
@@ -1991,6 +2051,16 @@ async fn run(
                 }
             }
             input = terminal_events.next() => {
+                #[cfg(all(feature = "native", not(windows)))]
+                if terminal_events.is_presentation_acknowledgement() {
+                    app.acknowledge_frontend_paint(terminal_events.presented_frame(None));
+                    continue;
+                }
+                #[cfg(feature = "native")]
+                if native_frontend::take_close_request()
+                    && let Err(error) = app.app_mut().execute(runyte::command::parse_colon_command("qa")?) {
+                    app.report_host_error(error.to_string());
+                }
                 match input.transpose()? {
                     // Fall through to the draw at the bottom of the loop
                     // rather than taking the lifecycle `continue` below.
@@ -2012,7 +2082,16 @@ async fn run(
                             Some(&input),
                             Instant::now(),
                         );
-                        if let Some(frame)=app.current_frame_id() { app.context_frame_presented(frame); }
+                        #[cfg(all(feature = "native", not(windows)))]
+                        let input_frame = terminal_events.presented_frame(app.current_frame_id());
+                        #[cfg(any(not(feature = "native"), windows))]
+                        let input_frame = app.current_frame_id();
+                        #[cfg(all(feature = "native", not(windows)))]
+                        if !terminal_events.accepts_input(&app, &input, frame_pending || app.finder_scan_refills() || app.plugin_presentation_pending()) {
+                            continue;
+                        }
+                        app.acknowledge_frontend_input_frame(input_frame);
+                        if let Some(frame) = input_frame { app.context_frame_presented(frame); }
                         if let Some(message) = rejected_text_input(&input) {
                             app.report_host_error(message);
                             if frame_publication_ready(
@@ -2022,11 +2101,15 @@ async fn run(
                             ) {
                                 terminal.draw(|frame| {
                                     let geometry = ui::frame_geometry(frame.area());
-                                    let snapshot = app.prepare_frame_with_hints(
+                                    #[cfg(feature = "native")]
+        native_frontend::update_media(app.app_mut());
+        let snapshot = app.prepare_frame_with_hints(
                                         geometry,
                                         Some(&key_hints),
                                     );
-                                    ui::render(
+                                    #[cfg(feature = "native")]
+        native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
+        ui::render(
                                         frame,
                                         app.app(),
                                         &snapshot.editor,
@@ -2059,7 +2142,7 @@ async fn run(
                         let hint_result = match &input {
                             InputEvent::Pointer(event) => {
                                 key_hints.clear();
-                                if let Some(frame) = app.current_frame_id() {
+                                if let Some(frame) = input_frame {
                                     match app.execute(HostCommand::Pointer {
                                         event: *event,
                                         frame,
@@ -2271,8 +2354,12 @@ async fn run(
         }
         terminal.draw(|frame| {
             let geometry = ui::frame_geometry(frame.area());
-            let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
-            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+            #[cfg(feature = "native")]
+        native_frontend::update_media(app.app_mut());
+        let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
+            #[cfg(feature = "native")]
+        native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
+        ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
         })?;
         frame_pending = false;
     }
@@ -2338,7 +2425,8 @@ fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMo
     // and the attach protocol does not represent all of those launch
     // semantics. Keep target-bearing invocations on the ordinary standalone
     // path unless a future protocol can preserve the complete target.
-    !arguments.mode_explicit
+    !arguments.window
+        && !arguments.mode_explicit
         && arguments.targets.is_empty()
         && arguments.init.is_none()
         && !arguments.editor
@@ -7349,6 +7437,7 @@ MODES:
     Runyte runs in one of three modes, chosen by a flag or by the mode
     setting, ide by default. The launch directory never changes the mode.
 
+        --window         Open the experimental GPUI window (native feature)
         --editor         Edit files and directories with no workspace: no Git,
                          language servers, MCP, plugins or terminals. Running
                          the binary as runed is the same as runyte --editor

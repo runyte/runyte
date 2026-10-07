@@ -953,6 +953,49 @@ impl App {
         }
     }
 
+    /// Open native launch targets with the same first-file and duplicate-position
+    /// policy as terminal startup. Media paths still use the ordinary open flow.
+    pub fn open_native_targets(&mut self, targets: Vec<crate::launch::LaunchTarget>) -> Result<()> {
+        let mut indices = std::collections::HashMap::new();
+        let mut unique: Vec<crate::launch::LaunchTarget> = Vec::new();
+        for target in targets {
+            let path = self.resolve_working_path(target.path.clone());
+            let identity = crate::path_safety::path_identity(&path)?;
+            if let Some(index) = indices.get(&identity).copied() {
+                let prior: &mut crate::launch::LaunchTarget = &mut unique[index];
+                if prior.position.is_none() {
+                    prior.position = target.position;
+                }
+            } else {
+                indices.insert(identity, unique.len());
+                unique.push(target);
+            }
+        }
+        let mut first = None;
+        for target in unique {
+            self.open_native_target(target)?;
+            if first.is_none() {
+                first = Some((self.active().buffer, self.active().selection.clone()));
+            }
+        }
+        if let Some((buffer, selection)) = first {
+            self.switch_buffer(buffer);
+            self.active_mut().replace_selection(selection);
+        }
+        Ok(())
+    }
+
+    /// Native frontend launch targets use the same path as explorer and :open.
+    pub fn open_native_target(&mut self, target: crate::launch::LaunchTarget) -> Result<()> {
+        self.open_file(target.path)?;
+        if let Some(position) = target.position {
+            let buffer = self.active().buffer;
+            self.launch_positions.insert(buffer, position);
+            self.apply_pending_launch_position(buffer);
+        }
+        Ok(())
+    }
+
     pub(super) fn open_file(&mut self, path: PathBuf) -> Result<()> {
         ensure!(
             !self.plugins.filesystem_applying,
@@ -969,6 +1012,27 @@ impl App {
             }
         } else if let Some(index) = self.live_buffer_for_path(&path) {
             index
+        } else if self.native_media && crate::media::supported(&path) {
+            ensure!(
+                std::fs::metadata(&path)?.is_file(),
+                "media must be a regular file"
+            );
+            std::fs::File::open(&path)?;
+            let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+                (!self.closed_buffers.contains(&index)
+                    && buffer.media_path.as_deref() == Some(&requested_identity))
+                .then_some(index)
+            });
+            if let Some(index) = existing {
+                index
+            } else {
+                let mut buffer =
+                    Buffer::virtual_text(format!("[media] {}", path.display()), "Page 1");
+                buffer.media_path = Some(requested_identity.clone());
+                self.buffers.push(buffer);
+                self.syntax.push(None);
+                self.buffers.len() - 1
+            }
         } else if external_open::looks_binary(&path) {
             // Before the buffer exists, so a file Runyte cannot edit never
             // becomes one it is holding open and cannot save.
@@ -3143,5 +3207,113 @@ impl App {
             if delta.unsigned_abs() == 1 { "" } else { "s" }
         ));
         Ok(())
+    }
+}
+
+impl App {
+    pub(super) fn handle_media_command(&mut self, command: crate::command::EditorCommand) -> bool {
+        use crate::{
+            command::EditorCommand as C,
+            media::{ViewAction as A, ViewRequest},
+        };
+        if self.active_terminal().is_some() {
+            return false;
+        }
+        let Some(path) = self.active_buffer().media_path.clone() else {
+            return false;
+        };
+        let pdf = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+        if pdf
+            && matches!(
+                command,
+                C::PageDown | C::PageUp | C::HalfPageDown | C::HalfPageUp
+            )
+        {
+            let next = matches!(command, C::PageDown | C::HalfPageDown);
+            self.motion(if next {
+                super::Motion::Down
+            } else {
+                super::Motion::Up
+            });
+            return true;
+        }
+        let action = match command {
+            C::MediaZoomIn => A::ZoomIn,
+            C::MediaZoomOut => A::ZoomOut,
+            C::MediaFit => A::Fit,
+            C::MediaActualSize => A::ActualSize,
+            C::EnterSelectMode => {
+                self.toggle_select_mode();
+                if self.mode != Mode::Select {
+                    return true;
+                }
+                A::BeginSelection
+            }
+            C::MoveLeft if self.mode == Mode::Select => A::ExtendLeft,
+            C::MoveRight if self.mode == Mode::Select => A::ExtendRight,
+            C::MoveUp if self.mode == Mode::Select => A::ExtendUp,
+            C::MoveDown if self.mode == Mode::Select => A::ExtendDown,
+            C::MediaPanLeft | C::MoveLeft => A::PanLeft,
+            C::MediaPanRight | C::MoveRight => A::PanRight,
+            C::ScrollViewUp => A::PanUp,
+            C::ScrollViewDown => A::PanDown,
+            C::MoveUp if !pdf => A::PanUp,
+            C::MoveDown if !pdf => A::PanDown,
+            C::AlignViewCenter | C::AlignViewMiddle => A::Center,
+            C::MediaCopySelection => A::CopySelection,
+            C::MediaClearSelection => {
+                self.mode = Mode::Normal;
+                A::ClearSelection
+            }
+            C::MediaSelectAll => A::SelectAll,
+            _ => return false,
+        };
+        if self.media_requests.len() < 256 {
+            self.media_requests.push_back(ViewRequest {
+                pane: self.active_pane,
+                path,
+                page: self
+                    .active_buffer()
+                    .position_of(self.active().selection.primary().head)
+                    .row
+                    + 1,
+                action,
+            });
+        }
+        true
+    }
+}
+
+impl App {
+    /// Native media pointer events focus their explicit document without
+    /// treating pixel coordinates as rows in the PDF's page projection.
+    pub fn navigate_native_media(&mut self, pane: usize, path: &Path, delta: i32) {
+        if self.has_input_overlay() || self.mode == Mode::Command {
+            return;
+        }
+        let Some(target) = self.panes.get(&pane) else {
+            return;
+        };
+        if target.terminal.is_some()
+            || self.buffers[target.buffer].media_path.as_deref() != Some(path)
+        {
+            return;
+        }
+        self.activate_pane_from_pointer(pane);
+        let rows = self.active_buffer().text().len_lines();
+        let position = self
+            .active_buffer()
+            .position_of(self.active().selection.primary().head)
+            .row;
+        let row = position
+            .saturating_add_signed(delta as isize)
+            .min(rows.saturating_sub(1));
+        if delta != 0 {
+            let offset = self.active_buffer().text().line_to_offset(row);
+            self.active_mut()
+                .replace_selection(Selection::point(offset));
+        }
     }
 }

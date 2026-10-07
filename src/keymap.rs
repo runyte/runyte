@@ -233,6 +233,8 @@ pub enum BindingScope {
     Plugin(usize),
     #[default]
     Global,
+    /// A native image/PDF surface owns its pixel selection and view controls.
+    Media,
     Directory,
     DirectoryTree,
     Settings,
@@ -278,6 +280,7 @@ impl BindingScope {
     /// Exhaustive scope inventory used by registry invariants.
     pub const ALL: &'static [Self] = &[
         Self::Global,
+        Self::Media,
         Self::Directory,
         Self::DirectoryTree,
         Self::Settings,
@@ -312,7 +315,7 @@ impl BindingScope {
         )
     }
     pub(crate) const fn owns_modal_input(self) -> bool {
-        self.is_merge_review() || matches!(self, Self::DirectoryTree)
+        self.is_merge_review() || matches!(self, Self::DirectoryTree | Self::Media)
     }
 
     /// Whether the scope belongs to a generated view rather than to a document
@@ -2104,6 +2107,72 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         // Enter alone opens an entry. A directory buffer is an ordinary buffer,
         // so `e` has to stay the word-end motion here as it is everywhere else.
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('+'),
+            Command::MediaZoomIn,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('='),
+            Command::MediaZoomIn,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('-'),
+            Command::MediaZoomOut,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            [Key::char('z'), Key::char('f')],
+            Command::MediaFit,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            [Key::char('z'), Key::char('1')],
+            Command::MediaActualSize,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            [Key::char('z'), Key::char('h')],
+            Command::MediaPanLeft,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            [Key::char('z'), Key::char('l')],
+            Command::MediaPanRight,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('y'),
+            Command::MediaCopySelection,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::ctrl('c'),
+            Command::MediaCopySelection,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::plain(KeyCode::Escape),
+            Command::MediaClearSelection,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('%'),
+            Command::MediaSelectAll,
+        ),
         directory(Key::plain(KeyCode::Enter), Command::OpenDirectoryEntry),
         directory(Key::plain(KeyCode::Backspace), Command::OpenParentDirectory),
         directory(Key::char('-'), Command::OpenParentDirectory),
@@ -3631,7 +3700,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 16,
+            special, 17,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }

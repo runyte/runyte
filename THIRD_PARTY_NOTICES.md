@@ -333,3 +333,25 @@ The assets are the project owner's own work and are covered by the root
 artwork and have not been given textual SPDX headers.
 
 This entry supersedes the AI-generated `logo/R.png` that these files replaced.
+
+## Experimental native frontend dependencies
+
+The optional `native` feature links GPUI 0.2.2, Zed Industries' Rust UI
+framework, under Apache-2.0. Source: <https://github.com/zed-industries/zed>;
+published crate: <https://crates.io/crates/gpui/0.2.2>. The adapter is
+Runyte-authored and does not incorporate Zed editor code or its widget library.
+
+Image decoding uses the `image` crate (MIT OR Apache-2.0); temporary PDF
+raster storage uses `tempfile` (MIT OR Apache-2.0); frontend wakeups use
+`async-channel` (MIT OR Apache-2.0). Resolved transitive versions are recorded
+in `Cargo.lock`. Upstream license notices accompany their crate distributions.
+
+PDF rasterization invokes separately installed Poppler utilities through
+argument vectors. Poppler is neither linked nor bundled by this experiment.
+The two-page PDF test fixture in `src/native_frontend/tests/fixtures/` is
+Runyte-authored, containing solid-color rectangles and short Helvetica text samples.
+
+The optional native frontend also uses `roxmltree` (MIT OR Apache-2.0) to read
+bounded Poppler word coordinates and `arboard` (MIT OR Apache-2.0) for native
+image clipboard ownership. GPUI 0.2.2's Linux clipboard publishes text only;
+image-region copying therefore uses arboard's Rust X11/Wayland backend.

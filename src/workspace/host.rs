@@ -217,6 +217,14 @@ struct PreparedFrame {
 }
 
 #[derive(Clone, Debug)]
+struct FrontendPresentation {
+    id: FrameId,
+    views: std::collections::BTreeMap<usize, (usize, u64)>,
+    viewports:
+        std::collections::BTreeMap<(usize, String, usize), crate::plugin::observation::Snapshot>,
+}
+
+#[derive(Clone, Debug)]
 struct PendingAutomaticGitRefresh {
     id: GitRequestId,
     spec: RefreshSpec,
@@ -308,6 +316,7 @@ pub struct WorkspaceHost {
     services: ServiceLifecycle,
     next_frame: u64,
     prepared: Option<PreparedFrame>,
+    plugin_presentations: VecDeque<FrontendPresentation>,
     last_git_refresh: Instant,
     last_automatic_git_refresh_request: Option<Instant>,
     git_dirty: bool,
@@ -430,6 +439,7 @@ impl WorkspaceHost {
             services: ServiceLifecycle::new(256),
             next_frame: 1,
             prepared: None,
+            plugin_presentations: VecDeque::new(),
             last_git_refresh: Instant::now(),
             last_automatic_git_refresh_request: None,
             git_dirty: false,
@@ -1385,6 +1395,27 @@ impl WorkspaceHost {
             pointer_compatible_since,
             view,
         });
+        if self.app.plugins.deferred_presentation {
+            let views = self.app.plugin_view_presentation();
+            // Derive viewport observations from this prepared frame without
+            // publishing them until the asynchronous frontend paints it.
+            let presented = std::mem::replace(&mut self.app.plugins.presented_views, views.clone());
+            let cached = self.app.plugins.viewport_cache.clone();
+            self.app
+                .capture_plugin_viewports(&self.prepared.as_ref().unwrap().view);
+            let viewports = std::mem::replace(&mut self.app.plugins.viewport_cache, cached);
+            self.app.plugins.presented_views = presented;
+            self.plugin_presentations.push_back(FrontendPresentation {
+                id,
+                views,
+                viewports,
+            });
+            // Input may lag rendering, but retained presentation witnesses
+            // must remain bounded. Expired witnesses fail closed on actions.
+            while self.plugin_presentations.len() > 32 {
+                self.plugin_presentations.pop_front();
+            }
+        }
         let active_buffer = self.app.active().buffer;
         HostFrame {
             id,
@@ -1397,6 +1428,56 @@ impl WorkspaceHost {
 
     pub fn context_frame_presented(&mut self, frame: FrameId) {
         self.app.note_context_presented(frame.0);
+    }
+
+    /// Opt in before preparing frames when drawing and host dispatch run on
+    /// separate threads. Synchronous terminal frontends retain their lifecycle.
+    pub fn defer_frontend_presentation(&mut self, deferred: bool) {
+        self.app.plugins.deferred_presentation = deferred;
+        self.app.plugins.presented_views.clear();
+        self.plugin_presentations.clear();
+    }
+
+    /// Restore exactly the plugin revisions painted when this input was
+    /// captured, including for colon commands and configured action bindings.
+    pub fn acknowledge_frontend_input_frame(&mut self, frame: Option<FrameId>) {
+        if self.app.plugins.deferred_presentation {
+            self.app.plugins.presented_views = self
+                .plugin_presentations
+                .iter()
+                .find(|presentation| Some(presentation.id) == frame)
+                .map(|presentation| presentation.views.clone())
+                .unwrap_or_default();
+        }
+    }
+
+    /// Painting can complete without a physical input. Publish the retained
+    /// viewport observations without preparing another frame or synthesizing
+    /// editor input, which would create a redraw/acknowledgement loop.
+    pub fn acknowledge_frontend_paint(&mut self, frame: Option<FrameId>) {
+        self.acknowledge_frontend_input_frame(frame);
+        if self.app.plugins.deferred_presentation {
+            self.app.plugins.viewport_cache = self
+                .plugin_presentations
+                .iter()
+                .find(|presentation| Some(presentation.id) == frame)
+                .map(|presentation| presentation.viewports.clone())
+                .unwrap_or_default();
+        }
+        if let Some(frame) = frame {
+            self.context_frame_presented(frame);
+        }
+    }
+
+    pub fn accepts_frontend_input(
+        &self,
+        input: &InputEvent,
+        presented: Option<FrameId>,
+        publication_pending: bool,
+    ) -> bool {
+        !self.app.plugins.deferred_presentation
+            || !self.app.input_requires_presented_approval(input)
+            || (!publication_pending && presented.is_some() && presented == self.current_frame_id())
     }
 
     pub fn current_frame_id(&self) -> Option<FrameId> {

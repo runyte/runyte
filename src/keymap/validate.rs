@@ -182,9 +182,9 @@ pub fn validate(
                     });
                 }
             }
-            // The sidebar owns input independently of the document pane. Its
-            // navigation keys intentionally replace document motions while it
-            // has focus; ordinary buffer scopes still may only add bindings.
+            // Sidebars, merge review and media surfaces own their input independently
+            // of ordinary text. Their scoped keys may replace text commands;
+            // ordinary buffer scopes still may only add bindings.
             if scope != BindingScope::Global && !scope.owns_modal_input() {
                 let globals_by_sequence = globals
                     .iter()

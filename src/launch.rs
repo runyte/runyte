@@ -72,6 +72,8 @@ pub struct LaunchArguments {
     /// Editor mode: no workspace, Git, language servers, MCP, plugins or
     /// terminals. Set by `--editor`, or by running the binary as `runed`.
     pub editor: bool,
+    /// Experimental native window frontend.
+    pub window: bool,
     pub help: bool,
     pub version: bool,
     pub json: bool,
@@ -193,6 +195,7 @@ impl LaunchArguments {
                 "-V" | "--version" => parsed.version = true,
                 // Editor and ide mode are both one standalone process; only
                 // the editor flag says that process has no workspace.
+                "--window" => parsed.window = true,
                 "--editor" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?;
                     parsed.editor = true;

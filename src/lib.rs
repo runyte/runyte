@@ -47,6 +47,7 @@ pub mod manual;
 pub mod markdown;
 #[cfg(any(unix, windows))]
 pub mod mcp;
+pub mod media;
 pub(crate) mod merge_review_layout;
 #[cfg(any(unix, windows))]
 mod native_path;

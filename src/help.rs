@@ -27,6 +27,7 @@ const KEY_COLUMN: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HelpTopic {
     Text,
+    Media,
     Explorer,
     DirectoryTree,
     Config,
@@ -52,6 +53,7 @@ pub enum HelpTopic {
 impl HelpTopic {
     pub const ALL: &'static [Self] = &[
         Self::Text,
+        Self::Media,
         Self::Explorer,
         Self::DirectoryTree,
         Self::Config,
@@ -82,6 +84,7 @@ impl HelpTopic {
     /// One document per buffer type describes both.
     pub fn for_context(scope: BindingScope) -> Self {
         match scope {
+            BindingScope::Media => Self::Media,
             BindingScope::Directory => Self::Explorer,
             BindingScope::DirectoryTree => Self::DirectoryTree,
             BindingScope::Settings => Self::Config,
@@ -130,6 +133,7 @@ impl HelpTopic {
     /// matches the `[RO]` the pane title and global status line carry.
     pub fn title_for(self, _grammar: GrammarKind, read_only: bool) -> String {
         let context = match self {
+            Self::Media => "MEDIA",
             Self::Text => "TEXT",
             Self::Explorer => "EXPLORER",
             Self::DirectoryTree => "DIRECTORY TREE",
@@ -160,6 +164,12 @@ impl HelpTopic {
     /// renderer, so these strings describe ideas rather than terminal rows.
     pub fn overview_for(self, _grammar: GrammarKind) -> &'static [&'static str] {
         match self {
+            Self::Media => &[
+                "Images and PDF pages are read-only. PDF line motions choose pages; image vertical motions pan.",
+                "View alignment commands pan or center media. Zoom and fit commands appear in the key table below.",
+                "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape clears it and returns to Normal.",
+                "Wheel pans; Ctrl-wheel zooms at the pointer; middle-drag pans. PDF left-drag selects text. Shift-left-drag selects an image region. Yank copies the selection to the system clipboard.",
+            ],
             Self::Text => &[
                 "Runyte is a selection-first modal editor: move to select, then act. Every editing command works on whatever is selected, however many ranges that is.",
                 "NORMAL mode replaces the selection as you move. v enters SELECT mode, where moving extends every selection instead; v or Escape returns.",

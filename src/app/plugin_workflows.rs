@@ -108,6 +108,8 @@ pub(crate) struct Plugins {
     pub presentation_dirty: bool,
     pub attachment_generation: u64,
     pub foreground_generation: u64,
+    /// Asynchronous frontends acknowledge the revisions their input observed.
+    pub deferred_presentation: bool,
     pub presented_views: BTreeMap<usize, (usize, u64)>,
     pub viewport_watches: BTreeSet<(usize, String, usize)>,
     pub viewport_cache: BTreeMap<(usize, String, usize), plugin::observation::Snapshot>,

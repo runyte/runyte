@@ -4403,7 +4403,21 @@ impl App {
         {
             self.mode = mode;
         }
+        if self.handle_media_command(command) {
+            return Ok(());
+        }
         match command {
+            Command::MediaZoomIn
+            | Command::MediaZoomOut
+            | Command::MediaFit
+            | Command::MediaActualSize
+            | Command::MediaPanLeft
+            | Command::MediaPanRight
+            | Command::MediaCopySelection
+            | Command::MediaClearSelection
+            | Command::MediaSelectAll => {
+                self.status("media commands require an image or PDF pane");
+            }
             Command::ToggleDirectoryTree
             | Command::FocusDirectoryTree
             | Command::DirectoryTreeUp

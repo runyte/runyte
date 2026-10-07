@@ -774,3 +774,22 @@ the absolute number; wrapped continuations retain arrows and folded document
 lines count toward distances. `editor.line_numbers` still controls gutter
 number visibility. Private bundled-client protocol version 73 carries the
 per-pane document-row origin, including when the cursor is outside the viewport.
+
+## Experimental native frontend
+
+The optional GPUI window renders the same Runyte screen as a grid of logical
+pixel cells. A **media projection** is a read-only generated buffer with an
+explicit source path separate from its text save identity. Its pane body can
+show an image or one PDF page. PDF page numbers are ordinary logical rows, so
+existing motions select pages without a second keymap. Overlays and key hints
+temporarily show the text projection instead of the media surface.
+
+Native media zoom, pan and pixel/text selection are pane-local presentation
+state. A PDF still uses one logical buffer row per page for existing navigation;
+its extracted text selection and an image-region selection do not change those
+rows or the underlying read-only file.
+
+The native media surface adds the seventeenth special-buffer binding scope.
+Unlike an ordinary text buffer, it owns pixel selection and clipboard actions;
+its scoped overrides are intentional and validated alongside other owned
+input surfaces. Ordinary text-buffer scopes still cannot shadow global keys.

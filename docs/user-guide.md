@@ -1699,6 +1699,74 @@ under [Directory tree sidebar](#directory-tree-sidebar).
 **Opening by command:** `:open <path>` (aliases `:e`, `:edit`) opens a file or
 directory in the active pane; see [Commands](#commands) for path completion.
 
+### Experimental native window
+
+This branch can build a native GPUI frontend with `cargo build --features native`.
+Launch `target/debug/runyte --window` in a workspace, or add `--editor` to work
+outside one. All existing editor keys and configured keymaps are dispatched by
+the same registry. The interface remains the editor's cell grid, without menus
+or toolbars. Window resizing changes the pane geometry and PTY dimensions.
+The window close button requests `:qa`, preserving unsaved-buffer and running-terminal refusal.
+
+PNG, JPEG, GIF, WebP, BMP, and PDF paths open as read-only media projections in
+the destination pane, including from `:open`, the explorer, the directory tree,
+and startup filenames. Other binary types retain the external-program prompt.
+Media never becomes an editable source file or a save target. Ordinary pane,
+buffer, jump, and close commands remain available. PDFs represent one page per
+logical buffer row: `j`/`k`, counts, and first/last-line motions select pages.
+Images initially fit the pane while preserving aspect ratio. Zoom, pan, and
+selection belong to each pane, so split views of the same file can differ.
+
+| Input in a media pane | Action |
+| --- | --- |
+| `+` / `=` / `-` | Zoom in / out |
+| `z f` / `z 1` | Fit pane / actual raster pixels |
+| `z h`, `z j`, `z k`, `z l` | Pan left, down, up, right |
+| `h` / `l` | Pan horizontally |
+| `j` / `k`, arrows, counts | PDF pages; vertical image panning |
+| `Ctrl-f` / `Ctrl-b`, PageDown / PageUp | Next / previous PDF page |
+| `z z` | Center the media |
+| `v`, then `h/j/k/l` or arrows | Extend a PDF word/line selection or an image-region corner; `v` again stops extending |
+| `%` | Select all page text, or the whole image when there is no text |
+| `y` / `Ctrl-c` | Copy selected PDF text or selected image region to the system clipboard |
+| Escape | Clear the selection and return to Normal mode |
+| Wheel / Shift-wheel | Pan vertically / horizontally; at fit size, vertical PDF scrolling changes pages |
+| Ctrl-wheel (Cmd-wheel on macOS) | Zoom around the pointer |
+| Middle-drag, right-drag, or Alt-left-drag | Pan |
+| Left-drag on PDF text | Select words in reading order |
+| Left-drag on an image | Pan; double-click toggles fit / 2× fit |
+| Shift-left-drag | Select a rectangular image region, including on PDFs |
+
+Scanned PDFs without embedded text use rectangular selection; this experiment
+does not perform OCR. Copying a region exports the displayed raster, including
+alpha, without modifying the source file. PDF text selection additionally uses
+Poppler's `pdftotext`; if extraction fails, the page remains viewable and region
+selection stays available.
+
+The page row remains visible
+when a prompt or key-hint popup temporarily replaces the image with its text
+projection, so those overlays always remain readable.
+
+PDF support requires Poppler's `pdfinfo` and `pdftoppm` executables. Rendering
+runs on one background worker and reports failures inside the pane. Input is
+limited to regular files up to 128 MiB, decoded images to 8192 pixels per axis
+and 64 MiB allocation, and PDFs to 10,000 pages. Images are reduced to at most
+2048 pixels per axis and PDF pages rasterized at 1600 pixels on their longest
+axis. Eight page/image results are cached. PDF subprocesses have a 15-second
+limit per invocation and are killed and reaped during cancellation.
+
+Current scope: standalone `ide` and `editor` modes on Linux/macOS. `--window`
+with mux/host/lifecycle modes is rejected; the terminal frontend still supports
+those modes. The window uses a fixed 15-pixel monospace font and a 9×20 logical
+pixel cell. PDF text search and animated-image playback are not implemented; animated GIFs
+and WebP files show their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
+resolution. PDF rendering uses an external helper,
+while windowing, editor integration, and image decoding are Rust. Source changes
+are checked when another frame is presented; there is no automatic media reload
+watcher. macOS, Wayland, IME composition, and touchpad pinch gestures still need hands-on
+platform verification. Ctrl-wheel zoom is supported; native pinch gestures are
+not exposed by this GPUI release.
+
 ### Opening binary files
 
 A file whose bytes contain a NUL, or do not decode as UTF-8, is binary.

@@ -243,6 +243,33 @@ cargo build --release
 ./target/release/runyte README.md
 ```
 
+### Experimental native window (this branch)
+
+Build with GPUI, Zed's Rust UI framework, and open a window:
+
+```sh
+cargo run --features native -- --window
+cargo run --features native -- --window --editor /path/to/file
+```
+
+The window keeps Runyte's cell layout, themes, command palette, key hints,
+configured bindings, splits, and integrated terminals. It adds no toolbars.
+Open an image or PDF with `:open`, the explorer, the directory tree, or a
+startup filename to view it inside a pane. On PDFs, `j`/`k` select the next or
+previous page; `gg`/`ge` and counts use the existing buffer motions. `+`/`-`
+zoom, `z f` fits, and `z h/j/k/l` pans. Ctrl-wheel zooms at the pointer;
+middle-drag pans. Select PDF text with left-drag or image regions with
+Shift-drag, then `y` copies the selection.
+
+The experiment targets Linux and macOS; Windows and persistent-session window
+attachments are not implemented. Linux needs GPUI's native build dependencies
+and a working Vulkan driver. PDF viewing additionally requires Poppler's
+`pdfinfo`, `pdftoppm`, and `pdftotext` on `PATH` (`poppler-utils` on Debian/Ubuntu, `poppler`
+on Arch/Fedora or Homebrew). Image viewing needs no external program.
+
+See [native-window details and limits](docs/user-guide.md#experimental-native-window).
+The normal terminal executable remains available without `--window`.
+
 ### Post-install setup
 
 Git features require `git` on `PATH`; language servers are installed separately.

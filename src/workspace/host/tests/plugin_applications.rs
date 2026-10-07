@@ -20,6 +20,8 @@ mod filesystem_recursive;
 mod filesystem_review;
 #[path = "plugin_filesystem_stat.rs"]
 mod filesystem_stat;
+#[path = "plugin_frontend_presentation.rs"]
+mod frontend_presentation;
 #[path = "plugin_handoffs.rs"]
 mod handoffs;
 #[path = "plugin_help.rs"]
@@ -686,7 +688,16 @@ fn model(rows: &[(&str, &str)]) -> crate::plugin::view::Model {
     }
 }
 fn view_setup(host: &mut WorkspaceHost) -> mpsc::Receiver<HostMessage> {
+    view_setup_with_binding(host, None)
+}
+fn view_setup_with_binding(
+    host: &mut WorkspaceHost,
+    binding: Option<&str>,
+) -> mpsc::Receiver<HostMessage> {
     let mut cfg = config("tasks");
+    if let Some(binding) = binding {
+        cfg.bindings.insert("toggle".into(), binding.into());
+    }
     cfg.api = crate::plugin::application::VERSION.to_owned();
     cfg.capabilities = vec!["views".into()];
     let mut receiver = instance(host, 0, cfg);

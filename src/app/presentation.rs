@@ -367,24 +367,8 @@ impl App {
     pub fn prepare_view(&mut self, geometry: FrameGeometry) -> PreparedView {
         self.poll_diff_work();
         self.settle_background_notifications();
-        if !self.plugins.instances.is_empty() {
-            self.plugins.presented_views.clear();
-            for (&pane_id, pane) in &self.panes {
-                if pane.terminal.is_none() {
-                    for instance in self.plugins.instances.values() {
-                        if let Some(view) = instance
-                            .application
-                            .views
-                            .values()
-                            .find(|view| view.buffer == pane.buffer)
-                        {
-                            self.plugins
-                                .presented_views
-                                .insert(pane_id, (view.buffer, view.revision));
-                        }
-                    }
-                }
-            }
+        if !self.plugins.deferred_presentation {
+            self.plugins.presented_views = self.plugin_view_presentation();
         }
         let (geometry, session_strip) = self.prepare_session_strip(geometry);
         self.pace_picker_progress();
@@ -933,6 +917,9 @@ impl App {
         if self.active_terminal().is_some() {
             return BindingScope::Terminal;
         }
+        if self.active_buffer().media_path.is_some() {
+            return BindingScope::Media;
+        }
         if let Some(GeneratedViewIdentity::Plugin { owner, view }) =
             self.active_buffer().generated_view_identity()
             && self
@@ -1233,6 +1220,83 @@ impl App {
     /// that closes an overlay cannot also produce a normal-mode key hint.
     pub fn has_input_overlay(&self) -> bool {
         self.plugins.input.is_some() || self.has_native_input_overlay()
+    }
+
+    pub(crate) fn plugin_view_presentation(
+        &self,
+    ) -> std::collections::BTreeMap<usize, (usize, u64)> {
+        if self.plugins.instances.is_empty() {
+            return Default::default();
+        }
+        self.panes
+            .iter()
+            .filter(|(_, pane)| pane.terminal.is_none())
+            .filter_map(|(&pane_id, pane)| {
+                self.plugins.instances.values().find_map(|instance| {
+                    instance
+                        .application
+                        .views
+                        .values()
+                        .find(|view| view.buffer == pane.buffer)
+                        .map(|view| (pane_id, (view.buffer, view.revision)))
+                })
+            })
+            .collect()
+    }
+
+    /// Whether this input can commit a native decision. Editing a form and
+    /// moving its selection remain queueable while an asynchronous frontend
+    /// catches up; accepting the decision requires its current painted frame.
+    pub fn input_requires_presented_approval(&self, input: &crate::input::InputEvent) -> bool {
+        use crate::input::{InputEvent, KeyCode, Modifiers};
+
+        let pending = self.context_overlay_active()
+            || self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.fs_confirmation.is_some()
+            || self.directory_tree_delete.is_some()
+            || self.merge_ui.review.is_some()
+            || self.confirmation_overlay().is_some()
+            || self
+                .terminal_action_menu
+                .as_ref()
+                .is_some_and(|menu| menu.close_armed)
+            || self
+                .session_action_menu
+                .as_ref()
+                .is_some_and(|menu| menu.force_armed)
+            || (self.list.is_some()
+                && self
+                    .list_actions
+                    .iter()
+                    .any(|action| matches!(action, super::ListAction::LspTrust { .. })));
+        if !pending {
+            return false;
+        }
+        let InputEvent::Key(key) = input else {
+            return matches!(input, InputEvent::Pointer(_));
+        };
+        if let Some(review) = &self.merge_ui.review {
+            // Merge approval uses configured bindings. Only the editing keys
+            // consumed before that registry lookup can bypass presentation.
+            return !(review.input_focused()
+                && match key.code {
+                    KeyCode::Char(_) => {
+                        key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT
+                    }
+                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => true,
+                    _ => false,
+                });
+        }
+        if key.code == KeyCode::Escape {
+            return false;
+        }
+        key.code == KeyCode::Enter
+            || (self.directory_tree_delete.is_some()
+                && matches!(key.code, KeyCode::Char('y' | 'Y')))
+            || (self.fs_confirmation.is_some() && key.code == KeyCode::Char('P'))
+            || (self.context_overlay_active() && key.code == KeyCode::Char('x'))
     }
 
     pub(crate) fn has_native_input_overlay(&self) -> bool {
