@@ -226,6 +226,7 @@ mod search_region_boundaries;
 mod search_region_cost;
 mod selection_history;
 mod session_navigation;
+mod surround;
 mod terminal_previews;
 mod tutorial;
 #[cfg(windows)]

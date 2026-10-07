@@ -93,8 +93,8 @@ use crate::{
     settings::{PreviewPolicy, SettingId, SettingType, SettingValue, persist_setting},
     startup::{StartupPhase, StartupTrace},
     structural_selection::{
-        ExpansionHistory, HistoryReset, ShrinkResult, navigate_text_object, select_delimiter,
-        select_text_object, transform_selection,
+        ExpansionHistory, HistoryReset, ShrinkResult, enclosing_delimiter, navigate_text_object,
+        select_delimiter, select_text_object, transform_selection,
     },
     syntax::{
         DelimiterPair, DocumentSyntax, LanguageId, Outline, OutlineItem, OutlineKind, ParseRequest,
@@ -298,6 +298,7 @@ mod search_history;
 mod search_preview;
 mod selection_history;
 mod settings_workflows;
+mod surround;
 mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
