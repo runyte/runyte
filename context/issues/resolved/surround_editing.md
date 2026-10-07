@@ -29,9 +29,15 @@ many. The test-only `VimGrammar` follows the same rule through
 `src/app/surround.rs` performs the edits. `m s` wraps each operative span, so
 a bare caret wraps the character under it, and selects the result with its
 delimiters in Normal mode. Either bracket of `()`, `[]`, `{}`, or `<>` names
-that pair; any other character is used on both sides. Spans that touch, which
-inclusive selections can produce, are wrapped together so the computed
-selection matches the inserted text.
+that pair; any other character is used on both sides. Overlapping operative
+spans, which inclusive selections can produce from touching ranges, are
+wrapped together so the computed selection matches the inserted text.
+
+A follow-up review corrected primary-selection mapping in `surround_add`.
+Combining operative spans had retained the original primary index, which
+could identify a later, unrelated result, and kept the first range's direction
+even when a later range was primary. The merge now maps the primary index to
+its combined span and preserves that range's direction.
 
 `m r` and `m d` look the pair up from the character under each caret rather
 than from the whole selection. `enclosing_pair` deliberately skips a pair
@@ -58,6 +64,7 @@ the nth enclosing pair.
 Regression coverage, in `src/app/tests/surround.rs`:
 `m_s_surrounds_the_selection_and_selects_the_pair_it_added`,
 `m_s_wraps_every_selection_including_adjacent_ones`,
+`surround_add_preserves_the_primary_when_inclusive_spans_merge`,
 `m_r_replaces_the_named_or_closest_pair_around_the_cursor`,
 `m_d_deletes_the_pair_around_the_cursor_or_the_pair_selected`,
 `surround_edits_change_nothing_unless_every_cursor_has_a_pair`,

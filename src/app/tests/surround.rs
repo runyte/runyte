@@ -64,6 +64,19 @@ fn m_s_wraps_every_selection_including_adjacent_ones() {
 }
 
 #[test]
+fn surround_add_preserves_the_primary_when_inclusive_spans_merge() {
+    let mut app = plain_app("abcdef");
+    app.active_mut().replace_selection(Selection::new(
+        vec![Range::new(0, 1), Range::new(2, 1), Range::new(4, 5)],
+        1,
+    ));
+    type_keys(&mut app, "ms[");
+    assert_eq!(text(&app), "[abc]d[ef]");
+    assert_eq!(app.active().selection.primary_index(), 0);
+    assert_eq!(app.active().selection.primary(), Range::new(4, 0));
+}
+
+#[test]
 fn m_r_replaces_the_named_or_closest_pair_around_the_cursor() {
     let mut app = plain_app("f(a, [b])");
     set_cursor(&mut app, 0, 6);

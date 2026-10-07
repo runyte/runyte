@@ -64,20 +64,30 @@ impl App {
         }
         let (open, close) = inserted_pair(character);
         let selection = self.active().selection.clone();
-        // Selections never overlap, but an inclusive span can reach a caret
-        // sitting on its last character. Such spans are wrapped together.
+        // Half-open ranges can touch while their inclusive operative spans
+        // overlap. Wrap those together, retaining the primary's direction.
         let mut spans: Vec<(usize, usize, bool)> = Vec::new();
+        let mut primary = 0;
         let mut directed: Vec<_> = self
             .operative_spans()
             .into_iter()
             .zip(selection.ranges())
-            .map(|((from, to), range)| (from, to, range.anchor > range.head))
+            .enumerate()
+            .map(|(index, ((from, to), range))| (from, to, range.anchor > range.head, index))
             .collect();
-        directed.sort_by_key(|(from, to, _)| (*from, *to));
-        for (from, to, reversed) in directed {
+        directed.sort_by_key(|(from, to, _, _)| (*from, *to));
+        for (from, to, reversed, index) in directed {
             match spans.last_mut() {
-                Some(previous) if from < previous.1 => previous.1 = previous.1.max(to),
+                Some(previous) if from < previous.1 => {
+                    previous.1 = previous.1.max(to);
+                    if index == selection.primary_index() {
+                        previous.2 = reversed;
+                    }
+                }
                 _ => spans.push((from, to, reversed)),
+            }
+            if index == selection.primary_index() {
+                primary = spans.len() - 1;
             }
         }
 
@@ -102,7 +112,7 @@ impl App {
         }
         let buffer_id = self.active().buffer;
         self.active_mut()
-            .replace_selection(Selection::new(ranges, selection.primary_index()));
+            .replace_selection(Selection::new(ranges, primary));
         self.active_mut()
             .mark_selection_semantics(SelectionSemantics::Runyte);
         self.mode = Mode::Normal;
