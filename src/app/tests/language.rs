@@ -93,6 +93,147 @@ pub(super) fn drain(queue: &mut tokio::sync::mpsc::Receiver<LspCommand>) -> Vec<
     }
     commands
 }
+/// Presses `Space l ?` and returns the action the queued status request
+/// names, so a test can answer it the way the manager would.
+fn request_lsp_status(
+    app: &mut App,
+    queue: &mut tokio::sync::mpsc::Receiver<LspCommand>,
+) -> Option<u64> {
+    for character in [' ', 'l', '?'] {
+        press(app, character);
+    }
+    let requests: Vec<Option<u64>> = drain(queue)
+        .into_iter()
+        .filter_map(|command| match command {
+            LspCommand::Status { action } => Some(action),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests.len(), 1, "one status request per invocation");
+    assert!(requests[0].is_some(), "the request names its action");
+    requests[0]
+}
+
+#[test]
+fn an_lsp_status_report_replaces_its_current_echo_and_is_retained() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    let action = request_lsp_status(&mut app, &mut queue);
+    assert_eq!(
+        app.displayed_status_message(),
+        "Space l ? (Report language server state)"
+    );
+
+    app.apply_lsp_event(LspEvent::StatusReport {
+        action,
+        message: "rust: mock-rust-server (ready)".to_owned(),
+    });
+    assert_eq!(
+        app.displayed_status_message(),
+        "Space l ? (rust: mock-rust-server (ready))"
+    );
+    assert!(!app.displayed_status_message_is_error());
+    let entry = &app.notifications.entries()[0];
+    assert_eq!(entry.severity, NotificationSeverity::Info);
+    assert_eq!(entry.source, "LSP");
+    assert_eq!(entry.title, "Language server status");
+    assert_eq!(entry.body, "rust: mock-rust-server (ready)");
+}
+
+#[test]
+fn a_typed_lsp_status_command_reports_on_its_own_echo() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    press(&mut app, ':');
+    for character in "lsp-status".chars() {
+        press(&mut app, character);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    let action = drain(&mut queue)
+        .into_iter()
+        .find_map(|command| match command {
+            LspCommand::Status { action } => Some(action),
+            _ => None,
+        })
+        .expect("the command queues a status request");
+
+    app.apply_lsp_event(LspEvent::StatusReport {
+        action,
+        message: "no language servers running".to_owned(),
+    });
+    assert_eq!(
+        app.displayed_status_message(),
+        ":lsp-status (no language servers running)"
+    );
+}
+
+#[test]
+fn an_lsp_status_report_never_replaces_a_superseded_echo() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    let action = request_lsp_status(&mut app, &mut queue);
+    press(&mut app, 'g');
+    press(&mut app, 'l');
+    assert_eq!(app.displayed_status_message(), "g l (Move to line end)");
+
+    app.apply_lsp_event(LspEvent::StatusReport {
+        action,
+        message: "rust: mock-rust-server (ready)".to_owned(),
+    });
+    assert_eq!(app.displayed_status_message(), "g l (Move to line end)");
+    assert_eq!(
+        app.notifications.entries()[0].body,
+        "rust: mock-rust-server (ready)",
+        "the notification is the record once the echo has moved on"
+    );
+}
+
+#[test]
+fn an_lsp_status_report_never_replaces_an_open_prompt() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    let action = request_lsp_status(&mut app, &mut queue);
+    press(&mut app, ':');
+    assert_eq!(app.mode, Mode::Command);
+
+    app.apply_lsp_event(LspEvent::StatusReport {
+        action,
+        message: "rust: mock-rust-server (ready)".to_owned(),
+    });
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.displayed_status_message(), "");
+    assert_eq!(
+        app.notifications.entries()[0].body,
+        "rust: mock-rust-server (ready)"
+    );
+}
+
+#[test]
+fn an_unsolicited_lsp_status_leaves_the_echo_alone() {
+    let (mut app, _, mut queue) = rust_app("fn main() {}\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+
+    request_lsp_status(&mut app, &mut queue);
+    app.apply_lsp_event(LspEvent::Status {
+        message: "rust: index is incomplete".to_owned(),
+        error: false,
+    });
+    assert_eq!(
+        app.displayed_status_message(),
+        "Space l ? (Report language server state)",
+        "only the reply to the request takes over its echo"
+    );
+}
+
 #[test]
 fn status_stop_and_restart_clear_every_language_owned_transient() {
     let (mut app, _, mut queue) = rust_app("fn main() {}\n");
@@ -1242,7 +1383,7 @@ fn a_rejected_change_forces_full_resync_before_the_next_request() {
     ready(&mut app, Encoding::Utf8);
     drain(&mut queue);
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
-        assert!(app.lsp_send(LspCommand::Status));
+        assert!(app.lsp_send(LspCommand::Status { action: None }));
     }
     let old_version = app.lsp_documents[&0].version;
     let before = app.buffers[0].text().clone();
@@ -2299,7 +2440,7 @@ fn code_action_command_is_suppressed_when_an_edit_cannot_be_synchronized() {
         .with_server("rust".to_owned(), 1),
     );
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
-        assert!(app.lsp_send(LspCommand::Status));
+        assert!(app.lsp_send(LspCommand::Status { action: None }));
     }
 
     app.apply_lsp_event(LspEvent::Response {
@@ -2355,7 +2496,7 @@ fn code_action_command_is_suppressed_when_a_new_target_cannot_be_opened() {
         .with_server("rust".to_owned(), 1),
     );
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
-        assert!(app.lsp_send(LspCommand::Status));
+        assert!(app.lsp_send(LspCommand::Status { action: None }));
     }
 
     app.apply_lsp_event(LspEvent::Response {
@@ -2459,7 +2600,7 @@ fn workspace_edit_acknowledgement_retries_after_manager_backpressure() {
     ready(&mut app, Encoding::Utf8);
     drain(&mut queue);
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
-        assert!(app.lsp_send(LspCommand::Status));
+        assert!(app.lsp_send(LspCommand::Status { action: None }));
     }
 
     app.apply_lsp_event(LspEvent::ApplyEdit {

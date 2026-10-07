@@ -2848,6 +2848,9 @@ pub struct App {
     pub directory_tree: crate::directory_tree::DirectoryTree,
     directory_tree_previous_mode: Mode,
     directory_tree_geometry: Option<(Rect, Rect)>,
+    /// The tree entry the last left press landed on, and when. A second
+    /// press on the same entry soon enough opens it as Enter does.
+    directory_tree_click: Option<(PathBuf, Instant)>,
     /// The pane temporarily presented across the complete editor area by
     /// `:zen` or `:fullscreen`, if either is active.
     maximized: Option<MaximizedPane>,
@@ -3565,6 +3568,7 @@ impl App {
             directory_tree: crate::directory_tree::DirectoryTree::new(project_root.clone()),
             directory_tree_previous_mode: initial_mode,
             directory_tree_geometry: None,
+            directory_tree_click: None,
             maximized: None,
             mode: initial_mode,
             replace_session: None,

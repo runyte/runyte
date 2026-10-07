@@ -2019,6 +2019,20 @@ mod tests {
     }
 
     #[test]
+    fn jsonc_takes_its_own_language_server_beside_json() {
+        let config: Config = serde_yaml::from_str(
+            "lsp:\n  json:\n    command: biome\n    args: [lsp-proxy]\n  jsonc:\n    command: biome\n    args: [lsp-proxy]\n",
+        )
+        .unwrap();
+
+        assert!(config.validate_settings().is_ok());
+        for language in ["json", "jsonc"] {
+            assert_eq!(config.lsp.servers[language].command, PathBuf::from("biome"));
+            assert_eq!(config.lsp.servers[language].args, ["lsp-proxy"]);
+        }
+    }
+
+    #[test]
     fn legacy_and_flat_lsp_declarations_cannot_disagree() {
         let error = serde_yaml::from_str::<Config>(
             "lsp:\n  servers:\n    markdown:\n      command: old\n  markdown:\n    command: new\n",

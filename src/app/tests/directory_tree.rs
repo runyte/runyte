@@ -194,6 +194,151 @@ fn stale_pointer_frame_uses_the_rows_that_were_drawn() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn wait_for_tree_rows(app: &mut App, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while app.directory_tree.rows().len() < count {
+        assert!(Instant::now() < deadline);
+        app.directory_tree.poll();
+        std::thread::yield_now();
+    }
+}
+
+fn left_press(app: &mut App, view: &PreparedView, row: u16) {
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Left),
+            column: 2,
+            row,
+            modifiers: Modifiers::NONE,
+        },
+        view,
+    )
+    .unwrap();
+}
+
+/// A second press guaranteed to fall inside the double-click interval, however
+/// loaded the machine running the test is.
+fn left_press_again(app: &mut App, view: &PreparedView, row: u16) {
+    if let Some((_, at)) = app.directory_tree_click.as_mut() {
+        *at = Instant::now();
+    }
+    left_press(app, view, row);
+}
+
+fn tree_row_expanded(app: &App, path: &Path) -> bool {
+    app.directory_tree
+        .rows()
+        .iter()
+        .any(|row| row.path == path && row.expanded)
+}
+
+#[test]
+fn double_click_toggles_a_directory_and_opens_a_file_like_enter() {
+    let (mut app, root) = isolated("directory-tree-double-click");
+    fs::create_dir(root.join("sub")).unwrap();
+    fs::write(root.join("sub/inner.txt"), "inner").unwrap();
+    fs::write(root.join("z.txt"), "z").unwrap();
+    chord(&mut app, 'd');
+    app.directory_tree.refresh(root.clone());
+    wait_for_tree_rows(&mut app, 3);
+    let view = app.prepare_view(geometry(80, 20));
+    assert_eq!(view.tree_rows.get(1), Some(&root.join("sub")));
+
+    left_press(&mut app, &view, 2);
+    assert!(!tree_row_expanded(&app, &root.join("sub")));
+    left_press_again(&mut app, &view, 2);
+    assert!(tree_row_expanded(&app, &root.join("sub")));
+    // A third press begins a new pair instead of collapsing straight back.
+    left_press(&mut app, &view, 2);
+    assert!(tree_row_expanded(&app, &root.join("sub")));
+    left_press_again(&mut app, &view, 2);
+    assert!(!tree_row_expanded(&app, &root.join("sub")));
+
+    let view = app.prepare_view(geometry(80, 20));
+    assert_eq!(view.tree_rows.get(2), Some(&root.join("z.txt")));
+    // A pending prefix does not survive the gesture to fire afterwards.
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert!(!app.grammar.pending_sequence().is_empty());
+    left_press(&mut app, &view, 3);
+    left_press_again(&mut app, &view, 3);
+    assert_eq!(
+        app.active_buffer().path.as_deref(),
+        Some(&*root.join("z.txt"))
+    );
+    assert!(!app.directory_tree.focused);
+    assert!(app.grammar.pending_sequence().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_double_click_that_cannot_open_its_file_reports_the_failure() {
+    let (mut app, root) = isolated("directory-tree-double-click-failure");
+    fs::write(root.join("z.txt"), "z").unwrap();
+    chord(&mut app, 'd');
+    app.directory_tree.refresh(root.clone());
+    wait_for_tree_rows(&mut app, 2);
+    let view = app.prepare_view(geometry(80, 20));
+    assert_eq!(view.tree_rows.get(1), Some(&root.join("z.txt")));
+    app.plugins.filesystem_applying = true;
+    left_press(&mut app, &view, 2);
+    left_press_again(&mut app, &view, 2);
+    assert!(app.status_error);
+    assert!(
+        app.status.contains("Wait for filesystem changes"),
+        "{}",
+        app.status
+    );
+    assert_ne!(
+        app.active_buffer().path.as_deref(),
+        Some(&*root.join("z.txt"))
+    );
+    app.plugins.filesystem_applying = false;
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn separate_or_slow_tree_clicks_only_select() {
+    let (mut app, root) = isolated("directory-tree-single-clicks");
+    fs::create_dir(root.join("sub")).unwrap();
+    fs::write(root.join("z.txt"), "z").unwrap();
+    chord(&mut app, 'd');
+    app.directory_tree.refresh(root.clone());
+    wait_for_tree_rows(&mut app, 3);
+    let view = app.prepare_view(geometry(80, 20));
+
+    // Two presses on different entries are two selections.
+    left_press(&mut app, &view, 2);
+    left_press(&mut app, &view, 3);
+    assert_eq!(app.directory_tree.selected, root.join("z.txt"));
+    assert!(app.directory_tree.focused);
+
+    // A press elsewhere in between breaks the pair.
+    left_press(&mut app, &view, 2);
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: 2,
+            row: 2,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+    left_press(&mut app, &view, 2);
+    assert!(!tree_row_expanded(&app, &root.join("sub")));
+
+    // A second press after the interval is a fresh single click.
+    let (path, at) = app.directory_tree_click.clone().unwrap();
+    app.directory_tree_click = Some((
+        path,
+        at - crate::app::input::TREE_DOUBLE_CLICK_INTERVAL - Duration::from_millis(1),
+    ));
+    left_press(&mut app, &view, 2);
+    assert!(!tree_row_expanded(&app, &root.join("sub")));
+    assert!(app.directory_tree.focused);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn tree_help_returns_focus_to_the_ordinary_pane() {
     let (mut app, root) = isolated("directory-tree-help");

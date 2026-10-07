@@ -48,7 +48,7 @@ reading from top to bottom.
 
 - Tree-sitter syntax highlighting for Python, Rust, Swift, C, C++, JavaScript,
   TypeScript, TSX, HTML, CSS, Go, Bash, Java, Kotlin, SQL, Lua, C#, Zig, CMake,
-  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, Dockerfile, XML,
+  Protobuf, Make, INI, Markdown, TOML, YAML, JSON, JSONC, Dockerfile, XML,
   HCL/Terraform, Ruby, PHP, and Elixir
 - Language servers: diagnostics, completion, hover, signature help, goto,
   references, rename, code actions, formatting, and symbol pickers
@@ -588,7 +588,8 @@ So the interaction line can say an action `failed` while its notification is
   successful hook or helper.
 - Successful asynchronous Git output updates the action echo while it is still
   current. Multiline output, or output whose echo has been superseded, is kept
-  as `INFO`.
+  as `INFO`. The `:lsp-status` report updates its echo the same way, and is
+  always kept as `INFO` as well.
 
 ### Help, hints, and the tutorial
 
@@ -717,6 +718,7 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
 | Wheel | Scroll the pane under the pointer |
 | Drag a shared border | Resize the split |
 | Right-click a selection | Copy all selections to the system clipboard, like `Space c y` |
+| Double-click a directory tree row | Toggle the directory or open the file, like Enter |
 
 - **Autoscroll** follows visual rows, including soft wrapping and collapsed
   folds. Move back inside the pane or release the button to stop.
@@ -1061,7 +1063,7 @@ buffer language's line comment.
 
 | Marker | Languages |
 | --- | --- |
-| `//` | Rust, C, C++, C#, Go, Java, JavaScript, TypeScript, TSX, Kotlin, Swift, Zig, Protobuf, PHP |
+| `//` | Rust, C, C++, C#, Go, Java, JavaScript, TypeScript, TSX, Kotlin, Swift, Zig, Protobuf, PHP, JSONC |
 | `#` | Python, Bash, TOML, YAML, CMake, Make, Dockerfile, HCL, Ruby, Elixir |
 | `--` | SQL, Lua |
 | `;` | INI |
@@ -2184,8 +2186,13 @@ pane or a buffer.
 | `h` or Left | Collapse a directory, or select its parent |
 | Enter on a directory | Toggle expansion |
 | `Space r` | Refresh the selected directory |
+| Click | Select a row and focus the tree |
+| Double-click | Act as Enter: toggle a directory or open a file |
+| Wheel | Move the selection three rows |
 
-Digits choose destination panes (below), not counts.
+Digits choose destination panes (below), not counts. A double-click is two
+left presses on the same row within half a second; a third press starts a new
+pair rather than toggling the directory straight back.
 
 #### Tree actions
 
@@ -3774,6 +3781,7 @@ Runyte checks, in order:
 | `lua` | `lua` shebangs |
 | `dockerfile` | `Dockerfile`, `Containerfile`, their lowercase names, dot-suffixed variants such as `Dockerfile.dev`, and `.dockerfile` / `.containerfile` |
 | `kotlin` | `.kt`, `.kts` |
+| `jsonc` | `.jsonc`, `tsconfig.json`, `jsconfig.json`, `devcontainer.json`, and `.devcontainer.json` |
 | `xml` | `.xml`, `.svg`, `.xsd`, `.xsl`, `.xslt`, `.wsdl`, `.xaml`, `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.resx`, and `.plist` |
 | `hcl` | `.hcl`, `.tf`, and `.tfvars`, including `terragrunt.hcl` and `production.auto.tfvars` |
 | `ruby` | `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile`, `Rakefile`, `Guardfile`, `Vagrantfile`, `Brewfile`, `Podfile`, `Fastfile`, `Appfile`, `.irbrc`, and `.pryrc`; `ruby` and `jruby` shebangs |
@@ -3785,6 +3793,18 @@ Terraform's `.tf.json` files keep JSON highlighting.
 #### Notes by language
 
 **INI** parses both `;` and `#` comments. `toggle-comments` inserts `;`.
+
+**JSONC** is JSON with `//` and `/* */` comments, and uses the JSON grammar.
+`toggle-comments` inserts `//`; in plain JSON it changes nothing.
+
+- Language servers see `jsonc` as the language, so configure one under
+  `lsp.jsonc`; a server under `lsp.json` does not attach to JSONC files.
+- Only the exact file names in the table are JSONC. Detection sees the file
+  name, not its directory, so `.vscode/settings.json`, `tsconfig.base.json`,
+  and other `.json` files read as JSONC by their tools stay JSON.
+- Trailing commas are not part of the grammar. A file with one still
+  highlights, but its tree has a parse error and some of its folds are
+  missing.
 
 **Dockerfile** — the language name is `dockerfile`, including in Markdown
 fences.
@@ -3978,9 +3998,9 @@ lsp:
 **Language keys** are Runyte's language names, so a buffer's language is the
 same question for highlighting and for LSP: `rust`, `python`, `swift`, `c`,
 `cpp`, `javascript`, `typescript`, `tsx`, `html`, `css`, `go`, `bash`, `java`,
-`kotlin`, `json`, `sql`, `lua`, `c-sharp`, `zig`, `cmake`, `proto`, `make`,
-`ini`, `toml`, `yaml`, and `markdown`. Other keys under `lsp` are rejected,
-apart from `enable` and the `servers` wrapper.
+`kotlin`, `json`, `jsonc`, `sql`, `lua`, `c-sharp`, `zig`, `cmake`, `proto`,
+`make`, `ini`, `toml`, `yaml`, and `markdown`. Other keys under `lsp` are
+rejected, apart from `enable` and the `servers` wrapper.
 
 - `lsp.servers.<language>` is an accepted compatibility spelling of
   `lsp.<language>`, which is preferred.
@@ -3996,7 +4016,7 @@ apart from `enable` and the `servers` wrapper.
 | --- | --- |
 | `:config-reload` | Adopt new definitions; restart only languages whose definition changed |
 | `:lsp-restart [language]` | Restart a stopped server from the configuration already loaded. It does not re-read YAML, so it is the wrong command after editing the file. |
-| `:lsp-status` | Show servers that started or failed |
+| `:lsp-status` (`Space l ?`) | Report servers that started or failed. The report replaces the command's echo while that echo is still current; `:not` keeps the full report. |
 | `:service-health` | Show whether the active document has a configured and attached server |
 
 `lsp.enable` is decided at startup. To turn LSP on or off, reopen an ide-mode
