@@ -28,6 +28,7 @@ parser.add_argument("--paint-window", type=int, nargs=2, default=[1080, 800], me
 parser.add_argument("--latency", action="store_true", help="measure key-to-pixel latency and idle wakeups at 120x40")
 parser.add_argument("--latency-keys", type=int, default=60, help="keys measured by --latency")
 parser.add_argument("--max-idle-wakeups", type=float, help="with --latency, fail above this many idle context switches per second")
+parser.add_argument("--input-burst", action="store_true", help="verify a rapid ordered key burst is saved without loss")
 parser.add_argument("--paint-styles", action="store_true", help="capture styled terminal cells, including wide glyphs and decorated emoji")
 parser.add_argument("--paint-reference", type=pathlib.Path, help="compare styled-cell pixels against an earlier --paint-styles output directory")
 args = parser.parse_args()
@@ -298,6 +299,28 @@ try:
         text('exit'); key('Return'); time.sleep(.5); key('backslash',ctrl=True)
         close_window(); p.wait(timeout=15); assert p.returncode == 0
         print('PASS: styled-cell capture' + (' matches reference' if args.paint_reference else ''))
+        raise SystemExit(0)
+    if args.input_burst:
+        if args.mux:
+            command('open notes.txt')
+        key('i')
+        expected = ''.join(chr(ord('a') + n % 26) for n in range(512))
+        for letter in expected:
+            code = x.XKeysymToKeycode(d, x.XStringToKeysym(letter.encode()))
+            xt.XTestFakeKeyEvent(d, code, 1, 0)
+            xt.XTestFakeKeyEvent(d, code, 0, 0)
+        x.XFlush(d); time.sleep(1)
+        key('Escape'); command('write')
+        for _ in range(150):
+            saved = (root/'notes.txt').read_text()
+            if saved.startswith(expected):
+                break
+            time.sleep(.1)
+        if not saved.startswith(expected):
+            screenshot('input-burst-failed')
+            raise AssertionError(f'rapid native input was lost or reordered: saved {len(saved)} characters; prefix {saved[:80]!r}; log: ' + (root/'window.log').read_text()[-3000:])
+        close_window(); p.wait(timeout=15); assert p.returncode == 0
+        print('PASS: 512-character native input burst saved in order')
         raise SystemExit(0)
     if args.paint_benchmark:
         assert not args.mux, "benchmark uses a standalone window"

@@ -524,6 +524,7 @@ pub enum Events {
     Native {
         attachment: Arc<AtomicU64>,
         events: input_queue::Receiver,
+        batch: usize,
         presented: Option<runyte::workspace::FrameId>,
         presentation_only: bool,
     },
@@ -541,6 +542,7 @@ impl Events {
                     .unwrap()
                     .take()
                     .unwrap(),
+                batch: 0,
                 presented: None,
                 presentation_only: false,
             }
@@ -556,6 +558,7 @@ impl Events {
                 events,
                 presented,
                 presentation_only,
+                ..
             } => {
                 *presentation_only = false;
                 let input = loop {
@@ -574,6 +577,23 @@ impl Events {
             }
         }
     }
+    /// Drain an already queued key/text burst before preparing its result.
+    /// Never wait for another event, and publish at least every 64 applied inputs.
+    /// Mark pending here so later approval admission sees the unpublished state.
+    pub fn defer_frame(&mut self, applied_key_or_text: bool, pending: &mut bool) -> bool {
+        let Self::Native { events, batch, .. } = self else {
+            return false;
+        };
+        *batch += 1;
+        if applied_key_or_text && *batch < 64 && events.has_batchable_input() {
+            *pending = true;
+            true
+        } else {
+            *batch = 0;
+            false
+        }
+    }
+
     /// The GUI may lag or coalesce host frames. Never acknowledge a newer frame
     /// than the one painted when this physical input was captured.
     pub fn presented_frame(

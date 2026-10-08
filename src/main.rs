@@ -2045,6 +2045,8 @@ async fn run(
         let hint_timeout = key_hints.time_until_expiry(Instant::now());
         let picker_pacing = app.picker_pacing_delay(Instant::now());
         let pointer_autoscroll = app.pointer_autoscroll_delay(Instant::now());
+        #[cfg(all(feature = "native", not(windows)))]
+        let mut applied_key_or_text = false;
         app.note_plugin_frontend(true);
         app.sync_plugin_observers();
         app.sync_context();
@@ -2193,6 +2195,13 @@ async fn run(
                                     break;
                                 }
                             }
+                        }
+                        #[cfg(all(feature = "native", not(windows)))]
+                        {
+                            applied_key_or_text = matches!(
+                                input,
+                                InputEvent::Key(_) | InputEvent::Text(_) | InputEvent::ClipboardPaste
+                            );
                         }
                         #[cfg(debug_assertions)]
                         trace_input(
@@ -2368,6 +2377,10 @@ async fn run(
                 received_signal = Some(signal);
                 break;
             }
+        }
+        #[cfg(all(feature = "native", not(windows)))]
+        if terminal_events.defer_frame(applied_key_or_text, &mut frame_pending) {
+            continue;
         }
         if !frame_publication_ready(true, app.finder_scan_refills(), &mut frame_pending) {
             continue;

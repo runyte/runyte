@@ -72,6 +72,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     let mut events = Events::Native {
         attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
+        batch: 0,
         presented: None,
         presentation_only: false,
     };
@@ -172,6 +173,7 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
     let events = Events::Native {
         attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
+        batch: 0,
         presented: Some(first),
         presentation_only: false,
     };
@@ -248,6 +250,7 @@ async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
     let mut events = Events::Native {
         attachment,
         events: receiver,
+        batch: 0,
         presented: None,
         presentation_only: false,
     };
@@ -518,4 +521,189 @@ fn attached_snapshot_renders_at_host_geometry_during_resize() {
     );
     super::draw_native_grid(&mut terminal, (80, 24), None, |_| {}).unwrap();
     assert_eq!(terminal.backend().snapshot().area, Rect::new(0, 0, 80, 24));
+}
+
+#[tokio::test]
+async fn queued_native_keys_publish_bounded_batches_without_reordering_text() {
+    use super::{Events, NativeInput};
+    use crossterm::event::{Event, KeyEvent};
+    use runyte::{
+        app::{App, FrameGeometry},
+        config::Config,
+        workspace::WorkspaceHost,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mut host =
+        WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
+    host.defer_frontend_presentation(true);
+    let painted = host.prepare_frame(FrameGeometry::default()).id;
+    let (send, receive) = super::input_queue::channel(256);
+    let mut events = Events::Native {
+        attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        events: receive,
+        batch: 0,
+        presented: None,
+        presentation_only: false,
+    };
+    // Insert mode followed by 128 distinct ordered characters: three frames,
+    // with the first two published despite additional input remaining queued.
+    let text: String = (0..128).map(|i| char::from(b'a' + i % 26)).collect();
+    for c in std::iter::once('i').chain(text.chars()) {
+        send.try_send(NativeInput {
+            attachment: 0,
+            event: Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+            presented: Some(painted),
+            presentation_only: false,
+        })
+        .unwrap();
+    }
+    let mut pending = false;
+    let mut publications = Vec::new();
+    for n in 1..=129 {
+        let input = runyte::tui::input::convert_event(events.next().await.unwrap().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(events.presented_frame(None), Some(painted));
+        assert!(events.accepts_input(&host, &input, pending));
+        host.execute_frontend_input(input, false).unwrap();
+        if events.defer_frame(true, &mut pending) {
+            assert!(pending);
+        } else {
+            publications.push(n);
+            host.prepare_frame(FrameGeometry::default());
+            pending = false;
+        }
+    }
+    assert_eq!(publications, [64, 128, 129]);
+    assert_eq!(host.app().active_buffer().to_string(), text);
+    assert!(!pending);
+}
+
+#[tokio::test]
+async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and_resize() {
+    use super::{Events, NativeInput};
+    use crossterm::event::{Event, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+    let (send, receive) = super::input_queue::channel(8);
+    let mut events = Events::Native {
+        attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        events: receive,
+        batch: 0,
+        presented: None,
+        presentation_only: false,
+    };
+    let mut pending = false;
+    assert!(
+        !events.defer_frame(true, &mut pending),
+        "a lone event paints immediately"
+    );
+    send.try_send(NativeInput {
+        attachment: 0,
+        event: Event::FocusGained,
+        presented: None,
+        presentation_only: true,
+    })
+    .unwrap();
+    assert!(
+        !events.defer_frame(true, &mut pending),
+        "a paint acknowledgement is not a queued edit"
+    );
+    events.next().await.unwrap().unwrap();
+    assert!(events.is_presentation_acknowledgement());
+    for barrier in [
+        Event::Resize(100, 30),
+        Event::FocusLost,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        }),
+    ] {
+        send.try_send(NativeInput {
+            attachment: 0,
+            event: barrier.clone(),
+            presented: None,
+            presentation_only: false,
+        })
+        .unwrap();
+        send.try_send(NativeInput {
+            attachment: 0,
+            event: Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            presented: None,
+            presentation_only: false,
+        })
+        .unwrap();
+        assert!(
+            !events.defer_frame(true, &mut pending),
+            "publish before the boundary"
+        );
+        assert_eq!(events.next().await.unwrap().unwrap(), barrier);
+        assert!(
+            !events.defer_frame(false, &mut pending),
+            "publish after lifecycle/pointer handling"
+        );
+        events.next().await.unwrap().unwrap();
+        assert!(!events.defer_frame(true, &mut pending));
+    }
+    assert!(!pending);
+}
+
+#[tokio::test]
+async fn native_batch_pending_blocks_approval_even_before_frame_identity_changes() {
+    use super::{Events, NativeInput};
+    use crossterm::event::{Event, KeyEvent};
+    use runyte::{
+        app::{App, FrameGeometry, FsConfirmation, FsConfirmationOrigin},
+        config::Config,
+        fs_plan::{DesiredEntry, DirectorySnapshot, EntryKind, FsPlan},
+        workspace::WorkspaceHost,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mut host =
+        WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
+    host.defer_frontend_presentation(true);
+    let painted = host.prepare_frame(FrameGeometry::default()).id;
+    let (send, receive) = super::input_queue::channel(8);
+    let mut events = Events::Native {
+        attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        events: receive,
+        batch: 0,
+        presented: None,
+        presentation_only: false,
+    };
+    send.try_send(NativeInput {
+        attachment: 0,
+        event: Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        presented: Some(painted),
+        presentation_only: false,
+    })
+    .unwrap();
+    // Model a preceding input opening a confirmation, before preparing any new
+    // frame. The captured id still equals the host id, so pending is essential.
+    host.app_mut().fs_confirmation = Some(FsConfirmation {
+        origin: FsConfirmationOrigin::Explorer {
+            buffer: host.app().active().buffer,
+        },
+        plan: FsPlan::build(
+            root.path().to_path_buf(),
+            DirectorySnapshot::read(root.path()).unwrap(),
+            vec![DesiredEntry::create("unseen.txt", EntryKind::File)],
+        )
+        .unwrap(),
+        selected: 0,
+    });
+    let mut pending = false;
+    assert!(events.defer_frame(true, &mut pending));
+    let input = runyte::tui::input::convert_event(events.next().await.unwrap().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(events.presented_frame(None), host.current_frame_id());
+    assert!(
+        events.accepts_input(&host, &input, false),
+        "ids alone cannot detect unpublished state"
+    );
+    assert!(!events.accepts_input(&host, &input, pending));
+    assert!(!root.path().join("unseen.txt").exists());
+    assert!(host.app().fs_confirmation.is_some());
+    assert!(!events.defer_frame(true, &mut pending));
 }

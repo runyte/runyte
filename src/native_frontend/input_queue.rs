@@ -121,6 +121,18 @@ impl Drop for Sender {
     }
 }
 impl Receiver {
+    /// Pointer and lifecycle events are publication barriers: their geometry
+    /// must not inherit an earlier key's unpublished layout changes.
+    pub(super) fn has_batchable_input(&self) -> bool {
+        self.0
+            .state
+            .lock()
+            .unwrap()
+            .physical
+            .front()
+            .is_some_and(|input| matches!(input.event, Event::Key(_) | Event::Paste(_)))
+    }
+
     pub async fn recv(&mut self) -> Option<NativeInput> {
         loop {
             let ready = self.0.ready.notified();

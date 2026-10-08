@@ -473,3 +473,22 @@ Use `--paint-font-size` and `--paint-window WIDTH HEIGHT` with `--paint-benchmar
 to reproduce different grids. The tested sizes used fonts 15, 10 and 8, and
 windows 1080×800, 1280×940 and 1280×940. Hardware GPU and Wayland comparisons
 remain unmeasured.
+
+## Bounded native input and frame batching — 2026-10-08
+
+Native physical input has a separate 4,096-event FIFO, bounded to 8 MiB of pasted
+text; the latest presentation acknowledgement occupies its own slot. Adjacent
+queued drags coalesce only across identical attachment, painted frame, button
+and modifiers. Rejected input sets a sticky window notice independently of host
+progress. The queue wakes the host with a notification, not a polling timer.
+
+Standalone native input drains already queued keys/text before preparing the
+result, with a limit of 64 applied inputs per frame. A lone input paints
+immediately. Deferral marks publication pending before admitting the next input,
+so unseen confirmations cannot inherit the preceding frame's approval identity.
+Pointer and lifecycle events are publication barriers; redundant drags are
+coalesced in the queue while geometry-sensitive pointer handling remains tied to
+the original frame. The terminal frontend and persistent-session host retain
+their existing publication loops. `tests/native_window.py --input-burst` exercises
+512 rapid physical characters and checks the saved text, alongside unit tests
+that apply 129 inputs through a real host and observe publications at 64/128/129.
