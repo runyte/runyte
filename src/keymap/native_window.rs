@@ -33,10 +33,8 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[
             KeyStroke::ctrl('V'),
             #[cfg(target_os = "macos")]
-            KeyStroke::ctrl('Y'),
-            #[cfg(target_os = "macos")]
             KeyStroke::new(
-                crate::input::KeyCode::Char('y'),
+                crate::input::KeyCode::Char('v'),
                 crate::input::Modifiers::SUPER,
             ),
         ],
@@ -70,18 +68,21 @@ mod tests {
     use crate::input::{KeyCode, Modifiers};
 
     #[test]
-    fn command_paste_is_macos_only_and_preserves_control_y() {
+    fn command_paste_is_macos_only_and_preserves_other_keys() {
+        assert_eq!(
+            lookup(KeyStroke::new(KeyCode::Char('v'), Modifiers::SUPER))
+                .map(|binding| binding.action),
+            cfg!(target_os = "macos").then_some(Action::PasteText)
+        );
         for key in [
             KeyStroke::new(KeyCode::Char('y'), Modifiers::SUPER),
-            KeyStroke::new(KeyCode::Char('Y'), Modifiers::CONTROL | Modifiers::SHIFT),
+            KeyStroke::ctrl('Y'),
+            KeyStroke::ctrl('y'),
+            KeyStroke::ctrl('v'),
+            KeyStroke::char('v'),
         ] {
-            assert_eq!(
-                lookup(key).map(|binding| binding.action),
-                cfg!(target_os = "macos").then_some(Action::PasteText)
-            );
+            assert!(lookup(key).is_none());
         }
-        assert!(lookup(KeyStroke::ctrl('y')).is_none());
-        assert!(lookup(KeyStroke::char('y')).is_none());
         assert_eq!(
             lookup(KeyStroke::ctrl('V')).unwrap().action,
             Action::PasteText

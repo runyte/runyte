@@ -32,15 +32,14 @@ literal paste, including to prompts and terminal children.
 A macOS follow-up adds Cmd-c (`Super-c` in the shared key spelling) to the
 clipboard-yank and media-copy registry entries. Terminal copy admission uses
 that effective registry, so the new key copies review selections and preserves
-live output and clipboard contents when no selection exists. Cmd-y and
-Ctrl-Shift-y join Ctrl-Shift-v as reserved native-window literal text paste
-shortcuts on macOS. Other Command keys retain their existing behavior.
+live output and clipboard contents when no selection exists. Cmd-v joins
+Ctrl-Shift-v as a reserved native-window literal text paste shortcut on macOS. Other Command keys retain their existing behavior.
 
 `macos_command_c_copies_the_selection_in_all_editing_modes` in
 `src/app/tests/editing_and_buffers.rs` covers the Command copy binding.
 `media_select_mode_extends_native_selection_without_changing_pdf_pages` in
 `src/app/tests/native_media.rs` and the terminal tests listed below also
-exercise Cmd-c on macOS. `command_paste_is_macos_only_and_preserves_control_y`
+exercise Cmd-c on macOS. `command_paste_is_macos_only_and_preserves_other_keys`
 in `src/keymap/native_window.rs` checks the paste aliases and modifier
 separation; `native_strokes_preserve_modal_sequences_and_modifiers` in
 `src/native_frontend/tests/input.rs` covers GPUI Command-key translation.
@@ -73,6 +72,5 @@ as in Alacritty, including in integrated terminals. Ordinary Ctrl+c must
 remain available to terminal programs. Existing editor clipboard commands
 must continue to work.
 
-The macOS follow-up requests Cmd-c for copy and Cmd-y for system clipboard
-paste, alongside Ctrl-Shift-c and Ctrl-Shift-y. Existing Ctrl-Shift-v remains
-available.
+The macOS follow-up requests Cmd-c for copy and Cmd-v for system clipboard
+paste, alongside Ctrl-Shift-c and Ctrl-Shift-v.

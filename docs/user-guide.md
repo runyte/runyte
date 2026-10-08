@@ -1833,10 +1833,10 @@ builds use an in-process clipboard owner for `Space c y`, Ctrl-v and the other
 system clipboard commands; external clipboard helpers are not required.
 Window-local font and literal-paste shortcuts are reserved frontend controls,
 listed in contextual help; they do not participate in editor key remapping.
-On macOS, Cmd-c also copies, and Cmd-y or Ctrl-Shift-y also pastes literal
+On macOS, Cmd-c also copies, and Cmd-v also pastes literal
 clipboard text. Ctrl-Shift-c/v remain available. The Command modifier is
 spelled `Super` in the shared key registry and configuration (`Super-c` and
-`Super-y`). Other Command shortcuts are left unchanged.
+`Super-v`). Other Command shortcuts are left unchanged.
 Search within PDF page contents and
 animated-image playback are not implemented; animated GIFs and WebP files show
 their first frame. Zoom magnifies the bounded raster rather than rendering unbounded

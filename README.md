@@ -259,7 +259,7 @@ Set `editor.font_size` in `Space o o` to choose the window's starting size
 reopening it restores the configured size. Ctrl-Shift-c copies the selection
 to the system clipboard, and Ctrl-Shift-v pastes text into the active input,
 including integrated terminals.
-On macOS, Cmd-c copies, and Cmd-y or Ctrl-Shift-y also pastes clipboard text;
+On macOS, Cmd-c copies, and Cmd-v also pastes clipboard text;
 the Control-Shift shortcuts remain available.
 
 **macOS**
