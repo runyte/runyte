@@ -22,7 +22,9 @@ parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
-parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting at 120x40; requires RUNYTE_NATIVE_PAINT_TIMING=1")
+parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting; requires RUNYTE_NATIVE_PAINT_TIMING=1")
+parser.add_argument("--paint-font-size", type=int, default=15, choices=range(8, 49), help="font size for --paint-benchmark")
+parser.add_argument("--paint-window", type=int, nargs=2, default=[1080, 800], metavar=("WIDTH", "HEIGHT"), help="pixel size for --paint-benchmark")
 parser.add_argument("--latency", action="store_true", help="measure key-to-pixel latency and idle wakeups at 120x40")
 parser.add_argument("--latency-keys", type=int, default=60, help="keys measured by --latency")
 parser.add_argument("--max-idle-wakeups", type=float, help="with --latency, fail above this many idle context switches per second")
@@ -39,6 +41,8 @@ root.mkdir()
 (storage / "config/config.yaml").write_text("mode: ide\nlsp:\n  enable: false\n")
 (root / "notes.txt").write_text("Runyte native window\nExisting keys, panes, and terminal sessions.\n")
 if args.paint_benchmark:
+    with (storage / "config/config.yaml").open("a") as config:
+        config.write(f"editor:\n  font_size: {args.paint_font_size}\n")
     (root / "notes.txt").write_text(("Grid paint abcdefghijklmnopqrstuvwxyz 0123456789 == != -> " * 3 + "\n") * 100)
 if args.paint_styles:
     sample = "Grid == != -> ffi  abc XYZ  \ue0b0 \uf120  界界  e\u0301  😀🌍"
@@ -297,16 +301,17 @@ try:
         raise SystemExit(0)
     if args.paint_benchmark:
         assert not args.mux, "benchmark uses a standalone window"
-        x.XResizeWindow(d, win, 1080, 800); x.XFlush(d); time.sleep(.5)
+        x.XResizeWindow(d, win, *args.paint_window); x.XFlush(d); time.sleep(.5)
         key('i'); text('warmup'); time.sleep(.5)
         offset = (root/'window.log').stat().st_size
         text('abcdefghijklmnopqrstuvwxyz' * 4); time.sleep(.5)
         samples = []
         for line in (root/'window.log').read_bytes()[offset:].decode().splitlines():
-            if line.startswith('native-paint 120x40 '):
+            if line.startswith('native-paint '):
+                columns, rows = map(int, line.split()[1].split('x'))
                 samples.append(int(line.split()[-1].removesuffix('us')))
         assert samples, "enable RUNYTE_NATIVE_PAINT_TIMING=1"
-        result = {"columns": 120, "rows": 40, "samples_us": samples,
+        result = {"columns": columns, "rows": rows, "samples_us": samples,
                   "median_us": statistics.median(samples), "min_us": min(samples), "max_us": max(samples)}
         print(json.dumps(result), flush=True)
         if args.output:

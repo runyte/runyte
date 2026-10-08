@@ -436,3 +436,40 @@ changed cells reuse that row. Every frame retains the full grid, including
 changes in frames skipped by the GUI. Resize and clear produce a fresh grid
 without mutating any frame retained by the painter. The core renderer and
 Ratatui's own layout/diff buffers are unchanged.
+
+## Reusing cell styles and painted rows — 2026-10-08
+
+The painter prepares colours, logical widths, background runs and media coverage
+once per changed row. ASCII glyphs use direct-indexed slots; each face still
+retains at most 1,024 layouts, and theme changes retain shaped layouts. Unchanged
+rows replay the immediately preceding GPUI scene segment, avoiding repeated glyph
+raster-bound and atlas lookups. The small `SceneCache` API in the vendored GPUI
+checks window/frame identity, scale, clipping, opacity and placement; Runyte also
+checks source row identity, colours, coverage, font metrics and cursor-row status.
+It retains no additional scene, texture or shaped layout. Every redraw still
+registers the ordinary input handler and acknowledges the frame it actually paints.
+
+Styled terminal captures, including wide glyphs, combining marks, decorated
+emoji, reversed and hidden text, matched the pre-change release pixel for pixel
+with `tests/native_window.py --paint-styles --paint-reference`. Native row tests
+cover invalidation on changed cells, default colours and media/overlay coverage.
+
+A repeated before/after run on isolated Xvfb with lavapipe software Vulkan gave:
+
+| Grid | Before median | After median |
+| --- | ---: | ---: |
+| 120×40 | 881 µs | 402 µs |
+| 213×70 | 1,591.5 µs | 882 µs |
+| 266×88 | 1,773.5 µs | 959 µs |
+
+These are release `RUNYTE_NATIVE_PAINT_TIMING=1` scene-construction measurements,
+not GPU time or key-to-screen latency. Absolute software-display timings varied
+between runs; an earlier comparison measured 798 → 542.5 µs at 120×40 and
+1,729 → 941 µs at 266×88. No build ran during the comparisons. Raw repeated-run
+samples and binary hashes are in
+`benchmarks/results/2026-10-08-native-cell-paint.json`. The baseline was `f0b4f8f`
+plus the inherited geometry draft; the benchmark uses a fixed font and grid.
+Use `--paint-font-size` and `--paint-window WIDTH HEIGHT` with `--paint-benchmark`
+to reproduce different grids. The tested sizes used fonts 15, 10 and 8, and
+windows 1080×800, 1280×940 and 1280×940. Hardware GPU and Wayland comparisons
+remain unmeasured.

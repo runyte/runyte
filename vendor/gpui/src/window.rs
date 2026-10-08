@@ -740,6 +740,22 @@ pub(crate) struct PaintIndex {
     line_layout_index: LineLayoutIndex,
 }
 
+/// A draw-only scene segment retained from the immediately preceding frame.
+/// No input handlers, element state, or text-layout registrations are cached.
+#[derive(Default)]
+pub struct SceneCache {
+    previous: Option<CachedScene>,
+}
+struct CachedScene {
+    window: AnyWindowHandle,
+    generation: u64,
+    range: Range<usize>,
+    scale: f32,
+    mask: ContentMask<Pixels>,
+    opacity: f32,
+    offset: Point<Pixels>,
+}
+
 impl Frame {
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
@@ -875,6 +891,7 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
+    scene_generation: u64,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
@@ -1262,6 +1279,7 @@ impl Window {
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            scene_generation: 0,
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
@@ -1977,6 +1995,7 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.scene_generation = self.scene_generation.wrapping_add(1);
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
@@ -2808,6 +2827,50 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
+        });
+    }
+
+    /// Paints or replays a draw-only scene segment, preserving its layer order.
+    ///
+    /// The caller may request reuse only when content and absolute placement are
+    /// unchanged. This method also checks window identity, adjacent frame lifetime,
+    /// scale, clipping, opacity and element offset. `paint` must only emit scene
+    /// primitives/layers, not input handlers or element-state registrations.
+    pub fn paint_cached_scene(
+        &mut self,
+        cache: &mut SceneCache,
+        reuse: bool,
+        paint: impl FnOnce(&mut Self),
+    ) {
+        self.invalidator.debug_assert_paint();
+        let scale = self.scale_factor();
+        let mask = self.content_mask();
+        let opacity = self.element_opacity();
+        let offset = self.element_offset();
+        let start = self.next_frame.scene.len();
+        if reuse
+            && let Some(previous) = &cache.previous
+            && previous.window == self.handle
+            && previous.generation == self.scene_generation
+            && previous.scale == scale
+            && previous.mask == mask
+            && previous.opacity == opacity
+            && previous.offset == offset
+        {
+            self.next_frame
+                .scene
+                .replay(previous.range.clone(), &self.rendered_frame.scene);
+        } else {
+            paint(self);
+        }
+        cache.previous = Some(CachedScene {
+            window: self.handle,
+            generation: self.scene_generation.wrapping_add(1),
+            range: start..self.next_frame.scene.len(),
+            scale,
+            mask,
+            opacity,
+            offset,
         });
     }
 

@@ -85,3 +85,20 @@ idle window kept waking at the refresh rate.
 
 Remove this patch when upstream GPUI draws on demand on Linux, or replace it
 with a fork if further GPUI changes accumulate.
+
+## Native cell scene reuse
+
+- `src/window.rs`: `SceneCache` and `Window::paint_cached_scene` expose a
+  draw-only subset of GPUI's existing previous-scene replay. Runyte uses it for
+  unchanged cell rows, avoiding repeated raster-bound and sprite-atlas lookups.
+  Each handle contains only indices into the immediately preceding window frame;
+  no extra scene, glyph layout, or texture is retained. Window identity, frame
+  generation, scale, clipping, opacity and element offset must match. The caller
+  also verifies row content and placement. Replay recalculates draw order using
+  the current scene, preserving original layer operations. Input handlers,
+  element states and layout registrations must not be placed inside this cache.
+  The normal input handler and frame acknowledgement remain outside it.
+
+The scheduling patch and the draw-only replay API are independent. Removing the
+Linux scheduling changes after an upstream update must retain the replay API
+until Runyte's cell painter has an equivalent upstream interface.
