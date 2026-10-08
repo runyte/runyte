@@ -151,6 +151,10 @@ impl WindowInvalidator {
         self.inner.borrow_mut().wake = wake;
     }
 
+    pub fn draws_on_demand(&self) -> bool {
+        self.inner.borrow().wake.is_some()
+    }
+
     /// Requests a frame from an on-demand platform. Called outside any
     /// invalidator borrow; the platform schedules the frame on its event loop
     /// rather than drawing re-entrantly.
@@ -1065,9 +1069,12 @@ impl Window {
 
                 // Keep presenting the current scene for 1 extra second since the
                 // last input to prevent the display from underclocking the refresh rate.
+                // Runyte patch: platforms that draw on demand present only what
+                // changed; repeating an unchanged scene re-renders it on the GPU.
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get()
+                    || (!invalidator.draws_on_demand()
+                        && active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
                 if invalidator.is_dirty() || request_frame_options.force_render {

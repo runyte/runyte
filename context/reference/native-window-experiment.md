@@ -367,6 +367,27 @@ at 60 Hz inside a headless KWin virtual output (no other clients):
 | Registry GPUI 0.2.2 | 12.6–15.9 ms | 29.2–29.7 ms | 33.2–33.3 ms | 71–73 per second |
 | Patched GPUI | 4.6–5.2 ms | 5.7–6.5 ms | 6.3–7.0 ms | 9 per second |
 
+GPUI's rule that re-presents an unchanged scene on every frame request for one
+second after input applies only to platforms without on-demand frames, so a
+Linux window renders nothing unless something changed.
+
+Per-thread figures for the same build (process CPU time and context switches
+from `/proc`, 120 alternating `x`/Backspace keys 100 ms apart on a 1,200-line
+Rust file):
+
+| Thread | Window, CPU per key | Terminal frontend in a PTY, CPU per key |
+| --- | ---: | ---: |
+| Syntax worker | 3.2–3.4 ms | 3.5 ms |
+| Host loop | 3.0 ms | 3.2 ms |
+| GPUI main thread | 2.0 ms | (terminal emulator, not measured) |
+
+While idle, the GPUI main thread does not wake at all. The window process
+wakes about 8.7 times per second, the terminal frontend about 7; both come
+from the host's maintenance timers, file and Git monitors, and tokio workers.
+A tokio blocking thread present only in the window accounts for the difference
+(2 per second). Moving the pointer over an idle window costs about 127 context
+switches per second against 468 before, and renders nothing.
+
 An independent probe that reads back only the start of the edited row measured
 the patched window at 3.9–4.5 ms median (p90 below 5.3 ms), against 3.8 ms
 median for `runyte --ide` in Alacritty on the same display before the change.

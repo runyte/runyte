@@ -534,6 +534,12 @@ impl WaylandWindowStatePtr {
                 self.frames.configured.set(true);
                 drop(state);
                 self.frame();
+            } else {
+                // The acknowledgement and geometry apply on the next commit. A
+                // configure that changes no size draws nothing, so schedule the
+                // frame whose completion commits them.
+                drop(state);
+                self.schedule_frame();
             }
         }
     }

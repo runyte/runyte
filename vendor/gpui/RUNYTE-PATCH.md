@@ -62,7 +62,19 @@ idle window kept waking at the refresh rate.
   is requested for a frame that is presented, and for a frame during which
   another frame was requested, so such requests wait for the compositor. An
   interactive resize that sets GPUI's resize throttle schedules a frame,
-  because only a frame clears the throttle.
+  because only a frame clears the throttle. Every later configure schedules a
+  frame as well: GPUI commits the surface when a frame completes, even when
+  nothing was drawn, and that commit applies the acknowledgement and window
+  geometry of a configure that changed no size.
+
+## Presentation without changes
+
+- `src/window.rs`: GPUI presents the retained scene again on every frame
+  request for one second after any input, to keep variable-refresh displays
+  from lowering their rate. `Window::present` re-renders the whole scene on the
+  GPU. On platforms that draw on demand a frame is requested only when
+  something changed, so the rule is skipped there; platforms with a periodic
+  frame source keep it.
 
 ## Build hygiene
 
