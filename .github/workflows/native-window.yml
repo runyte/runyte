@@ -39,6 +39,12 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libxcb1-dev libx11-xcb-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \
             libvulkan1 mesa-vulkan-drivers poppler-utils xvfb libxtst6
+          # Mesa packages use either lvp_icd.json or lvp_icd.<arch>.json.
+          # Select the installed software driver, and fail here if it is missing.
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp*.json)
+          test "${#lvp_icds[@]}" -eq 1
+          test -f "${lvp_icds[0]}"
+          printf 'VK_DRIVER_FILES=%s\n' "${lvp_icds[0]}" >> "$GITHUB_ENV"
       - name: macOS dependencies
         if: runner.os == 'macOS'
         run: |
@@ -66,12 +72,10 @@ jobs:
       - name: Linux window acceptance with bundled fonts
         if: runner.os == 'Linux'
         run: |
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts
       - name: Linux font and clipboard acceptance
         if: runner.os == 'Linux'
         run: |
-          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls --mux
       - name: Construct macOS app bundle
