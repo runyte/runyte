@@ -638,6 +638,7 @@ struct NativeView {
     glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     composition: String,
+    scroll: ScrollAccumulator,
     image_clipboard: Option<arboard::Clipboard>,
     viewports: std::collections::HashMap<(usize, PathBuf), viewport::Viewport>,
 }
@@ -696,6 +697,7 @@ impl NativeView {
             frame,
             glyphs: Default::default(),
             composition: String::new(),
+            scroll: ScrollAccumulator::default(),
             image_clipboard: None,
             viewports: Default::default(),
         }
@@ -821,31 +823,15 @@ impl Render for NativeView {
                 if view.media_scroll(event, cx) {
                     return;
                 }
-                let metrics = view.metrics;
-                let delta = event.delta.pixel_delta(px(metrics.height));
-                use crossterm::event::MouseEventKind::*;
-                let (kind, amount) = if delta.y != px(0.) {
-                    (
-                        if delta.y > px(0.) {
-                            ScrollUp
-                        } else {
-                            ScrollDown
-                        },
-                        f32::from(delta.y).abs() / metrics.height,
-                    )
-                } else if delta.x != px(0.) {
-                    (
-                        if delta.x > px(0.) {
-                            ScrollLeft
-                        } else {
-                            ScrollRight
-                        },
-                        f32::from(delta.x).abs() / metrics.width,
-                    )
-                } else {
+                if matches!(event.touch_phase, TouchPhase::Started) {
+                    view.scroll = ScrollAccumulator::default();
+                }
+                let delta = ScrollAccumulator::delta(event.delta, view.metrics);
+                let Some((kind, events)) = view.scroll.push(delta, std::time::Instant::now())
+                else {
                     return;
                 };
-                for _ in 0..(amount.ceil() as usize).clamp(1, 20) {
+                for _ in 0..events {
                     view.send(mouse_event(
                         view.metrics,
                         event.position,
@@ -1075,6 +1061,81 @@ fn translate_key(key: &Keystroke) -> Option<KeyEvent> {
     };
     Some(KeyEvent::new(code, modifiers(key.modifiers)))
 }
+/// Lines the host scrolls for one scroll event.
+const LINES_PER_SCROLL_EVENT: f32 = 3.0;
+/// Lines GPUI reports for one wheel notch: three on Linux and by default on
+/// Windows, about one on macOS. One notch sends one scroll event, as in a
+/// terminal.
+const WHEEL_LINES_PER_NOTCH: f32 = if cfg!(target_os = "macos") { 1.0 } else { 3.0 };
+/// A pause after which a leftover fraction no longer belongs to the gesture.
+/// Linux GPUI reports no touch phases, so this ends a gesture there.
+const SCROLL_GESTURE_GAP: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Turns fractional scroll deltas (touchpads, high-resolution wheels, pixel
+/// scrolling) into whole host scroll events, carrying the remainder forward
+/// within a gesture.
+#[derive(Default, Debug)]
+struct ScrollAccumulator {
+    /// Pending scroll events per axis; positive scrolls left or up.
+    events: Point<f32>,
+    last: Option<std::time::Instant>,
+}
+impl ScrollAccumulator {
+    /// The delta in scroll events, and whether it is mainly vertical. The axis
+    /// is judged on the raw delta: cells are narrower than they are tall, so
+    /// converted horizontal motion would outweigh the same vertical motion.
+    fn delta(delta: ScrollDelta, metrics: CellMetrics) -> (Point<f32>, bool) {
+        match delta {
+            ScrollDelta::Lines(lines) => (
+                lines.map(|lines| lines / WHEEL_LINES_PER_NOTCH),
+                lines.y.abs() >= lines.x.abs(),
+            ),
+            ScrollDelta::Pixels(pixels) => (
+                point(
+                    f32::from(pixels.x) / metrics.width / LINES_PER_SCROLL_EVENT,
+                    f32::from(pixels.y) / metrics.height / LINES_PER_SCROLL_EVENT,
+                ),
+                pixels.y.abs() >= pixels.x.abs(),
+            ),
+        }
+    }
+
+    /// Adds a delta measured in scroll events and returns the events now due
+    /// on the dominant axis. Reversing an axis, or a pause longer than
+    /// `SCROLL_GESTURE_GAP`, discards its remainder.
+    fn push(
+        &mut self,
+        (delta, vertical): (Point<f32>, bool),
+        now: std::time::Instant,
+    ) -> Option<(crossterm::event::MouseEventKind, usize)> {
+        use crossterm::event::MouseEventKind::*;
+        if self
+            .last
+            .replace(now)
+            .is_some_and(|last| now.duration_since(last) > SCROLL_GESTURE_GAP)
+        {
+            self.events = Point::default();
+        }
+        let (remainder, delta, kinds) = if vertical && delta.y != 0. {
+            (&mut self.events.y, delta.y, (ScrollUp, ScrollDown))
+        } else if delta.x != 0. {
+            (&mut self.events.x, delta.x, (ScrollLeft, ScrollRight))
+        } else {
+            return None;
+        };
+        if *remainder * delta < 0. {
+            *remainder = 0.;
+        }
+        *remainder += delta;
+        // The tolerance keeps summed fractions such as thirty 0.1-line steps
+        // from falling just short of a whole event.
+        let events = (remainder.abs() + 1e-3).floor().copysign(*remainder);
+        *remainder -= events;
+        let kind = if events > 0. { kinds.0 } else { kinds.1 };
+        (events != 0.).then(|| (kind, (events.abs() as usize).min(20)))
+    }
+}
+
 fn mouse_event(
     metrics: CellMetrics,
     position: Point<Pixels>,

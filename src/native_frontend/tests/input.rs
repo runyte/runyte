@@ -376,3 +376,63 @@ fn resized_font_scales_pointer_and_media_hit_testing_together() {
     assert_eq!(super::CellMetrics::new(0).font_size, 8.);
     assert_eq!(super::CellMetrics::new(usize::MAX).font_size, 48.);
 }
+
+#[test]
+fn fractional_scroll_accumulates_into_whole_host_events() {
+    use super::{CellMetrics, ScrollAccumulator, WHEEL_LINES_PER_NOTCH};
+    use crossterm::event::MouseEventKind::*;
+    use gpui::{ScrollDelta, point, px};
+    use std::time::{Duration, Instant};
+    let metrics = CellMetrics::new(15);
+    let lines = |y: f32| ScrollAccumulator::delta(ScrollDelta::Lines(point(0., y)), metrics);
+    let start = Instant::now();
+    let at = |ms: u64| start + Duration::from_millis(ms);
+    let mut scroll = ScrollAccumulator::default();
+    // One wheel notch is exactly one host event.
+    assert_eq!(
+        scroll.push(lines(WHEEL_LINES_PER_NOTCH), at(0)),
+        Some((ScrollUp, 1))
+    );
+    assert_eq!(
+        scroll.push(lines(-WHEEL_LINES_PER_NOTCH), at(10)),
+        Some((ScrollDown, 1))
+    );
+    // Thirty touchpad steps of 2 px (0.1 lines at 20 px) are one event of three
+    // lines, not thirty.
+    let pixels = ScrollAccumulator::delta(ScrollDelta::Pixels(point(px(0.), px(2.))), metrics);
+    let events: usize = (0..30)
+        .filter_map(|step| scroll.push(pixels, at(20 + step)))
+        .map(|(kind, count)| {
+            assert_eq!(kind, ScrollUp);
+            count
+        })
+        .sum();
+    assert_eq!(events, 1);
+    let events = |x: f32, y: f32| (point(x, y), y.abs() >= x.abs());
+    // Reversing discards the remainder of the opposite direction.
+    assert_eq!(scroll.push(events(0., 0.6), at(60)), None);
+    assert_eq!(scroll.push(events(0., -0.3), at(70)), None);
+    assert_eq!(scroll.push(events(0., -0.7), at(80)), Some((ScrollDown, 1)));
+    // A pause ends the gesture: its fraction does not complete a later nudge.
+    assert_eq!(scroll.push(events(0., 0.9), at(90)), None);
+    assert_eq!(scroll.push(events(0., 0.2), at(1_000)), None);
+    // The dominant axis wins, so vertical jitter does not block a sideways swipe.
+    assert_eq!(
+        scroll.push(events(2., 0.1), at(1_010)),
+        Some((ScrollLeft, 2))
+    );
+    assert_eq!(
+        scroll.push(events(-1., 0.), at(1_020)),
+        Some((ScrollRight, 1))
+    );
+    assert_eq!(scroll.push(events(0., 0.), at(1_030)), None);
+    // The axis is judged in pixels: a vertical swipe drifting sideways by half
+    // its height stays vertical even though columns are narrower than rows.
+    let drift = ScrollAccumulator::delta(ScrollDelta::Pixels(point(px(30.), px(60.))), metrics);
+    assert!(drift.1 && drift.0.x > drift.0.y);
+    // A single event never sends more than twenty scrolls.
+    assert_eq!(
+        scroll.push(events(0., -100.), at(1_040)),
+        Some((ScrollDown, 20))
+    );
+}

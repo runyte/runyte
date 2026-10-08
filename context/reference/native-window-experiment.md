@@ -70,7 +70,13 @@ The native frontend renders owned snapshots using the same overlay geometry
 as the host-frame renderer. Window margins, media fills and `Reset` cell
 colours use the active theme's background and foreground, carried in each
 frame with its cells; a `reset` theme colour becomes a light or dark default
-that contrasts with the colour the theme defines. Images remain behind key hints and prompts;
+that contrasts with the colour the theme defines.
+
+Scrolling outside media panes sends the host one scroll event, which moves
+three lines or columns, per wheel notch, as a terminal does. Touchpad and
+high-resolution deltas accumulate per axis into whole events, the dominant
+axis wins, and the remainder is discarded on reversal, after a 500 ms pause or
+when a platform reports a new gesture. Images remain behind key hints and prompts;
 only overlay cells paint above them. Media mouse input is blocked while an
 overlay owns input, including clicks on hints that would otherwise land on
 hidden page rows. Pane page counts are initialized even when a page buffer
