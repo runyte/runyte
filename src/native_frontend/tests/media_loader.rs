@@ -15,6 +15,7 @@ fn loaded(key: Key, pages: usize) -> Loaded {
         result: Ok((
             Arc::new(Page {
                 source: (key.modified, key.length),
+                animation: None,
                 image: Arc::new(RenderImage::new(vec![image::Frame::new(
                     image::RgbaImage::new(1, 1),
                 )])),

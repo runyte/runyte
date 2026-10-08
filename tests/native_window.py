@@ -20,6 +20,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
+parser.add_argument("--animations", action="store_true", help="exercise media playback, selection pause, and hidden-window idle")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting; requires RUNYTE_NATIVE_PAINT_TIMING=1")
@@ -41,6 +42,21 @@ root.mkdir()
 (storage / "runtime").mkdir(mode=0o700)
 (storage / "config/config.yaml").write_text("mode: ide\nlsp:\n  enable: false\n")
 (root / "notes.txt").write_text("Runyte native window\nExisting keys, panes, and terminal sessions.\n")
+if args.animations:
+    def animation_gif(loop):
+        # Two 2x2 solid frames. Reset LZW before each pixel so every code is 3 bits.
+        data = bytearray(b'GIF89a\x02\0\x02\0\x80\0\0\xff\0\0\0\0\xff')
+        if loop:
+            data.extend(b'!\xff\x0bNETSCAPE2.0\x03\x01\0\0\0')
+        for color in [0, 1]:
+            data.extend(b'!\xf9\x04\x04\x14\0\0\0,\0\0\0\0\x02\0\x02\0\0\x02')
+            codes = [4, color] * 4 + [5]
+            bits = sum(code << (3 * i) for i, code in enumerate(codes))
+            payload = bits.to_bytes(4, 'little')
+            data.extend(bytes([len(payload)]) + payload + b'\0')
+        return bytes(data) + b';'
+    (root/'animated.gif').write_bytes(animation_gif(True))
+    (root/'once.gif').write_bytes(animation_gif(False))
 if args.paint_benchmark:
     with (storage / "config/config.yaml").open("a") as config:
         config.write(f"editor:\n  font_size: {args.paint_font_size}\n")
@@ -107,6 +123,8 @@ x.XInternAtom.argtypes = [C.c_void_p, C.c_char_p, C.c_int]
 x.XInternAtom.restype = C.c_ulong
 x.XSendEvent.argtypes = [C.c_void_p, C.c_ulong, C.c_int, C.c_long, C.POINTER(XEvent)]
 x.XResizeWindow.argtypes = [C.c_void_p, C.c_ulong, C.c_uint, C.c_uint]
+x.XUnmapWindow.argtypes = [C.c_void_p, C.c_ulong]
+x.XMapWindow.argtypes = [C.c_void_p, C.c_ulong]
 @C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_void_p)
 def x_error(_display, _event):
     # Turn window disappearance into a Python assertion/cleanup, not Xlib exit.
@@ -411,6 +429,64 @@ try:
         key('Escape'); command('write')
         assert (root/'notes.txt').read_text() == "Runyte native window\nExisting keys, panes, and terminal sessions.\n", "latency keys were not applied in order"
         close_window(); p.wait(timeout=15); assert p.returncode == 0
+        raise SystemExit(0)
+    if args.animations:
+        def pixel():
+            im=x.XGetImage(d,win,500,350,1,1,0xffffffffffffffff,2)
+            assert im
+            value=x.XGetPixel(im,0,0);x.XDestroyImage(im)
+            return value & 0xffffff
+        def sample(seconds=1):
+            result=set();end=time.monotonic()+seconds
+            while time.monotonic()<end:
+                result.add(pixel());time.sleep(.04)
+            return result
+        def main_switches():
+            return sum(int(line.split()[1]) for line in pathlib.Path(f'/proc/{p.pid}/status').read_text().splitlines()
+                       if line.startswith(('voluntary_ctxt_switches','nonvoluntary_ctxt_switches')))
+        def idle(label):
+            time.sleep(.5);before=main_switches();time.sleep(2)
+            rate=(main_switches()-before)/2
+            assert rate <= 3, f'{label}: native main thread woke {rate}/s'
+            return rate
+        command('open animated.gif');time.sleep(.3)
+        assert sample()=={0xff0000,0x0000ff},'animated GIF did not display both frames'
+        key('percent',shift=True);time.sleep(.2)
+        frozen=sample()
+        assert len(frozen)==1,'selection did not pause playback'
+        key('y');time.sleep(.2);copied=clipboard(b'image/png')
+        assert copied.startswith(b'\x89PNG')
+        # PNG's first scanline/first pixel has zero left/upper predictors for
+        # every filter. Check the copied color, not only stability across copies.
+        assert copied[24] == 8 and copied[25] in (2,6), 'expected RGB/RGBA PNG'
+        compressed=bytearray();offset=8
+        while offset<len(copied):
+            length=struct.unpack('!I',copied[offset:offset+4])[0]
+            if copied[offset+4:offset+8]==b'IDAT':compressed.extend(copied[offset+8:offset+8+length])
+            offset+=length+12
+        first=zlib.decompress(compressed)[1:4]
+        selected_color=next(iter(frozen))
+        # Selection adds a translucent blue tint; red/blue dominance still
+        # identifies the underlying solid frame without copying that tint.
+        expected=b'\xff\0\0' if (selected_color >> 16) > (selected_color & 255) else b'\0\0\xff'
+        assert first==expected,'copy used a different animation frame'
+        time.sleep(.4);key('y');time.sleep(.2)
+        assert clipboard(b'image/png')==copied,'copy did not retain the selected frame'
+        paused=idle('selected animation')
+        key('q');time.sleep(.2)
+        assert sample()=={0xff0000,0x0000ff},'clearing selection did not resume'
+        x.XUnmapWindow(d,win);x.XFlush(d)
+        hidden=idle('hidden animation')
+        x.XMapWindow(d,win);x.XSetInputFocus(d,win,1,0);x.XFlush(d);time.sleep(.5)
+        assert sample()=={0xff0000,0x0000ff},'restoring the window did not resume'
+        command('open notes.txt');left=idle('preview left')
+        command('open once.gif');time.sleep(.6)
+        assert sample()=={0x0000ff},'finite GIF did not stop at its last frame'
+        finite=idle('finished animation')
+        screenshot('animated-final')
+        print(json.dumps({'paused_main_wakeups':paused,'hidden_main_wakeups':hidden,'left_main_wakeups':left,'finished_main_wakeups':finite}),flush=True)
+        close_window();p.wait(timeout=15);assert p.returncode==0
+        print('PASS: animation frames, selection/copy pause, resume, hidden/left idle, finite loop')
         raise SystemExit(0)
     if args.window_controls:
         command('open notes.txt')

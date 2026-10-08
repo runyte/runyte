@@ -797,6 +797,8 @@ opens the source directory directly and focuses its file for both media types.
 Native media zoom, pan and pixel/text selection are pane-local presentation
 state. Extracted PDF text selection and image-region selection do not change
 the page buffer's rows or the underlying read-only file.
+Animated GIF/WebP playback is also pane-local: a region selection freezes its
+displayed frame for copying, and clearing that selection resumes playback.
 
 The native media surface owns pixel selection and clipboard actions; its scoped
 overrides are intentional and validated alongside other owned input surfaces.

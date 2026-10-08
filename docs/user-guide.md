@@ -1735,6 +1735,21 @@ buffer, jump, and close commands remain available. Titles identify PDFs with
 aspect ratio. Zoom, pan, and selection belong to each pane, so split views of
 the same file can differ.
 
+Animated GIF and WebP images play automatically while visible, using their frame
+delays and loop counts. A finite animation stops on its last frame. Selecting a
+region pauses that pane on the displayed frame; `y` / `Ctrl-c` copies from that
+frame. Clearing the selection resumes playback. Split panes have independent
+playback and selection state. Hidden previews and minimized windows do not keep
+an animation timer running; restoring a preview resumes without replaying missed
+frames. There are no separate pause, step, or restart bindings.
+
+Frame delays below 20 ms use 100 ms to prevent continuous redraws. Decoding is
+limited to 1024 frames and 32 MiB of retained raster data per animation, after
+reduction to 2048 pixels per axis. An animation exceeding either limit shows a
+clear error in its pane. For example, two 2048×2048 RGBA frames fill the 32 MiB
+budget. Animated WebP EXIF metadata is limited to 64 KiB. Single-frame files
+remain still images.
+
 PDFs have a read-only **page buffer** with one row per page. Once the displayed
 page is at fit size and has no selection, Escape reveals this buffer at the
 current page. Use normal editor motions,
@@ -1803,7 +1818,9 @@ visible while sharper text and vector graphics load. Each refinement is bounded
 to 4096 pixels per axis and approximately eight million pixels; unusually large
 or dense displays may still exceed that detail budget. Eight base page/image
 results and eight visible-region refinements are cached separately using
-least-recently-used eviction. Zooming, panning, resizing, or leaving a pane
+least-recently-used eviction. The base cache is also bounded to 256 MiB, enough
+for eight animations at their individual limit. GPU images no longer displayed
+by any pane are released. Zooming, panning, resizing, or leaving a pane
 cancels refinements that are no longer needed by any visible pane.
 After a PDF page loads, up to two pages on either side are loaded in the
 background. Requested pages take priority and interrupt speculative rendering.
@@ -1856,9 +1873,8 @@ On macOS, Cmd-c also copies, and Cmd-v also pastes literal
 clipboard text. Ctrl-Shift-c/v remain available. The Command modifier is
 spelled `Super` in the shared key registry and configuration (`Super-c` and
 `Super-v`). Other Command shortcuts are left unchanged.
-Search within PDF page contents and
-animated-image playback are not implemented; animated GIFs and WebP files show
-their first frame. Image zoom and scanned PDF content remain limited by their
+Search within PDF page contents is not implemented.
+Image zoom and scanned PDF content remain limited by their
 source resolution. PDF text and vector graphics are rendered at the view
 resolution within the visible-region budget described above. PDF rendering uses
 an external helper, while windowing, editor integration, and image decoding are Rust. Source changes

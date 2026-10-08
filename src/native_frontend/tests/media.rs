@@ -25,6 +25,72 @@ fn image_decode_preserves_alpha_and_converts_rgba_to_native_bgra() {
 }
 
 #[test]
+fn animated_region_copy_uses_the_frozen_pane_frame_and_source_replacement_resets_it() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("moving.gif");
+    {
+        let mut encoder =
+            image::codecs::gif::GifEncoder::new(std::fs::File::create(&path).unwrap());
+        for color in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+            encoder
+                .encode_frame(image::Frame::new(image::RgbaImage::from_pixel(
+                    2,
+                    2,
+                    image::Rgba(color),
+                )))
+                .unwrap();
+        }
+    }
+    let (page, _) = load(&key(&path, 1), &AtomicBool::new(false)).unwrap();
+    let mut view = super::super::viewport::Viewport::new(1);
+    view.show_source(&page);
+    let now = Instant::now();
+    view.playback
+        .update(page.animation.as_ref().unwrap(), now, false);
+    view.playback.update(
+        page.animation.as_ref().unwrap(),
+        now + Duration::from_millis(100),
+        false,
+    );
+    view.begin_selection(&page);
+    view.playback.update(
+        page.animation.as_ref().unwrap(),
+        now + Duration::from_secs(1),
+        true,
+    );
+    let crop =
+        super::super::interactions::crop_frame_rgba(&page, view.playback.frame, [0., 0.], [1., 1.])
+            .unwrap();
+    assert_eq!(crop.get_pixel(0, 0).0, [0, 0, 255, 255]);
+    let mut changed = key(&path, 1);
+    changed.length = 1;
+    let (replacement, _) = load(&changed, &AtomicBool::new(false)).unwrap();
+    view.show_source(&replacement);
+    assert_eq!(view.playback.frame, 0);
+    assert!(view.selection.is_none());
+}
+
+#[test]
+fn large_single_frame_gif_keeps_the_still_decoder_allocation_budget() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("still.gif");
+    {
+        let mut encoder =
+            image::codecs::gif::GifEncoder::new(std::fs::File::create(&path).unwrap());
+        encoder
+            .encode_frame(image::Frame::new(image::RgbaImage::from_pixel(
+                3000,
+                3000,
+                image::Rgba([255, 0, 0, 255]),
+            )))
+            .unwrap();
+    }
+    let (page, _) = load(&key(&path, 1), &AtomicBool::new(false)).unwrap();
+    assert!(page.animation.is_none());
+    assert_eq!([page.width, page.height], [2048., 2048.]);
+}
+
+#[test]
 fn corrupt_and_oversized_media_fail_without_publishing_pixels() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("broken.png");

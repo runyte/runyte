@@ -3,6 +3,7 @@
 //! GPUI owns the main thread; the existing host loop owns all editor state.
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
+mod animation;
 mod cells;
 mod grid;
 mod icon;
@@ -739,6 +740,10 @@ struct NativeView {
     scroll: ScrollAccumulator,
     image_clipboard: Option<arboard::Clipboard>,
     viewports: std::collections::HashMap<(usize, PathBuf), viewport::Viewport>,
+    animation_deadline: Option<std::time::Instant>,
+    animation_generation: u64,
+    animation_timer: Option<Task<()>>,
+    painted_images: Vec<Arc<RenderImage>>,
 }
 impl NativeView {
     fn new(
@@ -808,8 +813,48 @@ impl NativeView {
             scroll: ScrollAccumulator::default(),
             image_clipboard: None,
             viewports: Default::default(),
+            animation_deadline: None,
+            animation_generation: 0,
+            animation_timer: None,
+            painted_images: Vec::new(),
         }
     }
+    fn schedule_animation(
+        &mut self,
+        deadline: Option<std::time::Instant>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.animation_deadline == deadline {
+            return;
+        }
+        self.animation_generation = self.animation_generation.wrapping_add(1);
+        self.animation_deadline = deadline;
+        self.animation_timer = None;
+        let Some(deadline) = deadline else {
+            return;
+        };
+        let generation = self.animation_generation;
+        // Register during drawing so Wayland gates this callback on the compositor.
+        // A minimized/occluded window cannot keep arming timers behind that gate.
+        cx.on_next_frame(window, move |view, _, cx| {
+            if view.animation_generation != generation {
+                return;
+            }
+            view.animation_timer = Some(cx.spawn(async move |view, cx| {
+                cx.background_executor()
+                    .timer(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .await;
+                let _ = view.update(cx, |view, cx| {
+                    if view.animation_generation == generation {
+                        view.animation_deadline = None;
+                        cx.notify();
+                    }
+                });
+            }));
+        });
+    }
+
     fn window_shortcut(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> bool {
         let Some(runyte::input::InputEvent::Key(key)) =
             runyte::tui::input::convert_event(Event::Key(key))
@@ -996,6 +1041,10 @@ impl Render for NativeView {
             root = root.child(div().text_color(rgb(0xcccccc)).child("Opening workspace…"));
         }
         self.media.begin_frame();
+        let now = std::time::Instant::now();
+        let mut animation_deadline = None;
+        let mut visible_animations = Vec::new();
+        let mut painted_images = Vec::new();
         if let Some(frame) = &frame {
             for path in &frame.metadata_paths {
                 self.media.get(path, 1);
@@ -1020,10 +1069,30 @@ impl Render for NativeView {
                             .or_insert_with(|| viewport::Viewport::new(pane.page));
                         view.show_page(pane.page);
                         view.show_source(&page);
+                        if let Some(animation) = &page.animation {
+                            let visible = animation::visible(pane.body, &frame.overlays);
+                            if visible {
+                                visible_animations.push((pane.pane, pane.path.clone()));
+                            }
+                            if let Some(deadline) = view.playback.update(
+                                animation,
+                                now,
+                                !visible || view.selection.is_some(),
+                            ) {
+                                animation_deadline = Some(
+                                    animation_deadline
+                                        .map_or(deadline, |old: std::time::Instant| {
+                                            old.min(deadline)
+                                        }),
+                                );
+                            }
+                        }
                         view.clamp([page.width, page.height], area);
                         let (origin, size) = view.geometry([page.width, page.height], area);
+                        let raster = page.frame(view.playback.frame).clone();
+                        painted_images.push(raster.clone());
                         layer = layer.child(
-                            img(page.image.clone())
+                            img(raster)
                                 .absolute()
                                 .left(px(origin[0]))
                                 .top(px(origin[1]))
@@ -1046,6 +1115,7 @@ impl Render for NativeView {
                             match self.media.detail(&pane.path, pane.page, detail) {
                                 Some(Ok(sharp)) => {
                                     let (origin, size) = detail.geometry(origin, size);
+                                    painted_images.push(sharp.image.clone());
                                     layer = layer.child(
                                         img(sharp.image.clone())
                                             .absolute()
@@ -1117,6 +1187,18 @@ impl Render for NativeView {
             }
         }
         self.media.end_frame();
+        for (key, view) in &mut self.viewports {
+            if !visible_animations.contains(key) {
+                view.playback.suspend();
+            }
+        }
+        for image in self.painted_images.drain(..) {
+            if !painted_images.iter().any(|current| current.id == image.id) {
+                let _ = window.drop_image(image);
+            }
+        }
+        self.painted_images = painted_images;
+        self.schedule_animation(animation_deadline, window, cx);
         let entity = cx.entity();
         let bridge = self.bridge.clone();
         let focus = self.focus.clone();

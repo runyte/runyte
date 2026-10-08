@@ -104,6 +104,16 @@ processes are killed and reaped on cancellation or limit failure. Scratch
 rasters and extracted XHTML live in temporary directories. JPEG orientation
 is applied before display, hit testing or copying.
 
+Animated GIF/WebP decoding stays on that worker. Each animation retains at most
+1024 composited, reduced frames and 32 MiB of raster data; the eight-result base
+cache is capped at 256 MiB. Still-image decoding retains its existing limits.
+GIF repetitions and WebP total-play counts are normalized separately. Playback
+uses pane-local clocks, freezes the displayed frame during selection, and stops
+at the last frame after a finite loop count. A single earliest-deadline timer
+is armed through a GPUI next-frame callback, so compositor/visibility gating
+stops rearming for hidden windows. It never uses GPUI's refresh-rate image
+animation loop. Unused image textures are explicitly removed from the atlas.
+
 Poppler's `pdfinfo` and `pdftoppm` provide PDF pages; `pdftotext -bbox-layout`
 provides normalized word boxes and reading order. `roxmltree` parses bounded
 XHTML. Scanned pages fall back to image-region selection, without OCR.

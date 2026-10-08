@@ -110,10 +110,24 @@ pub(super) struct Word {
 pub(super) struct Page {
     pub source: (Option<std::time::SystemTime>, u64),
     pub image: Arc<RenderImage>,
+    pub animation: Option<super::animation::Animation>,
     pub width: f32,
     pub height: f32,
     pub words: Vec<Word>,
     pub text_error: Option<String>,
+}
+impl Page {
+    fn bytes(&self) -> usize {
+        self.animation
+            .as_ref()
+            .map_or_else(|| self.image.as_bytes(0).unwrap().len(), |a| a.bytes())
+    }
+    pub fn frame(&self, index: usize) -> &Arc<RenderImage> {
+        self.animation
+            .as_ref()
+            .and_then(|a| a.frames.get(index))
+            .unwrap_or(&self.image)
+    }
 }
 struct Loaded {
     key: Key,
@@ -121,6 +135,9 @@ struct Loaded {
 }
 type Cached = Result<Arc<Page>, String>;
 const CACHE_PAGES: usize = 8;
+// Eight maximally sized animations still fit: byte accounting must not evict
+// one of <=8 visible sources and make the next render decode it again.
+const CACHE_BYTES: usize = 256 * 1024 * 1024;
 const QUEUED_PAGES: usize = 8;
 
 impl Key {
@@ -356,7 +373,18 @@ impl Schedule {
             }
             Err(error) => (Err(error), None),
         };
-        if self.cache.len() == CACHE_PAGES {
+        let bytes = value.as_ref().map_or(0, |page| page.bytes());
+        while !self.cache.is_empty()
+            && (self.cache.len() >= CACHE_PAGES
+                || self
+                    .cache
+                    .iter()
+                    .filter_map(|e| e.value.as_ref().ok())
+                    .map(|p| p.bytes())
+                    .sum::<usize>()
+                    + bytes
+                    > CACHE_BYTES)
+        {
             self.cache.pop_front();
         }
         self.cache.push_back(Entry {
@@ -654,7 +682,26 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
     } else {
         (Vec::new(), None)
     };
-    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let mut reader = image::ImageReader::open(&path)?.with_guessed_format()?;
+    if !pdf
+        && let Some(format) = reader.format()
+        && let Some(animation) = super::animation::decode(&path, format, cancel)?
+    {
+        let image = animation.frames[0].clone();
+        let size = image.size(0);
+        return Ok((
+            Arc::new(Page {
+                source: (key.modified, key.length),
+                width: size.width.0 as f32,
+                height: size.height.0 as f32,
+                image,
+                animation: Some(animation),
+                words,
+                text_error,
+            }),
+            pages,
+        ));
+    }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
@@ -693,6 +740,7 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
             image: Arc::new(RenderImage::new(
                 [image::Frame::new(pixels)].into_iter().collect::<Vec<_>>(),
             )),
+            animation: None,
             words,
             text_error,
         }),

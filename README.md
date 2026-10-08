@@ -369,6 +369,10 @@ and leave-preview action.
 middle-drag pans. Select PDF text with left-drag or image regions with
 Shift-drag, then `y` copies the selection.
 
+Animated GIF and WebP images play automatically while visible, respecting frame
+delays and loop counts. Selecting a region pauses that pane on the displayed
+frame; copying uses that frame, and clearing the selection resumes playback.
+
 Use `--window --mux` to create or attach to a persistent session. The window and
 terminal frontend share the same sessions and take turns attaching. `:detach`
 and the window close button leave the session running; session switching and

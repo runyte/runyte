@@ -17,6 +17,18 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-10-08 — animated native media idle
+
+`tests/native_window.py --animations`, debug native build, isolated X11/Xvfb
+1280×960 with the lavapipe software Vulkan driver on Linux. The test verifies
+two GIF frame colors, selection/copy pause, resume, and finite-loop completion.
+Over two-second samples after 500 ms settling, the native main thread recorded
+0 context switches per second in each of four states: selected animation,
+hidden window, preview left, and finite animation finished. These are main-thread
+measurements, not whole-process idle figures. No animation timer is armed for
+ordinary still images or an editor with no visible animated media. Wayland and
+macOS visibility gating was source-reviewed but not measured on those desktops.
+
 ## 2026-10-04 — plain sessions
 
 Plain sessions have since become editor mode (`runyte --editor`, or `runed`);

@@ -23,6 +23,7 @@ pub struct Viewport {
     pub selection: Option<Selection>,
     pub drag: Option<Drag>,
     pub message: String,
+    pub playback: super::animation::Playback,
 }
 impl Viewport {
     /// Media returns to fit before cancelling selection or leaving the preview.
@@ -63,10 +64,12 @@ impl Viewport {
             selection: None,
             drag: None,
             message: String::new(),
+            playback: Default::default(),
         }
     }
     pub fn show_source(&mut self, page: &Page) {
         if self.source.is_some_and(|source| source != page.source) {
+            self.playback = Default::default();
             self.selection = None;
             self.drag = None;
             self.message.clear();
@@ -77,6 +80,7 @@ impl Viewport {
     }
     pub fn show_page(&mut self, page: usize) {
         if self.page != page {
+            self.playback = Default::default();
             self.page = page;
             self.scroll_y = 0.;
             self.center = [0.5; 2];

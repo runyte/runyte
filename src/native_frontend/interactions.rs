@@ -417,7 +417,7 @@ fn copy_selection(
         view.message = "Copied PDF text".into();
     } else if let Some(Selection::Region(a, b)) = view.selection {
         let result = (|| -> anyhow::Result<()> {
-            let image = crop_rgba(page, a, b)?;
+            let image = crop_frame_rgba(page, view.playback.frame, a, b)?;
             if clipboard.is_none() {
                 *clipboard = Some(arboard::Clipboard::new()?);
             }
@@ -437,7 +437,17 @@ fn copy_selection(
     }
 }
 
+#[cfg(test)]
 pub(super) fn crop_rgba(page: &Page, a: [f32; 2], b: [f32; 2]) -> anyhow::Result<image::RgbaImage> {
+    crop_frame_rgba(page, 0, a, b)
+}
+
+pub(super) fn crop_frame_rgba(
+    page: &Page,
+    frame: usize,
+    a: [f32; 2],
+    b: [f32; 2],
+) -> anyhow::Result<image::RgbaImage> {
     let width = page.width as u32;
     let height = page.height as u32;
     let x = (a[0].min(b[0]).clamp(0., 1.) * width as f32).floor() as u32;
@@ -446,7 +456,7 @@ pub(super) fn crop_rgba(page: &Page, a: [f32; 2], b: [f32; 2]) -> anyhow::Result
     let bottom = (a[1].max(b[1]).clamp(0., 1.) * height as f32).ceil() as u32;
     anyhow::ensure!(right > x && bottom > y, "selection is empty");
     let pixels = page
-        .image
+        .frame(frame)
         .as_bytes(0)
         .ok_or_else(|| anyhow::anyhow!("image pixels unavailable"))?;
     let mut region = image::RgbaImage::new(right - x, bottom - y);
