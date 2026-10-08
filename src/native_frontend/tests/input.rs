@@ -436,3 +436,86 @@ fn fractional_scroll_accumulates_into_whole_host_events() {
         Some((ScrollDown, 20))
     );
 }
+
+#[test]
+fn frames_keep_the_metrics_they_were_laid_out_for() {
+    use super::{CellMetrics, painted_metrics};
+    use gpui::{px, size};
+    let old = CellMetrics::new(15);
+    let new = CellMetrics::new(20);
+    let viewport = size(px(1080.), px(800.));
+    assert_eq!(old.grid(viewport), (120, 40));
+    let requested = new.grid(viewport);
+    assert_eq!(requested, (90, 29));
+    // After a font change the previous frame keeps its own metrics.
+    assert_eq!(painted_metrics(old, new, Some((120, 40)), requested), old);
+    // The frame laid out for the requested grid switches to the new metrics.
+    assert_eq!(painted_metrics(old, new, Some(requested), requested), new);
+    // Before any frame, and when the grid did not change, nothing waits.
+    assert_eq!(painted_metrics(old, new, None, requested), new);
+    assert_eq!(painted_metrics(old, new, Some(requested), requested), new);
+    // A resize at unchanged metrics paints the stale frame at those metrics.
+    assert_eq!(painted_metrics(old, old, Some((120, 40)), (130, 45)), old);
+}
+
+#[test]
+fn rapid_font_changes_preserve_intermediate_frame_metrics_and_bound_history() {
+    use super::{CellMetrics, GeometryRequests, painted_metrics};
+    let mut history = GeometryRequests::default();
+    let viewport = gpui::size(px(1080.), px(800.));
+    for font in [15, 16, 17] {
+        let metrics = CellMetrics::new(font);
+        history.record(metrics.grid(viewport), metrics);
+    }
+    let middle = CellMetrics::new(16);
+    let latest = CellMetrics::new(17);
+    let received = history.metrics(middle.grid(viewport)).unwrap();
+    assert_eq!(
+        painted_metrics(
+            received,
+            latest,
+            Some(middle.grid(viewport)),
+            latest.grid(viewport)
+        ),
+        middle
+    );
+    assert_eq!(history.metrics(latest.grid(viewport)), Some(latest));
+    // A same-grid request may adopt new metrics immediately: layout is unchanged.
+    history.record(middle.grid(viewport), latest);
+    assert_eq!(history.metrics(middle.grid(viewport)), Some(latest));
+    for width in 200..300 {
+        history.record((width, 50), latest);
+    }
+    assert_eq!(history.0.len(), 64);
+    assert!(history.metrics(middle.grid(viewport)).is_none());
+    assert_eq!(history.metrics((299, 50)), Some(latest));
+}
+
+#[test]
+fn attached_snapshot_renders_at_host_geometry_during_resize() {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    let root = tempfile::tempdir().unwrap();
+    let app =
+        runyte::app::App::new_in_project(runyte::config::Config::default(), None, root.path())
+            .unwrap();
+    let mut host = runyte::workspace::WorkspaceHost::new(app);
+    let snapshot = host.prepare_frame(runyte::ui::frame_geometry(Rect::new(0, 0, 120, 40)));
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    super::draw_native_grid(
+        &mut terminal,
+        (80, 24),
+        Some(snapshot.editor.geometry.screen),
+        |frame| {
+            runyte::ui::render_host_frame_exact_colors_for_test(frame, &snapshot);
+        },
+    )
+    .unwrap();
+    assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 120, 40));
+    assert!(
+        terminal.backend().buffer().content[120 * 38..120 * 39]
+            .iter()
+            .any(|cell| cell.symbol() != " ")
+    );
+    super::draw_native_grid(&mut terminal, (80, 24), None, |_| {}).unwrap();
+    assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 80, 24));
+}

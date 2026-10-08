@@ -4078,10 +4078,7 @@ impl AttachedSurface for native_frontend::Surface {
         snapshot: &runyte::workspace::HostFrame,
         depth: ui::TerminalColorDepth,
     ) -> io::Result<()> {
-        if self.native() {
-            native_frontend::capture_attached(snapshot);
-        }
-        self.draw(|frame| ui::render_host_frame(frame, snapshot, depth))
+        self.draw_host_frame(snapshot, depth)
     }
 }
 

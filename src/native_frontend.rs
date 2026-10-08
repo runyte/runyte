@@ -28,7 +28,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct CellMetrics {
     font_size: f32,
     width: f32,
@@ -42,6 +42,50 @@ impl CellMetrics {
             width: font_size * 0.6,
             height: font_size * (4.0 / 3.0),
         }
+    }
+
+    /// The window's grid for a viewport at these metrics.
+    fn grid(self, viewport: Size<Pixels>) -> (u16, u16) {
+        (
+            ((f32::from(viewport.width) / self.width) as u16).clamp(10, 500),
+            ((f32::from(viewport.height) / self.height) as u16).clamp(5, 200),
+        )
+    }
+}
+
+/// The metrics to paint a frame with. A frame keeps the metrics it was laid
+/// out for until the host publishes one for the requested grid, so a font
+/// change never shows the previous layout rescaled.
+fn painted_metrics(
+    painted: CellMetrics,
+    requested: CellMetrics,
+    frame_grid: Option<(u16, u16)>,
+    requested_grid: (u16, u16),
+) -> CellMetrics {
+    if frame_grid.is_none_or(|grid| grid == requested_grid) {
+        requested
+    } else {
+        painted
+    }
+}
+/// Requests can be overtaken by newer font changes before their frames arrive.
+/// Retain a bounded history so each intermediate grid keeps its own metrics.
+#[derive(Default)]
+struct GeometryRequests(std::collections::VecDeque<((u16, u16), CellMetrics)>);
+impl GeometryRequests {
+    fn record(&mut self, grid: (u16, u16), metrics: CellMetrics) {
+        self.0.retain(|(old, _)| *old != grid);
+        if self.0.len() == 64 {
+            self.0.pop_front();
+        }
+        self.0.push_back((grid, metrics));
+    }
+    fn metrics(&self, grid: (u16, u16)) -> Option<CellMetrics> {
+        self.0
+            .iter()
+            .rev()
+            .find(|(old, _)| *old == grid)
+            .map(|(_, metrics)| *metrics)
     }
 }
 impl Default for CellMetrics {
@@ -415,6 +459,25 @@ impl Surface {
         }
     }
     pub fn draw(&mut self, draw: impl FnOnce(&mut ratatui::Frame<'_>)) -> io::Result<()> {
+        self.draw_sized(None, draw)
+    }
+    pub fn draw_host_frame(
+        &mut self,
+        snapshot: &runyte::workspace::HostFrame,
+        depth: runyte::ui::TerminalColorDepth,
+    ) -> io::Result<()> {
+        if matches!(self, Self::Native(_)) {
+            capture_attached(snapshot);
+        }
+        self.draw_sized(Some(snapshot.editor.geometry.screen), |frame| {
+            runyte::ui::render_host_frame(frame, snapshot, depth);
+        })
+    }
+    fn draw_sized(
+        &mut self,
+        snapshot_area: Option<runyte::layout::Rect>,
+        draw: impl FnOnce(&mut ratatui::Frame<'_>),
+    ) -> io::Result<()> {
         match self {
             Self::Tui(terminal) => {
                 terminal.draw(draw)?;
@@ -422,8 +485,7 @@ impl Surface {
             Self::Native(terminal) => {
                 let bridge = BRIDGE.get().unwrap();
                 let (width, height) = *bridge.dimensions.lock().unwrap();
-                terminal.backend_mut().resize(width, height);
-                terminal.draw(draw).unwrap();
+                draw_native_grid(terminal, (width, height), snapshot_area, draw)?;
                 let (background, foreground) = *bridge.default_colors.lock().unwrap();
                 *bridge.frame.lock().unwrap() = Some(FrameData {
                     attachment: bridge.attachment.load(Ordering::Acquire),
@@ -445,6 +507,20 @@ impl Surface {
         }
         Ok(())
     }
+}
+
+/// An attached snapshot has already been laid out by the host. Rendering it
+/// into the latest requested grid would falsely label it with newer geometry.
+fn draw_native_grid(
+    terminal: &mut Terminal<TestBackend>,
+    requested: (u16, u16),
+    snapshot_area: Option<runyte::layout::Rect>,
+    draw: impl FnOnce(&mut ratatui::Frame<'_>),
+) -> io::Result<()> {
+    let (width, height) = snapshot_area.map_or(requested, |area| (area.width, area.height));
+    terminal.backend_mut().resize(width, height);
+    terminal.draw(draw).unwrap();
+    Ok(())
 }
 
 pub enum Events {
@@ -631,7 +707,13 @@ pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::R
 }
 
 struct NativeView {
+    /// The metrics of the frame on screen: painting, pointer mapping, media
+    /// geometry and the IME caret all use these.
     metrics: CellMetrics,
+    /// The metrics the font size asks for; the grid requested from the host.
+    requested: CellMetrics,
+    frame_metrics: CellMetrics,
+    geometry_requests: GeometryRequests,
     bridge: Arc<Bridge>,
     focus: FocusHandle,
     frame: Option<std::rc::Rc<FrameData>>,
@@ -654,6 +736,8 @@ impl NativeView {
         let frame = bridge.frame.lock().unwrap().take().map(std::rc::Rc::new);
         let (width, height) = *bridge.dimensions.lock().unwrap();
         bridge.send(Event::Resize(width, height));
+        let mut geometry_requests = GeometryRequests::default();
+        geometry_requests.record((width, height), CellMetrics::new(font_size));
         let wakes = bridge.wakes.clone();
         cx.spawn(async move |view, cx| {
             while wakes.recv().await.is_ok() {
@@ -665,7 +749,12 @@ impl NativeView {
                         }
                         let frame = view.bridge.frame.lock().unwrap().take();
                         let changed = frame.is_some();
-                        if let Some(frame) = frame {
+                        if let Some(frame) = frame
+                            && let Some(metrics) = view
+                                .geometry_requests
+                                .metrics((frame.cells.area.width, frame.cells.area.height))
+                        {
+                            view.frame_metrics = metrics;
                             if view.viewports.len() > 32 && !frame.media.is_empty() {
                                 view.viewports.retain(|(id, path), _| {
                                     frame
@@ -691,6 +780,9 @@ impl NativeView {
         .detach();
         Self {
             metrics: CellMetrics::new(font_size),
+            requested: CellMetrics::new(font_size),
+            frame_metrics: CellMetrics::new(font_size),
+            geometry_requests,
             media: media::Loader::new(bridge.clone()),
             bridge,
             focus,
@@ -715,10 +807,9 @@ impl NativeView {
         };
         match binding.action {
             runyte::keymap::native_window::Action::FontSize(delta) => {
-                self.metrics = CellMetrics::new(
-                    (self.metrics.font_size as i32 + i32::from(delta)).clamp(8, 48) as usize,
+                self.requested = CellMetrics::new(
+                    (self.requested.font_size as i32 + i32::from(delta)).clamp(8, 48) as usize,
                 );
-                *self.glyphs.borrow_mut() = cells::GlyphCache::default();
                 cx.notify();
             }
             runyte::keymap::native_window::Action::PasteText => {
@@ -739,12 +830,22 @@ impl NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let metrics = self.metrics;
-        let bounds = window.viewport_size();
-        let dimensions = (
-            ((f32::from(bounds.width) / self.metrics.width) as u16).clamp(10, 500),
-            ((f32::from(bounds.height) / self.metrics.height) as u16).clamp(5, 200),
+        let dimensions = self.requested.grid(window.viewport_size());
+        self.geometry_requests.record(dimensions, self.requested);
+        let painted = painted_metrics(
+            self.frame_metrics,
+            self.requested,
+            self.frame
+                .as_ref()
+                .map(|frame| (frame.cells.area.width, frame.cells.area.height)),
+            dimensions,
         );
+        if painted != self.metrics {
+            // Glyph layouts are shaped at one font size.
+            self.metrics = painted;
+            *self.glyphs.borrow_mut() = cells::GlyphCache::default();
+        }
+        let metrics = self.metrics;
         if *self.bridge.dimensions.lock().unwrap() != dimensions {
             *self.bridge.dimensions.lock().unwrap() = dimensions;
             self.send(Event::Resize(dimensions.0, dimensions.1));

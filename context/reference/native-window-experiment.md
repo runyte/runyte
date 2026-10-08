@@ -409,3 +409,19 @@ runtime: the headless compositor offers no input injection, and its virtual
 output did not deliver frame callbacks even to the unpatched build, which
 painted once and then stopped. It needs a run on a Wayland desktop. macOS is
 unchanged.
+
+## Frame geometry during font changes and resize — 2026-10-08
+
+The window keeps the metrics associated with each incoming grid, including
+intermediate frames from rapid font changes. A bounded history retains 64
+recent grid requests; frames older than that history are ignored until a
+recognised frame arrives, while the previous complete frame remains visible.
+When two font sizes produce the same grid, the newer metrics can be used
+immediately because the cell layout has not changed. Pointer mapping, media,
+cursor painting and the IME caret continue to use the displayed frame's metrics.
+
+Attached snapshots render at `snapshot.editor.geometry.screen`, rather than
+being copied into a buffer sized for a newer window request. This preserves the
+host's actual grid identity in persistent-session mode without a protocol
+change, timer, or extra round trip. A stale grid during window resizing keeps
+its own size, with theme-coloured margins or clipping until its replacement.
