@@ -1,4 +1,86 @@
-# PDF viewing in the native window depends on separately installed Poppler
+---
+title: "PDF viewing in the native window depends on separately installed Poppler"
+status: resolved
+reported: 2026-10-08
+resolved: 2026-10-09
+commit: 1db9279
+---
+
+## Resolution
+
+`1db9279` — `Render native PDFs with a bounded Hayro helper and Poppler fallback`
+replaces the unconditional Poppler branch of `native_frontend::media::load`.
+Previously every PDF request required `pdfinfo`, a PNG-producing `pdftoppm`,
+and optional `pdftotext`, so a stock installation could not display PDFs.
+
+`native_frontend::pdf` now invokes a hidden mode of the same executable before
+frontend initialization. Exact-pinned Hayro 0.8 crates remain native-only.
+The helper owns the parser and caches for one request, returns bounded RGBA and
+word metadata over a pipe, and can be killed on cancellation or a 15-second
+deadline. It also applies CPU/address-space limits before parsing; macOS's
+large initial mappings are measured before adding the 1 GiB budget. The parent
+keeps the process-group leader unreaped through cleanup using the repository's
+owned-group API. Neither UI loop nor the media worker runs an uninterruptible
+Hayro interpreter. Detail rendering translates/scales into only the visible
+crop, rather than allocating the potentially 524288px virtual page.
+
+Fallback is automatic per page/refinement request. WarningSink, unresolved
+CMaps, fallback font requests and helper-local WARN/ERROR capture detect known
+unsupported or damaged content; the log hook is necessary because upstream
+font failures do not all reach WarningSink. Standard and embedded fonts work
+without system-font lookup; recognized nonembedded Latin names may use built-in
+standard substitutes. Empty-user-password encrypted documents work; documents
+requiring a password report a clear error.
+
+The text Device combines page/draw/glyph transforms, groups glyphs in content
+order by baselines and gaps, retains invisible OCR text, and deduplicates
+fill/stroke dispatch. Missing Unicode or Type3 geometry triggers independent
+Poppler text extraction. Failed text extraction leaves region selection usable.
+Both raster backends and Poppler text use CropBox. Poppler's rotated word boxes
+carry unrotated page dimensions, so normalization uses the displayed raster's
+aspect to choose the correct axes. This prevents mixed-backend text and detail
+misalignment on cropped, rotated pages.
+
+The performance register records release-build comparisons with ten authored
+fixtures, including image differences and differing column reading order.
+The user guide, backend reference and third-party notices describe fallback,
+font substitutions, limits and retained permissive asset notices.
+
+Regression coverage:
+
+- `src/native_frontend/tests/pdf.rs`:
+  `hayro_renders_the_authored_fixture_and_extracts_real_words`,
+  `hayro_word_geometry_tracks_rotation_and_nonzero_crop_origins`,
+  `hayro_detail_is_a_crop_of_the_same_scaled_page`,
+  `text_collection_keeps_ocr_and_deduplicates_fill_stroke_and_column_boundaries`,
+  `hayro_rejects_missing_fonts_bad_pages_and_damaged_documents`,
+  `recognized_nonembedded_latin_fonts_use_documented_standard_substitutes`,
+  `private_pdf_response_rejects_truncation_overlarge_headers_and_bad_geometry`,
+  and `helper_transport_bounds_output_timeout_cancellation_and_descendant_pipes`.
+- `src/native_frontend/tests/media.rs`:
+  `mixed_pdf_backends_align_cropped_rotated_text_and_detail`,
+  `pdf_rasterizes_distinct_pages_and_reports_total_count`, and
+  `pdf_detail_rerenders_vectors_and_matches_full_resolution_crop` (explicitly
+  run with `--ignored` and installed Poppler).
+- `tests/native_pdf.py`: actual-helper acceptance with Poppler absent from
+  PATH, including four crop rotations, columns, vectors, image scans, Form
+  XObjects, empty/required passwords, unknown fonts, damaged files and large
+  virtual-page crops; `--compare` adds Poppler image/text/timing comparisons.
+  Native CI runs the helper acceptance on Linux and macOS.
+- `tests/native_window.py`: real-window PDF paging, refinement, text selection
+  and clipboard acceptance. Local Linux validation passed alongside formatting,
+  default/native Clippy, the full Rust suite, 77 native tests and all three
+  explicit Poppler tests. Astra high review iterated to a clean final result.
+
+Known limitation: reading order remains heuristic and follows content-stream
+order, and standard font substitutions can alter appearance. Automatic fallback
+cannot detect every silent visual difference. The authored corpus does not
+establish broad accuracy for CJK, JBIG2/CCITT/JPEG 2000 scans, complex forms,
+large papers or slide decks. There is no PDF password prompt, OCR or persistent
+parsed-document cache. macOS helper validation is wired into CI but was not
+executed locally; performance numbers are Linux-only.
+
+## Report
 
 In `runyte --window`, PDF projections are produced by three Poppler utilities,
 invoked through argument vectors from the media worker in
@@ -88,7 +170,7 @@ Constraints:
   `THIRD_PARTY_NOTICES.md` must describe which backend is used and when Poppler
   is still needed.
 
-Open questions:
+Questions left undecided in the original report:
 
 - Whether the fallback is automatic per document, per page, or a setting the
   user selects.
