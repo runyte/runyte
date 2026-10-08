@@ -335,3 +335,47 @@ including text/image clipboard round trips, terminal paste, font shortcuts,
 PTY geometry and config on reopening. The persistent run additionally verifies
 parent editor wait against the matching executable. macOS and Wayland
 clipboard/font interaction acceptance remains unverified locally.
+
+## On-demand frames — 2026-10-08
+
+GPUI 0.2.2 is built from the patched copy in `vendor/gpui` (provenance and the
+exact changes are in `vendor/gpui/RUNYTE-PATCH.md`). On X11 and Wayland a window
+is drawn when it becomes dirty: immediately when no frame was drawn during the
+last refresh interval, otherwise one interval after the previous frame, or on
+the pending `wl_surface.frame` callback. Idle windows have no refresh timer and
+request no frame callbacks. The Vulkan surface on X11 uses its own X connection
+so that the driver's presentation thread cannot consume input events from
+GPUI's connection. macOS keeps GPUI's display-link frames.
+
+`tests/native_window.py --latency` measures key-to-pixel latency for 60
+isolated keystrokes in Insert mode at 120×40 cells (XTest press, `XGetImage`
+readback of the edited row) and then counts the window process's context
+switches over five idle seconds. Each key must reach the screen within one
+second; `--max-idle-wakeups` turns the idle count into an assertion, which CI
+sets to 30 per second.
+
+### Measured acceptance
+
+Linux 7.2.8, AMD Radeon 880M (RADV), release builds, a rootful Xwayland server
+at 60 Hz inside a headless KWin virtual output (no other clients):
+
+| Build | Median | p90 | Max | Idle context switches |
+| --- | ---: | ---: | ---: | ---: |
+| Registry GPUI 0.2.2 | 12.6–15.9 ms | 29.2–29.7 ms | 33.2–33.3 ms | 71–73 per second |
+| Patched GPUI | 4.6–5.2 ms | 5.7–6.5 ms | 6.3–7.0 ms | 9 per second |
+
+An independent probe that reads back only the start of the edited row measured
+the patched window at 3.9–4.5 ms median (p90 below 5.3 ms), against 3.8 ms
+median for `runyte --ide` in Alacritty on the same display before the change.
+A diagnostic GPUI build that polled every millisecond measured 3.3–3.6 ms; it
+kept the processor awake with about 1,000 wakeups per second and is not a
+usable configuration.
+
+The full isolated X11 acceptance passed with the patched build in standalone,
+`--mux`, `--window-controls` and `--window-controls --mux` modes. Persistent
+modes need the tested binary first on `PATH` and a short temporary directory
+for the workspace socket. The Wayland scheduler has not been exercised at
+runtime: the headless compositor offers no input injection, and its virtual
+output did not deliver frame callbacks even to the unpatched build, which
+painted once and then stopped. It needs a run on a Wayland desktop. macOS is
+unchanged.

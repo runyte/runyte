@@ -13,6 +13,12 @@ does not ship a separate license file. Each directory's `RUNYTE-PATCH.md`
 records its source and the local Rust compatibility corrections. These
 dependencies are used by the optional GPUI native frontend.
 
+`vendor/gpui` contains GPUI 0.2.2 by Zed Industries, Inc. under Apache-2.0,
+with its upstream `LICENSE-APACHE`. Its `RUNYTE-PATCH.md` lists the removed
+example programs and the modified files, which carry a modification notice.
+The changes schedule Linux frames on demand. The vendored files keep their
+Apache-2.0 license and are not relicensed under Runyte's MPL-2.0.
+
 ## Built-in color themes
 
 Runyte incorporates palette values from the projects below into the built-in
@@ -347,8 +353,9 @@ This entry supersedes the AI-generated `logo/R.png` that these files replaced.
 
 The optional `native` feature links GPUI 0.2.2, Zed Industries' Rust UI
 framework, under Apache-2.0. Source: <https://github.com/zed-industries/zed>;
-published crate: <https://crates.io/crates/gpui/0.2.2>. The adapter is
-Runyte-authored and does not incorporate Zed editor code or its widget library.
+published crate: <https://crates.io/crates/gpui/0.2.2>. A locally patched copy
+is built from `vendor/gpui` (see above). The adapter is Runyte-authored and does
+not incorporate Zed editor code or its widget library.
 
 Image decoding uses the `image` crate (MIT OR Apache-2.0); temporary PDF
 raster storage uses `tempfile` (MIT OR Apache-2.0); frontend wakeups use

@@ -169,3 +169,4 @@ harness = false
 [patch.crates-io]
 block = { path = "vendor/block" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
+gpui = { path = "vendor/gpui" }

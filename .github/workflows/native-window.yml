@@ -89,6 +89,7 @@ jobs:
         run: |
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts --mux
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --latency --max-idle-wakeups 30
       - name: Linux font and clipboard acceptance
         if: runner.os == 'Linux'
         run: |

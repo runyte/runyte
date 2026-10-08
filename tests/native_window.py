@@ -23,6 +23,9 @@ parser.add_argument("--window-controls", action="store_true", help="exercise fon
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting at 120x40; requires RUNYTE_NATIVE_PAINT_TIMING=1")
+parser.add_argument("--latency", action="store_true", help="measure key-to-pixel latency and idle wakeups at 120x40")
+parser.add_argument("--latency-keys", type=int, default=60, help="keys measured by --latency")
+parser.add_argument("--max-idle-wakeups", type=float, help="with --latency, fail above this many idle context switches per second")
 parser.add_argument("--paint-styles", action="store_true", help="capture styled terminal cells, including wide glyphs and decorated emoji")
 parser.add_argument("--paint-reference", type=pathlib.Path, help="compare styled-cell pixels against an earlier --paint-styles output directory")
 args = parser.parse_args()
@@ -118,7 +121,10 @@ def name(w):
     if n:x.XFree(n)
     return s
 existing=set(children(x.XDefaultRootWindow(d)))
-env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
+env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
+# A harness started from a Runyte terminal must not hand its parent context to the fixture.
+for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
+env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.paint_styles:
     # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.
     env['PS1'] = ''
@@ -293,6 +299,74 @@ try:
         screenshot('benchmark-grid')
         key('Escape'); command('write')
         assert (root/'notes.txt').read_text().startswith('warmup' + 'abcdefghijklmnopqrstuvwxyz' * 4), "benchmark dropped typing"
+        close_window(); p.wait(timeout=15); assert p.returncode == 0
+        raise SystemExit(0)
+    if args.latency:
+        # Key press to the first changed pixel of the edited row, read back
+        # from the X server. Keys are spaced so each one starts from an idle
+        # window; this measures the latency of an isolated keystroke.
+        assert not args.mux, "latency uses a standalone window"
+        class XImage(C.Structure):
+            _fields_ = [('width', C.c_int), ('height', C.c_int), ('xoffset', C.c_int), ('format', C.c_int),
+                        ('data', C.c_void_p), ('byte_order', C.c_int), ('bitmap_unit', C.c_int),
+                        ('bitmap_bit_order', C.c_int), ('bitmap_pad', C.c_int), ('depth', C.c_int),
+                        ('bytes_per_line', C.c_int), ('bits_per_pixel', C.c_int)]
+        def region(rx, ry, rw, rh):
+            im = x.XGetImage(d, win, rx, ry, rw, rh, 0xffffffffffffffff, 2)
+            assert im
+            image = XImage.from_address(im)
+            data = C.string_at(image.data, image.bytes_per_line * image.height)
+            x.XDestroyImage(im)
+            return data
+        def context_switches():
+            # Live threads only; the editor's threads persist while it is idle.
+            total = 0
+            for task in pathlib.Path(f'/proc/{p.pid}/task').iterdir():
+                try:
+                    for line in (task / 'status').read_text().splitlines():
+                        if line.startswith(('voluntary_ctxt_switches', 'nonvoluntary_ctxt_switches')):
+                            total += int(line.split()[1])
+                except OSError:
+                    pass
+            return total
+        x.XResizeWindow(d, win, 1080, 800); x.XFlush(d); time.sleep(.5)
+        key('g'); key('g'); key('i'); time.sleep(.5)
+        # Watch the cell row whose pixels changed most: the edited text line,
+        # not a title or status marker that changes with it.
+        before = region(0, 0, 1080, 800); key('x'); time.sleep(.5); after = region(0, 0, 1080, 800)
+        changed = [sum(a != b for a, b in zip(before[y * 4320:(y + 1) * 4320], after[y * 4320:(y + 1) * 4320]))
+                   for y in range(800)]
+        cell_rows = [sum(changed[row * 20:(row + 1) * 20]) for row in range(40)]
+        assert max(cell_rows), "typing did not change the window"
+        band = (0, cell_rows.index(max(cell_rows)) * 20, 320, 20)
+        key('BackSpace'); time.sleep(.5)
+        samples = []
+        for index in range(args.latency_keys):
+            reference = region(*band)
+            sym = 'x' if index % 2 == 0 else 'BackSpace'
+            code = x.XKeysymToKeycode(d, x.XStringToKeysym(sym.encode()))
+            started = time.perf_counter()
+            xt.XTestFakeKeyEvent(d, code, 1, 0); xt.XTestFakeKeyEvent(d, code, 0, 0); x.XFlush(d)
+            while region(*band) == reference:
+                assert time.perf_counter() - started < 1, "key did not reach the screen"
+            samples.append((time.perf_counter() - started) * 1000)
+            time.sleep(.12 + (index % 5) * .01)
+        time.sleep(1)
+        switches = context_switches(); time.sleep(5)
+        idle = (context_switches() - switches) / 5
+        ordered = sorted(samples)
+        result = {"columns": 120, "rows": 40, "keys": len(samples),
+                  "median_ms": round(statistics.median(samples), 2),
+                  "p90_ms": round(ordered[len(ordered) * 9 // 10], 2),
+                  "max_ms": round(max(samples), 2),
+                  "idle_context_switches_per_second": idle}
+        print(json.dumps(result), flush=True)
+        if args.output:
+            (args.output/'latency.json').write_text(json.dumps(result, indent=2) + '\n')
+        if args.max_idle_wakeups is not None:
+            assert idle <= args.max_idle_wakeups, f"idle window woke {idle}/s"
+        key('Escape'); command('write')
+        assert (root/'notes.txt').read_text() == "Runyte native window\nExisting keys, panes, and terminal sessions.\n", "latency keys were not applied in order"
         close_window(); p.wait(timeout=15); assert p.returncode == 0
         raise SystemExit(0)
     if args.window_controls:
