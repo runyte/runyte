@@ -4,9 +4,9 @@ name: CI
 
 on:
   push:
-    branches: [main, dev, feat/windows-support]
+    branches: [main, dev, exp, feat/windows-support]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, exp]
 
 # No job here needs to write to the repository. Declaring the floor once means
 # any future workflow that does need write access has to say so deliberately.

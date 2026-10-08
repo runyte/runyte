@@ -68,6 +68,12 @@ jobs:
         run: |
           export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts
+      - name: Linux font and clipboard acceptance
+        if: runner.os == 'Linux'
+        run: |
+          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls
+          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls --mux
       - name: Construct macOS app bundle
         if: runner.os == 'macOS'
         run: python3 contrib/native/package.py macos --binary target/debug/runyte --output "$RUNNER_TEMP/Runyte.app"
