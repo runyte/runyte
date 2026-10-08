@@ -1,0 +1,20 @@
+--- a/src/native_frontend.rs
++++ b/src/native_frontend.rs
+@@ -1025,6 +1025,7 @@
+     rgb(value).into()
+ }
+ fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
++    let started = std::time::Instant::now();
+     for y in 0..frame.cells.area.height {
+         for x in 0..frame.cells.area.width {
+             if frame.under_media(x, y) {
+@@ -1114,6 +1115,9 @@
+             rgb(0xffffff),
+         ));
+     }
++    if std::env::var_os("RUNYTE_NATIVE_PAINT_TIMING").is_some() {
++        eprintln!("native-paint {}x{} {}us", frame.cells.area.width, frame.cells.area.height, started.elapsed().as_micros());
++    }
+ }
+ 
+ // Composition is kept locally until committed, so it cannot execute modal

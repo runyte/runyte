@@ -3,6 +3,7 @@
 //! GPUI owns the main thread; the existing host loop owns all editor state.
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
+mod cells;
 mod icon;
 mod interactions;
 mod media;
@@ -15,7 +16,7 @@ use ratatui::{
     Terminal,
     backend::{CrosstermBackend, TestBackend},
     buffer::Buffer,
-    style::{Color, Modifier},
+    style::Color,
 };
 use std::{
     io,
@@ -595,7 +596,8 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
 struct NativeView {
     bridge: Arc<Bridge>,
     focus: FocusHandle,
-    frame: Option<FrameData>,
+    frame: Option<std::rc::Rc<FrameData>>,
+    glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     composition: String,
     image_clipboard: Option<arboard::Clipboard>,
@@ -605,7 +607,7 @@ impl NativeView {
     fn new(bridge: Arc<Bridge>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window);
-        let frame = bridge.frame.lock().unwrap().take();
+        let frame = bridge.frame.lock().unwrap().take().map(std::rc::Rc::new);
         let (width, height) = *bridge.dimensions.lock().unwrap();
         bridge.send(Event::Resize(width, height));
         let wakes = bridge.wakes.clone();
@@ -628,7 +630,7 @@ impl NativeView {
                                         .any(|pane| pane.pane == *id && pane.path == *path)
                                 });
                             }
-                            view.frame = Some(frame);
+                            view.frame = Some(std::rc::Rc::new(frame));
                         }
                         let loaded = view.media.poll(&view.bridge);
                         view.apply_media_requests(cx);
@@ -648,6 +650,7 @@ impl NativeView {
             bridge,
             focus,
             frame,
+            glyphs: Default::default(),
             composition: String::new(),
             image_clipboard: None,
             viewports: Default::default(),
@@ -670,6 +673,7 @@ impl Render for NativeView {
             self.send(Event::Resize(dimensions.0, dimensions.1));
         }
         let frame = self.frame.clone();
+        let glyphs = self.glyphs.clone();
         let mut root = div()
             .font_family("JetBrainsMono Nerd Font")
             .font_weight(FontWeight::MEDIUM)
@@ -873,7 +877,13 @@ impl Render for NativeView {
                         cx,
                     );
                     if let Some(frame) = &frame {
-                        paint_cells(frame, bounds.origin, window, cx);
+                        cells::paint_cells(
+                            frame,
+                            bounds.origin,
+                            &mut glyphs.borrow_mut(),
+                            window,
+                            cx,
+                        );
                         if frame.attachment != bridge.attachment.load(Ordering::Acquire) {
                             return;
                         }
@@ -1024,98 +1034,6 @@ fn color(color: Color, default: u32) -> Hsla {
     };
     rgb(value).into()
 }
-fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
-    for y in 0..frame.cells.area.height {
-        for x in 0..frame.cells.area.width {
-            if frame.under_media(x, y) {
-                continue;
-            }
-            let cell = &frame.cells[(x, y)];
-            let bg = if cell.modifier.contains(Modifier::REVERSED) {
-                color(cell.fg, 0xdddddd)
-            } else {
-                color(cell.bg, 0x181818)
-            };
-            let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
-            window.paint_quad(fill(
-                Bounds::new(position, size(px(CELL_WIDTH), px(CELL_HEIGHT))),
-                bg,
-            ));
-        }
-    }
-    for y in 0..frame.cells.area.height {
-        let mut x = 0;
-        while x < frame.cells.area.width {
-            if frame.under_media(x, y) {
-                x += 1;
-                continue;
-            }
-            let cell = &frame.cells[(x, y)];
-            let width = unicode_width::UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
-            let mut fg = color(cell.fg, 0xdddddd);
-            let mut bg = color(cell.bg, 0x181818);
-            if cell.modifier.contains(Modifier::REVERSED) {
-                std::mem::swap(&mut fg, &mut bg);
-            }
-            if cell.modifier.contains(Modifier::DIM) {
-                fg.l *= 0.65;
-            }
-            let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
-            if cell.symbol() != " " && !cell.modifier.contains(Modifier::HIDDEN) {
-                let mut font = font("JetBrainsMono Nerd Font");
-                font.weight = FontWeight::MEDIUM;
-                if cell.modifier.contains(Modifier::BOLD) {
-                    font.weight = FontWeight::BOLD;
-                }
-                if cell.modifier.contains(Modifier::ITALIC) {
-                    font.style = FontStyle::Italic;
-                }
-                let run = TextRun {
-                    len: cell.symbol().len(),
-                    font,
-                    color: fg,
-                    background_color: None,
-                    underline: cell.modifier.contains(Modifier::UNDERLINED).then_some(
-                        UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(fg),
-                            wavy: false,
-                        },
-                    ),
-                    strikethrough: cell.modifier.contains(Modifier::CROSSED_OUT).then_some(
-                        StrikethroughStyle {
-                            thickness: px(1.),
-                            color: Some(fg),
-                        },
-                    ),
-                };
-                let line = window.text_system().shape_line(
-                    cell.symbol().to_owned().into(),
-                    px(15.),
-                    &[run],
-                    None,
-                );
-                let _ = line.paint(position, px(CELL_HEIGHT), window, cx);
-            }
-            x += width;
-        }
-    }
-    if let Some(cursor) = frame
-        .cursor
-        .filter(|cursor| !frame.under_media(cursor.x, cursor.y))
-    {
-        let position = origin
-            + point(
-                px(cursor.x as f32 * CELL_WIDTH),
-                px(cursor.y as f32 * CELL_HEIGHT),
-            );
-        window.paint_quad(fill(
-            Bounds::new(position, size(px(2.), px(CELL_HEIGHT))),
-            rgb(0xffffff),
-        ));
-    }
-}
-
 // Composition is kept locally until committed, so it cannot execute modal
 // commands or leave partial edits in the host's transaction history.
 impl EntityInputHandler for NativeView {

@@ -282,7 +282,7 @@ impl NativeView {
     pub(super) fn apply_media_requests(&mut self, cx: &mut Context<Self>) {
         let requests = super::ready_media_requests(
             &mut self.bridge.media_requests.lock().unwrap(),
-            self.frame.as_ref(),
+            self.frame.as_deref(),
             self.bridge
                 .attachment
                 .load(std::sync::atomic::Ordering::Acquire),
