@@ -74,6 +74,26 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-10-08 — native window follow-up
+
+Measured on `x86_64-unknown-linux-gnu` with the implementation through `2d85e47`,
+Rust 1.97.1 and cargo-llvm-cov 0.9.1, using the canonical
+`cargo llvm-cov --locked --workspace` command and local socket/process access for
+integration fixtures.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 148,961 | 161,802 | 92.06% |
+| Functions | 13,434 | 14,599 | 92.02% |
+| Regions | 227,915 | 248,765 | 91.62% |
+
+The full ordinary and instrumented suites passed. Default and native all-target
+Clippy passed with warnings denied, and formatting passed. The native binary
+suite separately passed 115 tests with three ignored; the ignored real-Poppler
+rasterization check was also run and passed. Native-only frontend code is not
+part of the canonical default-feature coverage denominator. The 89% floor is
+unchanged. macOS coverage was not rerun in this Linux environment.
+
 ## 2026-10-03 — exp reliability and performance review
 
 Measured natively on `x86_64-unknown-linux-gnu` at implementation commit

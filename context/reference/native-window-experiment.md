@@ -492,3 +492,21 @@ the original frame. The terminal frontend and persistent-session host retain
 their existing publication loops. `tests/native_window.py --input-burst` exercises
 512 rapid physical characters and checks the saved text, alongside unit tests
 that apply 129 inputs through a real host and observe publications at 64/128/129.
+
+## Follow-up validation — 2026-10-08
+
+The completion through `2d85e47` passed the full default suite, formatting,
+default/native all-target Clippy with warnings denied, and the native binary
+suite (115 tests, three ignored). The real-Poppler ignored rasterization test
+also passed. Canonical Linux workspace line coverage is 92.06%, above the
+unchanged 89% floor; details are in `context/reference/test-coverage.md`.
+
+The final debug build passed isolated X11/lavapipe acceptance for ordinary media
+and persistent-session handoff, standalone and persistent font/clipboard controls,
+512-character input bursts in both modes, embedded-font-only media/handoff in
+both modes, and styled pixels against the baseline.
+With 60 isolated keys at 120×40, the same debug/software-rendered setup measured
+11.53 ms median, 12.45 ms p90, and 8.6 idle context switches per second, passing
+the CI idle limit of 30. These are debug/software-display results, not comparable
+to the earlier release/Radeon latency measurements. Real Wayland desktop and
+macOS runtime validation remain outstanding.
