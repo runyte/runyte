@@ -11,6 +11,17 @@ use std::sync::Arc;
 
 impl NativeView {
     fn media_at(&self, position: Point<Pixels>) -> Option<MediaPane> {
+        if self
+            .bridge
+            .painted_attachment
+            .load(std::sync::atomic::Ordering::Acquire)
+            != self
+                .bridge
+                .attachment
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return None;
+        }
         let [x, y] = [f32::from(position.x), f32::from(position.y)];
         self.bridge
             .painted_media
@@ -41,7 +52,14 @@ impl NativeView {
     fn focus_media(&self, pane: &MediaPane, delta: i32) {
         let mut requests = self.bridge.media_pointer.lock().unwrap();
         if requests.len() < 256 {
-            requests.push((pane.pane, pane.path.clone(), delta));
+            requests.push((
+                self.bridge
+                    .painted_attachment
+                    .load(std::sync::atomic::Ordering::Acquire),
+                pane.pane,
+                pane.path.clone(),
+                delta,
+            ));
         }
         drop(requests);
         let (w, h) = *self.bridge.dimensions.lock().unwrap();
@@ -262,7 +280,16 @@ impl NativeView {
         true
     }
     pub(super) fn apply_media_requests(&mut self, cx: &mut Context<Self>) {
-        let requests = std::mem::take(&mut *self.bridge.media_requests.lock().unwrap());
+        let requests = super::ready_media_requests(
+            &mut self.bridge.media_requests.lock().unwrap(),
+            self.frame.as_deref(),
+            self.bridge
+                .attachment
+                .load(std::sync::atomic::Ordering::Acquire),
+        );
+        if !requests.is_empty() {
+            cx.notify();
+        }
         for request in requests {
             let Some(pane) = self
                 .frame
@@ -289,7 +316,12 @@ impl NativeView {
                 if view.back() {
                     let mut back = self.bridge.media_back.lock().unwrap();
                     if back.len() < 256 {
-                        back.push((pane.pane, pane.path, pane.page));
+                        back.push((
+                            self.frame.as_ref().unwrap().attachment,
+                            pane.pane,
+                            pane.path,
+                            pane.page,
+                        ));
                     }
                     drop(back);
                     let (w, h) = *self.bridge.dimensions.lock().unwrap();
@@ -300,7 +332,11 @@ impl NativeView {
             let Some(Ok(page)) = self.media.get(&pane.path, request.page) else {
                 let mut requests = self.bridge.media_requests.lock().unwrap();
                 if requests.len() < 256 {
-                    requests.push_back(request);
+                    requests.push_back(super::PendingMediaRequest {
+                        attachment: self.frame.as_ref().unwrap().attachment,
+                        frame: self.frame.as_ref().unwrap().id.unwrap(),
+                        request,
+                    });
                 }
                 continue;
             };

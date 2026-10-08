@@ -3349,7 +3349,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn parent_wait_multi_file_completion_and_detach_cancellation_retain_origin() {
+    fn parent_wait_multi_file_completion_and_cancellation_retain_origin() {
         let root = std::env::temp_dir().join(format!(
             "runyte-parent-wait-{}-{}",
             std::process::id(),
@@ -3393,9 +3393,9 @@ mod tests {
         let (cancelled, _) = host
             .create_parent_wait_request(terminal, vec![first])
             .unwrap();
-        host.cancel_parent_waits("outer TUI detached");
+        host.cancel_parent_waits("host shutting down");
         assert!(
-            matches!(host.wait_status(cancelled), Some(WaitStatus::Cancelled { reason }) if reason == "outer TUI detached")
+            matches!(host.wait_status(cancelled), Some(WaitStatus::Cancelled { reason }) if reason == "host shutting down")
         );
         assert!(host.app.terminals.get(terminal).unwrap().live());
         assert_eq!(host.app.panes.len(), 1);

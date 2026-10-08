@@ -214,7 +214,8 @@ impl EditorDamageFrame {
         let mut total_rows = 0;
         let mut changed_rows = 0;
         for (old, new) in base.editor.panes.iter().zip(&next.editor.panes) {
-            if old.pane_id != new.pane_id
+            if old.media != new.media
+                || old.pane_id != new.pane_id
                 || old.area != new.area
                 || old.body != new.body
                 || old.active != new.active
@@ -1003,6 +1004,7 @@ mod tests {
                 terminal_theme_colors: true,
                 mode: Mode::Normal,
                 panes: vec![PaneSnapshot {
+                    media: None,
                     pane_id: 1,
                     area: Rect::default(),
                     body: Rect::default(),
@@ -1654,8 +1656,66 @@ impl TryFrom<OverlayIdentity> for core::OverlayIdentity {
     }
 }
 
+unit_enum!(
+    MediaAction,
+    crate::media::ViewAction,
+    [
+        ZoomIn,
+        ZoomOut,
+        Fit,
+        ActualSize,
+        Center,
+        PanLeft,
+        PanRight,
+        PanUp,
+        PanDown,
+        CopySelection,
+        Back,
+        SelectAll,
+        BeginSelection,
+        ExtendLeft,
+        ExtendRight,
+        ExtendUp,
+        ExtendDown
+    ]
+);
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MediaSnapshot {
+    pub path: Vec<u8>,
+    pub page: usize,
+    pub page_buffer: bool,
+    pub pages: usize,
+}
+impl From<core::MediaSnapshot> for MediaSnapshot {
+    fn from(value: core::MediaSnapshot) -> Self {
+        Self {
+            path: encode_path(&value.path),
+            page: value.page,
+            page_buffer: value.page_buffer,
+            pages: value.pages,
+        }
+    }
+}
+impl TryFrom<MediaSnapshot> for core::MediaSnapshot {
+    type Error = String;
+    fn try_from(value: MediaSnapshot) -> Result<Self, Self::Error> {
+        super::validate_path_bytes(&value.path)?;
+        if !(1..=10_000).contains(&value.pages) || !(1..=value.pages).contains(&value.page) {
+            return Err("invalid media page".into());
+        }
+        Ok(Self {
+            path: decode_path(value.path).map_err(|error| error.to_string())?,
+            page: value.page,
+            page_buffer: value.page_buffer,
+            pages: value.pages,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
     pub area: Rect,
     pub body: Rect,
@@ -1879,6 +1939,7 @@ impl From<TerminalView> for crate::terminal::TerminalView {
 impl From<core::PaneSnapshot> for PaneSnapshot {
     fn from(value: core::PaneSnapshot) -> Self {
         Self {
+            media: value.media.map(Into::into),
             pane_id: value.pane_id,
             area: value.area.into(),
             body: value.body.into(),
@@ -1908,6 +1969,7 @@ impl TryFrom<PaneSnapshot> for core::PaneSnapshot {
     type Error = String;
     fn try_from(value: PaneSnapshot) -> Result<Self, Self::Error> {
         Ok(Self {
+            media: value.media.map(TryInto::try_into).transpose()?,
             pane_id: value.pane_id,
             area: value.area.into(),
             body: value.body.into(),

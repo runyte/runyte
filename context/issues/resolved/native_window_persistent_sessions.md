@@ -1,6 +1,85 @@
-# Attach the native window to persistent sessions
+---
+title: "Native windows cannot attach to persistent sessions"
+status: resolved
+reported: 2026-10-08
+resolved: 2026-10-08
+commit: 8683956
+---
 
-## Observed behavior
+## Resolution
+
+Commit `8683956` (`Attach native windows to persistent sessions`) reuses the
+existing `run_workspace_switcher` and `run_attached` loop through an
+`AttachedSurface` adapter and native input events. GPUI still owns the main
+thread, while the attachment loop runs on its existing worker. Session history,
+single-client admission, switching, protected-state quit refusal, and fallback
+to previous running sessions consequently retain the terminal client's host
+semantics. The persistent window close button sends detach; standalone close
+continues to request `:qa`.
+
+`App::native_media` previously described an entire process, while native media
+capture depended on direct access to that process's editor state. Protocol 74
+adds the per-attachment media capability, owned pane media metadata, bounded
+navigation/page-count requests, and media action responses. The host retains
+read-only projections and their selected PDF page; decoding, Poppler work,
+zoom, and pixel/text selection remain in the window. Terminal clients display
+the unsupported-media placeholder, retain media title markers even when the
+path is clipped, and can return to the source directory. Opening binaries
+uses the current attachment's capability, including when a terminal-only build
+started the host.
+
+Native input and media requests carry attachment generations so queued input
+from an earlier session cannot supply a painted-frame witness in a new one.
+Window resize events remain valid across generations: discarding one before
+the first destination paint would otherwise strand the host at the previous
+geometry. Media actions also carry their required frame and wait in a bounded
+queue until that frame or a newer replacement reaches GPUI. The transport's
+priority semantic lane can overtake visual frames, so an action must not be
+lost merely because the window still displays the preceding PDF page buffer.
+Paint acknowledgements do not synthesize physical approval input.
+
+`finish_attached_detach` used to cancel host-owned parent-context waits even
+though their calling processes remained live inside retained terminal sessions.
+It now completes only waits belonging to that interactive attachment and leaves
+parent-context waits pending. Disconnect cancellation for outside-shell control
+clients is unchanged. Native-feature builds must be the `runyte` on `PATH` when
+mixing frontends and integrated `runyte --wait`, because the private protocol
+version is checked at attachment.
+
+Regression coverage:
+
+- `native_media_capability_and_projection_survive_frontend_handoff` in
+  `tests/local_protocol.rs` covers admission, PDF metadata/navigation/page
+  buffers, stale media back requests, projection retention, the terminal
+  placeholder, terminal navigation, and external-program prompting.
+- `integrated_parent_wait_survives_explicit_frontend_handoff` in
+  `tests/local_protocol.rs` covers colon detach and the window-close request,
+  both attachment directions, unsaved prompt text, and successful completion
+  back into the original live terminal. Existing save-route tests share its
+  fixture.
+- `media_protocol_bounds_and_page_changes_require_complete_frames` in
+  `tests/local_protocol.rs` checks lossless frame conversion, page-count and
+  navigation bounds, and full-frame publication when media pages change.
+- `attachment_handoff_keeps_window_resize_but_drops_old_document_input` and
+  `media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments` in
+  `src/native_frontend/tests/input.rs` cover the asynchronous bridge races.
+- `tests/native_window.py --mux` exercises a real window's editing, media
+  controls and selection, session switching, quit fallback, close-button
+  detach, terminal-client handoff, retained unsaved text, and live terminal
+  children. The same harness without `--mux` checks standalone close refusal.
+
+Linux validation passed formatting, default and native all-target Clippy, all
+4,641 ordinary tests (54 ignored), 29 native adapter tests (one optional Poppler
+test ignored), and both isolated X11 acceptance modes. Canonical default-feature
+coverage measured 92.04% lines, above the unchanged 89% floor. Astra High found
+the two asynchronous bridge races above; its follow-up review was clean.
+
+Known limitation: The native window remains unavailable on Windows. This change
+was validated on Linux; native macOS runtime validation remains outstanding.
+
+## Report
+
+### Observed behavior
 
 The experimental native window (`--window`, built with `--features native`)
 runs only in standalone ide and editor modes. `src/main.rs` refuses any other
@@ -23,7 +102,7 @@ Two consequences follow:
   window is refused, because standalone instances reject parent-context
   `runyte --wait` requests from their own terminals.
 
-## Expected behavior
+### Expected behavior
 
 Persistent sessions are shared between the terminal client and the native
 window. Either frontend can create a session, attach to it, detach from it,
@@ -45,7 +124,7 @@ Single-client attachment stays as it is: the host refuses a second interactive
 attachment, so the frontends take turns rather than viewing a session at the
 same time.
 
-### Quitting and detaching in the window
+#### Quitting and detaching in the window
 
 - `:detach` closes the window without stopping the session, as it disconnects
   a terminal client.
@@ -59,7 +138,7 @@ same time.
   live, which would make the close button usually report an error. In
   standalone `--window` the close button keeps requesting `:qa`.
 
-### Media panes
+#### Media panes
 
 - In the window, image and PDF panes in a persistent session render and behave
   as they do in standalone `--window`: zoom, pan, selection, PDF page
@@ -79,7 +158,7 @@ same time.
 - Media panes created while the window was attached survive a switch to a
   terminal client and render normally again when the window reattaches.
 
-### `Ctrl-g` and pending external edits
+#### `Ctrl-g` and pending external edits
 
 In a persistent session the window supports the existing parent-context flow:
 `Ctrl-g` in Claude Code or Codex in an integrated terminal opens the prompt as
@@ -104,7 +183,7 @@ parent-context waits pending as well. That includes detach requested by the
 window's close button. Waits owned by control clients (`runyte --wait` from an
 outside shell) keep their current cancellation on disconnect.
 
-## Constraints
+### Constraints
 
 - The attached terminal client already renders only from host frames
   (`run_attached` with `ui::render_host_frame`), and the window already renders
@@ -137,7 +216,7 @@ outside shell) keep their current cancellation on disconnect.
   native-feature build is the `runyte` on `PATH` when both frontends are used.
 - Windows remains out of scope for the native window.
 
-## Reproduction
+### Reproduction
 
 ```sh
 cargo build --features native

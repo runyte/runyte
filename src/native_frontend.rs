@@ -3,6 +3,7 @@
 //! GPUI owns the main thread; the existing host loop owns all editor state.
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
+mod cells;
 mod icon;
 mod interactions;
 mod media;
@@ -15,14 +16,14 @@ use ratatui::{
     Terminal,
     backend::{CrosstermBackend, TestBackend},
     buffer::Buffer,
-    style::{Color, Modifier},
+    style::Color,
 };
 use std::{
     io,
     path::PathBuf,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use tokio::sync::mpsc;
@@ -39,6 +40,7 @@ struct MediaPane {
 }
 #[derive(Clone)]
 struct FrameData {
+    attachment: u64,
     id: Option<runyte::workspace::FrameId>,
     cells: Buffer,
     media: Vec<MediaPane>,
@@ -76,11 +78,44 @@ impl MediaInputMask {
     }
 }
 pub struct NativeInput {
+    attachment: u64,
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
 }
+struct PendingMediaRequest {
+    attachment: u64,
+    frame: runyte::workspace::FrameId,
+    request: runyte::media::ViewRequest,
+}
+
+/// Semantic replies can overtake coalesced visuals. Keep each action until
+/// its target frame (or a newer complete replacement) is available to GPUI.
+fn ready_media_requests(
+    pending: &mut std::collections::VecDeque<PendingMediaRequest>,
+    frame: Option<&FrameData>,
+    attachment: u64,
+) -> Vec<runyte::media::ViewRequest> {
+    let mut ready = Vec::new();
+    for _ in 0..pending.len() {
+        let request = pending.pop_front().unwrap();
+        if request.attachment != attachment {
+            continue;
+        }
+        if frame.is_some_and(|frame| {
+            frame.attachment == attachment && frame.id.is_some_and(|id| id >= request.frame)
+        }) {
+            ready.push(request.request);
+        } else {
+            pending.push_back(request);
+        }
+    }
+    ready
+}
+
 struct Bridge {
+    attachment: Arc<AtomicU64>,
+    painted_attachment: AtomicU64,
     prepared: Mutex<Option<runyte::workspace::FrameId>>,
     presented: Mutex<Option<runyte::workspace::FrameId>>,
     frame: Mutex<Option<FrameData>>,
@@ -90,9 +125,9 @@ struct Bridge {
     media_input: AtomicBool,
     metadata_paths: Mutex<Vec<PathBuf>>,
     blocked_media: Mutex<MediaInputMask>,
-    media_requests: Mutex<std::collections::VecDeque<runyte::media::ViewRequest>>,
-    media_pointer: Mutex<Vec<(usize, PathBuf, i32)>>,
-    media_back: Mutex<Vec<(usize, PathBuf, usize)>>,
+    media_requests: Mutex<std::collections::VecDeque<PendingMediaRequest>>,
+    media_pointer: Mutex<Vec<(u64, usize, PathBuf, i32)>>,
+    media_back: Mutex<Vec<(u64, usize, PathBuf, usize)>>,
     dimensions: Mutex<(u16, u16)>,
     input: mpsc::Sender<NativeInput>,
     receiver: Mutex<Option<mpsc::Receiver<NativeInput>>>,
@@ -105,6 +140,7 @@ struct Bridge {
 impl Bridge {
     fn send(&self, event: Event) {
         let input = NativeInput {
+            attachment: self.painted_attachment.load(Ordering::Acquire),
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
@@ -124,10 +160,16 @@ pub fn take_close_request() -> bool {
 
 pub fn update_media(app: &mut runyte::app::App) {
     let Some(bridge) = BRIDGE.get() else { return };
-    for (pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
+    for (attachment, pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
+        if attachment != bridge.attachment.load(Ordering::Acquire) {
+            continue;
+        }
         app.leave_native_media(pane, &path, page);
     }
-    for (pane, path, delta) in bridge.media_pointer.lock().unwrap().drain(..) {
+    for (attachment, pane, path, delta) in bridge.media_pointer.lock().unwrap().drain(..) {
+        if attachment != bridge.attachment.load(Ordering::Acquire) {
+            continue;
+        }
         app.navigate_native_media(pane, &path, delta);
     }
     let counts = bridge.pages.lock().unwrap().clone();
@@ -151,7 +193,11 @@ pub fn capture_media(
         let mut requests = bridge.media_requests.lock().unwrap();
         for request in app.media_requests.drain(..) {
             if requests.len() < 256 {
-                requests.push_back(request);
+                requests.push_back(PendingMediaRequest {
+                    attachment: bridge.attachment.load(Ordering::Acquire),
+                    frame: snapshot.id,
+                    request,
+                });
             }
         }
     }
@@ -165,43 +211,136 @@ pub fn capture_media(
     *bridge.overlays.lock().unwrap() =
         runyte::ui::overlay_rectangles(&snapshot.editor, &snapshot.overlays);
     let counts = bridge.pages.lock().unwrap().clone();
-    *bridge.metadata_paths.lock().unwrap() = app
+    capture_snapshot_media(snapshot, &counts);
+}
+
+fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
+    let Some(bridge) = BRIDGE.get() else { return };
+    *bridge.overlays.lock().unwrap() =
+        runyte::ui::overlay_rectangles(&snapshot.editor, &snapshot.overlays);
+    *bridge.metadata_paths.lock().unwrap() = snapshot
+        .editor
         .panes
-        .values()
-        .filter_map(|pane| {
-            if !pane.shows_pdf_pages() {
-                return None;
-            }
-            let path = app.buffers[pane.buffer].media_path.as_ref()?;
-            let metadata = path.metadata().ok();
+        .iter()
+        .filter_map(|pane| pane.media.as_ref())
+        .filter(|media| media.page_buffer)
+        .filter_map(|media| {
+            let metadata = media.path.metadata().ok();
             let modified = metadata.as_ref().and_then(|m| m.modified().ok());
             let length = metadata.map_or(0, |m| m.len());
             (!counts
                 .iter()
-                .any(|count| count.0 == *path && count.1 == modified && count.2 == length))
-            .then(|| path.clone())
+                .any(|count| count.0 == media.path && count.1 == modified && count.2 == length))
+            .then(|| media.path.clone())
         })
         .collect();
-    let media = snapshot
+    *bridge.media.lock().unwrap() = snapshot
         .editor
         .panes
         .iter()
-        .filter_map(|view| {
-            let pane = app.panes.get(&view.pane_id)?;
-            if !view.drawable || pane.terminal.is_some() || pane.shows_pdf_pages() {
-                return None;
-            }
-            let buffer = &app.buffers[pane.buffer];
-            Some(MediaPane {
-                pane: view.pane_id,
-                path: buffer.media_path.clone()?,
-                page: buffer.position_of(pane.selection.primary().head).row + 1,
-                body: view.body,
+        .filter_map(|pane| {
+            let media = pane.media.as_ref()?;
+            (pane.drawable && !media.page_buffer).then(|| MediaPane {
+                pane: pane.pane_id,
+                path: media.path.clone(),
+                page: media.page,
+                body: pane.body,
             })
         })
         .collect();
-    *bridge.media.lock().unwrap() = media;
     *bridge.prepared.lock().unwrap() = Some(snapshot.id);
+}
+
+/// Send navigation and fresh cached page counts for the displayed projections.
+pub fn attached_media_requests(
+    snapshot: &runyte::workspace::HostFrame,
+) -> Vec<runyte::protocol::ClientRequest> {
+    use runyte::protocol::{ClientRequest, encode_path};
+    let Some(bridge) = BRIDGE.get() else {
+        return Vec::new();
+    };
+    let mut requests = Vec::new();
+    for (attachment, pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
+        if attachment != bridge.attachment.load(Ordering::Acquire) {
+            continue;
+        }
+        requests.push(ClientRequest::MediaBack {
+            pane,
+            path: encode_path(&path),
+            page,
+        });
+    }
+    for (attachment, pane, path, delta) in bridge.media_pointer.lock().unwrap().drain(..) {
+        if attachment != bridge.attachment.load(Ordering::Acquire) {
+            continue;
+        }
+        requests.push(ClientRequest::MediaNavigate {
+            pane,
+            path: encode_path(&path),
+            delta,
+        });
+    }
+    let counts = bridge.pages.lock().unwrap().clone();
+    for count in &counts {
+        let (path, modified, length, pages) = count;
+        let metadata = path.metadata().ok();
+        if snapshot
+            .editor
+            .panes
+            .iter()
+            .filter_map(|pane| pane.media.as_ref())
+            .any(|media| media.path == *path && media.pages != *pages)
+            && metadata.as_ref().and_then(|m| m.modified().ok()) == *modified
+            && metadata.as_ref().map_or(0, |m| m.len()) == *length
+        {
+            requests.push(ClientRequest::MediaPages {
+                path: encode_path(path),
+                pages: *pages,
+            });
+        }
+    }
+    requests
+}
+
+pub fn begin_attachment() {
+    let Some(bridge) = BRIDGE.get() else { return };
+    bridge.attachment.fetch_add(1, Ordering::AcqRel);
+    bridge.media_requests.lock().unwrap().clear();
+    bridge.media_pointer.lock().unwrap().clear();
+    bridge.media_back.lock().unwrap().clear();
+    bridge.media.lock().unwrap().clear();
+    bridge.painted_media.lock().unwrap().clear();
+    *bridge.presented.lock().unwrap() = None;
+}
+
+pub fn receive_media_action(
+    frame: runyte::workspace::FrameId,
+    request: runyte::media::ViewRequest,
+) {
+    let Some(bridge) = BRIDGE.get() else { return };
+    let mut requests = bridge.media_requests.lock().unwrap();
+    if requests.len() < 256 {
+        requests.push_back(PendingMediaRequest {
+            attachment: bridge.attachment.load(Ordering::Acquire),
+            frame,
+            request,
+        });
+    }
+    let _ = bridge.wake.try_send(());
+}
+
+pub fn dimensions() -> (u16, u16) {
+    *BRIDGE.get().unwrap().dimensions.lock().unwrap()
+}
+
+pub fn capture_attached(snapshot: &runyte::workspace::HostFrame) {
+    let Some(bridge) = BRIDGE.get() else { return };
+    bridge.media_input.store(
+        snapshot.editor.mode != runyte::app::Mode::Command && snapshot.overlays.is_empty(),
+        Ordering::Release,
+    );
+    let counts = bridge.pages.lock().unwrap().clone();
+    capture_snapshot_media(snapshot, &counts);
 }
 
 pub fn render_frame(
@@ -232,6 +371,16 @@ impl Surface {
             Terminal::new(backend).map(Self::Tui)
         }
     }
+    pub fn resize(&mut self, area: ratatui::layout::Rect) -> io::Result<()> {
+        match self {
+            Self::Tui(terminal) => terminal.resize(area),
+            Self::Native(terminal) => {
+                terminal.backend_mut().resize(area.width, area.height);
+                terminal.resize(area).unwrap();
+                Ok(())
+            }
+        }
+    }
     pub fn draw(&mut self, draw: impl FnOnce(&mut ratatui::Frame<'_>)) -> io::Result<()> {
         match self {
             Self::Tui(terminal) => {
@@ -243,6 +392,7 @@ impl Surface {
                 terminal.backend_mut().resize(width, height);
                 terminal.draw(draw).unwrap();
                 *bridge.frame.lock().unwrap() = Some(FrameData {
+                    attachment: bridge.attachment.load(Ordering::Acquire),
                     id: *bridge.prepared.lock().unwrap(),
                     cells: terminal.backend().buffer().clone(),
                     media: bridge.media.lock().unwrap().clone(),
@@ -264,6 +414,7 @@ impl Surface {
 pub enum Events {
     Tui(EventStream),
     Native {
+        attachment: Arc<AtomicU64>,
         events: mpsc::Receiver<NativeInput>,
         presented: Option<runyte::workspace::FrameId>,
         presentation_only: bool,
@@ -273,6 +424,7 @@ impl Events {
     pub fn new(native: bool) -> Self {
         if native {
             Self::Native {
+                attachment: BRIDGE.get().unwrap().attachment.clone(),
                 events: BRIDGE
                     .get()
                     .unwrap()
@@ -292,12 +444,22 @@ impl Events {
         match self {
             Self::Tui(events) => events.next().await,
             Self::Native {
+                attachment,
                 events,
                 presented,
                 presentation_only,
             } => {
                 *presentation_only = false;
-                let input = events.recv().await?;
+                let input = loop {
+                    let input = events.recv().await?;
+                    // Geometry and close wakeups describe the window, not a
+                    // document in the previously painted persistent session.
+                    if matches!(input.event, Event::Resize(..))
+                        || input.attachment == attachment.load(Ordering::Acquire)
+                    {
+                        break input;
+                    }
+                };
                 *presented = input.presented;
                 *presentation_only = input.presentation_only;
                 Some(Ok(input.event))
@@ -346,6 +508,8 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
     let (input, receiver) = mpsc::channel(4096);
     let (wake, wakes) = async_channel::bounded(1);
     let bridge = Arc::new(Bridge {
+        attachment: Arc::new(AtomicU64::new(0)),
+        painted_attachment: AtomicU64::new(0),
         prepared: Mutex::new(None),
         presented: Mutex::new(None),
         frame: Mutex::new(None),
@@ -432,7 +596,8 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
 struct NativeView {
     bridge: Arc<Bridge>,
     focus: FocusHandle,
-    frame: Option<FrameData>,
+    frame: Option<std::rc::Rc<FrameData>>,
+    glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     composition: String,
     image_clipboard: Option<arboard::Clipboard>,
@@ -442,7 +607,7 @@ impl NativeView {
     fn new(bridge: Arc<Bridge>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window);
-        let frame = bridge.frame.lock().unwrap().take();
+        let frame = bridge.frame.lock().unwrap().take().map(std::rc::Rc::new);
         let (width, height) = *bridge.dimensions.lock().unwrap();
         bridge.send(Event::Resize(width, height));
         let wakes = bridge.wakes.clone();
@@ -465,7 +630,7 @@ impl NativeView {
                                         .any(|pane| pane.pane == *id && pane.path == *path)
                                 });
                             }
-                            view.frame = Some(frame);
+                            view.frame = Some(std::rc::Rc::new(frame));
                         }
                         let loaded = view.media.poll(&view.bridge);
                         view.apply_media_requests(cx);
@@ -485,6 +650,7 @@ impl NativeView {
             bridge,
             focus,
             frame,
+            glyphs: Default::default(),
             composition: String::new(),
             image_clipboard: None,
             viewports: Default::default(),
@@ -507,6 +673,7 @@ impl Render for NativeView {
             self.send(Event::Resize(dimensions.0, dimensions.1));
         }
         let frame = self.frame.clone();
+        let glyphs = self.glyphs.clone();
         let mut root = div()
             .font_family("JetBrainsMono Nerd Font")
             .font_weight(FontWeight::MEDIUM)
@@ -710,7 +877,19 @@ impl Render for NativeView {
                         cx,
                     );
                     if let Some(frame) = &frame {
-                        paint_cells(frame, bounds.origin, window, cx);
+                        cells::paint_cells(
+                            frame,
+                            bounds.origin,
+                            &mut glyphs.borrow_mut(),
+                            window,
+                            cx,
+                        );
+                        if frame.attachment != bridge.attachment.load(Ordering::Acquire) {
+                            return;
+                        }
+                        let previous_attachment = bridge
+                            .painted_attachment
+                            .swap(frame.attachment, Ordering::AcqRel);
                         *bridge.blocked_media.lock().unwrap() = MediaInputMask {
                             blocked: if frame.media_input {
                                 Vec::new()
@@ -725,8 +904,9 @@ impl Render for NativeView {
                         };
                         let previous =
                             std::mem::replace(&mut *bridge.presented.lock().unwrap(), frame.id);
-                        if previous != frame.id {
+                        if previous != frame.id || previous_attachment != frame.attachment {
                             let _ = bridge.input.try_send(NativeInput {
+                                attachment: frame.attachment,
                                 // The envelope is consumed before event conversion.
                                 event: Event::FocusGained,
                                 presented: frame.id,
@@ -854,98 +1034,6 @@ fn color(color: Color, default: u32) -> Hsla {
     };
     rgb(value).into()
 }
-fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
-    for y in 0..frame.cells.area.height {
-        for x in 0..frame.cells.area.width {
-            if frame.under_media(x, y) {
-                continue;
-            }
-            let cell = &frame.cells[(x, y)];
-            let bg = if cell.modifier.contains(Modifier::REVERSED) {
-                color(cell.fg, 0xdddddd)
-            } else {
-                color(cell.bg, 0x181818)
-            };
-            let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
-            window.paint_quad(fill(
-                Bounds::new(position, size(px(CELL_WIDTH), px(CELL_HEIGHT))),
-                bg,
-            ));
-        }
-    }
-    for y in 0..frame.cells.area.height {
-        let mut x = 0;
-        while x < frame.cells.area.width {
-            if frame.under_media(x, y) {
-                x += 1;
-                continue;
-            }
-            let cell = &frame.cells[(x, y)];
-            let width = unicode_width::UnicodeWidthStr::width(cell.symbol()).max(1) as u16;
-            let mut fg = color(cell.fg, 0xdddddd);
-            let mut bg = color(cell.bg, 0x181818);
-            if cell.modifier.contains(Modifier::REVERSED) {
-                std::mem::swap(&mut fg, &mut bg);
-            }
-            if cell.modifier.contains(Modifier::DIM) {
-                fg.l *= 0.65;
-            }
-            let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
-            if cell.symbol() != " " && !cell.modifier.contains(Modifier::HIDDEN) {
-                let mut font = font("JetBrainsMono Nerd Font");
-                font.weight = FontWeight::MEDIUM;
-                if cell.modifier.contains(Modifier::BOLD) {
-                    font.weight = FontWeight::BOLD;
-                }
-                if cell.modifier.contains(Modifier::ITALIC) {
-                    font.style = FontStyle::Italic;
-                }
-                let run = TextRun {
-                    len: cell.symbol().len(),
-                    font,
-                    color: fg,
-                    background_color: None,
-                    underline: cell.modifier.contains(Modifier::UNDERLINED).then_some(
-                        UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(fg),
-                            wavy: false,
-                        },
-                    ),
-                    strikethrough: cell.modifier.contains(Modifier::CROSSED_OUT).then_some(
-                        StrikethroughStyle {
-                            thickness: px(1.),
-                            color: Some(fg),
-                        },
-                    ),
-                };
-                let line = window.text_system().shape_line(
-                    cell.symbol().to_owned().into(),
-                    px(15.),
-                    &[run],
-                    None,
-                );
-                let _ = line.paint(position, px(CELL_HEIGHT), window, cx);
-            }
-            x += width;
-        }
-    }
-    if let Some(cursor) = frame
-        .cursor
-        .filter(|cursor| !frame.under_media(cursor.x, cursor.y))
-    {
-        let position = origin
-            + point(
-                px(cursor.x as f32 * CELL_WIDTH),
-                px(cursor.y as f32 * CELL_HEIGHT),
-            );
-        window.paint_quad(fill(
-            Bounds::new(position, size(px(2.), px(CELL_HEIGHT))),
-            rgb(0xffffff),
-        ));
-    }
-}
-
 // Composition is kept locally until committed, so it cannot execute modal
 // commands or leave partial edits in the host's transaction history.
 impl EntityInputHandler for NativeView {

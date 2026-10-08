@@ -134,6 +134,7 @@ fn hello() -> ClientRequest {
         client_version: crate::protocol::CLIENT_VERSION.into(),
         role: ClientRole::Interactive,
         geometry: FrameGeometry::default().into(),
+        native_media: false,
         directory_handoff: true,
     }
 }

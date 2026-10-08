@@ -3320,6 +3320,14 @@ impl App {
             C::MediaSelectAll => A::SelectAll,
             _ => return false,
         };
+        if !self.native_media {
+            if action == A::Back
+                && let Err(error) = self.open_active_directory_explorer()
+            {
+                self.action_failed(error.to_string());
+            }
+            return true;
+        }
         if self.media_requests.len() < 256 {
             self.media_requests.push_back(ViewRequest {
                 pane: self.active_pane,

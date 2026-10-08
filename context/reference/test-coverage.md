@@ -1544,3 +1544,14 @@ The 89% floor is unchanged. The default-feature suite includes the media command
 and asynchronous presentation-boundary regressions. Optional GPUI rendering is
 validated separately by native adapter tests and the real-window acceptance
 harness; this number does not claim instrumented GUI coverage.
+
+## 2026-10-08 — native-window persistent sessions
+
+Linux `x86_64-unknown-linux-gnu`, Rust 1.97.1, cargo-llvm-cov 0.9.1:
+`cargo llvm-cov --locked --workspace --summary-only` with four concurrent test
+threads reports 92.04% total line coverage (148,717 covered of 161,582).
+The 89% floor is unchanged. Default-feature host tests exercise media capability
+handoff, retained projections, and parent-context waits across detach. Optional
+native adapter tests and isolated X11 window acceptance separately cover media
+presentation, attachment generations, session switching, and close behavior.
+This measurement does not claim native GUI or macOS coverage.

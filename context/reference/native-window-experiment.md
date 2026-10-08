@@ -207,3 +207,88 @@ guarantee for arbitrary documents. Scheduler tests cover bounded neighboring
 prefetch, demand priority and cancellation, promotion of an in-flight neighbor,
 LRU eviction, and source invalidation. macOS interaction acceptance remains
 unverified locally.
+
+## Cell painter and latency measurements — 2026-10-08
+
+The native view shares its latest immutable frame with the canvas through `Rc`.
+The cell painter retains up to 1,024 symbol layouts per font face (four faces),
+with a 256-byte per-symbol cache limit and FIFO eviction. Each symbol is shaped
+independently, preserving the existing absence of cross-cell ligatures and
+placing fallback glyphs at their cell origin. Foreground colours and decorations
+are applied at paint time, so theme changes do not invalidate glyph layouts.
+Glyphs use GPUI's public monochrome/emoji paint paths directly; decorations are
+submitted first to preserve the previous text layer's ordering over colour emoji.
+Ordinary rows share one logical text layer; the cursor row and rows with oversized
+or zero-width font advances keep per-cell layers to preserve ordering at overlaps. Backgrounds
+merge into horizontal colour runs, including root-coloured cells to preserve
+the same ordering floor on adjacent rows. Rows intersecting media retain the
+original per-cell backgrounds and layers because media has its own scene depth.
+Presentation acknowledgements and
+painted-frame admission retain their existing semantics.
+
+The earlier issue attributed batching failure categorically to per-cell layers.
+GPUI can batch disjoint layers with the same draw order. This change removes
+repeated layout/cache locking, per-cell allocations and layer bookkeeping;
+measurements below concern their combined CPU cost.
+
+Set `RUNYTE_NATIVE_PAINT_TIMING=1` to log `native-paint COLSxROWS Nus` to stderr.
+This opt-in trace measures cell-painter CPU scene construction, excluding GPU
+submission, display refresh and input-to-presentation latency. It records no
+buffer or keystroke contents and adds no timer or wakeup. With tracing disabled,
+the painter does not read the clock.
+
+The isolated X11 harness has two focused modes in addition to full acceptance:
+
+```sh
+# Dedicated X11 display only; use the same release profile and fonts for both binaries.
+RUNYTE_NATIVE_PAINT_TIMING=1 DISPLAY=:94 python3 tests/native_window.py \
+  --binary /tmp/runyte-before --paint-benchmark --output /tmp/paint-before
+RUNYTE_NATIVE_PAINT_TIMING=1 DISPLAY=:94 python3 tests/native_window.py \
+  --binary target/release/runyte --paint-benchmark --output /tmp/paint-after
+DISPLAY=:94 python3 tests/native_window.py --binary /tmp/runyte-before \
+  --paint-styles --output /tmp/styles-before
+DISPLAY=:94 python3 tests/native_window.py --binary target/release/runyte \
+  --paint-styles --output /tmp/styles-after --paint-reference /tmp/styles-before
+```
+
+The benchmark fills a 120×40 window with repeated text, warms the painter, types
+104 letters with 25 ms between keys, retains every paint sample in that interval,
+and verifies the saved text. Samples are frames, not individual keystrokes:
+coalescing and background redraws can change their count. The style comparison
+checks fixed terminal rows pixel-for-pixel, including font weights/styles,
+reverse/dim/hidden text, decorations, colour emoji, combining symbols, Nerd Font
+icons and wide-cell advancement. Actual CJK glyph appearance remains unverified
+on a machine without a CJK fallback font; missing-glyph boxes still test advance.
+
+### Measured acceptance
+
+Three alternating before/after release runs on Linux 7.2.8, AMD Ryzen AI 9 365,
+Xvfb and Mesa lavapipe, at 1080×800 logical pixels (120×40 cells). Builds and
+tests finished before measurement; ordinary desktop applications remained
+running. The baseline is `62fe897` with only the
+[timing observation patch](../../benchmarks/native-paint-before.patch) applied.
+The same harness and fonts were used for both binaries. Every run verified that
+all typed letters reached the saved document; no successful paint samples were
+removed. The [individual samples and binary hashes](../../benchmarks/results/native-paint-2026-10-08.json)
+retain the measurement provenance.
+
+| Round | Before median (min–max), ms | After median (min–max), ms |
+| --- | ---: | ---: |
+| 1 | 13.560 (12.830–19.241) | 0.989 (0.385–1.446) |
+| 2 | 13.494 (12.901–20.664) | 0.933 (0.388–1.542) |
+| 3 | 13.765 (12.895–29.118) | 0.797 (0.391–1.440) |
+
+The median of the three run medians fell from 13.560 ms to 0.933 ms, about
+14.5 times less CPU paint time for this fixture. This establishes a reduction
+in the diagnosed painting bottleneck; it does not establish a platform-wide
+input-to-display latency guarantee or a comparison with a terminal emulator.
+
+Formatting, default/native all-target Clippy, the full default test suite,
+31 native adapter tests and the explicitly invoked Poppler test passed. Canonical
+`cargo llvm-cov --locked --workspace` reported 92.05% line coverage
+(148,738 of 161,582), above the unchanged 89% floor. The final release build
+passed full isolated X11 acceptance with system fonts disabled and exact
+styled-cell pixel comparison against the baseline with system fallback fonts.
+The latter includes 20 styled rows, alternating root/nondefault backgrounds,
+emoji and non-emoji runs, plus a cursor in a blank cell beside an italic icon.
+Actual CJK glyphs and macOS interaction/latency remain unverified locally.

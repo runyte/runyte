@@ -331,6 +331,7 @@ Then build and open a window:
 
 ```sh
 cargo run --features native -- --window
+cargo run --features native -- --window --mux
 cargo run --features native -- --window --editor /path/to/file
 ```
 
@@ -358,9 +359,16 @@ directly, with the file selected.
 middle-drag pans. Select PDF text with left-drag or image regions with
 Shift-drag, then `y` copies the selection.
 
-The experiment targets Linux and macOS; Windows and persistent-session window
-attachments are not implemented. macOS installation prerequisites are documented
-above, but the native frontend still needs hands-on macOS validation.
+Use `--window --mux` to create or attach to a persistent session. The window and
+terminal frontend share the same sessions and take turns attaching. `:detach`
+and the window close button leave the session running; session switching and
+quit fallback work as in the terminal frontend. Keep the native-feature build
+as `runyte` on `PATH` so both frontends and integrated `runyte --wait` use the
+same private protocol version.
+
+The experiment targets Linux and macOS; Windows is not implemented. macOS
+installation prerequisites are documented above, but the native frontend still
+needs hands-on macOS validation.
 
 See [native-window details and limits](docs/user-guide.md#experimental-native-window).
 The normal terminal executable remains available without `--window`.

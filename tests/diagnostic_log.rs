@@ -781,6 +781,7 @@ async fn a_malformed_frame_is_recorded_in_host_log_at_the_default_level() {
     let mut stream = UnixStream::connect(endpoint.socket()).await.unwrap();
     let hello = ClientRequest::Hello {
         protocol: PROTOCOL_VERSION,
+        native_media: false,
         directory_handoff: false,
         features: vec![
             FeatureGroup::Control,

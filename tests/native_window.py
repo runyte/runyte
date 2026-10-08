@@ -6,6 +6,8 @@ Use --output to retain window-only PNG captures; all editor state is temporary.
 """
 import argparse
 import ctypes as C
+import json
+import statistics
 import os
 import pathlib
 import struct
@@ -17,7 +19,11 @@ import zlib
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
+parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting at 120x40; requires RUNYTE_NATIVE_PAINT_TIMING=1")
+parser.add_argument("--paint-styles", action="store_true", help="capture styled terminal cells, including wide glyphs and decorated emoji")
+parser.add_argument("--paint-reference", type=pathlib.Path, help="compare styled-cell pixels against an earlier --paint-styles output directory")
 args = parser.parse_args()
 binary = args.binary.resolve()
 fixture = tempfile.TemporaryDirectory(prefix="runyte-native-window-")
@@ -28,6 +34,19 @@ root.mkdir()
 (storage / "runtime").mkdir(mode=0o700)
 (storage / "config/config.yaml").write_text("mode: ide\nlsp:\n  enable: false\n")
 (root / "notes.txt").write_text("Runyte native window\nExisting keys, panes, and terminal sessions.\n")
+if args.paint_benchmark:
+    (root / "notes.txt").write_text(("Grid paint abcdefghijklmnopqrstuvwxyz 0123456789 == != -> " * 3 + "\n") * 100)
+if args.paint_styles:
+    sample = "Grid == != -> ffi  abc XYZ  \ue0b0 \uf120  界界  e\u0301  😀🌍"
+    styles = [("medium", "0"), ("bold", "1"), ("italic", "3"), ("bold italic", "1;3"),
+              ("dim", "2"), ("reverse", "7"), ("hidden", "8"),
+              ("underline", "4"), ("crossed out", "9"), ("both", "4;9")]
+    (root/'styles.ansi').write_text("\x1b[2J\x1b[H" + "".join(
+        "\x1b[0m" + label.ljust(14) + "\x1b[38;2;255;80;90m\x1b[" + style + "m"
+        + ("\x1b[48;2;24;24;24m" if index % 2 else "\x1b[48;2;11;33;44m")
+        + content + "\x1b[0m\r\n"
+        for content in [sample, sample.removesuffix("  😀🌍")]
+        for index, (label, style) in enumerate(styles)) + "\x1b[14;44H")
 subprocess.run(["git", "init", "-q", str(root)], check=True)
 
 def chunk(kind, data):
@@ -98,13 +117,18 @@ def name(w):
     if n:x.XFree(n)
     return s
 existing=set(children(x.XDefaultRootWindow(d)))
-env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh'
+env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
+if args.paint_styles:
+    # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.
+    env['PS1'] = ''
 if args.no_system_fonts:
     fontconfig = storage / 'fonts.conf'
     fontconfig.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><reset-dirs/><cachedir>' + str(storage / 'font-cache') + '</cachedir></fontconfig>')
     env['FONTCONFIG_FILE'] = str(fontconfig)
 log=open(root/'window.log','w')
-p=subprocess.Popen([str(binary),'--window','--ide','--config',str(storage/'config/config.yaml'),str(root/'notes.txt')],cwd=root,env=env,stdout=log,stderr=log)
+launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
+if not args.mux:launch.append(str(root/'notes.txt'))
+p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
 try:
     win=None
     for _ in range(100):
@@ -228,6 +252,49 @@ try:
             break
         time.sleep(.25)
     assert len(set(initial)) > 8, "first editor frame remained blank"
+    if args.paint_styles:
+        assert args.output and not args.mux, "style capture requires --output and standalone mode"
+        command('terminal'); time.sleep(.5); text('cat styles.ansi'); key('Return'); time.sleep(.5)
+        attr=Attr();x.XGetWindowAttributes(d,win,C.byref(attr))
+        deadline = time.monotonic() + 15
+        while True:
+            pixels, _ = screenshot('styled-cells')
+            last_row = b''.join(pixels[(y*attr.width+135)*3:(y*attr.width+550)*3] for y in range(400, 420))
+            if sum(last_row[i:i+3] == b'\xff\x50\x5a' for i in range(0, len(last_row), 3)) > 100:
+                break
+            assert time.monotonic() < deadline, 'styled terminal output was not painted'
+            time.sleep(.1)
+        # Only fixed terminal rows: exclude dynamic titles, prompt and status text.
+        crop = b''.join(pixels[(y*attr.width+9)*3:(y*attr.width+1000)*3] for y in range(20, 420))
+        (args.output/'styled-cells.rgb').write_bytes(crop)
+        if args.paint_reference:
+            assert crop == (args.paint_reference/'styled-cells.rgb').read_bytes(), 'styled-cell pixels changed'
+        text('exit'); key('Return'); time.sleep(.5); key('backslash',ctrl=True)
+        close_window(); p.wait(timeout=15); assert p.returncode == 0
+        print('PASS: styled-cell capture' + (' matches reference' if args.paint_reference else ''))
+        raise SystemExit(0)
+    if args.paint_benchmark:
+        assert not args.mux, "benchmark uses a standalone window"
+        x.XResizeWindow(d, win, 1080, 800); x.XFlush(d); time.sleep(.5)
+        key('i'); text('warmup'); time.sleep(.5)
+        offset = (root/'window.log').stat().st_size
+        text('abcdefghijklmnopqrstuvwxyz' * 4); time.sleep(.5)
+        samples = []
+        for line in (root/'window.log').read_bytes()[offset:].decode().splitlines():
+            if line.startswith('native-paint 120x40 '):
+                samples.append(int(line.split()[-1].removesuffix('us')))
+        assert samples, "enable RUNYTE_NATIVE_PAINT_TIMING=1"
+        result = {"columns": 120, "rows": 40, "samples_us": samples,
+                  "median_us": statistics.median(samples), "min_us": min(samples), "max_us": max(samples)}
+        print(json.dumps(result), flush=True)
+        if args.output:
+            (args.output/'paint-timings.json').write_text(json.dumps(result, indent=2) + '\n')
+        screenshot('benchmark-grid')
+        key('Escape'); command('write')
+        assert (root/'notes.txt').read_text().startswith('warmup' + 'abcdefghijklmnopqrstuvwxyz' * 4), "benchmark dropped typing"
+        close_window(); p.wait(timeout=15); assert p.returncode == 0
+        raise SystemExit(0)
+    if args.mux:command('open notes.txt')
     key('i');text('Native edit ');key('Escape');command('write')
     assert (root/'notes.txt').read_text().startswith('Native edit '),'typing or save failed'
     command('open gradient.png');time.sleep(2);image_pixels,_=screenshot('02-image');assert len(set(image_pixels)) > 100
@@ -271,17 +338,65 @@ try:
     assert (root/'terminal-result.txt').read_text() == 'native-terminal-ok', 'terminal input did not reach shell'
     text('cat terminal-result.txt'); key('Return'); time.sleep(.5)
     screenshot('07-terminal')
-    text('exit'); key('Return'); time.sleep(.5)
-    key('backslash', ctrl=True)
-    # Closing with dirty text must refuse; subsequently saving and closing exits.
-    command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
-    close_window(); assert p.poll() is None, 'dirty close discarded changes'
-    assert not (root/'notes.txt').read_text().startswith('Unsaved ')
-    screenshot('08-dirty-refusal')
-    command('write'); close_window(); p.wait(timeout=15)
-    assert p.returncode==0,p.returncode
-    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
+    if args.mux:
+        key('backslash', ctrl=True)
+        command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
+        command('quit-all'); assert p.poll() is None, 'quit discarded protected session state'
+        destination = storage / 'other'
+        destination.mkdir()
+        subprocess.run(['git','init','-q',str(destination)],check=True,env=env)
+        command('session-attach '+str(destination))
+        key('w',ctrl=True);key('a');time.sleep(.8)  # Return to the protected source.
+        key('w',ctrl=True);key('a');time.sleep(.8)  # Back to the clean destination.
+        command('quit-all');assert p.poll() is None, 'quit did not reuse the window for the source session'
+        close_window();p.wait(timeout=15);assert p.returncode == 0
+        assert not (root/'notes.txt').read_text().startswith('Unsaved ')
+        # A real terminal client takes over without a second attachment loop.
+        import pty, select, fcntl, termios
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
+        terminal = subprocess.Popen([str(binary),'--mux','--config',str(storage/'config/config.yaml')],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
+        os.close(slave)
+        try:
+            output = bytearray();deadline=time.monotonic()+15
+            while b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' not in output and time.monotonic()<deadline:
+                if select.select([master],[],[],.1)[0]:output.extend(os.read(master,65536))
+            assert b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' in output, output[-2000:]
+            os.write(master,b':detach\r');terminal.wait(timeout=15);assert terminal.returncode==0
+        finally:
+            if terminal.poll() is None:terminal.terminate();terminal.wait(timeout=15)
+            os.close(master)
+        existing=set(children(x.XDefaultRootWindow(d)))
+        p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
+        win=None
+        for _ in range(150):
+            for w in children(x.XDefaultRootWindow(d)):
+                if w not in existing and name(w)==b'Runyte':
+                    attr=Attr();x.XGetWindowAttributes(d,w,C.byref(attr))
+                    if attr.map_state==2:win=w;break
+            if win:break
+            assert p.poll() is None,(root/'window.log').read_text()[-3000:]
+            time.sleep(.1)
+        assert win,'reattachment did not create a window'
+        x.XSetInputFocus(d,win,1,0);x.XFlush(d);time.sleep(1)
+        screenshot('08-reattached');command('write')
+        assert (root/'notes.txt').read_text().startswith('Unsaved Native edit '), 'handoff lost unsaved text or quit fallback selected the wrong session'
+        close_window();p.wait(timeout=15);assert p.returncode==0
+    else:
+        text('exit'); key('Return'); time.sleep(.5)
+        key('backslash', ctrl=True)
+        # Closing with dirty text must refuse; subsequently saving and closing exits.
+        command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
+        close_window(); assert p.poll() is None, 'dirty close discarded changes'
+        assert not (root/'notes.txt').read_text().startswith('Unsaved ')
+        screenshot('08-dirty-refusal')
+        command('write'); close_window(); p.wait(timeout=15)
+        assert p.returncode==0,p.returncode
+    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal; ' + ('persistent detach, terminal/window handoff, unsaved state, live child, switching, quit fallback' if args.mux else 'dirty close refusal, quit'))
 finally:
     if p.poll() is None:p.terminate();p.wait(timeout=15)
+    if args.mux:
+        for project in [root, storage/'other']:
+            subprocess.run([str(binary),'--session-stop','--force',str(project)],cwd=root,env=env,stdout=log,stderr=log,timeout=15)
     log.close()
     fixture.cleanup()

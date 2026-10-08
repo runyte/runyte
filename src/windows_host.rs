@@ -679,7 +679,7 @@ async fn run_loop(
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;
                 match event {
-                    ServerEvent::Connected { id, peer_process, responses, interactive, directory_handoff, geometry } => {
+                    ServerEvent::Connected { id, peer_process, responses, interactive, native_media: _, directory_handoff, geometry } => {
                         clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, directory_handoff, geometry });
                         if interactive && clients.active_id() == Some(id) {
                             host.app_mut().refresh_sessions_on_attachment();

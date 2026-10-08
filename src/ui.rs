@@ -2384,6 +2384,15 @@ fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSna
         return;
     }
 
+    if pane.media.as_ref().is_some_and(|media| !media.page_buffer) {
+        frame.render_widget(
+            Paragraph::new("MEDIA UNSUPPORTED IN THE TERMINAL MODE")
+                .style(Style::default().fg(theme.muted).bg(background)),
+            body,
+        );
+        return;
+    }
+
     let lines = pane
         .rows
         .iter()
@@ -3212,7 +3221,22 @@ fn pane_title_text(
         + UnicodeWidthStr::width(read_only_marker)
         + UnicodeWidthStr::width(maximized_marker);
     let name_width = pane_width.saturating_sub(fixed_width);
-    let name = clip_path_start(name, name_width);
+    let name = ["[pdf] ", "[image] "]
+        .into_iter()
+        .find_map(|prefix| {
+            name.strip_prefix(prefix).map(|path| {
+                let prefix_width = UnicodeWidthStr::width(prefix);
+                if name_width >= prefix_width {
+                    format!(
+                        "{prefix}{}",
+                        clip_path_start(path, name_width - prefix_width)
+                    )
+                } else {
+                    clip_path_start(name, name_width)
+                }
+            })
+        })
+        .unwrap_or_else(|| clip_path_start(name, name_width));
     format!(" {name}{dirty_marker}{stale_marker}{read_only_marker}{maximized_marker} ")
 }
 
@@ -6428,6 +6452,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            media: None,
             pane_id: 0,
             area: Rect {
                 x: 0,
@@ -6496,6 +6521,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            media: None,
             pane_id: 0,
             area: Rect {
                 x: 0,
@@ -6581,6 +6607,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            media: None,
             pane_id: 0,
             area: Rect {
                 x: 0,
@@ -6668,6 +6695,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            media: None,
             pane_id: 0,
             area: Rect {
                 x: 0,
@@ -6740,6 +6768,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            media: None,
             pane_id: 0,
             area: Rect {
                 x: 0,
