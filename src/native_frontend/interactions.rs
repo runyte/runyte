@@ -304,6 +304,11 @@ impl NativeView {
             else {
                 continue;
             };
+            if matches!(request.action, ViewAction::MoveUp | ViewAction::MoveDown)
+                && pane.page != request.page
+            {
+                continue;
+            }
             if request.action == ViewAction::Back {
                 if pane.page != request.page {
                     continue;
@@ -313,7 +318,11 @@ impl NativeView {
                     .entry((pane.pane, pane.path.clone()))
                     .or_insert_with(|| Viewport::new(pane.page));
                 view.show_page(pane.page);
-                if view.back() {
+                if view.back(
+                    pane.path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")),
+                ) {
                     let mut back = self.bridge.media_back.lock().unwrap();
                     if back.len() < 256 {
                         back.push((
@@ -344,7 +353,7 @@ impl NativeView {
             let image = [page.width, page.height];
             let view = self
                 .viewports
-                .entry((pane.pane, pane.path))
+                .entry((pane.pane, pane.path.clone()))
                 .or_insert_with(|| Viewport::new(pane.page));
             view.show_page(request.page);
             view.show_source(&page);
@@ -365,6 +374,21 @@ impl NativeView {
                 ViewAction::PanRight => view.pan([-64., 0.], image, area),
                 ViewAction::PanUp => view.pan([0., 64.], image, area),
                 ViewAction::PanDown => view.pan([0., -64.], image, area),
+                ViewAction::MoveUp | ViewAction::MoveDown => {
+                    let direction = if request.action == ViewAction::MoveDown {
+                        1
+                    } else {
+                        -1
+                    };
+                    let pdf = pane
+                        .path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+                    let delta = view.move_vertical(direction, pdf, image, area);
+                    if delta != 0 {
+                        self.focus_media(&pane, delta);
+                    }
+                }
                 ViewAction::Back => unreachable!("back does not require a rendered page"),
                 ViewAction::BeginSelection => view.begin_selection(&page),
                 ViewAction::ExtendLeft => view.extend_selection(&page, -1, 0),

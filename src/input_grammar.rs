@@ -753,6 +753,8 @@ const fn runyte_repeats_for_count(command: EditorCommand) -> bool {
             | Command::MoveRight
             | Command::MoveUp
             | Command::MoveDown
+            | Command::MediaMoveUp
+            | Command::MediaMoveDown
             | Command::MoveWordForward
             | Command::MoveWordBackward
             | Command::MoveWordEnd

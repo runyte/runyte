@@ -382,9 +382,29 @@ try:
     drag((130,155),(500,155));key('y');time.sleep(.3)
     assert clipboard(b'UTF8_STRING').decode()=='Hello Runyte','PDF selection did not copy real text'
     screenshot('03a-pdf-selection')
+    key('equal');time.sleep(.3);zoomed_pdf,_=screenshot('03b-pdf-zoom')
+    key('j');time.sleep(.3);panned_pdf,panned_color=screenshot('03c-pdf-pan')
+    assert panned_pdf != zoomed_pdf, 'j did not pan the zoomed PDF'
+    assert panned_color[2] > panned_color[0] + 100, 'j changed the zoomed PDF page'
+    key('k');time.sleep(.2)
+    key('g');key('Escape');time.sleep(.2)
+    _,still_zoomed_color=screenshot('03d-pdf-prefix-dismissed')
+    assert still_zoomed_color[2] > still_zoomed_color[0] + 100, 'prefix Escape left the PDF'
+    key('Escape');time.sleep(.3);_,fitted_color=screenshot('03e-pdf-fit-with-selection')
+    assert fitted_color[2] > fitted_color[0] + 100, 'zoom Escape left the PDF'
+    # The first Escape fitted the page without clearing the selected words.
+    key('y');time.sleep(.2)
+    assert clipboard(b'UTF8_STRING').decode()=='Hello Runyte', 'fit Escape cleared the PDF selection'
     key('Escape');key('v');key('l');key('y');time.sleep(.3)
     assert clipboard(b'UTF8_STRING').decode()=='Hello Runyte','keyboard PDF selection failed'
     key('Escape');key('j');time.sleep(.15);second_page,second_color=screenshot('04-pdf-second');assert second_color[0] > second_color[2] + 100, second_color
+    key('equal')
+    for previous,next_page in [('p','n'),('b','f'),('u','d')]:
+        key(previous,ctrl=True);time.sleep(.3);_,page_color=screenshot('04-shortcut-'+previous)
+        assert page_color[2] > page_color[0] + 100, 'previous-page shortcut failed at zoom: '+previous
+        key(next_page,ctrl=True);time.sleep(.3);_,page_color=screenshot('04-shortcut-'+next_page)
+        assert page_color[0] > page_color[2] + 100, 'next-page shortcut failed at zoom: '+next_page
+    key('Escape');time.sleep(.2)  # Return to fit before testing the page-buffer step.
     key('g');time.sleep(.4);_,hint_color=screenshot('04a-pdf-hints');assert hint_color[0] > hint_color[2] + 100, 'hints hid PDF'
     mouse(80,40);button(1,True);button(1,False)
     mouse(200,650);button(1,True);button(1,False)  # Hints must not select hidden page rows.

@@ -706,16 +706,20 @@ registry that Tab, dispatch and hints read. No binding is added.
 frontend input boundary and registry. Native window close requests `:qa`; it
 does not bypass dirty-buffer or running-terminal protection.
 
-The native media scope keeps PDF `j`/`k`, counts and file-boundary motions as
-page navigation. PageUp/PageDown and Ctrl-b/Ctrl-f move one displayed PDF page.
-`42gg` goes to page 42; `gg`, `ge`/`G`, and `j`/`k` retain first, last, and
-adjacent-page motions. Images use vertical motions for panning.
+In Normal mode, the native media scope maps PDF `j`/`k` and vertical arrows to
+`media-move-down`/`media-move-up`: they pan a zoomed-in page and change pages at
+fit size (or below). Counts repeat that motion. Images always pan.
+Ctrl-f/Ctrl-d/Ctrl-n/PageDown and Ctrl-b/Ctrl-u/Ctrl-p/PageUp move to the next
+and previous PDF page at any zoom. `42gg` goes to page 42; `gg` and `ge`/`G`
+retain first and last page motions.
 
-Escape first dismisses an overlay or pending key sequence, then clears a media
-selection. With neither active, it leaves a displayed PDF page for the PDF's
+Escape first dismisses an overlay or pending key sequence, then resets a
+zoomed-in PDF to fit size in one press while preserving its selection. Further
+presses clear the selection and leave the displayed PDF page for the PDF's
 read-only page buffer. This uses ordinary buffer motions, counts and search;
 Enter displays the page at the cursor, while Escape opens its source directory.
-Images have no page buffer and Escape opens their source directory directly.
+Images keep their zoom, clear any selection, and open their source directory;
+they have no page buffer.
 `Space e` opens the media source directory directly and selects the source file.
 `Space E` continues to open the editor working directory.
 
@@ -726,7 +730,8 @@ copy PDF text or a selected image region; `%` selects all.
 
 In media Select mode (`v`), `h/l` extend by PDF words and `j/k` by PDF text
 lines; images extend a rectangular selection corner. `v` stops extending and
-Escape clears the native selection and restores Normal mode. View commands
+Escape restores Normal mode and follows the same fit-then-clear ordering for
+PDFs; images clear their native selection. View commands
 under `z` continue panning in either mode. These scoped commands, hints and help
 share the registry. Native mouse mappings are documented in the user guide.
 

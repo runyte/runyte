@@ -25,10 +25,32 @@ pub struct Viewport {
     pub message: String,
 }
 impl Viewport {
-    /// Returns true only when Escape has no selection left to cancel.
-    pub fn back(&mut self) -> bool {
+    /// PDFs return to fit before cancelling selection or leaving the page.
+    pub fn back(&mut self, pdf: bool) -> bool {
         self.drag = None;
+        if pdf && self.zoom > 1.01 {
+            self.zoom = 1.;
+            self.center = [0.5; 2];
+            self.scroll_y = 0.;
+            return false;
+        }
         self.selection.take().is_none()
+    }
+
+    /// Returns a page delta at PDF fit size; otherwise pans this viewport.
+    pub fn move_vertical(
+        &mut self,
+        direction: i32,
+        pdf: bool,
+        image: [f32; 2],
+        area: [f32; 2],
+    ) -> i32 {
+        if pdf && self.zoom <= 1.01 {
+            direction
+        } else {
+            self.pan([0., -64. * direction as f32], image, area);
+            0
+        }
     }
 
     pub fn new(page: usize) -> Self {
@@ -227,6 +249,58 @@ mod back_tests {
     use super::*;
 
     #[test]
+    fn pdf_escape_fits_before_clearing_selection_and_leaving() {
+        for selection in [
+            None,
+            Some(Selection::Text(1, 3)),
+            Some(Selection::Region([0.1; 2], [0.4; 2])),
+        ] {
+            let mut view = Viewport::new(4);
+            view.zoom = 3.125;
+            view.center = [0.4, 0.6];
+            view.scroll_y = 12.;
+            view.selection = selection.clone();
+            view.drag = Some(Drag::Pan([1., 2.]));
+            assert!(!view.back(true));
+            assert_eq!(view.zoom, 1.);
+            assert_eq!(view.center, [0.5; 2]);
+            assert_eq!(view.scroll_y, 0.);
+            assert_eq!(view.selection, selection);
+            assert!(view.drag.is_none());
+            if selection.is_some() {
+                assert!(!view.back(true));
+                assert!(view.selection.is_none());
+            }
+            assert!(view.back(true));
+            assert_eq!(view.page, 4);
+        }
+    }
+
+    #[test]
+    fn vertical_pdf_motion_pans_only_above_fit_and_images_never_change_pages() {
+        let mut view = Viewport::new(2);
+        let image = [600., 800.];
+        let area = [400., 400.];
+        for zoom in [0.8, 1.] {
+            view.zoom = zoom;
+            assert_eq!(view.move_vertical(1, true, image, area), 1);
+            assert_eq!(view.move_vertical(-1, true, image, area), -1);
+            assert_eq!(view.center, [0.5; 2]);
+        }
+        view.zoom = 2.;
+        assert_eq!(view.move_vertical(1, true, image, area), 0);
+        assert!(view.center[1] > 0.5);
+        assert_eq!(view.move_vertical(-1, true, image, area), 0);
+        assert!((view.center[1] - 0.5).abs() < 0.001);
+        assert_eq!(view.page, 2);
+        view.zoom = 1.;
+        assert_eq!(view.move_vertical(1, false, image, area), 0);
+        view.zoom = 2.;
+        assert_eq!(view.move_vertical(-1, false, image, area), 0);
+        assert!(view.center[1] < 0.5);
+    }
+
+    #[test]
     fn escape_clears_text_or_region_before_leaving_without_resetting_view() {
         for selection in [
             Selection::Text(1, 3),
@@ -237,10 +311,10 @@ mod back_tests {
             view.center = [0.4, 0.6];
             view.selection = Some(selection);
             view.drag = Some(Drag::Pan([1., 2.]));
-            assert!(!view.back());
+            assert!(!view.back(false));
             assert!(view.selection.is_none());
             assert!(view.drag.is_none());
-            assert!(view.back());
+            assert!(view.back(false));
             assert_eq!(view.page, 4);
             assert_eq!(view.zoom, 2.);
             assert_eq!(view.center, [0.4, 0.6]);

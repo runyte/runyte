@@ -4415,6 +4415,8 @@ impl App {
             | Command::MediaActualSize
             | Command::MediaPanLeft
             | Command::MediaPanRight
+            | Command::MediaMoveUp
+            | Command::MediaMoveDown
             | Command::MediaCopySelection
             | Command::MediaBack
             | Command::MediaSelectAll => {

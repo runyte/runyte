@@ -3289,6 +3289,20 @@ impl App {
             });
             return true;
         }
+        if pdf
+            && !self.native_media
+            && matches!(
+                command,
+                C::MediaMoveUp | C::MoveUp | C::MediaMoveDown | C::MoveDown
+            )
+        {
+            self.motion(if matches!(command, C::MediaMoveDown | C::MoveDown) {
+                super::Motion::Down
+            } else {
+                super::Motion::Up
+            });
+            return true;
+        }
         let action = match command {
             C::MediaZoomIn => A::ZoomIn,
             C::MediaZoomOut => A::ZoomOut,
@@ -3303,14 +3317,14 @@ impl App {
             }
             C::MoveLeft if self.mode == Mode::Select => A::ExtendLeft,
             C::MoveRight if self.mode == Mode::Select => A::ExtendRight,
-            C::MoveUp if self.mode == Mode::Select => A::ExtendUp,
-            C::MoveDown if self.mode == Mode::Select => A::ExtendDown,
+            C::MediaMoveUp | C::MoveUp if self.mode == Mode::Select => A::ExtendUp,
+            C::MediaMoveDown | C::MoveDown if self.mode == Mode::Select => A::ExtendDown,
             C::MediaPanLeft | C::MoveLeft => A::PanLeft,
             C::MediaPanRight | C::MoveRight => A::PanRight,
             C::ScrollViewUp => A::PanUp,
             C::ScrollViewDown => A::PanDown,
-            C::MoveUp if !pdf => A::PanUp,
-            C::MoveDown if !pdf => A::PanDown,
+            C::MediaMoveUp | C::MoveUp => A::MoveUp,
+            C::MediaMoveDown | C::MoveDown => A::MoveDown,
             C::AlignViewCenter | C::AlignViewMiddle => A::Center,
             C::MediaCopySelection => A::CopySelection,
             C::MediaBack => {

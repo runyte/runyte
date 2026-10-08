@@ -147,6 +147,12 @@ fn native_media_bindings_use_the_registry_and_preserve_pdf_page_motions() {
     let id = app.active().buffer;
     app.buffers[id].replace_virtual_text("Page 1\nPage 2\nPage 3");
     press(&mut app, 'j');
+    let request = app.media_requests.pop_front().unwrap();
+    assert_eq!(request.action, ViewAction::MoveDown);
+    assert_eq!(request.page, 1);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    // At fit size the frontend reports a page motion; zoomed views pan locally.
+    app.navigate_native_media(request.pane, &request.path, 1);
     assert_eq!(
         app.active_buffer()
             .position_of(app.active().selection.primary().head)
@@ -182,6 +188,66 @@ fn native_media_bindings_use_the_registry_and_preserve_pdf_page_motions() {
         && request.pane == app.active_pane
         && request.page == 3));
     assert_eq!(fs::read(path).unwrap(), b"%PDF fixture");
+}
+
+#[test]
+fn pdf_page_shortcuts_and_counted_vertical_requests_use_media_scope() {
+    use crate::media::ViewAction;
+    let root = TestRuntimeRoot::new("pdf-navigation-keys").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path.clone()).unwrap();
+    app.update_native_media_pages(&path, 4);
+    for (next, previous) in [('f', 'b'), ('d', 'u'), ('n', 'p')] {
+        key(&mut app, KeyCode::Char(next), Modifiers::CONTROL);
+        assert_eq!(app.active().cursor(app.active_buffer()).row, 1);
+        key(&mut app, KeyCode::Char(previous), Modifiers::CONTROL);
+        assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    }
+    key(&mut app, KeyCode::PageDown, Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 1);
+    key(&mut app, KeyCode::PageUp, Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    for ch in ['3', 'j', 'k'] {
+        press(&mut app, ch);
+    }
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Up, Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    assert_eq!(
+        app.media_requests
+            .iter()
+            .map(|request| request.action)
+            .collect::<Vec<_>>(),
+        vec![
+            ViewAction::MoveDown,
+            ViewAction::MoveDown,
+            ViewAction::MoveDown,
+            ViewAction::MoveUp,
+            ViewAction::MoveDown,
+            ViewAction::MoveUp
+        ]
+    );
+    app.media_requests.clear();
+    press(&mut app, 'g');
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(
+        app.media_requests.is_empty(),
+        "pending keys dismiss before media back"
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(
+        app.media_requests.pop_front().unwrap().action,
+        ViewAction::Back
+    );
+    // A terminal attachment to retained media has no native viewport to answer.
+    app.native_media = false;
+    press(&mut app, 'j');
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 1);
+    press(&mut app, 'k');
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
 }
 
 #[test]
@@ -254,7 +320,7 @@ fn pdf_back_opens_page_buffer_with_ordinary_motions_and_enter_previews() {
     let buffer = app.active().buffer;
     app.buffers[buffer].replace_virtual_text("Page 1 of 4\nPage 2 of 4\nPage 3 of 4\nPage 4 of 4");
     assert!(app.active_buffer().display_name().starts_with("[pdf]"));
-    press(&mut app, 'j');
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert_eq!(
         app.media_requests.pop_back().unwrap().action,
@@ -329,14 +395,7 @@ fn pdf_page_navigation_keeps_counted_file_jumps() {
     app.open_file(path).unwrap();
     let buffer = app.active().buffer;
     app.buffers[buffer].replace_virtual_text("Page 1\nPage 2\nPage 3\nPage 4");
-    for (keys, row) in [
-        ("3gg", 2),
-        ("gg", 0),
-        ("ge", 3),
-        ("k", 2),
-        ("j", 3),
-        ("ggG", 3),
-    ] {
+    for (keys, row) in [("3gg", 2), ("gg", 0), ("ge", 3), ("ggG", 3)] {
         for ch in keys.chars() {
             press(&mut app, ch);
         }

@@ -1669,6 +1669,8 @@ unit_enum!(
         PanRight,
         PanUp,
         PanDown,
+        MoveUp,
+        MoveDown,
         CopySelection,
         Back,
         SelectAll,

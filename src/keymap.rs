@@ -2151,6 +2151,37 @@ fn built_in_bindings() -> Vec<Binding> {
         Binding::implemented_in(
             MODAL,
             BindingScope::Media,
+            Key::char('j'),
+            Command::MediaMoveDown,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::plain(KeyCode::Down),
+            Command::MediaMoveDown,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::char('k'),
+            Command::MediaMoveUp,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::plain(KeyCode::Up),
+            Command::MediaMoveUp,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::ctrl('n'),
+            Command::PageDown,
+        ),
+        Binding::implemented_in(MODAL, BindingScope::Media, Key::ctrl('p'), Command::PageUp),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
             Key::char('='),
             Command::MediaZoomIn,
         ),

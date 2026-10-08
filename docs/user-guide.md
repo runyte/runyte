@@ -1726,16 +1726,19 @@ buffer, jump, and close commands remain available. Titles identify PDFs with
 aspect ratio. Zoom, pan, and selection belong to each pane, so split views of
 the same file can differ.
 
-PDFs have a read-only **page buffer** with one row per page. Escape from a PDF
-page reveals this buffer at the current page. Use normal editor motions,
+PDFs have a read-only **page buffer** with one row per page. Once the displayed
+page is at fit size and has no selection, Escape reveals this buffer at the
+current page. Use normal editor motions,
 counts, or buffer search (`s` or `/`) to choose a row, then Enter displays that
 page. Moving the cursor in the page buffer does not display pages until Enter.
 `42gg` goes to page 42; `gg` and `ge`/`G` go to the first and last pages. Escape
 from the page buffer opens the source directory with the PDF selected.
 
 Images have no page buffer: Escape returns directly to the source directory.
-Escape first dismisses a pending overlay or key sequence, then clears an active
-media selection, before leaving the media surface. `Space e` goes directly to
+Escape first dismisses a pending overlay or key sequence. On a zoomed-in PDF,
+the next press returns to fit size in one step, preserving its selection;
+subsequent presses clear the selection and then leave the media surface.
+Images keep their zoom and clear the selection before leaving. `Space e` goes directly to
 the source directory from either media type and selects the source file, just
 as it does from a rendered Markdown document. `Space E` still opens the editor's
 working directory.
@@ -1746,14 +1749,15 @@ working directory.
 | `z f` / `z 1` | Fit pane / actual raster pixels |
 | `z h`, `z j`, `z k`, `z l` | Pan left, down, up, right |
 | `h` / `l` | Pan horizontally |
-| `j` / `k`, arrows, counts | PDF pages; vertical image panning |
-| `Ctrl-f` / `Ctrl-b`, PageDown / PageUp | Next / previous PDF page |
+| `j` / `k`, vertical arrows, counts | In Normal mode, pan a zoomed PDF vertically; change pages at fit size. Images always pan. |
+| `Ctrl-f` / `Ctrl-d` / `Ctrl-n` / PageDown | Next PDF page at any zoom |
+| `Ctrl-b` / `Ctrl-u` / `Ctrl-p` / PageUp | Previous PDF page at any zoom |
 | `42gg` / `gg` / `ge` or `G` | Go directly to PDF page 42 / first page / last page |
 | `z z` | Center the media |
 | `v`, then `h/j/k/l` or arrows | Extend a PDF word/line selection or an image-region corner; `v` again stops extending |
 | `%` | Select all page text, or the whole image when there is no text |
 | `y` / `Ctrl-c` | Copy selected PDF text or selected image region to the system clipboard |
-| Escape | Dismiss an overlay or clear selection first; then PDF page → page buffer → explorer, or image → explorer |
+| Escape | Dismiss overlay or pending keys; then PDF fit → clear selection → page buffer → explorer. Images clear selection → explorer. |
 | Wheel / Shift-wheel | Pan vertically / horizontally; at fit size, vertical PDF scrolling changes pages |
 | Ctrl-wheel (Cmd-wheel on macOS) | Zoom around the pointer |
 | Middle-drag, right-drag, or Alt-left-drag | Pan |
