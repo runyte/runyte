@@ -320,10 +320,11 @@ or `vulkan-intel` for Intel, for example `sudo pacman -S --needed vulkan-radeon`
 For other distributions, consult the
 [upstream Linux dependency instructions](https://zed.dev/docs/development/linux).
 
-Poppler supplies `pdfinfo`, `pdftoppm`, and `pdftotext` for PDF rendering and
-text selection. It is a runtime dependency only for PDFs; image viewing needs
-no external decoder. If the build dependencies are already installed, only
-install the PDF tools: `brew install poppler` on macOS,
+Native PDF viewing includes Hayro 0.8 for rendering and text selection.
+Poppler is an optional fallback for documents Hayro cannot handle; its
+`pdfinfo`, `pdftoppm`, and `pdftotext` utilities are neither linked nor bundled.
+Hayro uses embedded fonts and built-in standard substitutes, without system
+font lookup. Install the fallback tools with `brew install poppler` on macOS,
 `sudo apt install poppler-utils` on Debian/Ubuntu,
 `sudo dnf install poppler-utils` on Fedora, or
 `sudo pacman -S --needed poppler` on Arch. Fedora packages these tools in

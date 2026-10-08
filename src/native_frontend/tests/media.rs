@@ -139,12 +139,12 @@ fn cancelling_pdf_work_kills_and_reaps_the_child() {
 
 #[test]
 fn pdf_word_coordinates_are_normalized_and_preserve_reading_lines() {
-    let words = parse_words(r#"<html><page width="200" height="100"><line><word xMin="20" yMin="10" xMax="60" yMax="20">Hello &amp;</word><word xMin="70" yMin="10" xMax="100" yMax="20">world</word></line><line><word xMin="20" yMin="30" xMax="60" yMax="40">Next</word></line></page></html>"#).unwrap();
+    let words = parse_words(r#"<html><page width="200" height="100"><line><word xMin="20" yMin="10" xMax="60" yMax="20">Hello &amp;</word><word xMin="70" yMin="10" xMax="100" yMax="20">world</word></line><line><word xMin="20" yMin="30" xMax="60" yMax="40">Next</word></line></page></html>"#, 2.).unwrap();
     assert_eq!(words.len(), 3);
     assert_eq!(words[0].bounds, [0.1, 0.1, 0.3, 0.2]);
     assert_eq!(words[0].text, "Hello &");
     assert_eq!(words[2].line, 1);
-    assert!(parse_words(r#"<page width="NaN" height="100"/>"#).is_err());
+    assert!(parse_words(r#"<page width="NaN" height="100"/>"#, 2.).is_err());
 }
 
 #[test]
@@ -382,5 +382,67 @@ fn pdf_detail_rerenders_vectors_and_matches_full_resolution_crop() {
         )
         .unwrap();
         assert_eq!(sharp.image.as_bytes(0).unwrap().len(), 800 * 600 * 4);
+    }
+}
+
+#[test]
+#[ignore = "requires installed Poppler"]
+fn mixed_pdf_backends_align_cropped_rotated_text_and_detail() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("cropped.pdf");
+    let cancel = AtomicBool::new(false);
+    for rotation in [0, 90, 180, 270] {
+        std::fs::write(
+            &path,
+            super::super::pdf::tests::document(
+                "0.2 0.4 0.8 rg 40 60 80 70 re f BT /F1 20 Tf 50 80 Td (Hello World) Tj ET",
+                &format!("/CropBox [20 30 280 180] /Rotate {rotation}"),
+                "Helvetica",
+            ),
+        )
+        .unwrap();
+        let hayro = super::super::pdf::render::page(&path, 1, None).unwrap();
+        let words = pdf_words(
+            &path,
+            1,
+            root.path(),
+            &cancel,
+            hayro.header.width as f32 / hayro.header.height as f32,
+        )
+        .unwrap();
+        assert_eq!(words.len(), 2);
+        for word in &hayro.header.words {
+            let other = words.iter().find(|w| w.text == word.text).unwrap();
+            for axis in 0..2 {
+                let center = (word.bounds[axis] + word.bounds[axis + 2]) * 0.5;
+                assert!(
+                    center >= other.bounds[axis] - 0.02 && center <= other.bounds[axis + 2] + 0.02,
+                    "rotation {rotation}: {:?} vs {:?}",
+                    word.bounds,
+                    other.bounds
+                );
+            }
+        }
+        let detail = Detail {
+            full: [hayro.header.width * 2, hayro.header.height * 2],
+            origin: [200, 200],
+            size: [600, 600],
+        };
+        let hayro = super::super::pdf::render::page(&path, 1, Some(detail)).unwrap();
+        let mut request = key(&path, 1);
+        request.detail = Some(detail);
+        let (poppler, _) = load_poppler_or_image(&request, &cancel).unwrap();
+        let other = poppler.image.as_bytes(0).unwrap();
+        // Interior vector pixels should coincide even when font antialiasing differs.
+        let mut matches = 0;
+        for (h, p) in hayro.pixels.chunks_exact(4).zip(other.chunks_exact(4)) {
+            matches += usize::from(
+                h[0].abs_diff(p[2]) < 5 && h[1].abs_diff(p[1]) < 5 && h[2].abs_diff(p[0]) < 5,
+            );
+        }
+        assert!(
+            matches as f64 / (600. * 600.) > 0.95,
+            "detail differs at rotation {rotation}"
+        );
     }
 }

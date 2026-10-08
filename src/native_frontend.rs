@@ -10,6 +10,7 @@ mod icon;
 mod input_queue;
 mod interactions;
 mod media;
+pub(crate) mod pdf;
 mod viewport;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};

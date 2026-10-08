@@ -42,7 +42,7 @@ default-run = "runyte"
 [features]
 default = []
 startup-timing = []
-native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard", "dep:x11rb"]
+native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard", "dep:x11rb", "dep:hayro", "dep:hayro-interpret", "dep:hayro-syntax", "dep:log"]
 
 [[bin]]
 name = "runyte"
@@ -59,6 +59,11 @@ path = "benches/diagnostic_rows.rs"
 harness = false
 
 [dependencies]
+# Hayro's native-only graph needs Rust 1.92; default builds retain Rust 1.88.
+hayro = { version = "=0.8.0", optional = true }
+hayro-interpret = { version = "=0.8.0", optional = true, features = ["logging"] }
+log = { version = "0.4", optional = true }
+hayro-syntax = { version = "=0.8.0", optional = true }
 arboard = { version = "3.6", optional = true, features = ["wayland-data-control"] }
 roxmltree = { version = "0.20", optional = true }
 async-channel = { version = "2", optional = true }

@@ -67,6 +67,7 @@ jobs:
           cargo test --locked --workspace -- --test-threads=4
           cargo test --locked --features native --bin runyte native_frontend
           cargo test --locked --features native --bin runyte native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact
+          cargo test --locked --features native --bin runyte native_frontend::media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact
       - name: Build native binary
         shell: bash
         run: |
@@ -77,6 +78,8 @@ jobs:
           if "0 dependencies had future-incompatible warnings" not in report:
               sys.exit("Native dependencies must have no future-incompatibility warnings")
           PY
+      - name: Bundled PDF helper without Poppler
+        run: python3 tests/native_pdf.py
       - name: macOS block ABI compatibility
         if: runner.os == 'macOS'
         run: |

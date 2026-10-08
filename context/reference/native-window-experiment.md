@@ -89,8 +89,8 @@ remain pane-local frontend state. Mouse focus names the media document rather
 than translating image pixels into synthetic PDF rows. Hit testing uses the
 painted media geometry. Source replacement clears stale selections.
 
-One bounded media worker decodes images and invokes external Poppler helpers
-using argument vectors. Rasterization and text extraction stay off both UI
+One bounded media worker decodes images and invokes the bundled Hayro helper
+or external Poppler fallback using argument vectors. Rasterization and text extraction stay off both UI
 loops. The LRU cache holds eight results. A bounded demand queue takes priority
 over speculative loading of two PDF pages on each side of the current page. New
 demand cancels an unrelated speculative job; speculative completion never
@@ -101,7 +101,8 @@ and speculative completions do not rewrite page rows or trigger redraws.
 Input, decoded allocation, dimensions,
 page count, helper duration and helper output have explicit limits. Child
 processes are killed and reaped on cancellation or limit failure. Scratch
-rasters and extracted XHTML live in temporary directories. JPEG orientation
+rasters and extracted XHTML for Poppler live in temporary directories; Hayro
+returns bounded RGBA bytes over a pipe. JPEG orientation
 is applied before display, hit testing or copying.
 
 Animated GIF/WebP decoding stays on that worker. Each animation retains at most
@@ -114,9 +115,38 @@ is armed through a GPUI next-frame callback, so compositor/visibility gating
 stops rearming for hidden windows. It never uses GPUI's refresh-rate image
 animation loop. Unused image textures are explicitly removed from the atlas.
 
-Poppler's `pdfinfo` and `pdftoppm` provide PDF pages; `pdftotext -bbox-layout`
-provides normalized word boxes and reading order. `roxmltree` parses bounded
-XHTML. Scanned pages fall back to image-region selection, without OCR.
+Hayro 0.8 is the default PDF backend, pinned with its interpreter and syntax
+crates behind `native` (Rust 1.92; default-feature MSRV remains 1.88).
+`--native-pdf-helper` runs before frontend initialization. Each request owns a
+fresh parser/cache in a killable process: 128 MiB input, 1–10,000 pages,
+15-second wall/CPU limits, 1 GiB address space (plus initial mappings on macOS),
+and bounded metadata/RGBA output. The pipe reader rejects overflow while reading;
+cancellation kills/reaps the process group. No untrusted Hayro call runs on
+an editor thread. Base rasters use 1600px longest axis; detail rendering allocates
+only the requested crop, never the virtual 524288px page. Both backends use
+CropBox, including rotated-page word coordinates and detail regions.
+
+Fallback is automatic per request, without a sticky document/backend setting.
+Hayro warnings, error diagnostics, unresolved CMaps and fallback font requests
+trigger Poppler. Embedded and built-in standard fonts work offline; Hayro's
+recognized Latin font-name substitutions are allowed and can change spacing.
+There is no system-font resolver. `log` captures only a diagnostic flag inside
+the helper, because some upstream font failures bypass its WarningSink.
+`pdfinfo`/`pdftoppm` remain the external raster fallback. Missing Unicode or
+Type3 glyph geometry independently invokes `pdftotext -bbox-layout -cropbox`;
+`roxmltree` parses its bounded XHTML. Hayro words follow content-stream order,
+using transformed glyph boxes, baseline/gap grouping, and fill/stroke deduplication.
+This is heuristic reading order, without layout analysis. Scanned pages retain
+region selection, without OCR. If all extraction fails the raster stays usable;
+if both renderers fail the error names both backends. Empty-user-password
+PDFs are supported; there is no password prompt.
+
+`tests/native_pdf.py` exercises the actual helper with no Poppler on PATH on
+Linux and macOS CI: text, four CropBox rotations, columns, vectors, image scan,
+Form XObject, empty-password encryption, unsupported fonts, required passwords,
+damaged files, and extreme virtual-size cropped rendering. `--compare` records
+three-run median helper timings against all three Poppler tools; results and
+limits of this authored corpus are in the startup-performance register.
 GPUI publishes text clipboard data on Linux; `arboard` supplies image clipboard
 ownership because GPUI 0.2.2 does not publish image MIME data to other Linux
 applications. Both are Rust integrations; Poppler is installed separately.

@@ -100,7 +100,7 @@ impl Detail {
         )
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct Word {
     /// Normalized page coordinates, independent of zoom and raster resolution.
     pub bounds: [f32; 4],
@@ -588,6 +588,60 @@ fn wait(
     }
 }
 fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
+    if !key.is_pdf() {
+        return load_poppler_or_image(key, cancel);
+    }
+    match super::pdf::load(&key.path, key.page, key.detail, cancel) {
+        Ok(raster) => {
+            let mut header = raster.header;
+            if key.detail.is_none()
+                && let Some(reason) = header.text_error.take()
+            {
+                let temporary = tempfile::tempdir()?;
+                match pdf_words(
+                    &key.path,
+                    key.page,
+                    temporary.path(),
+                    cancel,
+                    header.width as f32 / header.height as f32,
+                ) {
+                    Ok(words) => header.words = words,
+                    Err(error) => {
+                        header.text_error = Some(format!(
+                            "PDF text unavailable: {reason}; Poppler: {error:#}"
+                        ))
+                    }
+                }
+            }
+            ensure!(!cancel.load(Ordering::Acquire), "PDF rendering cancelled");
+            let mut pixels = image::RgbaImage::from_raw(header.width, header.height, raster.pixels)
+                .context("invalid Hayro raster")?;
+            for pixel in pixels.pixels_mut() {
+                pixel.0.swap(0, 2);
+            }
+            Ok((
+                Arc::new(Page {
+                    source: (key.modified, key.length),
+                    image: Arc::new(RenderImage::new(vec![image::Frame::new(pixels)])),
+                    animation: None,
+                    width: header.width as f32,
+                    height: header.height as f32,
+                    words: header.words,
+                    text_error: header.text_error,
+                }),
+                header.pages,
+            ))
+        }
+        Err(hayro) => {
+            ensure!(!cancel.load(Ordering::Acquire), "PDF rendering cancelled");
+            load_poppler_or_image(key, cancel).map_err(|poppler| {
+                anyhow::anyhow!("Hayro: {hayro:#}; Poppler fallback: {poppler:#}")
+            })
+        }
+    }
+}
+
+fn load_poppler_or_image(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
     let metadata = std::fs::metadata(&key.path)?;
     ensure!(metadata.is_file(), "media must be a regular file");
     ensure!(
@@ -633,6 +687,7 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
             "-l",
             &key.page.to_string(),
             "-singlefile",
+            "-cropbox",
             "-png",
         ]);
         if let Some(detail) = key.detail {
@@ -675,7 +730,14 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
         (key.path.clone(), 1)
     };
     let (words, text_error) = if pdf && key.detail.is_none() {
-        match pdf_words(&key.path, key.page, temporary.path(), cancel) {
+        let (width, height) = image::image_dimensions(&path)?;
+        match pdf_words(
+            &key.path,
+            key.page,
+            temporary.path(),
+            cancel,
+            width as f32 / height as f32,
+        ) {
             Ok(words) => (words, None),
             Err(error) => (Vec::new(), Some(format!("PDF text unavailable: {error:#}"))),
         }
@@ -748,7 +810,13 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
     ))
 }
 
-fn pdf_words(path: &Path, page: usize, root: &Path, cancel: &AtomicBool) -> Result<Vec<Word>> {
+fn pdf_words(
+    path: &Path,
+    page: usize,
+    root: &Path,
+    cancel: &AtomicBool,
+    aspect: f32,
+) -> Result<Vec<Word>> {
     let output = root.join("text.xhtml");
     wait(
         Command::new("pdftotext")
@@ -758,6 +826,7 @@ fn pdf_words(path: &Path, page: usize, root: &Path, cancel: &AtomicBool) -> Resu
                 "-l",
                 &page.to_string(),
                 "-bbox-layout",
+                "-cropbox",
                 "-enc",
                 "UTF-8",
             ])
@@ -771,10 +840,10 @@ fn pdf_words(path: &Path, page: usize, root: &Path, cancel: &AtomicBool) -> Resu
         output.metadata()?.len() <= 8 * 1024 * 1024,
         "PDF page text exceeds 8 MiB"
     );
-    parse_words(&std::fs::read_to_string(output)?)
+    parse_words(&std::fs::read_to_string(output)?, aspect)
 }
 
-fn parse_words(text: &str) -> Result<Vec<Word>> {
+fn parse_words(text: &str, aspect: f32) -> Result<Vec<Word>> {
     let document = roxmltree::Document::parse_with_options(
         text,
         roxmltree::ParsingOptions {
@@ -794,9 +863,18 @@ fn parse_words(text: &str) -> Result<Vec<Word>> {
         ensure!(value.is_finite(), "non-finite PDF coordinate");
         Ok(value)
     };
-    let width = number(page, "width")?;
-    let height = number(page, "height")?;
+    let mut width = number(page, "width")?;
+    let mut height = number(page, "height")?;
     ensure!(width > 0. && height > 0., "empty PDF text page");
+    ensure!(
+        aspect.is_finite() && aspect > 0.,
+        "invalid PDF display aspect"
+    );
+    // pdftotext keeps unrotated page dimensions but rotates its word boxes.
+    // The raster's aspect identifies whether those dimensions need swapping.
+    if ((height / width) / aspect).ln().abs() < ((width / height) / aspect).ln().abs() {
+        std::mem::swap(&mut width, &mut height);
+    }
     let mut words = Vec::new();
     for (line, node) in page
         .descendants()

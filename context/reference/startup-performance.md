@@ -17,6 +17,57 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-10-09 — bundled Hayro PDF helper versus Poppler
+
+Linux x86-64, AMD Ryzen AI 9 365, Rust 1.97.1 release build with repository
+LTO settings, Hayro 0.8.0 and Poppler 26.08.0. Reproduce with:
+
+```sh
+cargo build --release --features native
+python3 tests/native_pdf.py --binary target/release/runyte --compare
+```
+
+Three-request medians in milliseconds, warm filesystem caches. Every request
+starts a fresh process and reparses the PDF, so these include helper startup;
+no parsed-document cache is reused. Hayro base requests include raster and text
+extraction and RGBA pipe transfer. Poppler base requests invoke `pdfinfo`,
+`pdftoppm` and `pdftotext`; their totals include PNG encoding and file I/O but
+exclude Runyte's subsequent PNG decoding. Detail requests render a 600×600 crop
+at origin (200,200) of a 3200×2400 virtual page, without text extraction.
+These are backend request timings, not native-window first-paint measurements.
+
+| Authored fixture | Base Hayro / Poppler | Detail Hayro / Poppler | RGB mean absolute error (0–255) |
+| --- | ---: | ---: | ---: |
+| Standard Helvetica text | 11.6 / 71.4 | 4.5 / 19.4 | 0.850 |
+| Two columns | 12.1 / 76.6 | 5.2 / 36.6 | 0.734 |
+| Vector shapes and text | 10.4 / 69.1 | 6.6 / 25.8 | 0.120 |
+| Empty-password RC4 PDF | 10.2 / 71.0 | 5.7 / 19.9 | 0.663 |
+| CropBox, 0° | 9.6 / 76.7 | 6.0 / 22.0 | 1.397 |
+| CropBox, 90° | 8.7 / 76.9 | 5.8 / 30.3 | 1.500 |
+| CropBox, 180° | 10.1 / 76.6 | 6.3 / 24.5 | 1.273 |
+| CropBox, 270° | 9.7 / 72.8 | 5.9 / 24.1 | 1.385 |
+| RGB image scan | 11.1 / 65.6 | 6.5 / 30.5 | 0.000 |
+| Form XObject | 10.0 / 75.6 | 6.9 / 21.8 | 1.375 |
+
+RGB comparison samples every sixteenth pixel at matching physical dimensions;
+the short axis is explicitly scaled because the backends round base dimensions
+differently. All fixtures produce the same word multiset. The two-column case
+has deliberately different reading order: Hayro follows authored content order
+(left column, then right); Poppler groups both columns by horizontal rows.
+Glyph/antialiasing differences remain even when words and vector positions match.
+The mixed-backend Rust regression also verifies text-box overlap and at least
+95% near-matching crop pixels across all four rotations.
+
+This small, Runyte-authored corpus supports the default switch for ordinary
+pages; it does not establish accuracy or performance for a broad PDF corpus.
+JBIG2/CCITT/JPEG 2000 scans, CJK embedded fonts, complex interactive forms, real
+papers, and large slide decks still need broader comparison. No third-party
+PDFs are committed. Automatic Poppler fallback remains available for failures
+and reported unsupported content, but cannot detect every silent visual or
+reading-order difference. Nonembedded recognized Latin names may use Hayro's
+standard substitutes. macOS actual-helper acceptance is wired into native CI;
+these timings were measured only on Linux.
+
 ## 2026-10-08 — animated native media idle
 
 `tests/native_window.py --animations`, debug native build, isolated X11/Xvfb

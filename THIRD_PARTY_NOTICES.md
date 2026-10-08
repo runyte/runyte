@@ -366,7 +366,18 @@ The Linux window-icon adapter uses `x11rb` (MIT OR Apache-2.0) for bounded
 X11 property reads and the `_NET_WM_ICON` property. Its artwork derives from
 the repository's Runyte logo, without incorporating third-party icon artwork.
 
-PDF rasterization invokes separately installed Poppler utilities through
+PDF rendering defaults to Hayro, hayro-interpret and hayro-syntax 0.8.0
+(Apache-2.0 OR MIT), with the permissively licensed Vello CPU renderer and
+Hayro image/color/CMap dependencies recorded in `Cargo.lock`.
+Source: <https://github.com/LaurenzV/hayro>, revision
+`ea9c81dc70cde40c64205986fdcfcd481fe934d8`. Retained notices in
+`licenses/hayro/` include Hayro's MIT license; its upstream NOTICE with Apache
+2.0 terms for adaptations from PDFBox, pdf.js and the png crate; PDFium/Foxit
+BSD terms for embedded standard-font substitutes; Adobe BSD terms for embedded
+CMaps; and CC0 terms for the CGATS color profile. These are unmodified upstream
+assets included through the pinned crate distributions.
+
+Fallback rasterization invokes separately installed Poppler utilities through
 argument vectors. Poppler is neither linked nor bundled by this experiment.
 The two-page PDF test fixture in `src/native_frontend/tests/fixtures/` is
 Runyte-authored, containing solid-color rectangles and short Helvetica text samples.

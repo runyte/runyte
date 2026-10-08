@@ -1800,15 +1800,24 @@ keys without default bindings; `g p` and `g P` do not move between text paragrap
 Scanned PDFs without embedded text use rectangular selection; this experiment
 does not perform OCR. Copying a region exports the base page/image raster,
 including alpha, without modifying the source file; PDF zoom refinement does
-not increase the resolution of copied regions. PDF text selection additionally uses
-Poppler's `pdftotext`; if extraction fails, the page remains viewable and region
-selection stays available.
+not increase the resolution of copied regions. PDF text selection uses Hayro glyph geometry and content-stream order.
+If glyphs lack Unicode mappings or usable geometry, extraction independently
+falls back to Poppler's `pdftotext`. If both fail, the page remains viewable and
+region selection stays available. Complex layout reading order is heuristic;
+this is not a full document-layout analysis.
 
 Prompts and key hints remain readable above the media surface. Opening them
 does not expose internal image placeholder rows or enter the PDF page buffer.
 
-PDF support requires Poppler's `pdfinfo` and `pdftoppm` executables. Rendering
-runs on one background worker and reports failures inside the pane. Input is
+PDF support includes Hayro 0.8, run in a disposable helper process of the
+same executable. Each page or refinement request automatically falls back to
+separately installed Poppler tools when Hayro fails or reports unsupported
+content. If both fail, the pane reports both errors. Hayro supports embedded
+fonts and its standard Latin substitutes (including recognized nonstandard
+font names); it does not consult system fonts. Substitution can change glyph
+shapes and spacing. Other unavailable fonts require Poppler. Encrypted PDFs
+with an empty user password can open; entering a PDF password is not supported.
+Rendering runs on one background worker and reports failures inside the pane. Input is
 limited to regular files up to 128 MiB, decoded images to 8192 pixels per axis
 and 64 MiB allocation, and PDFs to 10,000 pages. Images are reduced to at most
 2048 pixels per axis. PDF pages initially render at 1600 pixels on their longest
@@ -1826,7 +1835,10 @@ After a PDF page loads, up to two pages on either side are loaded in the
 background. Requested pages take priority and interrupt speculative rendering.
 First loads and jumps beyond the warmed pages can still show a loading message.
 PDF subprocesses have a 15-second limit per invocation and are killed and reaped
-during cancellation.
+during cancellation. Hayro additionally has a 1 GiB address-space budget
+(on macOS, above the executable's initial mappings), a 15-second CPU limit,
+and bounded RGBA output. Its normal path uses no raster temporary files.
+Poppler fallback retains its temporary PNG/XHTML files and existing limits.
 
 On Linux/macOS, `runyte --window --mux` creates or attaches to the same
 persistent sessions as `runyte --mux`. Only one interactive frontend attaches
@@ -1877,7 +1889,7 @@ Search within PDF page contents is not implemented.
 Image zoom and scanned PDF content remain limited by their
 source resolution. PDF text and vector graphics are rendered at the view
 resolution within the visible-region budget described above. PDF rendering uses
-an external helper, while windowing, editor integration, and image decoding are Rust. Source changes
+a bundled Rust helper, with separately installed Poppler as fallback. Source changes
 are checked when another frame is presented; there is no automatic media reload
 watcher. macOS, Wayland, IME composition, and touchpad pinch gestures still need hands-on
 platform verification. Ctrl-wheel zoom is supported; native pinch gestures are
