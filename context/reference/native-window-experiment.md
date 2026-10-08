@@ -444,7 +444,7 @@ once per changed row. ASCII glyphs use direct-indexed slots; each face still
 retains at most 1,024 layouts, and theme changes retain shaped layouts. Unchanged
 rows replay the immediately preceding GPUI scene segment, avoiding repeated glyph
 raster-bound and atlas lookups. The small `SceneCache` API in the vendored GPUI
-checks window/frame identity, scale, clipping, opacity and placement; Runyte also
+checks window/frame identity, scale, clipping and opacity; Runyte also
 checks source row identity, colours, coverage, font metrics and cursor-row status.
 It retains no additional scene, texture or shaped layout. Every redraw still
 registers the ordinary input handler and acknowledges the frame it actually paints.

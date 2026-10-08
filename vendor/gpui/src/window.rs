@@ -753,7 +753,6 @@ struct CachedScene {
     scale: f32,
     mask: ContentMask<Pixels>,
     opacity: f32,
-    offset: Point<Pixels>,
 }
 
 impl Frame {
@@ -2834,7 +2833,7 @@ impl Window {
     ///
     /// The caller may request reuse only when content and absolute placement are
     /// unchanged. This method also checks window identity, adjacent frame lifetime,
-    /// scale, clipping, opacity and element offset. `paint` must only emit scene
+    /// scale, clipping and opacity. `paint` must only emit scene
     /// primitives/layers, not input handlers or element-state registrations.
     pub fn paint_cached_scene(
         &mut self,
@@ -2846,7 +2845,6 @@ impl Window {
         let scale = self.scale_factor();
         let mask = self.content_mask();
         let opacity = self.element_opacity();
-        let offset = self.element_offset();
         let start = self.next_frame.scene.len();
         if reuse
             && let Some(previous) = &cache.previous
@@ -2855,7 +2853,6 @@ impl Window {
             && previous.scale == scale
             && previous.mask == mask
             && previous.opacity == opacity
-            && previous.offset == offset
         {
             self.next_frame
                 .scene
@@ -2870,7 +2867,6 @@ impl Window {
             scale,
             mask,
             opacity,
-            offset,
         });
     }
 

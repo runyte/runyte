@@ -20,7 +20,7 @@ Theme changes rebuild colours without discarding shaped layouts.
 The vendored GPUI now exposes draw-only previous-scene replay through
 `Window::paint_cached_scene`. Unchanged rows reuse their glyph primitives rather
 than repeating glyph raster-bound and atlas lookups. Only immediately adjacent
-frames with matching window, scale, clip, opacity and offset can reuse a segment;
+frames with matching window, scale, clip and opacity can reuse a segment;
 Runyte additionally checks content, colours, media coverage, font metrics and
 cursor-row status. The handle holds scene indices, not another scene or texture.
 Backgrounds remain below glyphs; row and oversized-glyph layer ordering is
@@ -42,6 +42,10 @@ and timing variability are recorded in
 coverage and styled logical advance. `glyph_cache_reuses_symbols_and_bounds_retained_text`
 in `src/native_frontend/cells.rs` covers ASCII reuse and bounded non-ASCII storage.
 The native frontend tests and native all-target Clippy pass.
+
+The debug-window acceptance additionally caught a paint-phase call to GPUI’s
+prepaint-only `element_offset` getter. The replay helper now relies on the
+caller’s absolute placement check instead; it does not read prepaint state.
 
 Known limitation: these timings measure CPU scene construction on software
 Vulkan, not hardware-GPU rendering or end-to-end latency. Wayland desktop and

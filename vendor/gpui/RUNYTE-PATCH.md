@@ -93,7 +93,7 @@ with a fork if further GPUI changes accumulate.
   unchanged cell rows, avoiding repeated raster-bound and sprite-atlas lookups.
   Each handle contains only indices into the immediately preceding window frame;
   no extra scene, glyph layout, or texture is retained. Window identity, frame
-  generation, scale, clipping, opacity and element offset must match. The caller
+  generation, scale, clipping and opacity must match. The caller
   also verifies row content and placement. Replay recalculates draw order using
   the current scene, preserving original layer operations. Input handlers,
   element states and layout registrations must not be placed inside this cache.
