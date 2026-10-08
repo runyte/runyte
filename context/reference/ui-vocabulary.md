@@ -802,3 +802,13 @@ The native media surface owns pixel selection and clipboard actions; its scoped
 overrides are intentional and validated alongside other owned input surfaces.
 Ordinary text-buffer scopes still cannot shadow global keys. The PDF page buffer
 uses ordinary text navigation and a contextual Enter action to display a page.
+
+## Native media across frontend attachments
+
+Image and PDF projections remain host-owned read-only buffers. Pane snapshots
+carry their local path, selected page, page count, and whether the pane displays
+the PDF page buffer. The window decodes and composites media locally. Terminal
+clients preserve `[image]` / `[pdf]` titles and display
+`MEDIA UNSUPPORTED IN THE TERMINAL MODE` in a media surface's body; the PDF page
+buffer remains ordinary selectable text. The attached frontend declares its
+media capability at the handshake, which controls subsequent binary opening.

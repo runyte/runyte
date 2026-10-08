@@ -1730,6 +1730,7 @@ fn client_hello(
     ClientRequest::Hello {
         protocol: PROTOCOL_VERSION,
         directory_handoff,
+        native_media: false,
         features: if interactive {
             vec![
                 FeatureGroup::Snapshots,
@@ -1777,6 +1778,16 @@ impl LocalClient {
         interactive: bool,
         directory_handoff: bool,
     ) -> Result<Self> {
+        Self::connect_with_media(endpoint, geometry, interactive, directory_handoff, false).await
+    }
+
+    pub async fn connect_with_media(
+        endpoint: &LocalEndpoint,
+        geometry: FrameGeometry,
+        interactive: bool,
+        directory_handoff: bool,
+        native_media: bool,
+    ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
         let socket = decode_path(metadata.socket_bytes)?;
         let stream = UnixStream::connect(&socket)
@@ -1787,14 +1798,15 @@ impl LocalClient {
             reader: MessageReader::new(reader),
             writer: Some(writer),
         };
-        client
-            .send(&client_hello(
-                endpoint,
-                geometry,
-                interactive,
-                directory_handoff,
-            ))
-            .await?;
+        let mut hello = client_hello(endpoint, geometry, interactive, directory_handoff);
+        if let ClientRequest::Hello {
+            native_media: capability,
+            ..
+        } = &mut hello
+        {
+            *capability = native_media;
+        }
+        client.send(&hello).await?;
         Ok(client)
     }
 
@@ -1818,16 +1830,29 @@ impl BufferedLocalClient {
         geometry: FrameGeometry,
         directory_handoff: bool,
     ) -> Result<Self> {
+        Self::connect_with_media(endpoint, geometry, directory_handoff, false).await
+    }
+
+    pub async fn connect_with_media(
+        endpoint: &LocalEndpoint,
+        geometry: FrameGeometry,
+        directory_handoff: bool,
+        native_media: bool,
+    ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
         let socket = decode_path(metadata.socket_bytes)?;
         let mut stream = UnixStream::connect(&socket)
             .await
             .with_context(|| format!("cannot attach to workspace host {}", socket.display()))?;
-        write_message(
-            &mut stream,
-            &client_hello(endpoint, geometry, true, directory_handoff),
-        )
-        .await?;
+        let mut hello = client_hello(endpoint, geometry, true, directory_handoff);
+        if let ClientRequest::Hello {
+            native_media: capability,
+            ..
+        } = &mut hello
+        {
+            *capability = native_media;
+        }
+        write_message(&mut stream, &hello).await?;
         Self::from_connected_stream(stream)
     }
 
@@ -3399,6 +3424,7 @@ mod tests {
             &mut writer,
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION + 1,
+                native_media: false,
                 directory_handoff: false,
                 features: vec![FeatureGroup::Snapshots, FeatureGroup::Input],
                 project_root_bytes: encode_path(&endpoint.project_root),
@@ -3434,6 +3460,7 @@ mod tests {
             &mut writer,
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION,
+                native_media: false,
                 directory_handoff: false,
                 features: vec![
                     FeatureGroup::Control,
@@ -3485,6 +3512,7 @@ mod tests {
                 &mut writer,
                 &ClientRequest::Hello {
                     protocol: PROTOCOL_VERSION,
+                    native_media: false,
                     directory_handoff: false,
                     features: vec![
                         FeatureGroup::Control,
@@ -3963,6 +3991,7 @@ mod tests {
             &mut writer,
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION,
+                native_media: false,
                 directory_handoff: false,
                 features: vec![
                     FeatureGroup::Control,
@@ -4101,6 +4130,7 @@ mod tests {
             &mut writer,
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION,
+                native_media: false,
                 directory_handoff: false,
                 features: vec![FeatureGroup::Snapshots],
                 project_root_bytes: encode_path(&endpoint.project_root),
@@ -4138,6 +4168,7 @@ mod tests {
             &mut writer,
             &ClientRequest::Hello {
                 protocol: PROTOCOL_VERSION,
+                native_media: false,
                 directory_handoff: false,
                 features: vec![
                     FeatureGroup::Wait,

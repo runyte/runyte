@@ -208,8 +208,11 @@ fn main() -> Result<()> {
                 "the native-window experiment currently supports Linux and macOS"
             );
             anyhow::ensure!(
-                arguments.mode == LaunchMode::Standalone,
-                "--window currently supports standalone ide and editor modes"
+                matches!(
+                    arguments.mode,
+                    LaunchMode::Standalone | LaunchMode::Persistent
+                ),
+                "--window supports ide, editor, and mux modes"
             );
             return native_frontend::launch(cli_main);
         }
@@ -1687,6 +1690,7 @@ async fn run(
                     run_workspace_switcher(
                         endpoint,
                         mouse_enabled,
+                        arguments.window,
                         cwd_file.as_deref(),
                         &config,
                         config_path.as_deref(),
@@ -2708,6 +2712,11 @@ async fn run_host_server(
         let picker_pacing = host.picker_pacing_delay(Instant::now());
         if active.is_none() {
             host.cancel_pointer_drag();
+            if host.app().native_media {
+                host.app_mut().native_media = false;
+                host.app_mut().media_requests.clear();
+                host.defer_frontend_presentation(false);
+            }
         }
         let pointer_autoscroll = host.pointer_autoscroll_delay(Instant::now());
         host.note_plugin_frontend(active.is_some());
@@ -2732,7 +2741,7 @@ async fn run_host_server(
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
-                    ServerEvent::Connected { id, peer_process, geometry, interactive, directory_handoff, responses } => {
+                    ServerEvent::Connected { id, peer_process, geometry, interactive, native_media, directory_handoff, responses } => {
                         peer_processes.insert(id, peer_process);
                         if interactive && active.is_some() {
                             log_warn!(
@@ -2749,6 +2758,9 @@ async fn run_host_server(
                             // client is launched separately, so the capability
                             // follows the attachment rather than the host.
                             host.set_quit_directory_handoff(directory_handoff);
+                            host.app_mut().native_media = native_media;
+                            host.app_mut().media_requests.clear();
+                            host.defer_frontend_presentation(native_media);
                             let client = AttachedClient {
                                 id,
                                 geometry,
@@ -2951,7 +2963,26 @@ async fn run_host_server(
                             }
                         } else {
                             match request {
+                            ClientRequest::FrameDrawn { frame } => {
+                                host.acknowledge_frontend_paint(Some(frame.into()));
+                            }
+                            ClientRequest::MediaNavigate { pane, path, delta } if host.app().native_media => {
+                                host.app_mut().navigate_native_media(pane, &decode_path(path)?, delta);
+                                changed = true;
+                            }
+                            ClientRequest::MediaBack { pane, path, page } if host.app().native_media => {
+                                host.app_mut().leave_native_media(pane, &decode_path(path)?, page);
+                                changed = true;
+                            }
+                            ClientRequest::MediaPages { path, pages } if host.app().native_media => {
+                                host.app_mut().update_native_media_pages(&decode_path(path)?, pages);
+                                changed = true;
+                            }
+                            ClientRequest::MediaNavigate { .. } | ClientRequest::MediaBack { .. } | ClientRequest::MediaPages { .. } => {}
                             ClientRequest::Input { event, repeated, presented_frame } => {
+                                let input: InputEvent = event.clone().into();
+                                if !host.accepts_frontend_input(&input, presented_frame.map(Into::into), frame_pending || host.finder_scan_refills() || host.plugin_presentation_pending()) { continue; }
+                                host.acknowledge_frontend_input_frame(presented_frame.map(Into::into));
                                 if !repeated && let Some(frame) = presented_frame { host.context_frame_presented(frame.into()); }
                                 let input: InputEvent = event.into();
                                 #[cfg(debug_assertions)]
@@ -2996,6 +3027,9 @@ async fn run_host_server(
                                 frame,
                                 repetitions,
                             } => {
+                                let input = InputEvent::Pointer(event.into());
+                                if !host.accepts_frontend_input(&input, Some(frame.into()), frame_pending || host.finder_scan_refills() || host.plugin_presentation_pending()) { continue; }
+                                host.acknowledge_frontend_input_frame(Some(frame.into()));
                                 key_hints.clear();
                                 match host.execute(HostCommand::Pointer {
                                     event: event.into(),
@@ -3520,6 +3554,22 @@ fn publish_attached_frame(
     let frame: runyte::protocol::HostFrame = host
         .prepare_frame_with_hints(client.geometry, Some(key_hints))
         .into();
+    for request in host.app_mut().media_requests.drain(..) {
+        if client
+            .responses
+            .try_send(HostResponse::MediaAction {
+                frame: frame.id,
+                pane: request.pane,
+                path: encode_path(&request.path),
+                page: request.page,
+                action: request.action.into(),
+            })
+            .is_err()
+        {
+            *active = None;
+            return None;
+        }
+    }
     let response = if client.responses.visual_pending() {
         // Replacing an unseen delta with another delta would make the latter's
         // base impossible for the client to have. A complete replacement is
@@ -3863,7 +3913,6 @@ fn complete_attached_waits(host: &mut WorkspaceHost, active: &mut Option<Attache
 
 #[cfg(unix)]
 fn finish_attached_detach(host: &mut WorkspaceHost, active: &mut Option<AttachedClient>) {
-    host.cancel_parent_waits("outer TUI detached before the external edit completed");
     complete_attached_waits(host, active);
     detach_client(active, None);
 }
@@ -3989,6 +4038,52 @@ fn terminal_color_depth() -> ui::TerminalColorDepth {
     ui::TerminalColorDepth::from_color_count(crossterm::style::available_color_count())
 }
 
+#[cfg(unix)]
+trait AttachedSurface {
+    fn native(&self) -> bool {
+        false
+    }
+    fn resize_surface(&mut self, area: ratatui::layout::Rect) -> io::Result<()>;
+    fn draw_host(
+        &mut self,
+        snapshot: &runyte::workspace::HostFrame,
+        depth: ui::TerminalColorDepth,
+    ) -> io::Result<()>;
+}
+#[cfg(unix)]
+impl AttachedSurface for Terminal<CrosstermBackend<std::io::Stdout>> {
+    fn resize_surface(&mut self, area: ratatui::layout::Rect) -> io::Result<()> {
+        self.resize(area)
+    }
+    fn draw_host(
+        &mut self,
+        snapshot: &runyte::workspace::HostFrame,
+        depth: ui::TerminalColorDepth,
+    ) -> io::Result<()> {
+        self.draw(|frame| ui::render_host_frame(frame, snapshot, depth))?;
+        Ok(())
+    }
+}
+#[cfg(all(unix, feature = "native"))]
+impl AttachedSurface for native_frontend::Surface {
+    fn native(&self) -> bool {
+        matches!(self, Self::Native(_))
+    }
+    fn resize_surface(&mut self, area: ratatui::layout::Rect) -> io::Result<()> {
+        self.resize(area)
+    }
+    fn draw_host(
+        &mut self,
+        snapshot: &runyte::workspace::HostFrame,
+        depth: ui::TerminalColorDepth,
+    ) -> io::Result<()> {
+        if self.native() {
+            native_frontend::capture_attached(snapshot);
+        }
+        self.draw(|frame| ui::render_host_frame(frame, snapshot, depth))
+    }
+}
+
 /// Attaches, and keeps attaching wherever the editor asks to go next.
 ///
 /// One process for the whole session. The previous arrangement replaced the
@@ -3999,16 +4094,36 @@ fn terminal_color_depth() -> ui::TerminalColorDepth {
 async fn run_workspace_switcher(
     endpoint: LocalEndpoint,
     mouse_enabled: bool,
+    window: bool,
     cwd_file: Option<&Path>,
     config: &Config,
     config_path: Option<&Path>,
 ) -> Result<()> {
-    let color_depth = terminal_color_depth();
+    let color_depth = if window {
+        ui::TerminalColorDepth::TrueColor
+    } else {
+        terminal_color_depth()
+    };
     let mut termination = TerminationSignals::new()?;
-    let _terminal = TerminalGuard::enter(mouse_enabled)?;
+    let _terminal = if window {
+        None
+    } else {
+        Some(TerminalGuard::enter(mouse_enabled)?)
+    };
+    #[cfg(feature = "native")]
+    let mut terminal = native_frontend::Surface::new(CrosstermBackend::new(stdout()), window)?;
+    #[cfg(not(feature = "native"))]
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    #[cfg(feature = "native")]
+    let mut geometry = if window {
+        let (width, height) = native_frontend::dimensions();
+        ui::frame_geometry(ratatui::layout::Rect::new(0, 0, width, height))
+    } else {
+        current_frame_geometry()?
+    };
+    #[cfg(not(feature = "native"))]
     let mut geometry = current_frame_geometry()?;
-    let mut terminal_events = AttachedTerminalEvents::stream()?;
+    let mut terminal_events = AttachedTerminalEvents::for_frontend(window)?;
     let mut current = endpoint;
     let mut previous: Option<LocalEndpoint> = None;
     let mut notice: Option<String> = None;
@@ -4455,6 +4570,8 @@ struct AttachedTerminalEvents {
 
 #[cfg(unix)]
 enum AttachedEventSource {
+    #[cfg(feature = "native")]
+    Native(native_frontend::Events),
     Stream(EventStream),
     Isolated(tokio::sync::mpsc::UnboundedReceiver<io::Result<CrosstermEvent>>),
 }
@@ -4467,6 +4584,25 @@ impl AttachedTerminalEvents {
             #[cfg(debug_assertions)]
             trace: open_input_trace()?,
         })
+    }
+
+    fn for_frontend(window: bool) -> Result<Self> {
+        #[cfg(feature = "native")]
+        if window {
+            return Self::new(AttachedEventSource::Native(native_frontend::Events::new(
+                true,
+            )));
+        }
+        let _ = window;
+        Self::stream()
+    }
+
+    fn presented(&self, current: runyte::workspace::FrameId) -> Option<runyte::protocol::FrameId> {
+        #[cfg(feature = "native")]
+        if let AttachedEventSource::Native(events) = &self.source {
+            return events.presented_frame(None).map(Into::into);
+        }
+        Some(current.into())
     }
 
     fn stream() -> Result<Self> {
@@ -4535,6 +4671,8 @@ impl AttachedTerminalEvents {
 
     async fn next(&mut self) -> Option<io::Result<CrosstermEvent>> {
         match &mut self.source {
+            #[cfg(feature = "native")]
+            AttachedEventSource::Native(events) => events.next().await,
             AttachedEventSource::Stream(stream) => stream.next().await,
             AttachedEventSource::Isolated(receiver) => receiver.recv().await,
         }
@@ -4655,7 +4793,7 @@ struct AttachOptions<'a> {
 #[cfg(unix)]
 async fn run_attached(
     endpoint: &LocalEndpoint,
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    terminal: &mut impl AttachedSurface,
     terminal_events: &mut AttachedTerminalEvents,
     geometry: &mut runyte::app::FrameGeometry,
     options: AttachOptions<'_>,
@@ -4669,8 +4807,17 @@ async fn run_attached(
         parent_handoff,
         visit,
     } = options;
-    let mut client =
-        BufferedLocalClient::connect_with_handoff(endpoint, *geometry, cwd_file.is_some()).await?;
+    #[cfg(feature = "native")]
+    if terminal.native() {
+        native_frontend::begin_attachment();
+    }
+    let mut client = BufferedLocalClient::connect_with_media(
+        endpoint,
+        *geometry,
+        cwd_file.is_some(),
+        terminal.native(),
+    )
+    .await?;
     match client.recv_handshake().await? {
         Some(response @ HostResponse::Welcome { .. }) => {
             validate_welcome(&response, true).map_err(anyhow::Error::msg)?;
@@ -4693,7 +4840,7 @@ async fn run_attached(
     // stream this client is already running would consume the reply. Resizing to
     // the size we already know clears the screen and resets the back buffer
     // without asking the terminal anything.
-    terminal.resize(ratatui::layout::Rect::new(
+    terminal.resize_surface(ratatui::layout::Rect::new(
         0,
         0,
         geometry.screen.width,
@@ -4737,23 +4884,18 @@ async fn run_attached(
                     current_frame = (*frame)
                         .try_into()
                         .map_err(|error: String| anyhow::anyhow!(error))?;
-                    terminal
-                        .draw(|frame| ui::render_host_frame(frame, &current_frame, color_depth))?;
+                    terminal.draw_host(&current_frame, color_depth)?;
                 }
                 Some(HostResponse::TerminalDamage { damage }) => {
                     if apply_terminal_damage(&mut current_frame, &damage)? {
-                        terminal.draw(|frame| {
-                            ui::render_host_frame(frame, &current_frame, color_depth)
-                        })?;
+                        terminal.draw_host(&current_frame, color_depth)?;
                     } else {
                         client.send(&ClientRequest::Resynchronize).await?;
                     }
                 }
                 Some(HostResponse::EditorDamage { damage }) => {
                     if apply_editor_damage(&mut current_frame, &damage)? {
-                        terminal.draw(|frame| {
-                            ui::render_host_frame(frame, &current_frame, color_depth)
-                        })?;
+                        terminal.draw_host(&current_frame, color_depth)?;
                     } else {
                         client.send(&ClientRequest::Resynchronize).await?;
                     }
@@ -4783,7 +4925,7 @@ async fn run_attached(
             }
         }
     }
-    terminal.draw(|frame| ui::render_host_frame(frame, &current_frame, color_depth))?;
+    terminal.draw_host(&current_frame, color_depth)?;
     let mut key_repeat_detector = KeyRepeatDetector::default();
     let mut pointer_batcher = PointerBatcher::default();
     let mut pointer_tick = tokio::time::interval(Duration::from_millis(8));
@@ -4793,6 +4935,21 @@ async fn run_attached(
     loop {
         tokio::select! {
             input = terminal_events.next() => {
+                #[cfg(feature = "native")]
+                if terminal.native() {
+                    if native_frontend::take_close_request() {
+                        client.send(&ClientRequest::Detach).await?;
+                        continue;
+                    }
+                    for request in native_frontend::attached_media_requests(&current_frame) { client.send(&request).await?; }
+                    if let AttachedEventSource::Native(events) = &terminal_events.source
+                        && events.is_presentation_acknowledgement() {
+                        if let Some(frame) = terminal_events.presented(current_frame.id) {
+                            client.send(&ClientRequest::FrameDrawn { frame }).await?;
+                        }
+                        continue;
+                    }
+                }
                 let Some(event) = input.transpose()? else {
                     if let Some(batch) = pointer_batcher.take() {
                         client.send(&batch.request()).await?;
@@ -4833,9 +4990,11 @@ async fn run_attached(
                 if is_passive_pointer(&input) {
                     continue;
                 }
+                let presented = terminal_events.presented(current_frame.id);
+                if matches!(input, InputEvent::Pointer(_)) && presented.is_none() { continue; }
                 match input {
                     InputEvent::Pointer(event) if is_wheel_event(event.kind) => {
-                        if let Some(batch) = pointer_batcher.push_wheel(event, current_frame.id) {
+                        if let Some(batch) = pointer_batcher.push_wheel(event, presented.unwrap().into()) {
                             client.send(&batch.request()).await?;
                         }
                     }
@@ -4845,7 +5004,7 @@ async fn run_attached(
                         }
                         client.send(&ClientRequest::Pointer {
                             event: event.into(),
-                            frame: current_frame.id.into(),
+                            frame: presented.unwrap(),
                             repetitions: 1,
                         }).await?;
                     }
@@ -4859,7 +5018,7 @@ async fn run_attached(
                             .send(&ClientRequest::Input {
                                 event: event.into(),
                                 repeated,
-                                presented_frame: Some(current_frame.id.into()),
+                                presented_frame: terminal_events.presented(current_frame.id),
                             })
                             .await?
                     }
@@ -4872,32 +5031,24 @@ async fn run_attached(
             }
             response = client.recv() => {
                 match response? {
+                    #[cfg(feature = "native")]
+                    Some(HostResponse::MediaAction { frame, pane, path, page, action }) if terminal.native() => {
+                        native_frontend::receive_media_action(frame.into(), runyte::media::ViewRequest { pane, path: decode_path(path)?, page, action: action.into() });
+                    }
                     Some(HostResponse::Frame { frame }) => {
                         current_frame = (*frame)
                             .try_into()
                             .map_err(|error: String| anyhow::anyhow!(error))?;
                         #[cfg(debug_assertions)]
                         terminal_events.trace_received("frame", current_frame.id.get(), true)?;
-                        terminal.draw(|frame| {
-                            ui::render_host_frame(
-                                frame,
-                                &current_frame,
-                                color_depth,
-                            )
-                        })?;
+                        terminal.draw_host(&current_frame, color_depth)?;
                     }
                     Some(HostResponse::TerminalDamage { damage }) => {
                         let applied = apply_terminal_damage(&mut current_frame, &damage)?;
                         #[cfg(debug_assertions)]
                         terminal_events.trace_received("terminal-damage", damage.id.get(), applied)?;
                         if applied {
-                            terminal.draw(|frame| {
-                                ui::render_host_frame(
-                                    frame,
-                                    &current_frame,
-                                    color_depth,
-                                )
-                            })?;
+                            terminal.draw_host(&current_frame, color_depth)?;
                         } else {
                             client.send(&ClientRequest::Resynchronize).await?;
                         }
@@ -4907,9 +5058,7 @@ async fn run_attached(
                         #[cfg(debug_assertions)]
                         terminal_events.trace_received("editor-damage", damage.id.get(), applied)?;
                         if applied {
-                            terminal.draw(|frame| {
-                                ui::render_host_frame(frame, &current_frame, color_depth)
-                            })?;
+                            terminal.draw_host(&current_frame, color_depth)?;
                         } else {
                             client.send(&ClientRequest::Resynchronize).await?;
                         }

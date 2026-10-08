@@ -90,6 +90,7 @@ fn hello(metadata: &EndpointMetadata) -> ClientRequest {
         client_version: crate::protocol::CLIENT_VERSION.to_owned(),
         role: ClientRole::Control,
         geometry: FrameGeometry::default().into(),
+        native_media: false,
         directory_handoff: true,
     }
 }

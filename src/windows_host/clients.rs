@@ -808,6 +808,9 @@ impl Clients {
                     return false;
                 }
                 ClientRequest::Input { .. }
+                | ClientRequest::MediaNavigate { .. }
+                | ClientRequest::MediaBack { .. }
+                | ClientRequest::MediaPages { .. }
                 | ClientRequest::FrameDrawn { .. }
                 | ClientRequest::Pointer { .. }
                 | ClientRequest::Invoke { .. }

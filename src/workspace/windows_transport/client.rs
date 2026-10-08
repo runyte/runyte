@@ -100,6 +100,7 @@ pub(super) fn client_hello(
     ClientRequest::Hello {
         protocol: PROTOCOL_VERSION,
         directory_handoff,
+        native_media: false,
         features: if interactive {
             vec![
                 FeatureGroup::Snapshots,

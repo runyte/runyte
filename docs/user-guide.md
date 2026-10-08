@@ -1705,7 +1705,9 @@ Launch `target/debug/runyte --window` in a workspace, or add `--editor` to work
 outside one. All existing editor keys and configured keymaps are dispatched by
 the same registry. The interface remains the editor's cell grid, without menus
 or toolbars. Window resizing changes the pane geometry and PTY dimensions.
-The window close button requests `:qa`, preserving unsaved-buffer and running-terminal refusal.
+In standalone mode the window close button requests `:qa`, preserving
+unsaved-buffer and running-terminal refusal. In `--window --mux` it detaches,
+leaving all editor state and terminal sessions in the host.
 
 For the Runyte application icon on Wayland, register the desktop entry with
 `python3 contrib/native/package.py linux --binary target/debug/runyte` before
@@ -1782,9 +1784,31 @@ First loads and jumps beyond the warmed pages can still show a loading message.
 PDF subprocesses have a 15-second limit per invocation and are killed and reaped
 during cancellation.
 
-Current scope: standalone `ide` and `editor` modes on Linux/macOS. `--window`
-with mux/host/lifecycle modes is rejected; the terminal frontend still supports
-those modes. The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
+On Linux/macOS, `runyte --window --mux` creates or attaches to the same
+persistent sessions as `runyte --mux`. Only one interactive frontend attaches
+at a time. `:detach` closes the window and preserves the session; `:quit` from
+the last pane and `:quit-all` stop a clean session and reuse the window for the
+previously visited available running session, closing it when none is available.
+Unsaved edits and live terminal children still refuse a stop. Session navigation
+uses the same `Space Space`, `Space 1`–`Space 9`, `Shift-Left` / `Shift-Right`,
+and `Ctrl-w a` bindings in either frontend.
+
+Media panes survive frontend handoff. A terminal client retains their `[pdf]`
+or `[image]` title and displays `MEDIA UNSUPPORTED IN THE TERMINAL MODE` in the
+body; Escape and `Space e` still reach the source directory. Opening a binary
+while the terminal client is attached uses the external-program prompt. A
+window attachment opens supported media in panes, with decoding and PDF
+rasterization performed by the window process.
+
+Use the native-feature build as the `runyte` executable on `PATH` when using
+both frontends. The window, terminal client, host, and integrated
+`runyte --wait` must use the same private protocol version; a mismatch is refused
+at the handshake. Integrated Claude Code and Codex `Ctrl-g` edits work through
+this persistent host and survive detach and frontend handoff.
+
+The native window supports `ide`, `editor`, and `mux` modes; host and lifecycle
+modes are CLI operations. Windows remains outside the native-window experiment.
+The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
 Bold, and Bold Italic, at a fixed 15 logical pixels with a 9×20 logical pixel
 cell. No system installation of that font is required. Search within PDF page contents and
 animated-image playback are not implemented; animated GIFs and WebP files show
@@ -5127,9 +5151,11 @@ persistent session, even from another working directory or a temporary path.
 - A failed save leaves the edit open.
 - Navigation and splits keep request ownership; unrelated buffers keep
   ordinary quit behavior.
-- Switching sessions keeps the request pending in its host. Explicit detach or
-  loss of the caller cancels it; buffers are kept and no nested TUI takes over
-  the terminal.
+- On Unix, switching sessions and explicit detach keep the request pending in its host,
+  including closing a persistent-session window. Reattaching either frontend
+  resumes the edit. Loss of the calling process cancels it; buffers are kept
+  and no nested TUI takes over the terminal. Outside-shell control-client waits
+  retain their cancellation on disconnect.
 
 **Environment in new terminals.** New persistent terminals add `--wait` to
 inherited `EDITOR` and `VISUAL` values that name bare `runyte` (including a

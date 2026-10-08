@@ -53,6 +53,8 @@ pub enum ServerEvent<P = Option<u32>> {
         interactive: bool,
         /// Whether this client can hand a `:quit-here` directory to its shell.
         directory_handoff: bool,
+        /// Whether the interactive frontend can render media projections.
+        native_media: bool,
         responses: ResponseSender,
     },
     Request {
@@ -430,6 +432,7 @@ where
         client_version,
         role,
         geometry,
+        native_media,
         directory_handoff,
     } = hello
     else {
@@ -504,6 +507,7 @@ where
             peer_process: peer_process.clone(),
             geometry: geometry.into(),
             interactive,
+            native_media,
             directory_handoff,
             responses,
         })
@@ -635,9 +639,11 @@ fn peer_hung_up(error: &anyhow::Error) -> bool {
 pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole) -> bool {
     match request {
         ClientRequest::Hello { .. } => false,
-        #[cfg(windows)]
         ClientRequest::FrameDrawn { .. } => role == ClientRole::Interactive,
-        ClientRequest::Input { .. }
+        ClientRequest::MediaNavigate { .. }
+        | ClientRequest::MediaBack { .. }
+        | ClientRequest::MediaPages { .. }
+        | ClientRequest::Input { .. }
         | ClientRequest::Invoke { .. }
         | ClientRequest::VisitDestination { .. }
         | ClientRequest::Notify { .. }
@@ -865,6 +871,7 @@ mod tests {
             client_version: crate::protocol::CLIENT_VERSION.to_owned(),
             role: ClientRole::Control,
             geometry: FrameGeometry::default().into(),
+            native_media: false,
             directory_handoff: false,
         }
     }
@@ -1116,6 +1123,7 @@ mod tests {
                     client_version: crate::protocol::CLIENT_VERSION.to_owned(),
                     role: ClientRole::Control,
                     geometry: FrameGeometry::default().into(),
+                    native_media: false,
                     directory_handoff: false,
                 },
             )

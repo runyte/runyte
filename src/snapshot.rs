@@ -523,9 +523,19 @@ impl EditorSnapshot {
     }
 }
 
+/// A read-only projection whose raster and pixel selection belong to the frontend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaSnapshot {
+    pub path: std::path::PathBuf,
+    pub page: usize,
+    pub page_buffer: bool,
+    pub pages: usize,
+}
+
 /// One pane's owned title, geometry, viewport anchor, and visible rows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneSnapshot {
+    pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
     pub area: Rect,
     pub body: Rect,
@@ -1077,6 +1087,7 @@ impl App {
                 && !self.directory_tree.focused
                 && self.jump.is_some();
             return PaneSnapshot {
+                media: None,
                 pane_id: prepared.pane_id,
                 area: prepared.area,
                 body: prepared.body,
@@ -1141,6 +1152,12 @@ impl App {
             && !self.directory_tree.focused
             && self.jump.is_some();
         let mut snapshot = PaneSnapshot {
+            media: buffer.media_path.as_ref().map(|path| MediaSnapshot {
+                path: path.clone(),
+                page: cursor.row + 1,
+                pages: buffer.text().len_lines(),
+                page_buffer: self.panes[&prepared.pane_id].shows_pdf_pages(),
+            }),
             pane_id: prepared.pane_id,
             area: prepared.area,
             body: prepared.body,

@@ -2203,6 +2203,7 @@ async fn a_repeated_handshake_is_rejected_without_poisoning_the_control_connecti
             client_version: env!("CARGO_PKG_VERSION").to_owned(),
             role: ClientRole::Control,
             geometry: FrameGeometry::default().into(),
+            native_media: false,
             directory_handoff: false,
         })
         .await
@@ -5308,178 +5309,224 @@ async fn parent_shell_result(path: &Path) -> String {
 #[tokio::test]
 async fn integrated_parent_wait_save_routes_return_to_same_live_terminal() {
     for route in ["wq", "wbc", "write-then-quit", "q", "q!"] {
-        let root = project();
-        let outside = project();
-        let prompt = outside.join("prompt.txt");
-        fs::write(&prompt, "original\n").unwrap();
-        let result_path = root.join("parent-result");
-        let endpoint = LocalEndpoint::discover_with_runtime(
-            &root.join(".runyte"),
-            &root,
-            Some(test_runtime_dir()),
-        )
+        exercise_parent_wait_route(route).await;
+    }
+}
+
+#[tokio::test]
+async fn integrated_parent_wait_survives_explicit_frontend_handoff() {
+    for route in ["detach-handoff", "window-close"] {
+        exercise_parent_wait_route(route).await;
+    }
+}
+
+async fn exercise_parent_wait_route(route: &str) {
+    let root = project();
+    let outside = project();
+    let prompt = outside.join("prompt.txt");
+    fs::write(&prompt, "original\n").unwrap();
+    let result_path = root.join("parent-result");
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let child = bundled_runyte()
+        .args(["--serve", "other.txt"])
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", test_runtime_dir())
+        .env("XDG_CACHE_HOME", test_cache_dir())
+        .env("EDITOR", env!("CARGO_BIN_EXE_runyte"))
+        .env("VISUAL", env!("CARGO_BIN_EXE_runyte"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-        let child = bundled_runyte()
-            .args(["--serve", "other.txt"])
-            .current_dir(&root)
-            .env("XDG_RUNTIME_DIR", test_runtime_dir())
-            .env("XDG_CACHE_HOME", test_cache_dir())
-            .env("EDITOR", env!("CARGO_BIN_EXE_runyte"))
-            .env("VISUAL", env!("CARGO_BIN_EXE_runyte"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let Some(mut host) = wait_for_host_start(child, &endpoint).await else {
-            return;
-        };
-        let mut interactive = LocalClient::connect(&endpoint, tui_geometry(), true)
+    let Some(mut host) = wait_for_host_start(child, &endpoint).await else {
+        return;
+    };
+    let mut interactive = LocalClient::connect_with_media(
+        &endpoint,
+        tui_geometry(),
+        true,
+        false,
+        route == "window-close",
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        response(&mut interactive).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = next_idle_frame(&mut interactive).await;
+    let editor = match route {
+        "wq" => "$EDITOR".to_owned(),
+        "wbc" => "$VISUAL".to_owned(),
+        _ => format!(
+            "{} --wait",
+            parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte")))
+        ),
+    };
+    let script = format!(
+        "cd {}; {} {}; printf '%s' $? > {}; exec /bin/cat",
+        parent_shell_quote(&outside),
+        editor,
+        parent_shell_quote(&prompt),
+        parent_shell_quote(&result_path)
+    );
+    invoke_parent_test_command(
+        &mut interactive,
+        "terminal",
+        Some(format!(
+            "/bin/sh -c {}",
+            parent_shell_quote(Path::new(&script))
+        )),
+    )
+    .await;
+    let mut control = connect_control(&endpoint).await;
+    parent_wait_pending(&mut control).await;
+    assert!(
+        !result_path.exists(),
+        "request completed before its edit: {route}"
+    );
+    control.send(&ClientRequest::ListBuffers).await.unwrap();
+    let HostResponse::Buffers { buffers } = response(&mut control).await else {
+        panic!("expected buffers")
+    };
+    let buffer = buffers
+        .into_iter()
+        .find(|buffer| {
+            buffer
+                .path_bytes
+                .clone()
+                .map(|path| decode_path(path).unwrap())
+                .as_deref()
+                == Some(prompt.as_path())
+        })
+        .unwrap();
+    wait_for_frame(
+        &mut interactive,
+        "waiting for parent prompt activation",
+        |frame| frame.active_buffer == buffer.id,
+    )
+    .await;
+    if route != "q" {
+        control
+            .send(&ClientRequest::ApplyTransaction {
+                buffer: buffer.id,
+                expected: buffer.revision,
+                changes: vec![TransportChange {
+                    from: 0,
+                    to: 0,
+                    text: "edited ".to_owned(),
+                }],
+            })
             .await
             .unwrap();
+        assert!(matches!(
+            response(&mut control).await,
+            HostResponse::TransactionApplied { .. }
+        ));
+    }
+    if matches!(route, "detach-handoff" | "window-close") {
+        if route == "detach-handoff" {
+            invoke_parent_test_command(&mut interactive, "detach", None).await;
+        } else {
+            interactive.send(&ClientRequest::Detach).await.unwrap();
+        }
+        assert!(matches!(
+            semantic_response(&mut interactive).await,
+            HostResponse::Detached { .. }
+        ));
+        drop(interactive);
+        parent_wait_pending(&mut control).await;
+        assert!(!result_path.exists(), "detach completed the parent edit");
+        interactive = LocalClient::connect_with_media(
+            &endpoint,
+            tui_geometry(),
+            true,
+            false,
+            route == "detach-handoff",
+        )
+        .await
+        .unwrap();
         assert!(matches!(
             response(&mut interactive).await,
             HostResponse::Welcome { .. }
         ));
-        let _ = next_idle_frame(&mut interactive).await;
-        let editor = match route {
-            "wq" => "$EDITOR".to_owned(),
-            "wbc" => "$VISUAL".to_owned(),
-            _ => format!(
-                "{} --wait",
-                parent_shell_quote(Path::new(env!("CARGO_BIN_EXE_runyte")))
-            ),
-        };
-        let script = format!(
-            "cd {}; {} {}; printf '%s' $? > {}; exec /bin/cat",
-            parent_shell_quote(&outside),
-            editor,
-            parent_shell_quote(&prompt),
-            parent_shell_quote(&result_path)
-        );
-        invoke_parent_test_command(
-            &mut interactive,
-            "terminal",
-            Some(format!(
-                "/bin/sh -c {}",
-                parent_shell_quote(Path::new(&script))
-            )),
-        )
-        .await;
-        let mut control = connect_control(&endpoint).await;
-        parent_wait_pending(&mut control).await;
+        let frame = next_idle_frame(&mut interactive).await;
+        assert_eq!(frame.active_buffer, buffer.id);
+        invoke_parent_test_command(&mut interactive, "wq", None).await;
+    } else if route == "write-then-quit" {
+        invoke_parent_test_command(&mut interactive, "w", None).await;
         assert!(
             !result_path.exists(),
-            "request completed before its edit: {route}"
+            ":w alone must keep the parent caller waiting"
         );
-        control.send(&ClientRequest::ListBuffers).await.unwrap();
-        let HostResponse::Buffers { buffers } = response(&mut control).await else {
-            panic!("expected buffers")
-        };
-        let buffer = buffers
-            .into_iter()
-            .find(|buffer| {
-                buffer
-                    .path_bytes
-                    .clone()
-                    .map(|path| decode_path(path).unwrap())
-                    .as_deref()
-                    == Some(prompt.as_path())
-            })
-            .unwrap();
-        wait_for_frame(
-            &mut interactive,
-            "waiting for parent prompt activation",
-            |frame| frame.active_buffer == buffer.id,
-        )
-        .await;
-        if route != "q" {
-            control
-                .send(&ClientRequest::ApplyTransaction {
-                    buffer: buffer.id,
-                    expected: buffer.revision,
-                    changes: vec![TransportChange {
-                        from: 0,
-                        to: 0,
-                        text: "edited ".to_owned(),
-                    }],
-                })
-                .await
-                .unwrap();
-            assert!(matches!(
-                response(&mut control).await,
-                HostResponse::TransactionApplied { .. }
-            ));
-        }
-        if route == "write-then-quit" {
-            invoke_parent_test_command(&mut interactive, "w", None).await;
-            assert!(
-                !result_path.exists(),
-                ":w alone must keep the parent caller waiting"
-            );
-            invoke_parent_test_command(&mut interactive, "q", None).await;
-        } else {
-            invoke_parent_test_command(&mut interactive, route, None).await;
-        }
-        control.send(&ClientRequest::Health).await.unwrap();
-        let completed_health = response(&mut control).await;
-        assert!(
-            matches!(
-                completed_health,
-                HostResponse::Health {
-                    pending_wait_requests: 0,
-                    ..
-                }
-            ),
-            "route {route} did not complete its request: {completed_health:?}"
-        );
-        let _ = resynchronized_frame(&mut interactive, "draining parent completion frame").await;
-        let result = parent_shell_result(&result_path).await;
-        assert_eq!(result == "0", route != "q!", "route {route}: {result}");
-        assert_eq!(
-            fs::read_to_string(&prompt).unwrap(),
-            if matches!(route, "q" | "q!") {
-                "original\n"
-            } else {
-                "edited original\n"
-            }
-        );
-        let frame = wait_for_frame(
-            &mut interactive,
-            "restoring originating parent terminal",
-            |frame| {
-                frame
-                    .editor
-                    .panes
-                    .iter()
-                    .any(|pane| pane.active && pane.terminal.is_some())
-            },
-        )
-        .await;
-        assert_eq!(
-            frame.editor.panes.len(),
-            1,
-            "completion closed or split the parent pane"
-        );
-        control.send(&ClientRequest::Health).await.unwrap();
-        assert!(matches!(
-            response(&mut control).await,
+        invoke_parent_test_command(&mut interactive, "q", None).await;
+    } else {
+        invoke_parent_test_command(&mut interactive, route, None).await;
+    }
+    control.send(&ClientRequest::Health).await.unwrap();
+    let completed_health = response(&mut control).await;
+    assert!(
+        matches!(
+            completed_health,
             HostResponse::Health {
                 pending_wait_requests: 0,
-                live_terminals: 1,
-                interactive_attached: true,
                 ..
             }
-        ));
-        control.send(&ClientRequest::ForceShutdown).await.unwrap();
-        assert!(matches!(
-            response(&mut control).await,
-            HostResponse::ShuttingDown
-        ));
-        wait_child(host.0.as_mut().unwrap()).await;
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(outside).unwrap();
-    }
+        ),
+        "route {route} did not complete its request: {completed_health:?}"
+    );
+    let _ = resynchronized_frame(&mut interactive, "draining parent completion frame").await;
+    let result = parent_shell_result(&result_path).await;
+    assert_eq!(result == "0", route != "q!", "route {route}: {result}");
+    assert_eq!(
+        fs::read_to_string(&prompt).unwrap(),
+        if matches!(route, "q" | "q!") {
+            "original\n"
+        } else {
+            "edited original\n"
+        }
+    );
+    let frame = wait_for_frame(
+        &mut interactive,
+        "restoring originating parent terminal",
+        |frame| {
+            frame
+                .editor
+                .panes
+                .iter()
+                .any(|pane| pane.active && pane.terminal.is_some())
+        },
+    )
+    .await;
+    assert_eq!(
+        frame.editor.panes.len(),
+        1,
+        "completion closed or split the parent pane"
+    );
+    control.send(&ClientRequest::Health).await.unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Health {
+            pending_wait_requests: 0,
+            live_terminals: 1,
+            interactive_attached: true,
+            ..
+        }
+    ));
+    control.send(&ClientRequest::ForceShutdown).await.unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::ShuttingDown
+    ));
+    wait_child(host.0.as_mut().unwrap()).await;
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(outside).unwrap();
 }
 
 #[tokio::test]
@@ -5704,4 +5751,337 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
     wait_child(destination_host.0.as_mut().unwrap()).await;
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(destination).unwrap();
+}
+
+/// Media projections belong to the host, including when it was started by a
+/// terminal-only build. Only the attached frontend decides how binaries open.
+#[tokio::test]
+async fn native_media_capability_and_projection_survive_frontend_handoff() {
+    let root = project();
+    let pdf = root.join("pages.pdf");
+    let image = root.join("image.png");
+    fs::write(&pdf, b"%PDF\0fixture").unwrap();
+    fs::write(&image, b"\x89PNG\0fixture").unwrap();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host_opening(&root, &endpoint, Some("other.txt")).await else {
+        return;
+    };
+    let mut window = LocalClient::connect_with_media(&endpoint, tui_geometry(), true, false, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut window).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = next_idle_frame(&mut window).await;
+    let mut refused = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut refused).await,
+        HostResponse::Refused { .. }
+    ));
+    invoke_parent_test_command(&mut window, "open", Some(pdf.display().to_string())).await;
+    let frame = wait_for_frame(&mut window, "opening native PDF", |frame| {
+        frame.editor.panes.iter().any(|pane| pane.media.is_some())
+    })
+    .await;
+    let pane = frame.editor.panes.iter().find(|pane| pane.active).unwrap();
+    let pane_id = pane.pane_id;
+    let media = pane.media.as_ref().unwrap();
+    assert_eq!(decode_path(media.path.clone()).unwrap(), pdf);
+    assert_eq!(media.page, 1);
+    window
+        .send(&ClientRequest::MediaPages {
+            path: encode_path(&pdf),
+            pages: 4,
+        })
+        .await
+        .unwrap();
+    window
+        .send(&ClientRequest::MediaNavigate {
+            pane: pane_id,
+            path: encode_path(&pdf),
+            delta: 2,
+        })
+        .await
+        .unwrap();
+    let frame = wait_for_frame(&mut window, "native page navigation", |frame| {
+        frame
+            .editor
+            .panes
+            .iter()
+            .any(|pane| pane.media.as_ref().is_some_and(|media| media.page == 3))
+    })
+    .await;
+    let media = frame
+        .editor
+        .panes
+        .iter()
+        .find(|pane| pane.active)
+        .unwrap()
+        .media
+        .as_ref()
+        .unwrap();
+    assert_eq!(media.pages, 4);
+    window
+        .send(&ClientRequest::MediaBack {
+            pane: pane_id,
+            path: encode_path(&pdf),
+            page: 2,
+        })
+        .await
+        .unwrap();
+    let frame = resynchronized_frame(&mut window, "rejecting stale media back").await;
+    assert!(
+        !frame
+            .editor
+            .panes
+            .iter()
+            .find(|pane| pane.active)
+            .unwrap()
+            .media
+            .as_ref()
+            .unwrap()
+            .page_buffer
+    );
+    window
+        .send(&ClientRequest::MediaBack {
+            pane: pane_id,
+            path: encode_path(&pdf),
+            page: 3,
+        })
+        .await
+        .unwrap();
+    let _ = wait_for_frame(&mut window, "opening PDF page buffer", |frame| {
+        frame
+            .editor
+            .panes
+            .iter()
+            .any(|pane| pane.media.as_ref().is_some_and(|media| media.page_buffer))
+    })
+    .await;
+    window
+        .send(&ClientRequest::Input {
+            event: InputEvent::Key(KeyStroke::plain(KeyCode::Enter)).into(),
+            repeated: false,
+            presented_frame: None,
+        })
+        .await
+        .unwrap();
+    let _ = next_idle_frame(&mut window).await;
+    window
+        .send(&ClientRequest::Input {
+            event: InputEvent::Key(KeyStroke::plain(KeyCode::Char('+'))).into(),
+            repeated: false,
+            presented_frame: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(semantic_response(&mut window).await, HostResponse::MediaAction { pane, page: 3, .. } if pane == pane_id)
+    );
+    window.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut window).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(window);
+
+    let mut terminal = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut terminal).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut terminal).await;
+    let core: runyte::workspace::HostFrame = frame.try_into().unwrap();
+    let mut screen = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    screen
+        .draw(|frame| runyte::ui::render_host_frame_exact_colors_for_test(frame, &core))
+        .unwrap();
+    let contents = screen
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(contents.contains("MEDIA UNSUPPORTED IN THE TERMINAL MODE"));
+    assert!(contents.contains("[pdf]"));
+    terminal
+        .send(&ClientRequest::MediaNavigate {
+            pane: pane_id,
+            path: encode_path(&pdf),
+            delta: 1,
+        })
+        .await
+        .unwrap();
+    let frame = resynchronized_frame(&mut terminal, "terminal cannot send native navigation").await;
+    assert_eq!(
+        frame
+            .editor
+            .panes
+            .iter()
+            .find(|pane| pane.active)
+            .unwrap()
+            .media
+            .as_ref()
+            .unwrap()
+            .page,
+        3
+    );
+    terminal.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut terminal).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(terminal);
+
+    let mut window = LocalClient::connect_with_media(&endpoint, tui_geometry(), true, false, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut window).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut window).await;
+    assert_eq!(
+        frame
+            .editor
+            .panes
+            .iter()
+            .find(|pane| pane.active)
+            .unwrap()
+            .media
+            .as_ref()
+            .unwrap()
+            .page,
+        3
+    );
+    invoke_parent_test_command(&mut window, "open", Some(image.display().to_string())).await;
+    let _ = wait_for_frame(&mut window, "opening native image", |frame| {
+        frame
+            .editor
+            .panes
+            .iter()
+            .any(|pane| pane.title.name.contains("[image]"))
+    })
+    .await;
+    window.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut window).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(window);
+    let mut terminal = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut terminal).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = next_idle_frame(&mut terminal).await;
+    terminal
+        .send(&ClientRequest::Input {
+            event: InputEvent::Key(KeyStroke::plain(KeyCode::Escape)).into(),
+            repeated: false,
+            presented_frame: None,
+        })
+        .await
+        .unwrap();
+    let _ = wait_for_frame(&mut terminal, "Escape to media source directory", |frame| {
+        frame
+            .editor
+            .panes
+            .iter()
+            .any(|pane| pane.active && pane.title.name.contains("[explorer]"))
+    })
+    .await;
+    invoke_parent_test_command(&mut terminal, "open", Some(pdf.display().to_string())).await;
+    let frame =
+        resynchronized_frame(&mut terminal, "terminal binary opening prompts externally").await;
+    assert!(
+        frame.editor.status.interaction_line.contains("program") || !frame.overlays.is_empty(),
+        "{frame:?}"
+    );
+    let mut control = connect_control(&endpoint).await;
+    control.send(&ClientRequest::ForceShutdown).await.unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::ShuttingDown
+    ));
+    wait_child(host.0.as_mut().unwrap()).await;
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn media_protocol_bounds_and_page_changes_require_complete_frames() {
+    use runyte::{app::App, config::Config, launch::LaunchTarget, workspace::WorkspaceHost};
+    let storage = TestRuntimeRoot::new("media-protocol-bounds").unwrap();
+    let path = storage.join("document.pdf");
+    fs::write(&path, b"%PDF\0fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &storage).unwrap();
+    app.native_media = true;
+    app.open_native_target(LaunchTarget::new(&path)).unwrap();
+    app.update_native_media_pages(&path, 4);
+    let mut host = WorkspaceHost::new(app);
+    let base: runyte::protocol::HostFrame = host.prepare_frame(tui_geometry()).into();
+    let encoded = serde_json::to_vec(&base).unwrap();
+    let decoded: runyte::protocol::HostFrame = serde_json::from_slice(&encoded).unwrap();
+    let core: runyte::workspace::HostFrame = decoded.try_into().unwrap();
+    assert_eq!(runyte::protocol::HostFrame::from(core), base);
+    let active = host.app().active_pane;
+    host.app_mut().navigate_native_media(active, &path, 1);
+    let next: runyte::protocol::HostFrame = host.prepare_frame(tui_geometry()).into();
+    assert!(runyte::protocol::EditorDamageFrame::between(&base, &next).is_none());
+    assert!(runyte::protocol::TerminalDamageFrame::between(&base, &next).is_none());
+    for (page, pages) in [(0, 4), (5, 4), (1, 0), (1, 10_001)] {
+        let mut invalid = base.clone();
+        let media = invalid.editor.panes[0].media.as_mut().unwrap();
+        media.page = page;
+        media.pages = pages;
+        assert!(runyte::workspace::HostFrame::try_from(invalid).is_err());
+    }
+    for request in [
+        ClientRequest::MediaPages {
+            path: encode_path(&path),
+            pages: 0,
+        },
+        ClientRequest::MediaPages {
+            path: encode_path(&path),
+            pages: 10_001,
+        },
+        ClientRequest::MediaBack {
+            pane: 1,
+            path: Vec::new(),
+            page: 1,
+        },
+        ClientRequest::MediaBack {
+            pane: 1,
+            path: encode_path(&path),
+            page: 0,
+        },
+        ClientRequest::MediaNavigate {
+            pane: 1,
+            path: encode_path(&path),
+            delta: i32::MIN,
+        },
+    ] {
+        assert!(request.validate().is_err(), "{request:?}");
+    }
+    assert!(
+        ClientRequest::MediaPages {
+            path: encode_path(&path),
+            pages: 10_000
+        }
+        .validate()
+        .is_ok()
+    );
 }

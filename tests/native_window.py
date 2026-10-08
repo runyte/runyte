@@ -17,6 +17,7 @@ import zlib
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 args = parser.parse_args()
 binary = args.binary.resolve()
@@ -98,13 +99,15 @@ def name(w):
     if n:x.XFree(n)
     return s
 existing=set(children(x.XDefaultRootWindow(d)))
-env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh'
+env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.no_system_fonts:
     fontconfig = storage / 'fonts.conf'
     fontconfig.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><reset-dirs/><cachedir>' + str(storage / 'font-cache') + '</cachedir></fontconfig>')
     env['FONTCONFIG_FILE'] = str(fontconfig)
 log=open(root/'window.log','w')
-p=subprocess.Popen([str(binary),'--window','--ide','--config',str(storage/'config/config.yaml'),str(root/'notes.txt')],cwd=root,env=env,stdout=log,stderr=log)
+launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
+if not args.mux:launch.append(str(root/'notes.txt'))
+p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
 try:
     win=None
     for _ in range(100):
@@ -228,6 +231,7 @@ try:
             break
         time.sleep(.25)
     assert len(set(initial)) > 8, "first editor frame remained blank"
+    if args.mux:command('open notes.txt')
     key('i');text('Native edit ');key('Escape');command('write')
     assert (root/'notes.txt').read_text().startswith('Native edit '),'typing or save failed'
     command('open gradient.png');time.sleep(2);image_pixels,_=screenshot('02-image');assert len(set(image_pixels)) > 100
@@ -271,17 +275,65 @@ try:
     assert (root/'terminal-result.txt').read_text() == 'native-terminal-ok', 'terminal input did not reach shell'
     text('cat terminal-result.txt'); key('Return'); time.sleep(.5)
     screenshot('07-terminal')
-    text('exit'); key('Return'); time.sleep(.5)
-    key('backslash', ctrl=True)
-    # Closing with dirty text must refuse; subsequently saving and closing exits.
-    command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
-    close_window(); assert p.poll() is None, 'dirty close discarded changes'
-    assert not (root/'notes.txt').read_text().startswith('Unsaved ')
-    screenshot('08-dirty-refusal')
-    command('write'); close_window(); p.wait(timeout=15)
-    assert p.returncode==0,p.returncode
-    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
+    if args.mux:
+        key('backslash', ctrl=True)
+        command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
+        command('quit-all'); assert p.poll() is None, 'quit discarded protected session state'
+        destination = storage / 'other'
+        destination.mkdir()
+        subprocess.run(['git','init','-q',str(destination)],check=True,env=env)
+        command('session-attach '+str(destination))
+        key('w',ctrl=True);key('a');time.sleep(.8)  # Return to the protected source.
+        key('w',ctrl=True);key('a');time.sleep(.8)  # Back to the clean destination.
+        command('quit-all');assert p.poll() is None, 'quit did not reuse the window for the source session'
+        close_window();p.wait(timeout=15);assert p.returncode == 0
+        assert not (root/'notes.txt').read_text().startswith('Unsaved ')
+        # A real terminal client takes over without a second attachment loop.
+        import pty, select, fcntl, termios
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',40,120,0,0))
+        terminal = subprocess.Popen([str(binary),'--mux','--config',str(storage/'config/config.yaml')],cwd=root,env=env,stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
+        os.close(slave)
+        try:
+            output = bytearray();deadline=time.monotonic()+15
+            while b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' not in output and time.monotonic()<deadline:
+                if select.select([master],[],[],.1)[0]:output.extend(os.read(master,65536))
+            assert b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' in output, output[-2000:]
+            os.write(master,b':detach\r');terminal.wait(timeout=15);assert terminal.returncode==0
+        finally:
+            if terminal.poll() is None:terminal.terminate();terminal.wait(timeout=15)
+            os.close(master)
+        existing=set(children(x.XDefaultRootWindow(d)))
+        p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
+        win=None
+        for _ in range(150):
+            for w in children(x.XDefaultRootWindow(d)):
+                if w not in existing and name(w)==b'Runyte':
+                    attr=Attr();x.XGetWindowAttributes(d,w,C.byref(attr))
+                    if attr.map_state==2:win=w;break
+            if win:break
+            assert p.poll() is None,(root/'window.log').read_text()[-3000:]
+            time.sleep(.1)
+        assert win,'reattachment did not create a window'
+        x.XSetInputFocus(d,win,1,0);x.XFlush(d);time.sleep(1)
+        screenshot('08-reattached');command('write')
+        assert (root/'notes.txt').read_text().startswith('Unsaved Native edit '), 'handoff lost unsaved text or quit fallback selected the wrong session'
+        close_window();p.wait(timeout=15);assert p.returncode==0
+    else:
+        text('exit'); key('Return'); time.sleep(.5)
+        key('backslash', ctrl=True)
+        # Closing with dirty text must refuse; subsequently saving and closing exits.
+        command('open notes.txt'); key('i'); text('Unsaved '); key('Escape')
+        close_window(); assert p.poll() is None, 'dirty close discarded changes'
+        assert not (root/'notes.txt').read_text().startswith('Unsaved ')
+        screenshot('08-dirty-refusal')
+        command('write'); close_window(); p.wait(timeout=15)
+        assert p.returncode==0,p.returncode
+    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal; ' + ('persistent detach, terminal/window handoff, unsaved state, live child, switching, quit fallback' if args.mux else 'dirty close refusal, quit'))
 finally:
     if p.poll() is None:p.terminate();p.wait(timeout=15)
+    if args.mux:
+        for project in [root, storage/'other']:
+            subprocess.run([str(binary),'--session-stop','--force',str(project)],cwd=root,env=env,stdout=log,stderr=log,timeout=15)
     log.close()
     fixture.cleanup()

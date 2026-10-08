@@ -67,12 +67,14 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     let first = host.prepare_frame(FrameGeometry::default()).id;
     let (send, events) = tokio::sync::mpsc::channel(8);
     let mut events = Events::Native {
+        attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
         presented: None,
         presentation_only: false,
     };
     let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     send.send(NativeInput {
+        attachment: 0,
         event: enter.clone(),
         presented: Some(first),
         presentation_only: false,
@@ -104,6 +106,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     assert!(!root.path().join("approved.txt").exists());
     assert!(host.app().fs_confirmation.is_some());
     send.send(NativeInput {
+        attachment: 0,
         event: enter,
         presented: Some(confirmation),
         presentation_only: false,
@@ -122,6 +125,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     host.prepare_frame(FrameGeometry::default());
     assert!(events.accepts_input(&host, &input, false));
     send.send(NativeInput {
+        attachment: 0,
         event: Event::Resize(80, 24),
         presented: None,
         presentation_only: false,
@@ -132,6 +136,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     assert_eq!(events.presented_frame(host.current_frame_id()), None);
     assert!(!events.is_presentation_acknowledgement());
     send.send(NativeInput {
+        attachment: 0,
         event: Event::FocusGained,
         presented: host.current_frame_id(),
         presentation_only: true,
@@ -162,6 +167,7 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
     let first = host.prepare_frame(FrameGeometry::default()).id;
     let (_send, events) = tokio::sync::mpsc::channel(1);
     let events = Events::Native {
+        attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
         presented: Some(first),
         presentation_only: false,
@@ -190,6 +196,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         height: 5,
     };
     let frame = super::FrameData {
+        attachment: 0,
         id: None,
         cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)),
         media: vec![super::MediaPane {
@@ -224,4 +231,109 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         "hints cannot select underlying page rows"
     );
     assert!(!mask.blocks(point(35., 2.)));
+}
+
+#[tokio::test]
+async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
+    use super::{Events, NativeInput};
+    use crossterm::event::{Event, KeyEvent};
+    let (send, receiver) = tokio::sync::mpsc::channel(8);
+    let attachment = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2));
+    let mut events = Events::Native {
+        attachment,
+        events: receiver,
+        presented: None,
+        presentation_only: false,
+    };
+    for (generation, event, presentation_only) in [
+        (
+            1,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            false,
+        ),
+        (1, Event::FocusGained, true),
+        (1, Event::Resize(160, 50), false),
+        (
+            2,
+            Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE)),
+            false,
+        ),
+    ] {
+        send.send(NativeInput {
+            attachment: generation,
+            event,
+            presented: Some(runyte::protocol::FrameId::from_raw(7).into()),
+            presentation_only,
+        })
+        .await
+        .unwrap();
+    }
+    drop(send);
+    assert_eq!(
+        events.next().await.unwrap().unwrap(),
+        Event::Resize(160, 50)
+    );
+    assert!(!events.is_presentation_acknowledgement());
+    assert_eq!(
+        events.next().await.unwrap().unwrap(),
+        Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+    );
+    assert!(events.next().await.is_none());
+}
+
+#[test]
+fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
+    use super::{FrameData, PendingMediaRequest, ready_media_requests};
+    use runyte::{
+        media::{ViewAction, ViewRequest},
+        protocol::FrameId,
+    };
+    let mut frame = FrameData {
+        attachment: 2,
+        id: Some(FrameId::from_raw(10).into()),
+        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)),
+        media: Vec::new(),
+        cursor: None,
+        overlays: Vec::new(),
+        media_input: true,
+        metadata_paths: Vec::new(),
+    };
+    let request = || ViewRequest {
+        pane: 1,
+        path: "pages.pdf".into(),
+        page: 2,
+        action: ViewAction::ZoomIn,
+    };
+    let mut queue = std::collections::VecDeque::from([
+        PendingMediaRequest {
+            attachment: 1,
+            frame: FrameId::from_raw(11).into(),
+            request: request(),
+        },
+        PendingMediaRequest {
+            attachment: 2,
+            frame: FrameId::from_raw(11).into(),
+            request: request(),
+        },
+    ]);
+    assert!(ready_media_requests(&mut queue, None, 2).is_empty());
+    assert_eq!(queue.len(), 1, "old attachment must be discarded");
+    assert!(ready_media_requests(&mut queue, Some(&frame), 2).is_empty());
+    assert_eq!(
+        queue.len(),
+        1,
+        "page-buffer frame cannot consume preview action"
+    );
+    // A coalesced replacement can skip the exact frame but still releases FIFO actions.
+    frame.id = Some(FrameId::from_raw(12).into());
+    frame.media.push(super::MediaPane {
+        pane: 1,
+        path: "pages.pdf".into(),
+        page: 2,
+        body: runyte::layout::Rect::default(),
+    });
+    let ready = ready_media_requests(&mut queue, Some(&frame), 2);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].action, ViewAction::ZoomIn);
+    assert!(queue.is_empty());
 }
