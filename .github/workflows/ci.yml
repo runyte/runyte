@@ -481,9 +481,15 @@ jobs:
           retention-days: 14
 
   performance:
-    name: Performance (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: Performance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -498,6 +504,8 @@ jobs:
       # test thread gives every budget the machine rather than a noisy share.
       - name: Test serialized release budgets
         run: cargo test --release --locked --test performance -- --ignored --test-threads=1
+      - name: Test serialized incremental reparse budget
+        run: cargo test --release --locked --test syntax incremental_reparse_is_far_cheaper_than_a_full_parse -- --ignored --exact --test-threads=1
 
   floor:
     name: Release build floor (ubuntu-22.04)

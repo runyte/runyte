@@ -26,8 +26,8 @@ use runyte::{
 /// phase gate refers to it: a reparse must fit comfortably inside a redraw so
 /// typing never stalls.
 ///
-/// Generous enough to hold in an unoptimised debug build on a slow machine;
-/// the ratio assertion alongside it is the sharper check.
+/// Enforced by the serialized release performance job on Linux and macOS;
+/// concurrent debug and coverage suites cannot measure this wall-clock limit.
 const REPARSE_BUDGET: Duration = Duration::from_millis(50);
 
 fn parse(source: &str, language: &str) -> (Registry, Text, DocumentSyntax) {
@@ -3825,11 +3825,12 @@ fn realistic_source() -> String {
 
 /// Phase 1 gate: an incremental reparse must be far cheaper than a full parse.
 ///
-/// The ratio is asserted rather than a wall-clock figure, so the test means the
-/// same thing on a slow machine and in a debug build: it is checking that
-/// tree-sitter's subtree reuse is actually engaged, which is the property that
-/// makes typing in a large file viable.
+/// Both the ratio and the absolute budget run in the serialized release gate.
+/// The ratio checks that tree-sitter's subtree reuse is engaged; the absolute
+/// limit checks that reparsing remains responsive. Ordinary syntax tests still
+/// verify incremental results against fresh parses without timing assertions.
 #[test]
+#[ignore = "wall-clock budget; run serialized in release mode by CI"]
 fn incremental_reparse_is_far_cheaper_than_a_full_parse() {
     let source = realistic_source();
     let registry = Registry::new();

@@ -61,6 +61,15 @@ assertions while its cases compete for a CI runner. The syntax-dispatch budget
 also renders the minified fixture unwrapped, leaving its deliberately wider
 soft-wrap redraw ceiling to the separate wrapping tests.
 
+A 2026-10-08 CI follow-up moved
+`incremental_reparse_is_far_cheaper_than_a_full_parse` in `tests/syntax.rs`
+into the same serialized release gate, now run on Linux and macOS. Its 50 ms
+absolute ceiling and fivefold incremental/full-parse ratio are unchanged.
+Concurrent macOS debug execution had exceeded the absolute ceiling despite
+passing the ratio. Ordinary syntax tests continue comparing incremental
+results with fresh parses; the timing test runs explicitly with
+`cargo test --release --locked --test syntax incremental_reparse_is_far_cheaper_than_a_full_parse -- --ignored --exact --test-threads=1`.
+
 Known limitation: language injections are still dropped above
 `INJECTION_LIMIT_BYTES` (128 KB), and `PARSE_TIMEOUT` remains five seconds.
 Both policies were deliberately left for separate follow-up work.

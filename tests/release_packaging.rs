@@ -132,6 +132,10 @@ fn ci_enforces_the_committed_dependency_graph() {
             "performance",
             "cargo test --release --locked --test performance -- --ignored --test-threads=1",
         ),
+        (
+            "performance",
+            "cargo test --release --locked --test syntax incremental_reparse_is_far_cheaper_than_a_full_parse -- --ignored --exact --test-threads=1",
+        ),
         ("floor", "cargo build --release --locked"),
         ("msrv", "cargo +1.88 check --all-targets --locked"),
     ] {
