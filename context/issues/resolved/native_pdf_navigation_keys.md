@@ -1,4 +1,55 @@
-# PDF navigation keys in the native window
+---
+title: "Zoomed native PDF pages change pages instead of panning"
+status: resolved
+reported: 2026-10-08
+resolved: 2026-10-08
+commit: 0079463
+---
+
+## Resolution
+
+Commit `0079463` (`Pan zoomed PDF pages and reset fit before leaving previews`)
+corrects `App::handle_media_command`, which previously left PDF vertical
+motions to the ordinary page-buffer cursor even when the native viewport was
+zoomed in. The Media registry now exposes shared vertical-motion commands;
+Normal mode sends them to the native viewport, which pans above fit size and
+requests adjacent pages at fit size or below. Select mode still extends PDF
+word/line selections. Counts repeat vertical motions, and file-boundary page
+jumps retain their existing behavior. Retained media in a terminal attachment
+continues using ordinary page-row motion without waiting for a native viewport.
+
+The Media scope also binds Ctrl-n/Ctrl-p to the existing next/previous-page
+commands. Ctrl-f/Ctrl-d/PageDown and Ctrl-b/Ctrl-u/PageUp retain their page
+behavior at every zoom. Help, hints, and execution use the same registry.
+Private bundled protocol version 75 adds the vertical media actions, so older
+hosts and newer frontends cannot silently disagree about them.
+
+`Viewport::back` now returns a zoomed-in PDF to fit in one press while keeping
+its selection. Later presses clear the selection, return to the page buffer,
+and open the source directory. Overlays and pending key sequences still dismiss
+first. These choices resolve the report's open questions: j/k keep page motion
+at fit size, Escape resets directly to fit, and images keep their previous
+Escape behavior. Queued vertical actions cannot operate on a different PDF
+page from the one captured with the request.
+
+Regression coverage:
+
+- `native_media_bindings_use_the_registry_and_preserve_pdf_page_motions`,
+  `pdf_page_shortcuts_and_counted_vertical_requests_use_media_scope`,
+  `media_select_mode_extends_native_selection_without_changing_pdf_pages`, and
+  `pdf_back_opens_page_buffer_with_ordinary_motions_and_enter_previews` in
+  `src/app/tests/native_media.rs` cover command dispatch, counts, Select mode,
+  prefix cancellation, terminal fallback, and page-buffer navigation.
+- `pdf_escape_fits_before_clearing_selection_and_leaving`,
+  `vertical_pdf_motion_pans_only_above_fit_and_images_never_change_pages`, and
+  `escape_clears_text_or_region_before_leaving_without_resetting_view` in
+  `src/native_frontend/viewport.rs` cover zoom, selection, and image behavior.
+- `tests/native_window.py` exercises zoomed panning, all six control-key page
+  shortcuts, selection retention on fit, and subsequent page-buffer/explorer
+  navigation. Both its standalone and `--mux --no-system-fonts` runs passed;
+  CI runs the full acceptance scenario in both attachment modes.
+
+## Report
 
 In the `--window` native frontend, a displayed PDF page uses `j`/`k` for page
 navigation at every zoom level, while `h`/`l` pan horizontally. Vertical
