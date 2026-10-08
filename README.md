@@ -266,8 +266,14 @@ Xcode installation is required in addition to the command-line tools. With
 xcode-select --install  # If the command-line tools are not installed yet.
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 sudo xcodebuild -license
+xcodebuild -downloadComponent MetalToolchain
 brew install cmake pkgconf poppler
 ```
+
+The Metal Toolchain may need a separate download even with Xcode installed.
+If the build reports `cannot execute tool metal due to missing Metal Toolchain`,
+run the `xcodebuild -downloadComponent MetalToolchain` command above, then retry
+the build.
 
 See the [upstream macOS build prerequisites](https://zed.dev/docs/development/macos)
 if Xcode is installed in a different location. Poppler is available through
