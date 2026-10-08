@@ -27,8 +27,24 @@ native all-target Clippy passed. The `native_frontend` tests rooted in
 `src/native_frontend.rs` passed (32 tests; the existing manual Poppler test
 remains ignored in that invocation).
 
-Known limitation: the compatibility patch is local to this checkout and should
-be removed once the native dependency graph carries the upstream correction.
+A macOS follow-up addresses `block` 0.1.6, reached through GPUI, Cocoa, Core
+Video, and Metal. Its `_NSConcreteStackBlock` external static used an empty
+enum as its type. That type is uninhabited, so Rust's `uninhabited_static`
+future-incompatibility diagnostic rejects the declaration. The vendored patch
+uses a private inhabited opaque C struct instead; only the static's address
+is used. Implicit `extern` declarations now explicitly spell their existing
+C ABI, avoiding the separate `missing_abi` deprecation without changing calls.
+
+The native CI build requests the future-incompatibility report and requires
+zero affected dependencies on both Linux and macOS. On macOS it also compiles
+the patched crate with warnings denied and runs
+`copied_blocks_preserve_arguments_captures_and_reference_counts` and
+`copied_block_accepts_zero_arguments` in `contrib/native/block_compat.rs`.
+These exercise the real system block runtime, including captured-value cleanup
+after the final reference is dropped.
+
+Known limitation: these compatibility patches are local to this checkout and
+should be removed once the native dependency graph carries the corrections.
 
 ## Report
 
@@ -39,3 +55,6 @@ Cargo suggests `--future-incompat-report` or
 
 The build should complete without this dependency warning. The fix must retain
 the optional native build and must not suppress the compiler diagnostic.
+
+On macOS, native compilation also reports that `block v0.1.6` contains code
+that will be rejected by a future Rust version.

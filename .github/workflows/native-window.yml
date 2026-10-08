@@ -68,7 +68,22 @@ jobs:
           cargo test --locked --features native --bin runyte native_frontend
           cargo test --locked --features native --bin runyte native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact
       - name: Build native binary
-        run: cargo build --locked --features native
+        shell: bash
+        run: |
+          cargo build --locked --features native --future-incompat-report 2>&1 | tee "$RUNNER_TEMP/native-build.log"
+          python3 - "$RUNNER_TEMP/native-build.log" <<'PY'
+          import pathlib, sys
+          report = pathlib.Path(sys.argv[1]).read_text()
+          if "0 dependencies had future-incompatible warnings" not in report:
+              sys.exit("Native dependencies must have no future-incompatibility warnings")
+          PY
+      - name: macOS block ABI compatibility
+        if: runner.os == 'macOS'
+        run: |
+          rustc --crate-name block --crate-type rlib -D warnings vendor/block/src/lib.rs --out-dir "$RUNNER_TEMP"
+          rustc --edition=2021 --test -D warnings contrib/native/block_compat.rs \
+            --extern block="$RUNNER_TEMP/libblock.rlib" -o "$RUNNER_TEMP/block-compat"
+          "$RUNNER_TEMP/block-compat"
       - name: Linux window acceptance with bundled fonts
         if: runner.os == 'Linux'
         run: |

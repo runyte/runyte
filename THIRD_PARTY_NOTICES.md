@@ -4,6 +4,15 @@ This document records external material incorporated into Runyte, along with
 any asset whose provenance or distribution status should remain visible. It
 supplements, but does not replace, the root `LICENSE`.
 
+## Native dependency compatibility patches
+
+`vendor/proc-macro-error2` contains version 2.0.1 under MIT OR Apache-2.0,
+with both upstream license texts. `vendor/block` contains version 0.1.6 by
+Steven Sheldon, declared MIT in its upstream package manifest; that release
+does not ship a separate license file. Each directory's `RUNYTE-PATCH.md`
+records its source and the local Rust compatibility corrections. These
+dependencies are used by the optional GPUI native frontend.
+
 ## Built-in color themes
 
 Runyte incorporates palette values from the projects below into the built-in

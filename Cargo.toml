@@ -165,6 +165,7 @@ name = "plugin_windows_worker"
 path = "tests/plugin_windows_worker.rs"
 harness = false
 
-# GPUI 0.2.2 transitively uses a private proc_macro re-export.
+# Compatibility corrections for GPUI 0.2.2 dependencies; provenance is in vendor/.
 [patch.crates-io]
+block = { path = "vendor/block" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
