@@ -1401,7 +1401,7 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 494, "current binding inventory changed");
+    assert_eq!(bindings.len(), 493, "current binding inventory changed");
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1423,7 +1423,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 970, "mode-expanded binding inventory changed");
+    assert_eq!(rows.len(), 968, "mode-expanded binding inventory changed");
 
     let shared_colon = COMMANDS
         .iter()
@@ -1496,7 +1496,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        2
+        4
     );
     assert_eq!(
         exposures
@@ -1506,7 +1506,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         EditorCommand::ALL.len()
             - INTERNAL_EDITOR_COMMANDS.len()
             - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 57
+            - 59
     );
 
     for spec in COMMANDS {

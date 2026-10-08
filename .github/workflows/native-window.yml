@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MPL-2.0
+
+name: Experimental native window
+
+on:
+  push:
+    branches: [exp]
+  pull_request:
+    branches: [exp]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-window-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      TMPDIR: ${{ runner.os == 'macOS' && '/private/tmp' || '/tmp' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake clang \
+            libfontconfig1-dev libfreetype6-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \
+            libvulkan1 mesa-vulkan-drivers poppler-utils xvfb libxtst6
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -version
+          brew install cmake pkgconf poppler
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: native-window
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --features native --all-targets -- -D warnings
+      - name: Core and adapter tests
+        run: |
+          python3 -m unittest discover -s contrib/native -p 'test_*.py'
+          cargo test --locked --workspace -- --test-threads=4
+          cargo test --locked --features native --bin runyte native_frontend
+          cargo test --locked --features native --bin runyte native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact
+      - name: Build native binary
+        run: cargo build --locked --features native
+      - name: Linux window acceptance with bundled fonts
+        if: runner.os == 'Linux'
+        run: |
+          export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts
+      - name: Construct macOS app bundle
+        if: runner.os == 'macOS'
+        run: python3 contrib/native/package.py macos --binary target/debug/runyte --output "$RUNNER_TEMP/Runyte.app"

@@ -4407,7 +4407,8 @@ impl App {
             return Ok(());
         }
         match command {
-            Command::MediaZoomIn
+            Command::MediaPages
+            | Command::MediaZoomIn
             | Command::MediaZoomOut
             | Command::MediaFit
             | Command::MediaActualSize

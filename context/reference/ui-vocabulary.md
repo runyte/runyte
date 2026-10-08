@@ -793,3 +793,9 @@ The native media surface adds the seventeenth special-buffer binding scope.
 Unlike an ordinary text buffer, it owns pixel selection and clipboard actions;
 its scoped overrides are intentional and validated alongside other owned
 input surfaces. Ordinary text-buffer scopes still cannot shadow global keys.
+
+The native **PDF page picker** is a filterable result list headed **PDF pages**.
+Each row names one loaded page. It starts at the current page; cursor movement
+and filtering leave that page unchanged until Enter accepts a row. The choice
+is captured against its original pane and buffer, so a retargeted pane cannot
+apply a stale page choice to another document.

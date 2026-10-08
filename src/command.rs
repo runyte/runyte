@@ -726,6 +726,7 @@ editor_commands! {
     SearchPrevious => ("search-previous", "Select only the previous search match"),
     SearchSelection => ("search-selection", "Select every match of the selection or word"),
 
+    MediaPages => ("media-pages", "Choose a PDF page"),
     MediaZoomIn => ("media-zoom-in", "Zoom into the image or PDF"),
     MediaZoomOut => ("media-zoom-out", "Zoom out of the image or PDF"),
     MediaFit => ("media-fit", "Fit the image or PDF page in its pane"),
@@ -1310,7 +1311,8 @@ impl EditorCommand {
             | Self::OpenDirectoryFuzzyGrep
             | Self::GlobalSearch
             | Self::GlobalSearchRegex => CommandCategory::Search,
-            Self::MediaZoomIn
+            Self::MediaPages
+            | Self::MediaZoomIn
             | Self::MediaZoomOut
             | Self::MediaFit
             | Self::MediaActualSize

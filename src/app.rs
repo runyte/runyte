@@ -3864,6 +3864,11 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    MediaPage {
+        pane: usize,
+        buffer: usize,
+        page: usize,
+    },
     PluginEntry(usize),
     PluginLifecycle(crate::plugin::manager::Intent),
     PluginManagerBack,

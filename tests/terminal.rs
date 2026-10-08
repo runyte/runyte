@@ -1041,9 +1041,28 @@ fn terminal_goto_keys_move_the_review_caret() {
         "t"
     );
 
-    session.type_text("gggp");
+    session.type_text("gg");
+    session
+        .app
+        .execute(
+            runyte::command::CommandInvocation::editor(
+                runyte::command::EditorCommand::GotoNextParagraph,
+                Default::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     assert_eq!(session.app.terminals.get(id).unwrap().cursor_row(), 3);
-    session.type_text("gP");
+    session
+        .app
+        .execute(
+            runyte::command::CommandInvocation::editor(
+                runyte::command::EditorCommand::GotoPreviousParagraph,
+                Default::default(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     assert_eq!(session.app.terminals.get(id).unwrap().cursor_row(), 0);
 
     session.type_text("ge");

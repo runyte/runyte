@@ -166,6 +166,7 @@ impl HelpTopic {
         match self {
             Self::Media => &[
                 "Images and PDF pages are read-only. PDF line motions choose pages; image vertical motions pan.",
+                "Open the page picker to choose a PDF page with the cursor and Enter, or type a page number to filter. A count before gg jumps directly to that page.",
                 "View alignment commands pan or center media. Zoom and fit commands appear in the key table below.",
                 "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape clears it and returns to Normal.",
                 "Wheel pans; Ctrl-wheel zooms at the pointer; middle-drag pans. PDF left-drag selects text. Shift-left-drag selects an image region. Yank copies the selection to the system clipboard.",

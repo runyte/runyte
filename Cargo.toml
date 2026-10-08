@@ -26,7 +26,9 @@ include = [
     "/docs/**",
     "/contrib/**",
     "/licenses/**",
+    "/assets/fonts/**",
     "/logo/ascii/logo.txt",
+    "/logo/runyte_logo.svg",
     "/README.md",
     "/LICENSE",
     "/NOTICE",
@@ -39,7 +41,7 @@ default-run = "runyte"
 [features]
 default = []
 startup-timing = []
-native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard"]
+native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard", "dep:x11rb"]
 
 [[bin]]
 name = "runyte"
@@ -116,6 +118,9 @@ tree-sitter-xml = "=0.7.0"
 tree-sitter-zig = "=1.1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", optional = true, default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 png = "0.18"

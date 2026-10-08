@@ -346,6 +346,10 @@ raster storage uses `tempfile` (MIT OR Apache-2.0); frontend wakeups use
 `async-channel` (MIT OR Apache-2.0). Resolved transitive versions are recorded
 in `Cargo.lock`. Upstream license notices accompany their crate distributions.
 
+The Linux window-icon adapter uses `x11rb` (MIT OR Apache-2.0) for bounded
+X11 property reads and the `_NET_WM_ICON` property. Its artwork derives from
+the repository's Runyte logo, without incorporating third-party icon artwork.
+
 PDF rasterization invokes separately installed Poppler utilities through
 argument vectors. Poppler is neither linked nor bundled by this experiment.
 The two-page PDF test fixture in `src/native_frontend/tests/fixtures/` is
@@ -355,3 +359,13 @@ The optional native frontend also uses `roxmltree` (MIT OR Apache-2.0) to read
 bounded Poppler word coordinates and `arboard` (MIT OR Apache-2.0) for native
 image clipboard ownership. GPUI 0.2.2's Linux clipboard publishes text only;
 image-region copying therefore uses arboard's Rust X11/Wayland backend.
+
+## Bundled native font
+
+Native builds embed four unmodified JetBrainsMono Nerd Font faces (Medium,
+Medium Italic, Bold, Bold Italic), from Nerd Fonts v3.4.0 / JetBrains Mono
+2.304, under SIL OFL 1.1. Copyright 2020 The JetBrains Mono Project Authors;
+Nerd Fonts copyright Ryan L McIntyre. Sources, exact hashes, and redistribution
+terms are recorded in `assets/fonts/jetbrains-mono/README.md`; retained licenses
+and glyph-set attributions are in `licenses/jetbrains-mono/`. The fonts keep
+their own license and are not relicensed under Runyte's MPL-2.0.

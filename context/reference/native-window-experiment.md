@@ -2,6 +2,7 @@
 
 This branch adds an opt-in GPUI 0.2.2 frontend, built with `--features native`
 and selected with `--window`. It supports standalone editor and IDE modes.
+The experiment stays on `exp`; do not merge this branch into `dev` or `main`.
 The terminal frontend remains the default. The public plugin contract and
 persistent-session transport do not gain a new client protocol.
 
@@ -13,6 +14,22 @@ host loop runs on one worker thread and retains editor commands, configured
 keymaps, filesystem operations, language services, Git, and PTYs. The existing
 Ratatui renderer writes into a `TestBackend`; GPUI draws its cells and cursor.
 No Zed editor widgets or separate editor command implementation are included.
+
+The native desktop identity is `com.runyte.Runyte`. Its icons derive from
+`logo/runyte_logo.svg`; the authored charcoal mark sits on a light rounded
+backplate. Linux Wayland resolves the matching installed desktop entry. X11
+also receives `_NET_WM_ICON` from one bounded background scan matching this
+process's PID and exact window class. GPUI 0.2.2's X11 raw-handle accessors are
+unimplemented, so the adapter does not call them or vendor the toolkit.
+The macOS helper builds a local `.app` with an ICNS resource, launcher and
+project/dependency/font notices. Installation, regeneration and platform
+limits are documented in [the native packaging guide](../../contrib/native/README.md).
+
+Native builds embed four unmodified JetBrainsMono Nerd Font faces from Nerd
+Fonts v3.4.0 (JetBrains Mono 2.304): Medium, Medium Italic, Bold, and Bold Italic.
+They are registered before the window opens; both the cell grid and media
+labels use them. Font binaries add approximately 9.5 MiB only to native builds.
+Licenses and attribution live under `licenses/jetbrains-mono/`.
 
 The bridge retains the latest owned frame and coalesces wakeups. It does not
 poll on a GUI timer or enqueue every rendered frame. Physical input carries
@@ -123,3 +140,32 @@ A separate six-second KDE Wayland desktop smoke check received toplevel
 configuration and attached a surface without errors or panics, then exited
 on SIGTERM. This establishes basic Wayland window startup/presentation only;
 Wayland gesture, clipboard and IME acceptance still require a platform run.
+
+## Fonts, desktop identity and page picker — 2026-10-08
+
+`g p` opens a shared PDF page picker at the current page. Cursor movement and
+filtering leave the document selection unchanged until Enter; cancellation
+keeps the original page. Rows capture pane/buffer identity and acceptance
+rejects stale destinations. `42gg` selects page 42 directly. Global `g p` and
+`g P` paragraph bindings were removed to reserve the spelling consistently;
+the paragraph commands remain configurable in Normal and Select modes.
+
+The isolated X11 acceptance passed with Fontconfig's system font directories
+disabled (`--no-system-fonts`). It exercises actual page-picker filtering and
+cursor acceptance as well as previous image/PDF interactions. It also reads
+`WM_CLASS` and `_NET_WM_ICON` from the real window and checks dimensions and
+ARGB colors. GPUI omits the final NUL in its X11 class property; the adapter
+accepts that exact form as well as the standard terminated form.
+
+Default and native all-target Clippy, the full default test suite, 15 native
+adapter tests, and three desktop packaging tests passed. Font metadata was
+checked for all four requested faces; `cargo package --list` includes the
+font binaries, icon assets, source SVG and license notices. The exp-only
+`native-window.yml` workflow adds Linux/macOS builds, tests and packaging
+checks plus Linux GUI acceptance; it has not run remotely for this change.
+macOS Finder/Dock and native interactions still need a Mac validation run.
+
+Canonical `cargo llvm-cov --locked --workspace` verification reported 92.01%
+line coverage (148,340 of 161,215), above the unchanged 89% floor. The optimized
+release build also passed the full isolated X11 acceptance with system font
+directories disabled and the real icon property checked.

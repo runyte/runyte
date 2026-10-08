@@ -814,7 +814,6 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 | `Ctrl-b` / `Ctrl-f`; `Ctrl-u` / `Ctrl-d` | Page up / down; half-page up / down |
 | `PageUp` / `PageDown` | Page up / down |
 | `gg` / `ge` or `G` | Start / end of file |
-| `gp` / `gP` | Next / previous paragraph |
 | `gf` | Open the selected path exactly, or infer the complete path under a bare cursor; inferred paths at the end of a sentence ignore trailing punctuation if the literal name does not exist. On a Markdown link to `#heading` or `file.md#heading`, land on that heading |
 | `gw` | Dim the view, label nearby words with one key and farther words with two, then type a label to jump |
 | `gt` / `gc` / `gb`; `H` / `M` / `L` | Move to the top / center / bottom of the visible window |
@@ -1708,6 +1707,12 @@ the same registry. The interface remains the editor's cell grid, without menus
 or toolbars. Window resizing changes the pane geometry and PTY dimensions.
 The window close button requests `:qa`, preserving unsaved-buffer and running-terminal refusal.
 
+For the Runyte application icon on Wayland, register the desktop entry with
+`python3 contrib/native/package.py linux --binary target/debug/runyte` before
+opening a new window. X11 also receives an icon directly. A macOS `.app`
+packaging helper and the platform limitations are described in the
+[native desktop integration guide](../contrib/native/README.md).
+
 PNG, JPEG, GIF, WebP, BMP, and PDF paths open as read-only media projections in
 the destination pane, including from `:open`, the explorer, the directory tree,
 and startup filenames. Other binary types retain the external-program prompt.
@@ -1725,6 +1730,8 @@ selection belong to each pane, so split views of the same file can differ.
 | `h` / `l` | Pan horizontally |
 | `j` / `k`, arrows, counts | PDF pages; vertical image panning |
 | `Ctrl-f` / `Ctrl-b`, PageDown / PageUp | Next / previous PDF page |
+| `g p` | Open the PDF page picker; Up/Down or Ctrl-p/Ctrl-n move, Enter displays the page, Escape cancels |
+| `42gg` / `gg` / `ge` or `G` | Go directly to PDF page 42 / first page / last page |
 | `z z` | Center the media |
 | `v`, then `h/j/k/l` or arrows | Extend a PDF word/line selection or an image-region corner; `v` again stops extending |
 | `%` | Select all page text, or the whole image when there is no text |
@@ -1736,6 +1743,13 @@ selection belong to each pane, so split views of the same file can differ.
 | Left-drag on PDF text | Select words in reading order |
 | Left-drag on an image | Pan; double-click toggles fit / 2× fit |
 | Shift-left-drag | Select a rectangular image region, including on PDFs |
+
+The PDF page picker starts on the current page and lists the known pages of the
+loaded PDF. Type a page number to filter the list; moving its cursor does not
+change the displayed page until Enter accepts it. `g p` is reserved for media
+page navigation. The paragraph commands `goto-next-paragraph` and
+`goto-previous-paragraph` remain available for configured keys without default
+bindings; `g p` and `g P` no longer move between text paragraphs.
 
 Scanned PDFs without embedded text use rectangular selection; this experiment
 does not perform OCR. Copying a region exports the displayed raster, including
@@ -1757,9 +1771,11 @@ limit per invocation and are killed and reaped during cancellation.
 
 Current scope: standalone `ide` and `editor` modes on Linux/macOS. `--window`
 with mux/host/lifecycle modes is rejected; the terminal frontend still supports
-those modes. The window uses a fixed 15-pixel monospace font and a 9×20 logical
-pixel cell. PDF text search and animated-image playback are not implemented; animated GIFs
-and WebP files show their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
+those modes. The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
+Bold, and Bold Italic, at a fixed 15 logical pixels with a 9×20 logical pixel
+cell. No system installation of that font is required. PDF text search and
+animated-image playback are not implemented; animated GIFs and WebP files show
+their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
 resolution. PDF rendering uses an external helper,
 while windowing, editor integration, and image decoding are Rust. Source changes
 are checked when another frame is presented; there is no automatic media reload

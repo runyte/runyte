@@ -250,6 +250,11 @@ framework. Install [Rust through rustup](https://rustup.rs/) and the platform
 dependencies below before building. Use a current stable Rust toolchain for
 the optional GPUI dependency graph.
 
+Native builds embed JetBrainsMono Nerd Font (Medium, Medium Italic, Bold, and
+Bold Italic); no system font installation is needed. The font is redistributed
+under SIL OFL 1.1 with its [licenses and attribution](licenses/jetbrains-mono/README.md).
+Terminal builds continue to use the font selected by your terminal emulator.
+
 **macOS**
 
 Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835), launch it once,
@@ -323,11 +328,22 @@ cargo run --features native -- --window
 cargo run --features native -- --window --editor /path/to/file
 ```
 
+For a desktop launcher and the Runyte icon on Linux (required by Wayland):
+
+```sh
+python3 contrib/native/package.py linux --binary target/debug/runyte
+```
+
+Register again if you move the binary or switch to `target/release/runyte`.
+On macOS, use the [native desktop packaging guide](contrib/native/README.md)
+to create a local `Runyte.app` with the same icon and bundled font notices.
+
 The window keeps Runyte's cell layout, themes, command palette, key hints,
 configured bindings, splits, and integrated terminals. It adds no toolbars.
 Open an image or PDF with `:open`, the explorer, the directory tree, or a
 startup filename to view it inside a pane. On PDFs, `j`/`k` select the next or
-previous page; `gg`/`ge` and counts use the existing buffer motions. `+`/`-`
+previous page; `gg`/`ge` and counts use the existing buffer motions. `42gg`
+jumps to page 42, and `g p` opens the page picker (filter, select, Enter). `+`/`-`
 zoom, `z f` fits, and `z h/j/k/l` pans. Ctrl-wheel zooms at the pointer;
 middle-drag pans. Select PDF text with left-drag or image regions with
 Shift-drag, then `y` copies the selection.

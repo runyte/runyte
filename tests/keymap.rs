@@ -774,16 +774,17 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
             Lookup::Exact(binding) if binding.role == BindingRole::Primary
         ));
     }
-    for (keys, command) in [
-        ("gp", EditorCommand::GotoNextParagraph),
-        ("gP", EditorCommand::GotoPreviousParagraph),
-    ] {
-        assert!(matches!(
-            default_keymap().lookup(Mode::Normal, &sequence(keys)),
-            Lookup::Exact(binding)
-                if binding.target == BindingTarget::Editor(command)
-                    && binding.role == BindingRole::Primary
-        ));
+    for mode in [Mode::Normal, Mode::Select] {
+        for keys in ["gp", "gP"] {
+            assert!(matches!(
+                default_keymap().lookup(mode, &sequence(keys)),
+                Lookup::NoMatch
+            ));
+        }
+        assert!(
+            matches!(default_keymap().lookup_in(mode, BindingScope::Media, &sequence("gp")),
+            Lookup::Exact(binding) if binding.target == BindingTarget::Editor(EditorCommand::MediaPages))
+        );
     }
 }
 

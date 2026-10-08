@@ -91,27 +91,69 @@ fn paragraph_motions_cross_blank_line_runs_and_stop_at_document_edges() {
     seed(&mut app, "alpha\ncontinued\n\n\nbravo\n\ncharlie");
     set_cursor(&mut app, 0, 2);
 
-    press(&mut app, 'g');
-    press(&mut app, 'p');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoNextParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(4, 0));
-    press(&mut app, 'g');
-    press(&mut app, 'p');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoNextParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(6, 0));
-    press(&mut app, 'g');
-    press(&mut app, 'p');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoNextParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(6, 6));
 
-    press(&mut app, 'g');
-    press(&mut app, 'P');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoPreviousParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(6, 0));
-    press(&mut app, 'g');
-    press(&mut app, 'P');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoPreviousParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(4, 0));
-    press(&mut app, 'g');
-    press(&mut app, 'P');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoPreviousParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(0, 0));
-    press(&mut app, 'g');
-    press(&mut app, 'P');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoPreviousParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(0, 0));
 }
 
@@ -120,15 +162,26 @@ fn paragraph_motions_accept_counts_and_extend_in_select_mode() {
     let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "one\n\ntwo\n\nthree");
 
-    press(&mut app, '2');
-    press(&mut app, 'g');
-    press(&mut app, 'p');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoNextParagraph,
+            CommandExecutionContext::resolved(std::num::NonZeroUsize::new(2).unwrap(), None),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(cursor(&app), Position::new(4, 0));
 
     set_cursor(&mut app, 0, 0);
     press(&mut app, 'v');
-    press(&mut app, 'g');
-    press(&mut app, 'p');
+    app.execute(
+        CommandInvocation::editor(
+            EditorCommand::GotoNextParagraph,
+            CommandExecutionContext::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     assert_eq!(app.mode, Mode::Select);
     assert_eq!(app.active().selection.primary(), Range::new(0, 5));
 }

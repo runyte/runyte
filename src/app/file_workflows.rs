@@ -3225,6 +3225,14 @@ impl App {
         let pdf = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+        if command == C::MediaPages {
+            if pdf {
+                self.open_media_pages();
+            } else {
+                self.status("page picker requires a PDF");
+            }
+            return true;
+        }
         if pdf
             && matches!(
                 command,
@@ -3315,5 +3323,51 @@ impl App {
             self.active_mut()
                 .replace_selection(Selection::point(offset));
         }
+    }
+}
+
+impl App {
+    fn open_media_pages(&mut self) {
+        let buffer = self.active().buffer;
+        let pane = self.active_pane;
+        let pages = self.active_buffer().text().len_lines();
+        let selected = self
+            .active_buffer()
+            .position_of(self.active().selection.primary().head)
+            .row;
+        let items = (0..pages)
+            .map(|page| {
+                let label = format!("Page {}", page + 1);
+                PickerItem::searchable(label.clone(), format!("of {pages}"), label, page)
+            })
+            .collect();
+        self.list_actions = (0..pages)
+            .map(|page| ListAction::MediaPage { pane, buffer, page })
+            .collect();
+        let mut list = ListPicker::new("PDF pages", items).with_primary_action("to view page");
+        list.selected = selected.min(pages.saturating_sub(1));
+        self.list = Some(list);
+    }
+
+    pub(super) fn choose_media_page(&mut self, pane: usize, buffer: usize, page: usize) {
+        let valid = self
+            .panes
+            .get(&pane)
+            .is_some_and(|target| target.buffer == buffer && target.terminal.is_none())
+            && !self.closed_buffers.contains(&buffer)
+            && self.buffers.get(buffer).is_some_and(|buffer| {
+                buffer.media_path.is_some() && page < buffer.text().len_lines()
+            });
+        if !valid {
+            self.action_failed("PDF page changed; reopen the page picker");
+            return;
+        }
+        self.activate_pane_from_pointer(pane);
+        self.push_jump();
+        let offset = self.buffers[buffer].text().line_to_offset(page);
+        self.active_mut()
+            .replace_selection(Selection::point(offset));
+        self.active_mut().preserve_scroll = false;
+        self.mode = Mode::Normal;
     }
 }

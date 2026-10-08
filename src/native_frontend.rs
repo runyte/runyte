@@ -3,6 +3,7 @@
 //! GPUI owns the main thread; the existing host loop owns all editor state.
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
+mod icon;
 mod interactions;
 mod media;
 mod viewport;
@@ -301,10 +302,27 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
             result
         })?;
     Application::new().run(move |cx| {
+        cx.text_system()
+            .add_fonts(vec![
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"
+                )),
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"
+                )),
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"
+                )),
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"
+                )),
+            ])
+            .expect("load bundled JetBrains Mono Nerd Font faces");
         let bridge = bridge.clone();
         let bounds = Bounds::centered(None, size(px(1080.), px(800.)), cx);
         cx.open_window(
             WindowOptions {
+                app_id: Some(icon::APP_ID.into()),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Runyte".into()),
@@ -324,6 +342,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
             },
         )
         .expect("open Runyte window");
+        icon::install();
         cx.activate(true);
     });
     editor
@@ -410,6 +429,8 @@ impl Render for NativeView {
         }
         let frame = self.frame.clone();
         let mut root = div()
+            .font_family("JetBrainsMono Nerd Font")
+            .font_weight(FontWeight::MEDIUM)
             .size_full()
             .bg(rgb(0x181818))
             .track_focus(&self.focus)
@@ -774,7 +795,8 @@ fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx
             }
             let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
             if cell.symbol() != " " && !cell.modifier.contains(Modifier::HIDDEN) {
-                let mut font = font("monospace");
+                let mut font = font("JetBrainsMono Nerd Font");
+                font.weight = FontWeight::MEDIUM;
                 if cell.modifier.contains(Modifier::BOLD) {
                     font.weight = FontWeight::BOLD;
                 }

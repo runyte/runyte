@@ -17,6 +17,7 @@ import zlib
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 args = parser.parse_args()
 binary = args.binary.resolve()
 fixture = tempfile.TemporaryDirectory(prefix="runyte-native-window-")
@@ -98,6 +99,10 @@ def name(w):
     return s
 existing=set(children(x.XDefaultRootWindow(d)))
 env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None);env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh'
+if args.no_system_fonts:
+    fontconfig = storage / 'fonts.conf'
+    fontconfig.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><reset-dirs/><cachedir>' + str(storage / 'font-cache') + '</cachedir></fontconfig>')
+    env['FONTCONFIG_FILE'] = str(fontconfig)
 log=open(root/'window.log','w')
 p=subprocess.Popen([str(binary),'--window','--ide','--config',str(storage/'config/config.yaml'),str(root/'notes.txt')],cwd=root,env=env,stdout=log,stderr=log)
 try:
@@ -121,6 +126,22 @@ try:
         time.sleep(.1)
     assert attrs.map_state == 2, "Runyte window did not map"
     x.XSetInputFocus(d,win,1,0);x.XFlush(d);time.sleep(1)
+    def window_property(name):
+        actual=C.c_ulong();fmt=C.c_int();count=C.c_ulong();after=C.c_ulong();data=C.POINTER(C.c_ubyte)()
+        result=x.XGetWindowProperty(d,win,x.XInternAtom(d,name,0),0,20000,0,0,C.byref(actual),C.byref(fmt),C.byref(count),C.byref(after),C.byref(data))
+        assert result == 0 and after.value == 0, name
+        try:
+            if fmt.value == 32:
+                # Xlib expands protocol CARDINALs to native longs, which may
+                # sign-extend on 64-bit hosts. The property contains 32-bit ARGB.
+                return [C.cast(data,C.POINTER(C.c_ulong))[i] & 0xffffffff for i in range(count.value)]
+            return C.string_at(data,count.value) if data else b''
+        finally:
+            if data:x.XFree(data)
+    assert window_property(b'WM_CLASS').rstrip(b'\0') == b'com.runyte.Runyte\0com.runyte.Runyte', 'desktop identity'
+    icon = window_property(b'_NET_WM_ICON')
+    assert icon[:2] == [128,128] and len(icon) == 2 + 128*128, 'missing Runyte window icon'
+    assert 0xff323232 in icon[2:] and 0xfff3f1eb in icon[2:], 'unexpected icon pixels'
     def key(sym,shift=False,ctrl=False):
         modifiers=[]
         if shift:modifiers.append(x.XKeysymToKeycode(d,x.XStringToKeysym(b'Shift_L')))
@@ -226,6 +247,9 @@ try:
     key('Escape');key('v');key('l');key('y');time.sleep(.3)
     assert clipboard(b'UTF8_STRING').decode()=='Hello Runyte','keyboard PDF selection failed'
     key('Escape');key('j');time.sleep(2);second_page,second_color=screenshot('04-pdf-second');assert second_color[0] > second_color[2] + 100, second_color
+    key('g');key('p');time.sleep(.3);screenshot('04a-page-picker')
+    key('1');key('Return');time.sleep(.7);_,picked_color=screenshot('04b-picked-first');assert picked_color[2] > picked_color[0] + 100, picked_color
+    key('g');key('p');key('Down');key('Return');time.sleep(.7);_,picked_color=screenshot('04c-picked-second');assert picked_color[0] > picked_color[2] + 100, picked_color
     key('space');time.sleep(.5);screenshot('05-key-hints');key('Escape')
     x.XResizeWindow(d, win, 1000, 700);x.XFlush(d);time.sleep(.5)
     key('w', ctrl=True); key('v'); time.sleep(.5)
@@ -244,7 +268,7 @@ try:
     screenshot('08-dirty-refusal')
     command('write'); close_window(); p.wait(timeout=15)
     assert p.returncode==0,p.returncode
-    print('PASS: first paint, key-driven edit/save, image, PDF paging/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
+    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/picker/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
 finally:
     if p.poll() is None:p.terminate();p.wait(timeout=15)
     log.close()

@@ -1500,11 +1500,6 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('H'), Command::GotoWindowTop),
         modal(Key::char('M'), Command::GotoWindowCenter),
         modal(Key::char('L'), Command::GotoWindowBottom),
-        modal([Key::char('g'), Key::char('p')], Command::GotoNextParagraph),
-        modal(
-            [Key::char('g'), Key::char('P')],
-            Command::GotoPreviousParagraph,
-        ),
         modal([Key::char('g'), Key::char('f')], Command::GotoFile),
         modal([Key::char('g'), Key::char('w')], Command::GotoWord),
         modal([Key::char('g'), Key::char('d')], Command::GotoDefinition),
@@ -2107,6 +2102,12 @@ fn built_in_bindings() -> Vec<Binding> {
         ),
         // Enter alone opens an entry. A directory buffer is an ordinary buffer,
         // so `e` has to stay the word-end motion here as it is everywhere else.
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            [Key::char('g'), Key::char('p')],
+            Command::MediaPages,
+        ),
         Binding::implemented_in(
             MODAL,
             BindingScope::Media,

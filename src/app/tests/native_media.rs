@@ -245,3 +245,112 @@ fn media_select_mode_extends_native_selection_without_changing_pdf_pages() {
         ViewAction::ClearSelection
     );
 }
+
+#[test]
+fn pdf_page_picker_filters_accepts_and_cancels_without_changing_source() {
+    let root = TestRuntimeRoot::new("media-page-picker").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path.clone()).unwrap();
+    let buffer = app.active().buffer;
+    app.buffers[buffer].replace_virtual_text("Page 1 of 4\nPage 2 of 4\nPage 3 of 4\nPage 4 of 4");
+    press(&mut app, 'j');
+    press(&mut app, 'g');
+    press(&mut app, 'p');
+    assert_eq!(app.list.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 2);
+    for ch in ['g', 'p', '1'] {
+        press(&mut app, ch);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    for ch in ['g', 'p', '4'] {
+        press(&mut app, ch);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
+    for ch in ['g', 'g'] {
+        press(&mut app, ch);
+    }
+    for ch in ['g', 'p'] {
+        press(&mut app, ch);
+    }
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    assert_eq!(fs::read(path).unwrap(), b"%PDF fixture");
+}
+
+#[test]
+fn pdf_page_picker_rejects_retargeted_pane_and_images() {
+    let root = TestRuntimeRoot::new("media-page-picker-stale").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let image = root.join("image.png");
+    fs::write(&image, b"PNG fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path).unwrap();
+    for ch in ['g', 'p'] {
+        press(&mut app, ch);
+    }
+    app.open_file(image).unwrap();
+    let image_buffer = app.active().buffer;
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().buffer, image_buffer);
+    assert!(app.status.contains("PDF page changed"));
+    for ch in ['g', 'p'] {
+        press(&mut app, ch);
+    }
+    assert!(app.list.is_none());
+    assert!(app.status.contains("requires a PDF"));
+}
+
+#[test]
+fn pdf_page_navigation_keeps_counted_file_jumps() {
+    let root = TestRuntimeRoot::new("media-page-jumps").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path).unwrap();
+    let buffer = app.active().buffer;
+    app.buffers[buffer].replace_virtual_text("Page 1\nPage 2\nPage 3\nPage 4");
+    for (keys, row) in [
+        ("3gg", 2),
+        ("gg", 0),
+        ("ge", 3),
+        ("k", 2),
+        ("j", 3),
+        ("ggG", 3),
+    ] {
+        for ch in keys.chars() {
+            press(&mut app, ch);
+        }
+        assert_eq!(app.active().cursor(app.active_buffer()).row, row, "{keys}");
+    }
+}
+
+#[test]
+fn paragraph_commands_remain_available_to_configured_keys() {
+    let config: Config = serde_yaml::from_str(
+        "keys:\n  bind:\n    normal:\n      F7: goto-next-paragraph\n      F8: goto-previous-paragraph\n    select:\n      F7: goto-next-paragraph\n",
+    ).unwrap();
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "first\n\nsecond");
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 2);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    press(&mut app, 'v');
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 2);
+    assert!(!app.active().selection.primary().is_empty());
+}
