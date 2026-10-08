@@ -304,6 +304,14 @@ fn media_select_mode_extends_native_selection_without_changing_pdf_pages() {
             ViewAction::ExtendDown
         ]
     );
+    #[cfg(target_os = "macos")]
+    {
+        key(&mut app, KeyCode::Char('c'), Modifiers::SUPER);
+        assert_eq!(
+            app.media_requests.back().unwrap().action,
+            ViewAction::CopySelection
+        );
+    }
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.media_requests.back().unwrap().action, ViewAction::Back);

@@ -9,6 +9,8 @@ fn native_strokes_preserve_modal_sequences_and_modifiers() {
         ("ctrl-\\", KeyCode::Char('\\'), KeyModifiers::CONTROL),
         ("alt-v", KeyCode::Char('v'), KeyModifiers::ALT),
         ("ctrl-w", KeyCode::Char('w'), KeyModifiers::CONTROL),
+        ("cmd-c", KeyCode::Char('c'), KeyModifiers::SUPER),
+        ("cmd-y", KeyCode::Char('y'), KeyModifiers::SUPER),
         ("shift-tab", KeyCode::BackTab, KeyModifiers::SHIFT),
         ("shift-left", KeyCode::Left, KeyModifiers::SHIFT),
         ("f12", KeyCode::F(12), KeyModifiers::NONE),

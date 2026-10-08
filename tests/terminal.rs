@@ -1154,6 +1154,11 @@ fn clipboard_copy_in_live_terminal_input_preserves_output_and_clipboard() {
         .app
         .set_system_clipboard(Box::new(MemoryClipboard(Arc::clone(&clipboard))));
     session.app.handle_key(KeyStroke::ctrl('C')).unwrap();
+    #[cfg(target_os = "macos")]
+    session
+        .app
+        .handle_key(KeyStroke::new(KeyCode::Char('c'), Modifiers::SUPER))
+        .unwrap();
     assert_eq!(session.app.mode, Mode::Insert);
     let id = session.app.active_terminal().unwrap();
     assert!(!session.app.terminals.get(id).unwrap().reviewing());
@@ -1213,6 +1218,15 @@ fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
         ))
         .unwrap();
     assert_eq!(&*clipboard.lock().unwrap(), "beta");
+    #[cfg(target_os = "macos")]
+    {
+        *clipboard.lock().unwrap() = String::new();
+        session
+            .app
+            .handle_key(KeyStroke::new(KeyCode::Char('c'), Modifiers::SUPER))
+            .unwrap();
+        assert_eq!(&*clipboard.lock().unwrap(), "beta");
+    }
 }
 
 #[test]

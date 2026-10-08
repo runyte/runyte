@@ -608,6 +608,13 @@ mod tests {
     fn terminal_copy_admission_follows_the_effective_registry() {
         let base = default_keymap();
         assert!(base.terminal_clipboard_key(Key::ctrl('C')));
+        assert_eq!(
+            base.terminal_clipboard_key(Key::new(
+                crate::input::KeyCode::Char('c'),
+                crate::input::Modifiers::SUPER
+            )),
+            cfg!(target_os = "macos")
+        );
         assert!(!base.terminal_clipboard_key(Key::ctrl('c')));
         assert!(!base.terminal_clipboard_key(Key::ctrl('v')));
         for sequence in ["F11", "F11 c"] {

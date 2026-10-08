@@ -1401,7 +1401,12 @@ fn typed_colon_paths_preserve_spaces_and_remove_balanced_quotes() {
 #[test]
 fn command_inventory_classifies_every_command_and_current_binding() {
     let bindings = crate::keymap::default_keymap().bindings();
-    assert_eq!(bindings.len(), 503, "current binding inventory changed");
+    let macos_bindings = if cfg!(target_os = "macos") { 3 } else { 0 };
+    assert_eq!(
+        bindings.len(),
+        503 + macos_bindings,
+        "current binding inventory changed"
+    );
 
     let mut rows = HashSet::new();
     for binding in bindings {
@@ -1423,7 +1428,11 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             );
         }
     }
-    assert_eq!(rows.len(), 988, "mode-expanded binding inventory changed");
+    assert_eq!(
+        rows.len(),
+        988 + 2 * macos_bindings,
+        "mode-expanded binding inventory changed"
+    );
 
     let shared_colon = COMMANDS
         .iter()

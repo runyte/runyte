@@ -1688,6 +1688,24 @@ fn system_clipboard_bindings_use_the_clipboard_boundary() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn macos_command_c_copies_the_selection_in_all_editing_modes() {
+    for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+        let shared = Arc::new(Mutex::new(String::new()));
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.set_system_clipboard(Box::new(MemoryClipboard(shared.clone())));
+        seed(&mut app, "abc");
+        app.active_mut()
+            .replace_selection(Selection::single(Range::new(0, 1)));
+        app.mode = mode;
+        key(&mut app, KeyCode::Char('c'), Modifiers::SUPER);
+        assert_eq!(&*shared.lock().unwrap(), "ab", "{mode:?}");
+        assert_eq!(text(&app), "abc");
+        assert_eq!(app.mode, mode);
+    }
+}
+
+#[test]
 fn clipboard_linewise_paste_replaces_only_the_selected_text() {
     let shared = Arc::new(Mutex::new("copied\r\n".to_owned()));
     let mut app = App::new(Config::default(), None).unwrap();

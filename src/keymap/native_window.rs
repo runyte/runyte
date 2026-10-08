@@ -30,7 +30,16 @@ pub const BINDINGS: &[Binding] = &[
         action: Action::FontSize(-1),
     },
     Binding {
-        keys: &[KeyStroke::ctrl('V')],
+        keys: &[
+            KeyStroke::ctrl('V'),
+            #[cfg(target_os = "macos")]
+            KeyStroke::ctrl('Y'),
+            #[cfg(target_os = "macos")]
+            KeyStroke::new(
+                crate::input::KeyCode::Char('y'),
+                crate::input::Modifiers::SUPER,
+            ),
+        ],
         description: "Paste system clipboard text at the cursor",
         action: Action::PasteText,
     },
@@ -59,6 +68,25 @@ pub fn help() -> String {
 mod tests {
     use super::*;
     use crate::input::{KeyCode, Modifiers};
+
+    #[test]
+    fn command_paste_is_macos_only_and_preserves_control_y() {
+        for key in [
+            KeyStroke::new(KeyCode::Char('y'), Modifiers::SUPER),
+            KeyStroke::new(KeyCode::Char('Y'), Modifiers::CONTROL | Modifiers::SHIFT),
+        ] {
+            assert_eq!(
+                lookup(key).map(|binding| binding.action),
+                cfg!(target_os = "macos").then_some(Action::PasteText)
+            );
+        }
+        assert!(lookup(KeyStroke::ctrl('y')).is_none());
+        assert!(lookup(KeyStroke::char('y')).is_none());
+        assert_eq!(
+            lookup(KeyStroke::ctrl('V')).unwrap().action,
+            Action::PasteText
+        );
+    }
 
     #[test]
     fn window_font_controls_share_their_help_and_preserve_other_input() {

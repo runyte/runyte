@@ -1495,6 +1495,16 @@ fn built_in_bindings() -> Vec<Binding> {
         // Terminal Insert remains untouched so the child owns these keys.
         modal(Key::ctrl('C'), Command::ClipboardYank),
         insert(Key::ctrl('C'), Command::ClipboardYank),
+        #[cfg(target_os = "macos")]
+        modal(
+            Key::new(KeyCode::Char('c'), Modifiers::SUPER),
+            Command::ClipboardYank,
+        ),
+        #[cfg(target_os = "macos")]
+        insert(
+            Key::new(KeyCode::Char('c'), Modifiers::SUPER),
+            Command::ClipboardYank,
+        ),
         modal(Key::ctrl('v'), Command::ClipboardPaste),
         insert(Key::ctrl('v'), Command::ClipboardPaste),
         modal(Key::alt('v'), Command::ClipboardPaste),
@@ -2225,6 +2235,13 @@ fn built_in_bindings() -> Vec<Binding> {
             MODAL,
             BindingScope::Media,
             Key::ctrl('C'),
+            Command::MediaCopySelection,
+        ),
+        #[cfg(target_os = "macos")]
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::new(KeyCode::Char('c'), Modifiers::SUPER),
             Command::MediaCopySelection,
         ),
         Binding::implemented_in(
