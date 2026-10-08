@@ -191,6 +191,34 @@ fn native_media_bindings_use_the_registry_and_preserve_pdf_page_motions() {
 }
 
 #[test]
+fn media_q_and_escape_request_the_same_back_action_in_normal_and_select_modes() {
+    use crate::media::ViewAction;
+    let root = TestRuntimeRoot::new("media-back-alias").unwrap();
+    for name in ["pages.pdf", "photo.png"] {
+        let path = root.join(name);
+        fs::write(&path, b"media fixture").unwrap();
+        for select in [false, true] {
+            for back in [KeyCode::Char('q'), KeyCode::Escape] {
+                let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+                app.native_media = true;
+                app.open_file(path.clone()).unwrap();
+                if select {
+                    press(&mut app, 'v');
+                }
+                app.media_requests.clear();
+                key(&mut app, back, Modifiers::NONE);
+                assert_eq!(app.mode, Mode::Normal);
+                assert_eq!(app.media_requests.len(), 1);
+                let request = app.media_requests.pop_front().unwrap();
+                assert_eq!(request.action, ViewAction::Back);
+                assert_eq!(request.path, path);
+                assert_eq!(request.pane, app.active_pane);
+            }
+        }
+    }
+}
+
+#[test]
 fn pdf_page_shortcuts_and_counted_vertical_requests_use_media_scope() {
     use crate::media::ViewAction;
     let root = TestRuntimeRoot::new("pdf-navigation-keys").unwrap();

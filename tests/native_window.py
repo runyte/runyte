@@ -434,6 +434,17 @@ try:
         command('open paste-command.txt'); key('percent', shift=True); text(' cy')
         command('terminal'); time.sleep(.4); key('v', shift=True, ctrl=True); key('Return'); time.sleep(.4)
         assert (root/'clipboard-terminal-ok').exists(), 'clipboard paste did not reach terminal child'
+        # A known first-row selection exercises native right-click routing into
+        # terminal review, independently of the shell's prompt and scrollback.
+        (root/'right-click.txt').write_text('\x1b[2J\x1b[HRIGHTCLICK')
+        text('cat right-click.txt'); key('Return'); time.sleep(.4)
+        key('backslash',ctrl=True); key('backslash',ctrl=True); time.sleep(.2)
+        drag((15,30),(95,30)); time.sleep(.2)
+        mouse(40,30); button(3,True); button(3,False); time.sleep(.3)
+        screenshot('terminal-right-click')
+        terminal_copied = clipboard(b'UTF8_STRING').decode()
+        assert terminal_copied == 'RIGHTCLICK', repr(terminal_copied)
+        key('i')
         def terminal_size(name):
             text('stty size > '+name); key('Return'); time.sleep(.4)
             return tuple(map(int, (root/name).read_text().split()))

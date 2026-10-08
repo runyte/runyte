@@ -962,13 +962,33 @@ impl Render for NativeView {
                 .on_mouse_down(
                     button,
                     cx.listener(|view, event: &MouseDownEvent, _, cx| {
-                        view.media_mouse_down(event, cx);
+                        if !view.media_mouse_down(event, cx) && event.button == MouseButton::Right {
+                            view.send(mouse_event(
+                                view.metrics,
+                                event.position,
+                                crossterm::event::MouseEventKind::Down(
+                                    crossterm::event::MouseButton::Right,
+                                ),
+                                event.modifiers,
+                            ));
+                        }
                     }),
                 )
                 .on_mouse_up(
                     button,
                     cx.listener(|view, event: &MouseUpEvent, _, cx| {
-                        view.media_mouse_up(event.position, cx);
+                        if !view.media_mouse_up(event.position, cx)
+                            && event.button == MouseButton::Right
+                        {
+                            view.send(mouse_event(
+                                view.metrics,
+                                event.position,
+                                crossterm::event::MouseEventKind::Up(
+                                    crossterm::event::MouseButton::Right,
+                                ),
+                                event.modifiers,
+                            ));
+                        }
                     }),
                 );
         }

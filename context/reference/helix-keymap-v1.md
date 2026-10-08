@@ -720,6 +720,9 @@ read-only page buffer. This uses ordinary buffer motions, counts and search;
 Enter displays the page at the cursor, while Escape opens its source directory.
 Images follow the same fit-then-clear sequence and open their source directory;
 they have no page buffer.
+`q` aliases `media-back` in the Media scope in Normal and Select mode, following
+the same fit-then-clear sequence as Escape. It does not change bindings in
+overlays, pending sequences, or the PDF page buffer.
 `Space e` opens the media source directory directly and selects the source file.
 `Space E` continues to open the editor working directory.
 

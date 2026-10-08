@@ -2259,6 +2259,12 @@ fn built_in_bindings() -> Vec<Binding> {
         Binding::implemented_in(
             MODAL,
             BindingScope::Media,
+            Key::char('q'),
+            Command::MediaBack,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
             Key::char('%'),
             Command::MediaSelectAll,
         ),

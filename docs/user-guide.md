@@ -724,6 +724,8 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
   folds. Move back inside the pane or release the button to stop.
 - **Right-click copy** leaves the selections alone and reports
   `right mouse click (yanked to system clipboard)`.
+  The native window uses the same behavior for document and terminal-review
+  selections; right-drag in PDF and image previews pans instead.
 - **Character rule.** The pointer names the character under it, not the gap
   before it, so a drag covers the characters it started and ended on, in
   either direction. Pressing past a line's end places the caret on its last
@@ -1749,6 +1751,10 @@ This fit-then-clear order applies to images and PDFs alike. `Space e` goes direc
 the source directory from either media type and selects the source file, just
 as it does from a rendered Markdown document. `Space E` still opens the editor's
 working directory.
+
+In a PDF or image preview, `q` performs the same fit, clear-selection, and
+leave-preview action as Escape, in both Normal and Select mode. Overlays,
+pending key sequences, and the PDF page buffer retain their own bindings.
 
 | Input in a media pane | Action |
 | --- | --- |
