@@ -333,3 +333,9 @@ wakes blocked output producers before requesting process termination. Job
 assignment happens while the child is suspended and precedes its first run.
 Windows host/attachment parity and compatibility with the optional programs
 in the Unix matrix above are not implied by these tests.
+
+Native windows reserve Ctrl-Shift-v for one bounded literal clipboard paste;
+terminal dispatch retains bracketed-paste handling. Ctrl-Shift-c copies a
+terminal review selection through the registry, while Ctrl-c remains child
+input. Terminal Insert's copy exception and its help read the effective
+Terminal binding, including configured replacements.

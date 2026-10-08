@@ -214,7 +214,8 @@ fn main() -> Result<()> {
                 ),
                 "--window supports ide, editor, and mux modes"
             );
-            return native_frontend::launch(cli_main);
+            let (config, _) = Config::load(arguments.config.as_deref())?;
+            return native_frontend::launch(cli_main, config.editor.font_size);
         }
     }
     cli_main()

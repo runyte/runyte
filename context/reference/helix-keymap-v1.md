@@ -729,3 +729,12 @@ lines; images extend a rectangular selection corner. `v` stops extending and
 Escape clears the native selection and restores Normal mode. View commands
 under `z` continue panning in either mode. These scoped commands, hints and help
 share the registry. Native mouse mappings are documented in the user guide.
+
+Native window font controls use `keymap::native_window`: Ctrl-plus/Ctrl-equals
+increase and Ctrl-minus decreases the window-local font size. Ctrl-Shift-v
+pastes system clipboard text as literal frontend input. These reserved window
+controls are not editor commands, are not remappable, and their help and
+execution read the same registry. They apply while overlays or terminals own
+input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
+binding for clipboard yank in Normal/Select/Insert/Replace and Terminal Insert;
+media scopes copy the native selection. Ordinary Ctrl-c stays child input.

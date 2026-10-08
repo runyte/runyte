@@ -453,6 +453,8 @@ pub struct EditorConfig {
     pub trim_trailing_whitespace: bool,
     /// Capture terminal mouse events for selection, scrolling, and resizing.
     pub mouse: bool,
+    /// Native window font size in logical pixels, read when a window starts.
+    pub font_size: usize,
     /// Offer words already open elsewhere in the workspace while typing.
     pub word_completion: bool,
     /// Prefix length before word-completion candidates appear.
@@ -1006,6 +1008,7 @@ impl Default for EditorConfig {
             scratch_markdown: true,
             trim_trailing_whitespace: true,
             mouse: true,
+            font_size: 15,
             word_completion: true,
             word_completion_minimum: 3,
             fast_pane_keys: false,
@@ -1203,6 +1206,9 @@ impl Config {
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
         self.indentation.validate()?;
+        if !(8..=48).contains(&self.editor.font_size) {
+            return Err("editor.font_size must be between 8 and 48".to_owned());
+        }
         // `keys` is deliberately absent: structural and semantic errors take
         // the non-fatal configured-keymap path so a typo cannot lock someone
         // out of the editor needed to repair the file.

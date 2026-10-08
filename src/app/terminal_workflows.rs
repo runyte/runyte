@@ -945,6 +945,10 @@ impl App {
                 true
             }
             Command::ClipboardYank => {
+                if self.mode == Mode::Insert && !session.reviewing() {
+                    self.status("no terminal review selection to copy");
+                    return true;
+                }
                 let mut text = session.review_selection_text();
                 if transient_line_selection && !text.ends_with('\n') {
                     text.push('\n');

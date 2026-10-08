@@ -847,6 +847,7 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 | `Ctrl-o` / `Ctrl-i`; `Alt-o` / `Alt-i` | Jump backward / forward through every navigation point; jump backward / forward to another buffer |
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
+| `Ctrl-C` (Ctrl-Shift-c) | Copy the selection to the system clipboard |
 | `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
 | `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
@@ -1039,6 +1040,7 @@ The keys shared by Insert and Replace modes:
 | `Ctrl-x` | Ask the language server for completions |
 | `Ctrl-c` | Comment or uncomment the lines holding the carets |
 | `Ctrl-s` | Save |
+| `Ctrl-C` (Ctrl-Shift-c) | Copy the selection to the system clipboard |
 | `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
@@ -1809,8 +1811,23 @@ this persistent host and survive detach and frontend handoff.
 The native window supports `ide`, `editor`, and `mux` modes; host and lifecycle
 modes are CLI operations. Windows remains outside the native-window experiment.
 The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
-Bold, and Bold Italic, at a fixed 15 logical pixels with a 9×20 logical pixel
-cell. No system installation of that font is required. Search within PDF page contents and
+Bold, and Bold Italic. Set `editor.font_size` in `Space o o` (8–48 logical
+pixels, default 15); the saved size is read when each window opens, including
+reattachment to an existing persistent session. Reopen the window after saving
+the setting. Ctrl-plus (also Ctrl-equals) and Ctrl-minus adjust the current
+window by one pixel without writing the configuration. Text, pointer targeting,
+panes and terminal dimensions scale together. No system font installation is required.
+
+Ctrl-Shift-c copies the editor selection, terminal review selection, or selected
+media to the system clipboard. Ctrl-Shift-v pastes clipboard text as literal input
+into Insert/Replace mode, a prompt, or an integrated terminal, like a terminal
+emulator's paste shortcut. Normal mode retains ordinary modal paste commands
+(`Space c p` or Ctrl-v). Ctrl-c remains terminal child input. Native-feature
+builds use an in-process clipboard owner for `Space c y`, Ctrl-v and the other
+system clipboard commands; external clipboard helpers are not required.
+Window-local font and literal-paste shortcuts are reserved frontend controls,
+listed in contextual help; they do not participate in editor key remapping.
+Search within PDF page contents and
 animated-image playback are not implemented; animated GIFs and WebP files show
 their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
 resolution. PDF rendering uses an external helper,
@@ -6190,6 +6207,7 @@ says so when you save them:
 | Setting | Why it needs a restart |
 | --- | --- |
 | `editor.mouse` | Mouse capture is set up when the terminal is opened. |
+| `editor.font_size` | The native window reads its font size when it opens. |
 | `lsp.enable` | Language servers are started or suppressed at startup. |
 | `mode` | The launch mode is chosen before the editor starts. The saved value applies to future launches. |
 
@@ -6277,7 +6295,7 @@ That includes the theme, `notifications.history_limit`, and the `keys`
 section. Key dispatch, help, and key hints are rebuilt together, with each
 running plugin's keys laid back over them.
 
-**What keeps its startup value:** `editor.mouse`, `lsp.enable`,
+**What keeps its startup value:** `editor.mouse`, `editor.font_size`, `lsp.enable`,
 `mode`, `workspace.state`, and `workspace.state_anchor`. The status
 line names them as needing a restart. The `[config]` page shows the file's
 value as saved, while the editor keeps using the startup value.
@@ -6343,6 +6361,7 @@ file-only.
 | `editor.hard_wrap_width` | `80` | 1–1000 | Width used by `Space p w` (hard wrap) and `Space p r` (reflow). |
 | `editor.scratch_markdown` | `true` | boolean | Treat the pathless scratch buffer as Markdown for `Space p r` and `?`. |
 | `editor.trim_trailing_whitespace` | `true` | boolean | Remove spaces and tabs at line ends when saving. |
+| `editor.font_size` | `15` | `8`–`48` | Native window font size in logical pixels. Read when a window opens; Ctrl-plus/minus change only the current window. |
 | `editor.mouse` | `true` | boolean | Capture the mouse for selection, scrolling, and pane resizing. `false` keeps the terminal's own text selection. Restart required. |
 | `editor.word_completion` | `true` | boolean | Suggest words already open elsewhere in the workspace. |
 | `editor.word_completion_minimum` | `3` | 1–32 | Prefix length before word suggestions appear. |

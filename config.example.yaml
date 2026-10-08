@@ -3,7 +3,7 @@
 # Copy to ~/.config/runyte/config.yaml.
 #
 # Run :config-reload after editing this file to apply it to a running editor.
-# editor.mouse, lsp.enable, mode, and workspace.state are read at startup and
+# editor.mouse, editor.font_size, lsp.enable, mode, and workspace.state are read at startup and
 # are reported as needing a restart instead.
 #
 # The mode a launch without --editor, --ide, or --mux runs in: ide (the
@@ -11,6 +11,7 @@
 # project's host and attach to it; launches naming a file stay in ide.
 mode: ide
 editor:
+  font_size: 15 # native window logical pixels, 8–48; reopen window to apply
   line_numbers: true
   # Distances from the cursor; its own line keeps its absolute number.
   relative_line_numbers: false

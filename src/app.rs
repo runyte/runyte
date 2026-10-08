@@ -26,7 +26,7 @@ use crate::{
         FileObservationRequest, GeneratedViewIdentity, ObservationApply, Position,
         WorkspaceSearchTarget,
     },
-    clipboard::{CommandClipboard, SystemClipboard},
+    clipboard::SystemClipboard,
     command::{
         ArgumentKind, COMMANDS, ColonCommand, CommandArguments, CommandCategory,
         CommandExecutionContext, CommandId, CommandInvocation, CommandSpec, CommandUnavailable,
@@ -2552,7 +2552,7 @@ pub(crate) struct HostPorts {
 
 impl HostPorts {
     fn live() -> Self {
-        let mut ports = Self::isolated(Box::new(CommandClipboard));
+        let mut ports = Self::isolated(crate::clipboard::live_clipboard());
         ports.browser = Box::new(external_open::dispatch_browser);
         ports.directory_opener = Box::new(|path| external_open::dispatch("", path));
         ports.program_opener = Box::new(external_open::dispatch);

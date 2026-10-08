@@ -812,3 +812,10 @@ clients preserve `[image]` / `[pdf]` titles and display
 `MEDIA UNSUPPORTED IN THE TERMINAL MODE` in a media surface's body; the PDF page
 buffer remains ordinary selectable text. The attached frontend declares its
 media capability at the handshake, which controls subsequent binary opening.
+
+Native window font size is `editor.font_size` in the settings page, measured
+in logical pixels (8–48, default 15). Saving it selects the next window's
+starting size. Ctrl-plus/minus changes only the current window; cell drawing,
+mouse coordinates, media bounds, IME caret bounds, and PTY geometry use the
+same scaled metrics. Contextual help appends the reserved window controls
+from `keymap::native_window`.

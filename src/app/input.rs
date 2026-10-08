@@ -1882,6 +1882,7 @@ impl App {
             && key.canonical_for_binding() != self.keymap.window_prefix()
             && !self.is_fast_pane_key(key)
             && !self.is_persistent_navigation_key(key)
+            && !self.keymap.terminal_clipboard_key(key)
         {
             return self.handle_terminal_key(id, key);
         }

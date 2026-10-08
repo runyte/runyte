@@ -605,6 +605,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_copy_admission_follows_the_effective_registry() {
+        let base = default_keymap();
+        assert!(base.terminal_clipboard_key(Key::ctrl('C')));
+        assert!(!base.terminal_clipboard_key(Key::ctrl('c')));
+        assert!(!base.terminal_clipboard_key(Key::ctrl('v')));
+        for sequence in ["F11", "F11 c"] {
+            let mut bindings = base.bindings().to_vec();
+            for binding in &mut bindings {
+                if binding.sequence == KeySequence::from(Key::ctrl('C')) {
+                    binding.sequence = KeySequence::parse(sequence).unwrap();
+                }
+            }
+            let changed = crate::keymap::Keymap::new(bindings).unwrap();
+            assert!(!changed.terminal_clipboard_key(Key::ctrl('C')));
+            assert!(
+                changed.terminal_clipboard_key(Key::plain(crate::input::KeyCode::Function(11)))
+            );
+        }
+    }
+
+    #[test]
     fn longest_rebind_wins_and_named_prefixes_expand() {
         let value: Value = serde_yaml::from_str(
             "leader: Ctrl-x\nrebind:\n  Space g: Leader G\n  Space g l: Leader G q\n",

@@ -1012,16 +1012,20 @@ impl App {
             plugin.as_ref(),
             |target| self.plugin_binding_description(target).map(str::to_owned),
         );
+        let mut text = document.text().to_owned();
+        if self.native_media {
+            text.push_str(&crate::keymap::native_window::help());
+        }
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)
         });
         let buffer = match existing {
             Some(existing) => {
-                self.buffers[existing].replace_virtual_text(document.text());
+                self.buffers[existing].replace_virtual_text(&text);
                 existing
             }
             None => {
-                self.buffers.push(Buffer::help(document.text()));
+                self.buffers.push(Buffer::help(&text));
                 self.syntax.push(None);
                 self.buffers.len() - 1
             }

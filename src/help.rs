@@ -998,7 +998,11 @@ fn terminal_insert_admits(binding: &crate::keymap::Binding, keymap: &Keymap) -> 
         } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
         Lookup::NoMatch => false,
     };
-    terminal_escape || window_prefix || fast_pane_move || persistent_navigation
+    terminal_escape
+        || window_prefix
+        || fast_pane_move
+        || persistent_navigation
+        || keymap.terminal_clipboard_key(first)
 }
 
 fn help_key_label(key: Key) -> String {

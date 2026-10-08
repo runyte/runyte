@@ -28,8 +28,27 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-const CELL_WIDTH: f32 = 9.0;
-const CELL_HEIGHT: f32 = 20.0;
+#[derive(Clone, Copy, Debug)]
+struct CellMetrics {
+    font_size: f32,
+    width: f32,
+    height: f32,
+}
+impl CellMetrics {
+    fn new(font_size: usize) -> Self {
+        let font_size = font_size.clamp(8, 48) as f32;
+        Self {
+            font_size,
+            width: font_size * 0.6,
+            height: font_size * (4.0 / 3.0),
+        }
+    }
+}
+impl Default for CellMetrics {
+    fn default() -> Self {
+        Self::new(15)
+    }
+}
 
 #[derive(Clone)]
 struct MediaPane {
@@ -62,12 +81,13 @@ impl FrameData {
 }
 #[derive(Default)]
 struct MediaInputMask {
+    metrics: CellMetrics,
     blocked: Vec<runyte::layout::Rect>,
 }
 impl MediaInputMask {
     fn blocks(&self, position: Point<Pixels>) -> bool {
-        let x = f32::from(position.x) / CELL_WIDTH;
-        let y = f32::from(position.y) / CELL_HEIGHT;
+        let x = f32::from(position.x) / self.metrics.width;
+        let y = f32::from(position.y) / self.metrics.height;
         let contains = |r: &runyte::layout::Rect| {
             x >= r.x as f32
                 && x < (r.x + r.width) as f32
@@ -504,7 +524,7 @@ impl Events {
     }
 }
 
-pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
+pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::Result<()> {
     let (input, receiver) = mpsc::channel(4096);
     let (wake, wakes) = async_channel::bounded(1);
     let bridge = Arc::new(Bridge {
@@ -581,7 +601,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
                     close.send(Event::Resize(w, h));
                     false
                 });
-                cx.new(|cx| NativeView::new(bridge, window, cx))
+                cx.new(|cx| NativeView::new(bridge, font_size, window, cx))
             },
         )
         .expect("open Runyte window");
@@ -594,6 +614,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
 }
 
 struct NativeView {
+    metrics: CellMetrics,
     bridge: Arc<Bridge>,
     focus: FocusHandle,
     frame: Option<std::rc::Rc<FrameData>>,
@@ -604,7 +625,12 @@ struct NativeView {
     viewports: std::collections::HashMap<(usize, PathBuf), viewport::Viewport>,
 }
 impl NativeView {
-    fn new(bridge: Arc<Bridge>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        bridge: Arc<Bridge>,
+        font_size: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window);
         let frame = bridge.frame.lock().unwrap().take().map(std::rc::Rc::new);
@@ -646,6 +672,7 @@ impl NativeView {
         })
         .detach();
         Self {
+            metrics: CellMetrics::new(font_size),
             media: media::Loader::new(bridge.clone()),
             bridge,
             focus,
@@ -656,6 +683,36 @@ impl NativeView {
             viewports: Default::default(),
         }
     }
+    fn window_shortcut(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> bool {
+        let Some(runyte::input::InputEvent::Key(key)) =
+            runyte::tui::input::convert_event(Event::Key(key))
+                .ok()
+                .flatten()
+        else {
+            return false;
+        };
+        let Some(binding) = runyte::keymap::native_window::lookup(key) else {
+            return false;
+        };
+        match binding.action {
+            runyte::keymap::native_window::Action::FontSize(delta) => {
+                self.metrics = CellMetrics::new(
+                    (self.metrics.font_size as i32 + i32::from(delta)).clamp(8, 48) as usize,
+                );
+                *self.glyphs.borrow_mut() = cells::GlyphCache::default();
+                cx.notify();
+            }
+            runyte::keymap::native_window::Action::PasteText => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+                    && !text.is_empty()
+                    && text.len() <= runyte::input::MAX_TEXT_INPUT_BYTES
+                {
+                    self.send(Event::Paste(text));
+                }
+            }
+        }
+        true
+    }
     fn send(&self, event: Event) {
         self.bridge.send(event);
     }
@@ -663,10 +720,11 @@ impl NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let metrics = self.metrics;
         let bounds = window.viewport_size();
         let dimensions = (
-            ((f32::from(bounds.width) / CELL_WIDTH) as u16).clamp(10, 500),
-            ((f32::from(bounds.height) / CELL_HEIGHT) as u16).clamp(5, 200),
+            ((f32::from(bounds.width) / self.metrics.width) as u16).clamp(10, 500),
+            ((f32::from(bounds.height) / self.metrics.height) as u16).clamp(5, 200),
         );
         if *self.bridge.dimensions.lock().unwrap() != dimensions {
             *self.bridge.dimensions.lock().unwrap() = dimensions;
@@ -677,6 +735,7 @@ impl Render for NativeView {
         let mut root = div()
             .font_family("JetBrainsMono Nerd Font")
             .font_weight(FontWeight::MEDIUM)
+            .text_size(px(metrics.font_size))
             .size_full()
             .bg(rgb(0x181818))
             .track_focus(&self.focus)
@@ -684,6 +743,10 @@ impl Render for NativeView {
                 if view.composition.is_empty()
                     && let Some(mut key) = translate_key(&event.keystroke)
                 {
+                    if view.window_shortcut(key, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if event.is_held {
                         key.kind = crossterm::event::KeyEventKind::Repeat;
                     }
@@ -698,6 +761,7 @@ impl Render for NativeView {
                         return;
                     }
                     view.send(mouse_event(
+                        view.metrics,
                         event.position,
                         crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
                         event.modifiers,
@@ -711,6 +775,7 @@ impl Render for NativeView {
                         return;
                     }
                     view.send(mouse_event(
+                        view.metrics,
                         event.position,
                         crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
                         event.modifiers,
@@ -723,6 +788,7 @@ impl Render for NativeView {
                 }
                 if event.pressed_button == Some(MouseButton::Left) {
                     view.send(mouse_event(
+                        view.metrics,
                         event.position,
                         crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
                         event.modifiers,
@@ -733,7 +799,8 @@ impl Render for NativeView {
                 if view.media_scroll(event, cx) {
                     return;
                 }
-                let delta = event.delta.pixel_delta(px(CELL_HEIGHT));
+                let metrics = view.metrics;
+                let delta = event.delta.pixel_delta(px(metrics.height));
                 use crossterm::event::MouseEventKind::*;
                 let (kind, amount) = if delta.y != px(0.) {
                     (
@@ -742,7 +809,7 @@ impl Render for NativeView {
                         } else {
                             ScrollDown
                         },
-                        f32::from(delta.y).abs() / CELL_HEIGHT,
+                        f32::from(delta.y).abs() / metrics.height,
                     )
                 } else if delta.x != px(0.) {
                     (
@@ -751,13 +818,18 @@ impl Render for NativeView {
                         } else {
                             ScrollRight
                         },
-                        f32::from(delta.x).abs() / CELL_WIDTH,
+                        f32::from(delta.x).abs() / metrics.width,
                     )
                 } else {
                     return;
                 };
                 for _ in 0..(amount.ceil() as usize).clamp(1, 20) {
-                    view.send(mouse_event(event.position, kind, event.modifiers));
+                    view.send(mouse_event(
+                        view.metrics,
+                        event.position,
+                        kind,
+                        event.modifiers,
+                    ));
                 }
             }));
         for button in [MouseButton::Middle, MouseButton::Right] {
@@ -787,15 +859,15 @@ impl Render for NativeView {
                 let content = self.media.get(&pane.path, pane.page);
                 let mut layer = div()
                     .absolute()
-                    .left(px(area.x as f32 * CELL_WIDTH))
-                    .top(px(area.y as f32 * CELL_HEIGHT))
-                    .w(px(area.width as f32 * CELL_WIDTH))
-                    .h(px(area.height as f32 * CELL_HEIGHT))
+                    .left(px(area.x as f32 * metrics.width))
+                    .top(px(area.y as f32 * metrics.height))
+                    .w(px(area.width as f32 * metrics.width))
+                    .h(px(area.height as f32 * metrics.height))
                     .overflow_hidden()
                     .bg(rgb(0x181818));
                 layer = match content {
                     Some(Ok(page)) => {
-                        let area = Self::media_area(pane);
+                        let area = self.media_area(pane);
                         let view = self
                             .viewports
                             .entry((pane.pane, pane.path.clone()))
@@ -837,7 +909,7 @@ impl Render for NativeView {
                                 .absolute()
                                 .bottom(px(0.))
                                 .left(px(0.))
-                                .text_size(px(12.))
+                                .text_size(px(metrics.font_size * 0.8))
                                 .text_color(rgb(0xcccccc))
                                 .bg(rgba(0x181818dd))
                                 .child(
@@ -880,6 +952,7 @@ impl Render for NativeView {
                         cells::paint_cells(
                             frame,
                             bounds.origin,
+                            metrics,
                             &mut glyphs.borrow_mut(),
                             window,
                             cx,
@@ -891,6 +964,7 @@ impl Render for NativeView {
                             .painted_attachment
                             .swap(frame.attachment, Ordering::AcqRel);
                         *bridge.blocked_media.lock().unwrap() = MediaInputMask {
+                            metrics,
                             blocked: if frame.media_input {
                                 Vec::new()
                             } else {
@@ -980,14 +1054,15 @@ fn translate_key(key: &Keystroke) -> Option<KeyEvent> {
     Some(KeyEvent::new(code, modifiers(key.modifiers)))
 }
 fn mouse_event(
+    metrics: CellMetrics,
     position: Point<Pixels>,
     kind: crossterm::event::MouseEventKind,
     mods: gpui::Modifiers,
 ) -> Event {
     Event::Mouse(crossterm::event::MouseEvent {
         kind,
-        column: (f32::from(position.x) / CELL_WIDTH).max(0.) as u16,
-        row: (f32::from(position.y) / CELL_HEIGHT).max(0.) as u16,
+        column: (f32::from(position.x) / metrics.width).max(0.) as u16,
+        row: (f32::from(position.y) / metrics.height).max(0.) as u16,
         modifiers: modifiers(mods),
     })
 }
@@ -1111,14 +1186,15 @@ impl EntityInputHandler for NativeView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        let metrics = self.metrics;
         let cursor = self.frame.as_ref()?.cursor.unwrap_or_default();
         Some(Bounds::new(
             bounds.origin
                 + point(
-                    px(cursor.x as f32 * CELL_WIDTH),
-                    px(cursor.y as f32 * CELL_HEIGHT),
+                    px(cursor.x as f32 * metrics.width),
+                    px(cursor.y as f32 * metrics.height),
                 ),
-            size(px(CELL_WIDTH), px(CELL_HEIGHT)),
+            size(px(metrics.width), px(metrics.height)),
         ))
     }
     fn character_index_for_point(

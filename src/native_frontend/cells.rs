@@ -2,7 +2,7 @@
 
 //! Cell-local shaping preserves grid placement and prevents cross-cell ligatures.
 //! Cache layouts and group ordinary rows into logical layers for GPUI batching.
-use super::{CELL_HEIGHT, CELL_WIDTH, FrameData, color};
+use super::{CellMetrics, FrameData, color};
 use gpui::*;
 use ratatui::style::Modifier;
 use std::{
@@ -51,7 +51,13 @@ impl Default for GlyphCache {
     }
 }
 impl GlyphCache {
-    fn layout(&mut self, symbol: &str, modifier: Modifier, window: &Window) -> Arc<LineLayout> {
+    fn layout(
+        &mut self,
+        symbol: &str,
+        modifier: Modifier,
+        metrics: CellMetrics,
+        window: &Window,
+    ) -> Arc<LineLayout> {
         let face = usize::from(modifier.contains(Modifier::BOLD))
             | (usize::from(modifier.contains(Modifier::ITALIC)) << 1);
         self.faces[face].get_or_insert(symbol, || {
@@ -66,7 +72,7 @@ impl GlyphCache {
             }
             window.text_system().layout_line(
                 symbol,
-                px(15.),
+                px(metrics.font_size),
                 &[TextRun {
                     len: symbol.len(),
                     font,
@@ -119,6 +125,7 @@ fn backgrounds(frame: &FrameData, mut paint: impl FnMut(u16, u16, u16, Hsla)) {
 pub(super) fn paint_cells(
     frame: &FrameData,
     origin: Point<Pixels>,
+    metrics: CellMetrics,
     cache: &mut GlyphCache,
     window: &mut Window,
     cx: &mut App,
@@ -126,11 +133,11 @@ pub(super) fn paint_cells(
     let timing = *TIMING.get_or_init(|| std::env::var_os("RUNYTE_NATIVE_PAINT_TIMING").is_some());
     let started = timing.then(std::time::Instant::now);
     backgrounds(frame, |x, y, width, bg| {
-        let position = origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT));
+        let position = origin + point(px(x as f32 * metrics.width), px(y as f32 * metrics.height));
         window.paint_quad(fill(
             Bounds::new(
                 position,
-                size(px(width as f32 * CELL_WIDTH), px(CELL_HEIGHT)),
+                size(px(width as f32 * metrics.width), px(metrics.height)),
             ),
             bg,
         ));
@@ -148,11 +155,12 @@ pub(super) fn paint_cells(
             let cell = &frame.cells[(x, y)];
             let width = unicode_width::UnicodeWidthStr::width(cell.symbol()).max(1);
             if cell.symbol() != " " && !cell.modifier.contains(Modifier::HIDDEN) {
-                let layout = cache.layout(cell.symbol(), cell.modifier, window);
+                let layout = cache.layout(cell.symbol(), cell.modifier, metrics, window);
                 // Oversized advances can overlap subsequent logical cell layers.
                 // Keep exact per-cell ordering for that row, including zero-width
                 // layouts and rows crossing media layers with different depths.
-                separate |= layout.width <= px(0.) || layout.width > px(width as f32 * CELL_WIDTH);
+                separate |=
+                    layout.width <= px(0.) || layout.width > px(width as f32 * metrics.width);
                 let mut fg = if cell.modifier.contains(Modifier::REVERSED) {
                     color(cell.bg, 0x181818)
                 } else {
@@ -162,10 +170,12 @@ pub(super) fn paint_cells(
                     fg.l *= 0.65;
                 }
                 row.push(PaintedCell {
+                    height: metrics.height,
                     layout,
                     fg,
                     modifier: cell.modifier,
-                    position: origin + point(px(x as f32 * CELL_WIDTH), px(y as f32 * CELL_HEIGHT)),
+                    position: origin
+                        + point(px(x as f32 * metrics.width), px(y as f32 * metrics.height)),
                 });
             }
             x = (x as usize + width).min(frame.cells.area.width as usize) as u16;
@@ -181,7 +191,7 @@ pub(super) fn paint_cells(
                 first.position,
                 size(
                     last.position.x + last.layout.width - first.position.x,
-                    px(CELL_HEIGHT),
+                    px(metrics.height),
                 ),
             );
             window.paint_layer(bounds, |window| {
@@ -194,11 +204,11 @@ pub(super) fn paint_cells(
     if let Some(cursor) = frame.cursor.filter(|c| !frame.under_media(c.x, c.y)) {
         let position = origin
             + point(
-                px(cursor.x as f32 * CELL_WIDTH),
-                px(cursor.y as f32 * CELL_HEIGHT),
+                px(cursor.x as f32 * metrics.width),
+                px(cursor.y as f32 * metrics.height),
             );
         window.paint_quad(fill(
-            Bounds::new(position, size(px(2.), px(CELL_HEIGHT))),
+            Bounds::new(position, size(px(2.), px(metrics.height))),
             rgb(0xffffff),
         ));
     }
@@ -219,6 +229,7 @@ fn media_row(frame: &FrameData, y: u16) -> bool {
 }
 
 struct PaintedCell {
+    height: f32,
     layout: Arc<LineLayout>,
     position: Point<Pixels>,
     fg: Hsla,
@@ -226,11 +237,11 @@ struct PaintedCell {
 }
 impl PaintedCell {
     fn bounds(&self) -> Bounds<Pixels> {
-        Bounds::new(self.position, size(self.layout.width, px(CELL_HEIGHT)))
+        Bounds::new(self.position, size(self.layout.width, px(self.height)))
     }
     fn paint(&self, window: &mut Window, cx: &mut App) {
         let baseline =
-            (px(CELL_HEIGHT) - self.layout.ascent - self.layout.descent) / 2. + self.layout.ascent;
+            (px(self.height) - self.layout.ascent - self.layout.descent) / 2. + self.layout.ascent;
         if let Some(first) = self.layout.runs.iter().flat_map(|r| &r.glyphs).next() {
             let mut start = self.position.x + first.position.x;
             let end = start + self.layout.width;

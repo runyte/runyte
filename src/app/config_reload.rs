@@ -47,6 +47,11 @@ struct StartupBound {
 
 const STARTUP_BOUND: &[StartupBound] = &[
     StartupBound {
+        key: "editor.font_size",
+        differs: |loaded, running| loaded.editor.font_size != running.editor.font_size,
+        restore: |loaded, running| loaded.editor.font_size = running.editor.font_size,
+    },
+    StartupBound {
         key: "editor.mouse",
         differs: |loaded, running| loaded.editor.mouse != running.editor.mouse,
         restore: |loaded, running| loaded.editor.mouse = running.editor.mouse,

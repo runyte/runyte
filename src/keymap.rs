@@ -16,6 +16,7 @@ use crate::{
 
 pub mod actions;
 pub mod configured;
+pub mod native_window;
 pub mod validate;
 
 /// Compatibility name for a keymap key while callers migrate to the owned
@@ -1191,6 +1192,28 @@ impl Keymap {
         self.lookup_in(mode, BindingScope::Global, sequence)
     }
 
+    /// Clipboard copy bindings visible in Terminal Insert, including
+    /// configured replacements. Ordinary Ctrl-c remains child input.
+    pub fn terminal_clipboard_key(&self, key: Key) -> bool {
+        let copy = |binding: &Binding| {
+            binding.actions.is_empty()
+                && binding.target == BindingTarget::Editor(EditorCommand::ClipboardYank)
+        };
+        match self.lookup_in(
+            Mode::Insert,
+            BindingScope::Terminal,
+            &KeySequence::from(key),
+        ) {
+            Lookup::Exact(binding) => copy(binding),
+            Lookup::Prefix(bindings) => bindings.iter().any(|binding| copy(binding)),
+            Lookup::ExactAndPrefix {
+                exact,
+                continuations,
+            } => copy(exact) || continuations.iter().any(|binding| copy(binding)),
+            Lookup::NoMatch => false,
+        }
+    }
+
     pub fn lookup_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> Lookup<'_> {
         // Scopes without bindings in this mode inherit the global index.
         let Some(entry) = self
@@ -1470,6 +1493,8 @@ fn built_in_bindings() -> Vec<Binding> {
         // versions send no input for an image-only clipboard; Alt-v provides
         // a key that can reach Runyte there. Both work in editor modes;
         // Terminal Insert remains untouched so the child owns these keys.
+        modal(Key::ctrl('C'), Command::ClipboardYank),
+        insert(Key::ctrl('C'), Command::ClipboardYank),
         modal(Key::ctrl('v'), Command::ClipboardPaste),
         insert(Key::ctrl('v'), Command::ClipboardPaste),
         modal(Key::alt('v'), Command::ClipboardPaste),
@@ -2163,6 +2188,12 @@ fn built_in_bindings() -> Vec<Binding> {
             MODAL,
             BindingScope::Media,
             Key::char('y'),
+            Command::MediaCopySelection,
+        ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::Media,
+            Key::ctrl('C'),
             Command::MediaCopySelection,
         ),
         Binding::implemented_in(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{
-    CELL_HEIGHT, CELL_WIDTH, MediaPane, NativeView,
+    MediaPane, NativeView,
     media::Page,
     viewport::{Drag, Selection, Viewport},
 };
@@ -30,23 +30,23 @@ impl NativeView {
             .iter()
             .find(|pane| {
                 let area = pane.body;
-                x >= area.x as f32 * CELL_WIDTH
-                    && x < (area.x + area.width) as f32 * CELL_WIDTH
-                    && y >= area.y as f32 * CELL_HEIGHT
-                    && y < (area.y + area.height) as f32 * CELL_HEIGHT
+                x >= area.x as f32 * self.metrics.width
+                    && x < (area.x + area.width) as f32 * self.metrics.width
+                    && y >= area.y as f32 * self.metrics.height
+                    && y < (area.y + area.height) as f32 * self.metrics.height
             })
             .cloned()
     }
-    fn local(pane: &MediaPane, position: Point<Pixels>) -> [f32; 2] {
+    fn local(&self, pane: &MediaPane, position: Point<Pixels>) -> [f32; 2] {
         [
-            f32::from(position.x) - pane.body.x as f32 * CELL_WIDTH,
-            f32::from(position.y) - pane.body.y as f32 * CELL_HEIGHT,
+            f32::from(position.x) - pane.body.x as f32 * self.metrics.width,
+            f32::from(position.y) - pane.body.y as f32 * self.metrics.height,
         ]
     }
-    pub(super) fn media_area(pane: &MediaPane) -> [f32; 2] {
+    pub(super) fn media_area(&self, pane: &MediaPane) -> [f32; 2] {
         [
-            pane.body.width as f32 * CELL_WIDTH,
-            pane.body.height as f32 * CELL_HEIGHT,
+            pane.body.width as f32 * self.metrics.width,
+            pane.body.height as f32 * self.metrics.height,
         ]
     }
     fn focus_media(&self, pane: &MediaPane, delta: i32) {
@@ -86,8 +86,8 @@ impl NativeView {
         let Some(Ok(page)) = self.media.get(&pane.path, pane.page) else {
             return true;
         };
-        let area = Self::media_area(&pane);
-        let point = Self::local(&pane, event.position);
+        let area = self.media_area(&pane);
+        let point = self.local(&pane, event.position);
         let view = self
             .viewports
             .entry((pane.pane, pane.path.clone()))
@@ -173,8 +173,8 @@ impl NativeView {
         let Some(Ok(page)) = self.media.get(&pane.path, pane.page) else {
             return true;
         };
-        let area = Self::media_area(&pane);
-        let point = Self::local(&pane, event.position);
+        let area = self.media_area(&pane);
+        let point = self.local(&pane, event.position);
         let view = self.viewports.get_mut(&key).unwrap();
         view.show_source(&page);
         if event.pressed_button.is_none() {
@@ -240,10 +240,10 @@ impl NativeView {
         let Some(Ok(page)) = self.media.get(&pane.path, pane.page) else {
             return true;
         };
-        let delta = event.delta.pixel_delta(gpui::px(CELL_HEIGHT));
+        let delta = event.delta.pixel_delta(gpui::px(self.metrics.height));
         let mut delta = [f32::from(delta.x), f32::from(delta.y)];
-        let area = Self::media_area(&pane);
-        let point = Self::local(&pane, event.position);
+        let area = self.media_area(&pane);
+        let point = self.local(&pane, event.position);
         let view = self
             .viewports
             .entry((pane.pane, pane.path.clone()))
@@ -340,7 +340,7 @@ impl NativeView {
                 }
                 continue;
             };
-            let area = Self::media_area(&pane);
+            let area = self.media_area(&pane);
             let image = [page.width, page.height];
             let view = self
                 .viewports

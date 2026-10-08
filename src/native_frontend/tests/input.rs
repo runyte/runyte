@@ -38,6 +38,7 @@ fn native_strokes_preserve_modal_sequences_and_modifiers() {
 #[test]
 fn native_pointer_uses_the_same_cell_geometry_as_rendering() {
     let event = mouse_event(
+        super::CellMetrics::default(),
         point(px(93.), px(67.)),
         crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
         gpui::Modifiers::default(),
@@ -217,12 +218,13 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
     );
     assert!(!frame.under_media(35, 2));
     let mask = super::MediaInputMask {
+        metrics: super::CellMetrics::default(),
         blocked: vec![body],
     };
     let point = |x: f32, y: f32| {
         gpui::point(
-            gpui::px(x * super::CELL_WIDTH),
-            gpui::px(y * super::CELL_HEIGHT),
+            gpui::px(x * super::CellMetrics::default().width),
+            gpui::px(y * super::CellMetrics::default().height),
         )
     };
     assert!(mask.blocks(point(2., 2.)));
@@ -336,4 +338,35 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].action, ViewAction::ZoomIn);
     assert!(queue.is_empty());
+}
+
+#[test]
+fn resized_font_scales_pointer_and_media_hit_testing_together() {
+    for font_size in [8, 15, 30, 48] {
+        let metrics = super::CellMetrics::new(font_size);
+        let position = point(px(10.5 * metrics.width), px(3.5 * metrics.height));
+        let crossterm::event::Event::Mouse(event) = mouse_event(
+            metrics,
+            position,
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            gpui::Modifiers::default(),
+        ) else {
+            panic!("mouse event")
+        };
+        assert_eq!((event.column, event.row), (10, 3));
+        let mask = super::MediaInputMask {
+            metrics,
+            blocked: vec![runyte::layout::Rect {
+                x: 10,
+                y: 3,
+                width: 1,
+                height: 1,
+            }],
+        };
+        assert!(mask.blocks(position));
+        assert!(!mask.blocks(point(px(11.5 * metrics.width), position.y)));
+        assert_eq!(metrics.font_size, font_size as f32);
+    }
+    assert_eq!(super::CellMetrics::new(0).font_size, 8.);
+    assert_eq!(super::CellMetrics::new(usize::MAX).font_size, 48.);
 }

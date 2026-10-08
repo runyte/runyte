@@ -54,6 +54,7 @@ pub enum SettingId {
     EditorScratchMarkdown,
     EditorTrimTrailingWhitespace,
     EditorMouse,
+    EditorFontSize,
     EditorWordCompletion,
     EditorWordCompletionMinimum,
     EditorFastPaneKeys,
@@ -322,6 +323,18 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::EditorFontSize,
+        key: "editor.font_size",
+        title: "Window font size",
+        description: "Native window font size in logical pixels; reopen the window to apply",
+        value_type: SettingType::Integer {
+            minimum: 8,
+            maximum: 48,
+        },
+        preview: PreviewPolicy::RestartRequired,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::EditorWordCompletion,
         key: "editor.word_completion",
         title: "Word completion",
@@ -485,6 +498,7 @@ impl SettingId {
         Self::EditorScratchMarkdown,
         Self::EditorTrimTrailingWhitespace,
         Self::EditorMouse,
+        Self::EditorFontSize,
         Self::EditorWordCompletion,
         Self::EditorWordCompletionMinimum,
         Self::EditorFastPaneKeys,
@@ -552,6 +566,7 @@ impl SettingId {
             Self::EditorTrimTrailingWhitespace => {
                 SettingValue::Boolean(config.editor.trim_trailing_whitespace)
             }
+            Self::EditorFontSize => SettingValue::Integer(config.editor.font_size),
             Self::EditorMouse => SettingValue::Boolean(config.editor.mouse),
             Self::EditorWordCompletion => SettingValue::Boolean(config.editor.word_completion),
             Self::EditorWordCompletionMinimum => {
@@ -705,6 +720,9 @@ impl SettingId {
             }
             (Self::EditorTrimTrailingWhitespace, SettingValue::Boolean(value)) => {
                 config.editor.trim_trailing_whitespace = *value;
+            }
+            (Self::EditorFontSize, SettingValue::Integer(value)) => {
+                config.editor.font_size = *value
             }
             (Self::EditorMouse, SettingValue::Boolean(value)) => config.editor.mouse = *value,
             (Self::EditorWordCompletion, SettingValue::Boolean(value)) => {
@@ -1852,6 +1870,36 @@ mod tests {
             !SettingId::Theme
                 .allowed_values(&config)
                 .contains(&"paper".to_owned())
+        );
+    }
+
+    #[test]
+    fn native_font_size_is_bounded_persisted_and_read_on_next_launch() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+        fs::write(&path, "# retained\neditor:\n  mouse: false\n").unwrap();
+        let mut config = Config::default();
+        let id = SettingId::EditorFontSize;
+        assert_eq!(id.configured_value(&config), SettingValue::Integer(15));
+        assert_eq!(id.descriptor().preview, PreviewPolicy::RestartRequired);
+        for size in [0, 7, 49, usize::MAX] {
+            assert!(id.apply(&SettingValue::Integer(size), &mut config).is_err());
+            fs::write(&path, format!("editor:\n  font_size: {size}\n")).unwrap();
+            assert!(Config::load(Some(&path)).is_err());
+        }
+        for size in [8, 19, 48] {
+            id.apply(&SettingValue::Integer(size), &mut config).unwrap();
+            assert_eq!(config.editor.font_size, size);
+        }
+        fs::write(&path, "# retained\neditor:\n  mouse: false\n").unwrap();
+        persist_setting(&path, id, &SettingValue::Integer(19)).unwrap();
+        let (loaded, _) = Config::load(Some(&path)).unwrap();
+        assert_eq!(loaded.editor.font_size, 19);
+        assert!(!loaded.editor.mouse);
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .starts_with("# retained\n")
         );
     }
 

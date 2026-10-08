@@ -3,6 +3,19 @@
 //! Platform clipboard boundary: native UTF-16 on Windows, bounded helpers on Unix.
 
 use anyhow::Result;
+#[cfg(all(feature = "native", not(windows)))]
+mod native;
+
+pub(crate) fn live_clipboard() -> Box<dyn SystemClipboard> {
+    #[cfg(all(feature = "native", not(windows)))]
+    {
+        Box::new(native::NativeClipboard::default())
+    }
+    #[cfg(not(all(feature = "native", not(windows))))]
+    {
+        Box::new(CommandClipboard)
+    }
+}
 #[cfg(not(windows))]
 mod helpers;
 #[cfg(windows)]

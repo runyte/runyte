@@ -292,3 +292,46 @@ styled-cell pixel comparison against the baseline with system fallback fonts.
 The latter includes 20 styled rows, alternating root/nondefault backgrounds,
 emoji and non-emoji runs, plus a cursor in a blank cell beside an italic icon.
 Actual CJK glyphs and macOS interaction/latency remain unverified locally.
+
+## Window font and clipboard controls
+
+`editor.font_size` selects 8–48 logical pixels (default 15), read before every
+window opens, independently of a retained host's configuration. Settings saves
+and reloads report it as startup-bound. Ctrl-plus/equal and Ctrl-minus change
+only the current window. `CellMetrics` scales the cell painter, pointer and
+media geometry, IME caret and terminal dimensions; resizing invalidates shaped
+glyph caches. Reserved window controls and their help use `keymap::native_window`.
+
+Native-feature builds retain an `arboard` clipboard connection in the host's
+clipboard port. This makes editor clipboard commands independent of Unix
+helper executables and preserves X11 ownership after a write. Media text copy
+uses GPUI and image copy retains its arboard owner. Ctrl-Shift-c reaches the
+registry's copy command; Ctrl-Shift-v reads clipboard text through GPUI and
+sends one bounded literal paste, including to terminal children and prompts.
+Normal-mode text paste retains the existing modal clipboard commands.
+
+The focused X11 acceptance is `tests/native_window.py --window-controls`,
+with `--mux` to include existing-host reattachment and a parent editor wait.
+It verifies text copy through both copy bindings, external clipboard reads,
+Ctrl-v and Ctrl-Shift-v, terminal paste, PTY size changes and configuration on
+reopening. All clipboard ownership is confined to the dedicated test display.
+
+The vendored `proc-macro-error2` 2.0.1 carries only the public `proc_macro`
+visibility correction needed by Rust's future-incompatibility check. GPUI
+0.2.2 brings it through stacksafe 0.1.4; see `vendor/proc-macro-error2/RUNYTE-PATCH.md`.
+
+### Validation — 2026-10-08
+
+Formatting, default/native all-target Clippy, the full default test suite and
+32 native adapter tests passed on Linux. The native release build with
+`--future-incompat-report` reported zero dependencies with future-incompatible
+warnings. Canonical `cargo llvm-cov --locked --workspace` measured 92.04% line
+coverage (148,843 of 161,713), above the unchanged 89% floor; process-heavy
+fixtures ran with four test threads outside the execution sandbox.
+
+The complete isolated X11 window acceptance passed. The final release binary
+also passed `--window-controls` in standalone and persistent-session modes,
+including text/image clipboard round trips, terminal paste, font shortcuts,
+PTY geometry and config on reopening. The persistent run additionally verifies
+parent editor wait against the matching executable. macOS and Wayland
+clipboard/font interaction acceptance remains unverified locally.

@@ -19,6 +19,7 @@ import zlib
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting at 120x40; requires RUNYTE_NATIVE_PAINT_TIMING=1")
@@ -177,7 +178,7 @@ try:
         for m in reversed(modifiers):xt.XTestFakeKeyEvent(d,m,0,0)
         x.XFlush(d);time.sleep(.025)
     def text(s):
-        specials={':':('semicolon',True),' ':('space',False),'/':('slash',False),'.':('period',False),'-':('minus',False),'!':('1',True),'>':('period',True),'_':('minus',True),'\\':('backslash',False)}
+        specials={'&':('7',True), '\'':('apostrophe',False), ':':('semicolon',True),' ':('space',False),'/':('slash',False),'.':('period',False),'-':('minus',False),'!':('1',True),'>':('period',True),'_':('minus',True),'\\':('backslash',False)}
         for c in s:
             sym,shift=specials.get(c,(c.lower(),c.isupper()))
             key(sym,shift)
@@ -293,6 +294,71 @@ try:
         key('Escape'); command('write')
         assert (root/'notes.txt').read_text().startswith('warmup' + 'abcdefghijklmnopqrstuvwxyz' * 4), "benchmark dropped typing"
         close_window(); p.wait(timeout=15); assert p.returncode == 0
+        raise SystemExit(0)
+    if args.window_controls:
+        command('open notes.txt')
+        key('percent', shift=True); key('c', shift=True, ctrl=True); time.sleep(.3)
+        copied = clipboard(b'UTF8_STRING').decode()
+        assert copied == (root/'notes.txt').read_text(), 'Ctrl+Shift+C did not publish editor selection'
+        command('open pasted.txt'); key('i'); key('v', shift=True, ctrl=True); key('Escape'); command('write')
+        assert (root/'pasted.txt').read_text() == copied, 'Ctrl+Shift+V did not paste copied text'
+        key('percent', shift=True); text(' cy'); time.sleep(.3)
+        assert clipboard(b'UTF8_STRING').decode() == copied, 'Space c y did not publish text'
+        # Plain Ctrl-v must use the same native owner, including image probing.
+        command('open pasted-again.txt'); key('i'); key('v', ctrl=True); key('Escape'); command('write')
+        assert (root/'pasted-again.txt').read_text() == copied, 'Ctrl-v could not read Space c y clipboard'
+        command('open gradient.png'); time.sleep(1)
+        drag((200,200),(400,350),shift=True); key('c',shift=True,ctrl=True); time.sleep(.3)
+        assert clipboard(b'image/png').startswith(b'\x89PNG'), 'Ctrl+Shift+C did not copy image region'
+        command('open image-paste.md'); key('i'); key('v',ctrl=True); key('Escape'); command('write')
+        assert '[Image 1](' in (root/'image-paste.md').read_text(), 'native clipboard image did not paste as a reference'
+        assert list((root/'.runyte/cache/images').glob('*.png')), 'image paste did not retain PNG bytes'
+        (root/'paste-command.txt').write_text('touch clipboard-terminal-ok')
+        command('open paste-command.txt'); key('percent', shift=True); text(' cy')
+        command('terminal'); time.sleep(.4); key('v', shift=True, ctrl=True); key('Return'); time.sleep(.4)
+        assert (root/'clipboard-terminal-ok').exists(), 'clipboard paste did not reach terminal child'
+        def terminal_size(name):
+            text('stty size > '+name); key('Return'); time.sleep(.4)
+            return tuple(map(int, (root/name).read_text().split()))
+        initial = terminal_size('font-initial')
+        key('equal', shift=True, ctrl=True); time.sleep(.5)
+        enlarged = terminal_size('font-enlarged')
+        screenshot('font-enlarged')
+        assert all(a > b for a,b in zip(initial,enlarged)), (initial,enlarged)
+        key('minus', ctrl=True); time.sleep(.5)
+        assert terminal_size('font-restored') == initial
+        assert 'font_size' not in (storage/'config/config.yaml').read_text(), 'temporary zoom changed config'
+        if args.mux:
+            (root/'wait.txt').write_text('Original text\n')
+            text(str(binary)+' --wait wait.txt && touch wait-done'); key('Return'); time.sleep(1)
+            key('i'); text('Parent edit '); key('Escape'); command('wq'); time.sleep(.5)
+            assert (root/'wait.txt').read_text() == 'Parent edit Original text\n', 'wait did not open in parent window'
+            assert (root/'wait-done').exists(), 'wait client did not finish successfully'
+        key('equal', ctrl=True); time.sleep(.5)
+        text('exit'); key('Return'); time.sleep(.4)
+        close_window(); p.wait(timeout=15); assert p.returncode == 0
+        # A newly opened window reads config even when its mux host already exists.
+        (storage/'config/config.yaml').write_text('mode: ide\nlsp:\n  enable: false\neditor:\n  font_size: 21\n')
+        existing=set(children(x.XDefaultRootWindow(d)))
+        p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
+        win=None
+        for _ in range(150):
+            for w in children(x.XDefaultRootWindow(d)):
+                if w not in existing and name(w)==b'Runyte':
+                    attr=Attr();x.XGetWindowAttributes(d,w,C.byref(attr))
+                    if attr.map_state==2:win=w;break
+            if win:break
+            assert p.poll() is None,(root/'window.log').read_text()[-3000:]
+            time.sleep(.1)
+        assert win, 'restart did not create a window'
+        x.XSetInputFocus(d,win,1,0);x.XFlush(d);time.sleep(1)
+        command('terminal'); time.sleep(.4)
+        configured=terminal_size('font-configured')
+        screenshot('font-configured')
+        assert all(a > b for a,b in zip(enlarged,configured)), (enlarged,configured)
+        text('exit'); key('Return'); time.sleep(.4); close_window(); p.wait(timeout=15)
+        assert p.returncode == 0
+        print('PASS: native clipboard copy/paste, terminal paste, font resizing, restart config' + (', parent editor wait' if args.mux else ''))
         raise SystemExit(0)
     if args.mux:command('open notes.txt')
     key('i');text('Native edit ');key('Escape');command('write')

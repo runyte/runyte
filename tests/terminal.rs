@@ -1147,6 +1147,20 @@ fn terminal_normal_file_motions_move_the_review_caret() {
 }
 
 #[test]
+fn clipboard_copy_in_live_terminal_input_preserves_output_and_clipboard() {
+    let mut session = Session::start("/bin/cat");
+    let clipboard = Arc::new(Mutex::new("retained".to_owned()));
+    session
+        .app
+        .set_system_clipboard(Box::new(MemoryClipboard(Arc::clone(&clipboard))));
+    session.app.handle_key(KeyStroke::ctrl('C')).unwrap();
+    assert_eq!(session.app.mode, Mode::Insert);
+    let id = session.app.active_terminal().unwrap();
+    assert!(!session.app.terminals.get(id).unwrap().reviewing());
+    assert_eq!(&*clipboard.lock().unwrap(), "retained");
+}
+
+#[test]
 fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
     let mut session = Session::start(r#"/bin/sh -c 'printf "alpha\r\nbeta"; sleep 30'"#);
     assert!(session.settle(|app| terminal_text(app).contains("beta")));
@@ -1189,6 +1203,15 @@ fn normal_mode_has_a_movable_caret_and_selects_and_copies_terminal_text() {
     assert_eq!(review_selection(&mut session.app, id), "beta");
 
     session.type_text(" cy");
+    assert_eq!(&*clipboard.lock().unwrap(), "beta");
+    *clipboard.lock().unwrap() = String::new();
+    session
+        .app
+        .handle_key(KeyStroke::new(
+            KeyCode::Char('C'),
+            Modifiers::CONTROL | Modifiers::SHIFT,
+        ))
+        .unwrap();
     assert_eq!(&*clipboard.lock().unwrap(), "beta");
 }
 

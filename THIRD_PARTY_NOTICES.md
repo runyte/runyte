@@ -369,3 +369,7 @@ Nerd Fonts copyright Ryan L McIntyre. Sources, exact hashes, and redistribution
 terms are recorded in `assets/fonts/jetbrains-mono/README.md`; retained licenses
 and glyph-set attributions are in `licenses/jetbrains-mono/`. The fonts keep
 their own license and are not relicensed under Runyte's MPL-2.0.
+
+The native build carries a compatibility-patched copy of proc-macro-error2 2.0.1
+(MIT OR Apache-2.0) under `vendor/proc-macro-error2`. See its LICENSE-MIT,
+LICENSE-APACHE and RUNYTE-PATCH.md for provenance and the single source change.

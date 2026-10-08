@@ -636,3 +636,18 @@ fn auto_close_terminal_setting_previews_rolls_back_persists_and_reloads() {
     assert!(!app.config.editor.auto_close_terminal);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn font_size_reload_preserves_running_value_and_records_next_window_default() {
+    let (mut app, path) = editor("font-size.yaml", "editor:\n  font_size: 15\n");
+    fs::write(&path, "editor:\n  font_size: 21\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert_eq!(app.config.editor.font_size, 15);
+    assert_eq!(app.persisted_config.editor.font_size, 21);
+    assert!(
+        app.status.contains("restart required for editor.font_size"),
+        "{}",
+        app.status
+    );
+    fs::remove_file(path).unwrap();
+}

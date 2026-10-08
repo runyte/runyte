@@ -477,3 +477,25 @@ fn changed_pdf_page_count_preserves_each_panes_page_and_selection() {
     assert_eq!(app.panes[&first_pane].cursor(app.active_buffer()).row, 3);
     assert_eq!(app.panes[&second_pane].cursor(app.active_buffer()).row, 3);
 }
+
+#[test]
+fn native_help_lists_the_window_registry_controls_only_for_window_frontends() {
+    let root = TestRuntimeRoot::new("native-window-help").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.open_help();
+    assert!(
+        !app.active_buffer()
+            .text()
+            .to_string()
+            .contains("Native window")
+    );
+    app.native_media = true;
+    app.open_help();
+    let text = app.active_buffer().text().to_string();
+    for binding in crate::keymap::native_window::BINDINGS {
+        assert!(text.contains(binding.description));
+        for key in binding.keys {
+            assert!(text.contains(&key.label()));
+        }
+    }
+}

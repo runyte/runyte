@@ -26,6 +26,7 @@ include = [
     "/docs/**",
     "/contrib/**",
     "/licenses/**",
+    "/vendor/**",
     "/assets/fonts/**",
     "/logo/ascii/logo.txt",
     "/logo/runyte_logo.svg",
@@ -163,3 +164,7 @@ harness = false
 name = "plugin_windows_worker"
 path = "tests/plugin_windows_worker.rs"
 harness = false
+
+# GPUI 0.2.2 transitively uses a private proc_macro re-export.
+[patch.crates-io]
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }

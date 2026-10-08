@@ -254,6 +254,11 @@ Native builds embed JetBrainsMono Nerd Font (Medium, Medium Italic, Bold, and
 Bold Italic); no system font installation is needed. The font is redistributed
 under SIL OFL 1.1 with its [licenses and attribution](licenses/jetbrains-mono/README.md).
 Terminal builds continue to use the font selected by your terminal emulator.
+Set `editor.font_size` in `Space o o` to choose the window's starting size
+(default 15 logical pixels). Ctrl-plus/minus adjust only the current window;
+reopening it restores the configured size. Ctrl-Shift-c copies the selection
+to the system clipboard, and Ctrl-Shift-v pastes text into the active input,
+including integrated terminals.
 
 **macOS**
 
