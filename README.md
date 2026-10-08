@@ -245,7 +245,78 @@ cargo build --release
 
 ### Experimental native window (this branch)
 
-Build with GPUI, Zed's Rust UI framework, and open a window:
+The native window is built from this checkout with GPUI, Zed's Rust UI
+framework. Install [Rust through rustup](https://rustup.rs/) and the platform
+dependencies below before building. Use a current stable Rust toolchain for
+the optional GPUI dependency graph.
+
+**macOS**
+
+Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835), launch it once,
+and install its macOS components. GPUI compiles Metal shaders, so the full
+Xcode installation is required in addition to the command-line tools. With
+[Homebrew](https://brew.sh/) installed:
+
+```sh
+xcode-select --install  # If the command-line tools are not installed yet.
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license
+brew install cmake pkgconf poppler
+```
+
+See the [upstream macOS build prerequisites](https://zed.dev/docs/development/macos)
+if Xcode is installed in a different location. Poppler is available through
+[Homebrew's formula](https://formulae.brew.sh/formula/poppler).
+
+**Debian / Ubuntu**
+
+```sh
+sudo apt update
+sudo apt install build-essential pkg-config cmake clang \
+  libfontconfig1-dev libfreetype6-dev libxcb1-dev libx11-xcb-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \
+  libvulkan1 mesa-vulkan-drivers poppler-utils
+```
+
+**Fedora**
+
+```sh
+sudo dnf install gcc gcc-c++ pkgconf-pkg-config cmake clang \
+  fontconfig-devel freetype-devel libxcb-devel libX11-devel \
+  libxkbcommon-devel libxkbcommon-x11-devel wayland-devel openssl-devel \
+  vulkan-loader mesa-vulkan-drivers poppler-utils
+```
+
+**Arch Linux**
+
+```sh
+sudo pacman -Syu --needed base-devel pkgconf cmake clang fontconfig freetype2 \
+  libxcb libx11 libxkbcommon libxkbcommon-x11 wayland openssl \
+  vulkan-icd-loader poppler
+```
+
+Linux also needs a working Vulkan driver for the GPU. Debian/Ubuntu and Fedora
+commands above include Mesa's drivers; NVIDIA installations should use their
+distribution's matching NVIDIA driver. On Arch, install `vulkan-radeon` for AMD
+or `vulkan-intel` for Intel, for example `sudo pacman -S --needed vulkan-radeon`.
+For other distributions, consult the
+[upstream Linux dependency instructions](https://zed.dev/docs/development/linux).
+
+Poppler supplies `pdfinfo`, `pdftoppm`, and `pdftotext` for PDF rendering and
+text selection. It is a runtime dependency only for PDFs; image viewing needs
+no external decoder. If the build dependencies are already installed, only
+install the PDF tools: `brew install poppler` on macOS,
+`sudo apt install poppler-utils` on Debian/Ubuntu,
+`sudo dnf install poppler-utils` on Fedora, or
+`sudo pacman -S --needed poppler` on Arch. Fedora packages these tools in
+[`poppler-utils`](https://packages.fedoraproject.org/pkgs/poppler/poppler-utils/).
+Verify that all three are available in the same shell used to launch Runyte:
+
+```sh
+command -v pdfinfo pdftoppm pdftotext
+```
+
+Then build and open a window:
 
 ```sh
 cargo run --features native -- --window
@@ -262,10 +333,8 @@ middle-drag pans. Select PDF text with left-drag or image regions with
 Shift-drag, then `y` copies the selection.
 
 The experiment targets Linux and macOS; Windows and persistent-session window
-attachments are not implemented. Linux needs GPUI's native build dependencies
-and a working Vulkan driver. PDF viewing additionally requires Poppler's
-`pdfinfo`, `pdftoppm`, and `pdftotext` on `PATH` (`poppler-utils` on Debian/Ubuntu, `poppler`
-on Arch/Fedora or Homebrew). Image viewing needs no external program.
+attachments are not implemented. macOS installation prerequisites are documented
+above, but the native frontend still needs hands-on macOS validation.
 
 See [native-window details and limits](docs/user-guide.md#experimental-native-window).
 The normal terminal executable remains available without `--window`.
