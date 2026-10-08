@@ -24,12 +24,13 @@ behavior at every zoom. Help, hints, and execution use the same registry.
 Private bundled protocol version 75 adds the vertical media actions, so older
 hosts and newer frontends cannot silently disagree about them.
 
-`Viewport::back` now returns a zoomed-in PDF to fit in one press while keeping
-its selection. Later presses clear the selection, return to the page buffer,
-and open the source directory. Overlays and pending key sequences still dismiss
+`Viewport::back` returns zoomed-in media to fit in one press while keeping
+its selection. Later presses clear the selection and leave the preview: PDFs
+return to the page buffer and then the source directory; images open their
+source directory directly. A follow-up applies the same fit-then-clear order
+to images, whose hjkl motions already pan zoomed content. Overlays and pending key sequences still dismiss
 first. These choices resolve the report's open questions: j/k keep page motion
-at fit size, Escape resets directly to fit, and images keep their previous
-Escape behavior. Queued vertical actions cannot operate on a different PDF
+at fit size, Escape resets directly to fit, and images share that ordering. Queued vertical actions cannot operate on a different PDF
 page from the one captured with the request.
 
 Regression coverage:
@@ -40,11 +41,12 @@ Regression coverage:
   `pdf_back_opens_page_buffer_with_ordinary_motions_and_enter_previews` in
   `src/app/tests/native_media.rs` cover command dispatch, counts, Select mode,
   prefix cancellation, terminal fallback, and page-buffer navigation.
-- `pdf_escape_fits_before_clearing_selection_and_leaving`,
+- `escape_fits_media_before_clearing_selection_and_leaving`,
   `vertical_pdf_motion_pans_only_above_fit_and_images_never_change_pages`, and
-  `escape_clears_text_or_region_before_leaving_without_resetting_view` in
+  `escape_at_or_below_fit_clears_selection_before_leaving` in
   `src/native_frontend/viewport.rs` cover zoom, selection, and image behavior.
-- `tests/native_window.py` exercises zoomed panning, all six control-key page
+- `tests/native_window.py` exercises image hjkl panning and fit-before-clear,
+  zoomed PDF panning, all six control-key page
   shortcuts, selection retention on fit, and subsequent page-buffer/explorer
   navigation. Both its standalone and `--mux --no-system-fonts` runs passed;
   CI runs the full acceptance scenario in both attachment modes.
@@ -116,3 +118,9 @@ Escape on a zoomed-in page proceeds in this order:
 3. Press `j`: the next page is shown instead of panning down.
 4. Press `Ctrl-n`: nothing happens.
 5. Press Escape: the page buffer is shown; the zoom is not reset first.
+
+### Image navigation follow-up
+
+Zoomed images must use `h`/`j`/`k`/`l` for panning and Escape must return them
+to fit size before clearing a selection or leaving the preview, matching PDF
+navigation. Images have no page buffer, so leaving opens the source directory.

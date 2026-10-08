@@ -318,11 +318,7 @@ impl NativeView {
                     .entry((pane.pane, pane.path.clone()))
                     .or_insert_with(|| Viewport::new(pane.page));
                 view.show_page(pane.page);
-                if view.back(
-                    pane.path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")),
-                ) {
+                if view.back() {
                     let mut back = self.bridge.media_back.lock().unwrap();
                     if back.len() < 256 {
                         back.push((

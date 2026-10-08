@@ -738,7 +738,7 @@ editor_commands! {
     MediaMoveUp => ("media-move-up", "Move up in media; previous PDF page at fit"),
     MediaMoveDown => ("media-move-down", "Move down in media; next PDF page at fit"),
     MediaCopySelection => ("media-copy-selection", "Copy selected PDF text or image region"),
-    MediaBack => ("media-back", "Fit PDF, clear selection, or leave preview"),
+    MediaBack => ("media-back", "Fit media, clear selection, or leave preview"),
     MediaSelectAll => ("media-select-all", "Select all PDF text or the whole image"),
 
     AlignViewCenter => ("align-view-center", "Center the cursor line in the view"),

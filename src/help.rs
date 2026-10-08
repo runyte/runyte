@@ -174,7 +174,7 @@ impl HelpTopic {
             ],
             Self::Media => &[
                 "Images and PDF pages are read-only. Normal-mode vertical motions pan zoomed PDFs and choose pages at fit size; image vertical motions always pan.",
-                "Escape fits a zoomed PDF first, then clears a selection, then returns to its page rows. Images clear their selection before returning to their containing directory.",
+                "Escape fits zoomed media first, then clears a selection, then leaves the preview. PDFs return to their page rows; images return to their containing directory.",
                 "View alignment commands pan or center media. Zoom and fit commands appear in the key table below.",
                 "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape returns to Normal and follows the same fit, selection, and preview order.",
                 "Wheel pans; Ctrl-wheel zooms at the pointer; middle-drag pans. PDF left-drag selects text. Shift-left-drag selects an image region. Yank copies the selection to the system clipboard.",

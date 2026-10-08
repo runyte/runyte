@@ -1734,11 +1734,11 @@ page. Moving the cursor in the page buffer does not display pages until Enter.
 `42gg` goes to page 42; `gg` and `ge`/`G` go to the first and last pages. Escape
 from the page buffer opens the source directory with the PDF selected.
 
-Images have no page buffer: Escape returns directly to the source directory.
-Escape first dismisses a pending overlay or key sequence. On a zoomed-in PDF,
+Images have no page buffer: leaving their preview opens the source directory.
+Escape first dismisses a pending overlay or key sequence. On zoomed-in media,
 the next press returns to fit size in one step, preserving its selection;
 subsequent presses clear the selection and then leave the media surface.
-Images keep their zoom and clear the selection before leaving. `Space e` goes directly to
+This fit-then-clear order applies to images and PDFs alike. `Space e` goes directly to
 the source directory from either media type and selects the source file, just
 as it does from a rendered Markdown document. `Space E` still opens the editor's
 working directory.
@@ -1757,7 +1757,7 @@ working directory.
 | `v`, then `h/j/k/l` or arrows | Extend a PDF word/line selection or an image-region corner; `v` again stops extending |
 | `%` | Select all page text, or the whole image when there is no text |
 | `y` / `Ctrl-c` | Copy selected PDF text or selected image region to the system clipboard |
-| Escape | Dismiss overlay or pending keys; then PDF fit → clear selection → page buffer → explorer. Images clear selection → explorer. |
+| Escape | Dismiss overlay or pending keys; then fit → clear selection → PDF page buffer → explorer. Images go directly from cleared selection to explorer. |
 | Wheel / Shift-wheel | Pan vertically / horizontally; at fit size, vertical PDF scrolling changes pages |
 | Ctrl-wheel (Cmd-wheel on macOS) | Zoom around the pointer |
 | Middle-drag, right-drag, or Alt-left-drag | Pan |

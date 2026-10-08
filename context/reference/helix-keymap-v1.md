@@ -714,11 +714,11 @@ and previous PDF page at any zoom. `42gg` goes to page 42; `gg` and `ge`/`G`
 retain first and last page motions.
 
 Escape first dismisses an overlay or pending key sequence, then resets a
-zoomed-in PDF to fit size in one press while preserving its selection. Further
+zoomed-in image or PDF to fit size in one press while preserving its selection. Further
 presses clear the selection and leave the displayed PDF page for the PDF's
 read-only page buffer. This uses ordinary buffer motions, counts and search;
 Enter displays the page at the cursor, while Escape opens its source directory.
-Images keep their zoom, clear any selection, and open their source directory;
+Images follow the same fit-then-clear sequence and open their source directory;
 they have no page buffer.
 `Space e` opens the media source directory directly and selects the source file.
 `Space E` continues to open the editor working directory.
@@ -731,7 +731,7 @@ copy PDF text or a selected image region; `%` selects all.
 In media Select mode (`v`), `h/l` extend by PDF words and `j/k` by PDF text
 lines; images extend a rectangular selection corner. `v` stops extending and
 Escape restores Normal mode and follows the same fit-then-clear ordering for
-PDFs; images clear their native selection. View commands
+images and PDFs. View commands
 under `z` continue panning in either mode. These scoped commands, hints and help
 share the registry. Native mouse mappings are documented in the user guide.
 

@@ -365,6 +365,10 @@ try:
     assert (root/'notes.txt').read_text().startswith('Native edit '),'typing or save failed'
     command('open gradient.png');time.sleep(2);image_pixels,_=screenshot('02-image');assert len(set(image_pixels)) > 100
     key('equal');key('equal');time.sleep(.5);zoomed,_=screenshot('02a-image-zoom');assert zoomed[(300*1080+200)*3:(300*1080+200)*3+3] != image_pixels[(300*1080+200)*3:(300*1080+200)*3+3],'keyboard zoom did not change image pixels'
+    for direction in ['h','j','k','l']:
+        before_pan,_=screenshot('02a-before-'+direction)
+        key(direction);time.sleep(.2);after_pan,_=screenshot('02a-pan-'+direction)
+        assert after_pan != before_pan, 'zoomed image did not pan with '+direction
     drag((500,350),(650,420),number=2);panned,_=screenshot('02b-image-pan');assert panned != zoomed,'middle-drag did not pan image'
     mouse(500,350);wheel(4,ctrl=True);wheel_pixels,_=screenshot('02c-pointer-zoom');assert wheel_pixels != panned,'Ctrl-wheel did not zoom'
     key('z');key('f');time.sleep(.5)
@@ -372,9 +376,13 @@ try:
     region=clipboard(b'image/png');assert region.startswith(b'\x89PNG'),'region clipboard is not a PNG'
     assert 1 < struct.unpack('!I',region[16:20])[0] < width,'copied region did not crop image'
     screenshot('02d-region-selection')
+    key('equal');time.sleep(.2)
     key('g');time.sleep(.4);hint_image,_=screenshot('02e-image-hints');assert len(set(hint_image)) > 100, 'hints hid image'
     key('Escape');time.sleep(.2)
-    key('Escape');time.sleep(.2)  # Clear the selected region first.
+    key('Escape');time.sleep(.2)  # Fit before clearing the selected region.
+    key('y');time.sleep(.2)
+    assert clipboard(b'image/png') == region, 'image fit Escape cleared its region selection'
+    key('Escape');time.sleep(.2)  # Clear the selected region.
     key('Escape');time.sleep(.3);screenshot('02f-image-explorer')
     key('Return');time.sleep(.4);_,reopened_image=screenshot('02g-image-reopened')
     command('open pages.pdf');time.sleep(2);first_page,first_color=screenshot('03-pdf-first');assert first_color[2] > first_color[0] + 100, first_color

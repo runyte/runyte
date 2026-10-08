@@ -25,10 +25,10 @@ pub struct Viewport {
     pub message: String,
 }
 impl Viewport {
-    /// PDFs return to fit before cancelling selection or leaving the page.
-    pub fn back(&mut self, pdf: bool) -> bool {
+    /// Media returns to fit before cancelling selection or leaving the preview.
+    pub fn back(&mut self) -> bool {
         self.drag = None;
-        if pdf && self.zoom > 1.01 {
+        if self.zoom > 1.01 {
             self.zoom = 1.;
             self.center = [0.5; 2];
             self.scroll_y = 0.;
@@ -249,7 +249,7 @@ mod back_tests {
     use super::*;
 
     #[test]
-    fn pdf_escape_fits_before_clearing_selection_and_leaving() {
+    fn escape_fits_media_before_clearing_selection_and_leaving() {
         for selection in [
             None,
             Some(Selection::Text(1, 3)),
@@ -261,17 +261,17 @@ mod back_tests {
             view.scroll_y = 12.;
             view.selection = selection.clone();
             view.drag = Some(Drag::Pan([1., 2.]));
-            assert!(!view.back(true));
+            assert!(!view.back());
             assert_eq!(view.zoom, 1.);
             assert_eq!(view.center, [0.5; 2]);
             assert_eq!(view.scroll_y, 0.);
             assert_eq!(view.selection, selection);
             assert!(view.drag.is_none());
             if selection.is_some() {
-                assert!(!view.back(true));
+                assert!(!view.back());
                 assert!(view.selection.is_none());
             }
-            assert!(view.back(true));
+            assert!(view.back());
             assert_eq!(view.page, 4);
         }
     }
@@ -301,22 +301,22 @@ mod back_tests {
     }
 
     #[test]
-    fn escape_clears_text_or_region_before_leaving_without_resetting_view() {
+    fn escape_at_or_below_fit_clears_selection_before_leaving() {
         for selection in [
             Selection::Text(1, 3),
             Selection::Region([0.1, 0.2], [0.4, 0.5]),
         ] {
             let mut view = Viewport::new(4);
-            view.zoom = 2.;
+            view.zoom = 0.8;
             view.center = [0.4, 0.6];
             view.selection = Some(selection);
             view.drag = Some(Drag::Pan([1., 2.]));
-            assert!(!view.back(false));
+            assert!(!view.back());
             assert!(view.selection.is_none());
             assert!(view.drag.is_none());
-            assert!(view.back(false));
+            assert!(view.back());
             assert_eq!(view.page, 4);
-            assert_eq!(view.zoom, 2.);
+            assert_eq!(view.zoom, 0.8);
             assert_eq!(view.center, [0.4, 0.6]);
         }
     }
