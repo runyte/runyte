@@ -858,6 +858,7 @@ impl Render for NativeView {
         if frame.is_none() {
             root = root.child(div().text_color(rgb(0xcccccc)).child("Opening workspace…"));
         }
+        self.media.begin_frame();
         if let Some(frame) = &frame {
             for path in &frame.metadata_paths {
                 self.media.get(path, 1);
@@ -892,6 +893,37 @@ impl Render for NativeView {
                                 .w(px(size[0]))
                                 .h(px(size[1])),
                         );
+                        let mut detail_error = None;
+                        if pane
+                            .path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+                            && let Some(detail) = media::Detail::visible(
+                                origin,
+                                size,
+                                area,
+                                window.scale_factor(),
+                                [page.width, page.height],
+                            )
+                        {
+                            match self.media.detail(&pane.path, pane.page, detail) {
+                                Some(Ok(sharp)) => {
+                                    let (origin, size) = detail.geometry(origin, size);
+                                    layer = layer.child(
+                                        img(sharp.image.clone())
+                                            .absolute()
+                                            .left(px(origin[0]))
+                                            .top(px(origin[1]))
+                                            .w(px(size[0]))
+                                            .h(px(size[1])),
+                                    );
+                                }
+                                Some(Err(error)) => {
+                                    detail_error = Some(format!("PDF detail unavailable: {error}"))
+                                }
+                                None => {}
+                            }
+                        }
                         for bounds in view.selected_bounds(&page) {
                             layer = layer.child(
                                 div()
@@ -910,7 +942,10 @@ impl Render for NativeView {
                         let note = if !view.message.is_empty() {
                             view.message.as_str()
                         } else {
-                            page.text_error.as_deref().unwrap_or("")
+                            detail_error
+                                .as_deref()
+                                .or(page.text_error.as_deref())
+                                .unwrap_or("")
                         };
                         layer.child(
                             div()
@@ -944,6 +979,7 @@ impl Render for NativeView {
                 root = root.child(layer);
             }
         }
+        self.media.end_frame();
         let entity = cx.entity();
         let bridge = self.bridge.clone();
         let focus = self.focus.clone();

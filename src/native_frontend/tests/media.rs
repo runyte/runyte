@@ -5,6 +5,7 @@ fn key(path: &Path, page: usize) -> Key {
     Key {
         path: path.to_owned(),
         page,
+        detail: None,
         modified: None,
         length: 0,
     }
@@ -181,4 +182,139 @@ fn pdf_helper_output_limit_stops_oversized_output() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("size limit"));
+}
+
+#[test]
+fn pdf_detail_tracks_zoom_density_and_visible_document_coordinates() {
+    let origin = [-1000., -500.];
+    let size = [4000., 3000.];
+    let detail = Detail::visible(origin, size, [800., 600.], 2., [1600., 1200.]).unwrap();
+    assert_eq!(detail.full, [8000, 6000]);
+    assert_eq!(detail.origin, [2000, 1000]);
+    assert_eq!(detail.size, [1600, 1200]);
+    assert_eq!(detail.geometry(origin, size), ([0., 0.], [800., 600.]));
+    assert!(Detail::visible([0.; 2], [800., 600.], [800., 600.], 1., [1600., 1200.]).is_none());
+    assert!(Detail::visible([0.; 2], [1000., 750.], [1000., 750.], 2., [1600., 1200.]).is_some());
+    let margin = Detail::visible(
+        [100., 50.],
+        [2000., 1500.],
+        [800., 600.],
+        1.,
+        [1600., 1200.],
+    )
+    .unwrap();
+    assert_eq!(margin.origin, [0, 0]);
+    assert_eq!(
+        margin.geometry([100., 50.], [2000., 1500.]),
+        ([100., 50.], [700., 550.])
+    );
+}
+
+#[test]
+fn pdf_detail_bounds_extreme_views_and_rejects_empty_or_invalid_geometry() {
+    for density in [1., 2., 4.] {
+        let detail =
+            Detail::visible([-10000.; 2], [200000.; 2], [10000.; 2], density, [1600.; 2]).unwrap();
+        assert!(detail.size.into_iter().all(|v| v <= 4096));
+        assert!(u64::from(detail.size[0]) * u64::from(detail.size[1]) <= 8_010_000);
+        assert!(detail.full.into_iter().all(|v| v <= 524288));
+    }
+    for area in [
+        [0., 600.],
+        [-1., 600.],
+        [f32::NAN, 600.],
+        [f32::INFINITY, 600.],
+    ] {
+        assert!(Detail::visible([0.; 2], [3200., 2400.], area, 2., [1600., 1200.]).is_none());
+    }
+    assert!(
+        Detail::visible([1000.; 2], [3200., 2400.], [800., 600.], 1., [1600., 1200.]).is_none()
+    );
+}
+
+#[test]
+#[ignore = "requires installed Poppler pdfinfo, pdftoppm and pdftotext"]
+fn pdf_detail_rerenders_vectors_and_matches_full_resolution_crop() {
+    let root = tempfile::tempdir().unwrap();
+    for rotation in [0, 90, 180, 270] {
+        let path = root.path().join(format!("rotated-{rotation}.pdf"));
+        let fixture = String::from_utf8_lossy(include_bytes!("fixtures/two_pages.pdf"));
+        std::fs::write(
+            &path,
+            fixture.replace("/MediaBox", &format!("/Rotate {rotation} /MediaBox")),
+        )
+        .unwrap();
+        let base_key = key(&path, 1);
+        let cancel = AtomicBool::new(false);
+        let (base, _) = load(&base_key, &cancel).unwrap();
+        let full = [(base.width * 2.) as u32, (base.height * 2.) as u32];
+        let full_key = Key {
+            detail: Some(Detail {
+                full,
+                origin: [0, 0],
+                size: full,
+            }),
+            ..base_key.clone()
+        };
+        let (whole, pages) = load(&full_key, &cancel).unwrap();
+        assert_eq!(pages, 2);
+        assert_eq!([whole.width as u32, whole.height as u32], full);
+        assert!(whole.words.is_empty());
+        let base_pixels = image::RgbaImage::from_raw(
+            base.width as u32,
+            base.height as u32,
+            base.image.as_bytes(0).unwrap().to_vec(),
+        )
+        .unwrap();
+        let enlarged = image::imageops::resize(
+            &base_pixels,
+            full[0],
+            full[1],
+            image::imageops::FilterType::Triangle,
+        );
+        assert!(
+            whole.image.as_bytes(0).unwrap() != enlarged.as_raw(),
+            "detail must re-render PDF vectors rather than enlarge the base image"
+        );
+        let crop = Detail {
+            full,
+            origin: [200, 200],
+            size: [1600, 1000],
+        };
+        let (sharp, _) = load(
+            &Key {
+                detail: Some(crop),
+                ..base_key.clone()
+            },
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!([sharp.width, sharp.height], [1600., 1000.]);
+        let pixels = whole.image.as_bytes(0).unwrap();
+        let expected: Vec<_> = (200..1200)
+            .flat_map(|y| {
+                let start = (y * full[0] as usize + 200) * 4;
+                pixels[start..start + 1600 * 4].iter().copied()
+            })
+            .collect();
+        assert!(
+            sharp.image.as_bytes(0).unwrap() == expected,
+            "detail must match a crop of the full render at rotation {rotation}"
+        );
+        // At 64x, only the visible region is allocated and returned.
+        let zoom = Detail {
+            full: full.map(|v| v * 32),
+            origin: [10000, 10000],
+            size: [800, 600],
+        };
+        let (sharp, _) = load(
+            &Key {
+                detail: Some(zoom),
+                ..base_key
+            },
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(sharp.image.as_bytes(0).unwrap().len(), 800 * 600 * 4);
+    }
 }

@@ -5,6 +5,7 @@ fn key(page: usize) -> Key {
     Key {
         path: "document.pdf".into(),
         page,
+        detail: None,
         modified: None,
         length: 100,
     }
@@ -258,4 +259,115 @@ fn cached_count_access_refreshes_bounded_retention_and_can_restore_evicted_count
     assert!(retain_count(&mut counts, &evicted, 10));
     assert!(!retain_count(&mut counts, &evicted, 10));
     assert_eq!(counts.len(), CACHE_PAGES);
+}
+
+fn detail_key(page: usize, x: u32) -> Key {
+    Key {
+        detail: Some(Detail {
+            full: [6400, 4800],
+            origin: [x, 100],
+            size: [800, 600],
+        }),
+        ..key(page)
+    }
+}
+
+#[test]
+fn detail_changes_cancel_obsolete_work_but_preserve_other_visible_panes() {
+    let mut schedule = Schedule::default();
+    schedule.get(key(1));
+    finish(&mut schedule, 10);
+    let base = schedule.get(key(1)).unwrap().unwrap();
+    let mut viewport = super::super::viewport::Viewport::new(1);
+    viewport.show_source(&base);
+    viewport.zoom = 4.;
+    viewport.center = [0.3, 0.4];
+    viewport.selection = Some(super::super::viewport::Selection::Region(
+        [0.1, 0.2],
+        [0.4, 0.5],
+    ));
+    let geometry = viewport.geometry([base.width, base.height], [800., 600.]);
+    let first = detail_key(1, 100);
+    let other_pane = detail_key(1, 2000);
+    schedule.get(first.clone());
+    let active = schedule.next().unwrap();
+    schedule.get(other_pane.clone());
+    schedule.retain_details(&[first.clone(), other_pane.clone()]);
+    assert!(!active.cancel.load(Ordering::Acquire));
+    let latest = detail_key(1, 200);
+    schedule.get(latest.clone());
+    schedule.retain_details(&[latest.clone(), other_pane.clone()]);
+    assert!(active.cancel.load(Ordering::Acquire));
+    assert_eq!(
+        schedule.complete(loaded(first.clone(), 10), &first),
+        (true, None)
+    );
+    assert!(schedule.details.is_empty());
+    assert_eq!(finish(&mut schedule, 10), (true, None));
+    assert_eq!(finish(&mut schedule, 10), (true, None));
+    assert!(schedule.get(latest).unwrap().is_ok());
+    let same_base = schedule.get(key(1)).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&base, &same_base));
+    viewport.show_source(&same_base);
+    assert_eq!(viewport.zoom, 4.);
+    assert_eq!(viewport.center, [0.3, 0.4]);
+    assert!(viewport.selection.is_some());
+    assert_eq!(
+        viewport.geometry([same_base.width, same_base.height], [800., 600.]),
+        geometry
+    );
+    assert!(schedule.get(other_pane).unwrap().is_ok());
+    assert!(schedule.get(key(1)).unwrap().is_ok());
+    assert!(schedule.speculative.iter().all(|key| key.detail.is_none()));
+    schedule.get(detail_key(1, 500));
+    let pending = schedule.next().unwrap();
+    schedule.retain_details(&[]);
+    assert!(pending.cancel.load(Ordering::Acquire));
+    assert!(schedule.demand.is_empty());
+}
+
+#[test]
+fn detail_cache_is_bounded_separate_from_base_pages_and_invalidated_with_source() {
+    let mut schedule = Schedule::default();
+    schedule.get(key(1));
+    finish(&mut schedule, 10);
+    for x in 0..12 {
+        schedule.get(detail_key(1, x));
+        finish(&mut schedule, 10);
+    }
+    assert_eq!(schedule.details.len(), CACHE_PAGES);
+    assert!(schedule.get(key(1)).unwrap().is_ok());
+    assert!(schedule.get(detail_key(1, 0)).is_none());
+    let active = schedule.next().unwrap();
+    let revised = Key {
+        length: 101,
+        ..key(1)
+    };
+    schedule.get(revised);
+    assert!(active.cancel.load(Ordering::Acquire));
+    assert!(schedule.details.is_empty());
+    assert!(schedule.cache.is_empty());
+}
+
+#[test]
+fn detail_failures_keep_base_page_available_and_do_not_retry_each_frame() {
+    let mut schedule = Schedule::default();
+    schedule.get(key(1));
+    finish(&mut schedule, 10);
+    let sharp = detail_key(1, 100);
+    schedule.get(sharp.clone());
+    let request = schedule.next().unwrap();
+    assert_eq!(
+        schedule.complete(
+            Loaded {
+                key: request.key,
+                result: Err("helper failed".into())
+            },
+            &sharp
+        ),
+        (true, None)
+    );
+    assert!(schedule.get(sharp).unwrap().is_err());
+    assert!(schedule.get(key(1)).unwrap().is_ok());
+    assert!(schedule.demand.is_empty());
 }

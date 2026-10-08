@@ -1772,8 +1772,9 @@ There is no separate PDF page picker or `g p` binding. The paragraph commands
 keys without default bindings; `g p` and `g P` do not move between text paragraphs.
 
 Scanned PDFs without embedded text use rectangular selection; this experiment
-does not perform OCR. Copying a region exports the displayed raster, including
-alpha, without modifying the source file. PDF text selection additionally uses
+does not perform OCR. Copying a region exports the base page/image raster,
+including alpha, without modifying the source file; PDF zoom refinement does
+not increase the resolution of copied regions. PDF text selection additionally uses
 Poppler's `pdftotext`; if extraction fails, the page remains viewable and region
 selection stays available.
 
@@ -1784,8 +1785,15 @@ PDF support requires Poppler's `pdfinfo` and `pdftoppm` executables. Rendering
 runs on one background worker and reports failures inside the pane. Input is
 limited to regular files up to 128 MiB, decoded images to 8192 pixels per axis
 and 64 MiB allocation, and PDFs to 10,000 pages. Images are reduced to at most
-2048 pixels per axis and PDF pages rasterized at 1600 pixels on their longest
-axis. Eight page/image results are cached using least-recently-used eviction.
+2048 pixels per axis. PDF pages initially render at 1600 pixels on their longest
+axis. When that is insufficient for the current zoom or display pixel density,
+the visible region is rendered again in the background. The base page remains
+visible while sharper text and vector graphics load. Each refinement is bounded
+to 4096 pixels per axis and approximately eight million pixels; unusually large
+or dense displays may still exceed that detail budget. Eight base page/image
+results and eight visible-region refinements are cached separately using
+least-recently-used eviction. Zooming, panning, resizing, or leaving a pane
+cancels refinements that are no longer needed by any visible pane.
 After a PDF page loads, up to two pages on either side are loaded in the
 background. Requested pages take priority and interrupt speculative rendering.
 First loads and jumps beyond the warmed pages can still show a loading message.
@@ -1839,9 +1847,10 @@ spelled `Super` in the shared key registry and configuration (`Super-c` and
 `Super-v`). Other Command shortcuts are left unchanged.
 Search within PDF page contents and
 animated-image playback are not implemented; animated GIFs and WebP files show
-their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
-resolution. PDF rendering uses an external helper,
-while windowing, editor integration, and image decoding are Rust. Source changes
+their first frame. Image zoom and scanned PDF content remain limited by their
+source resolution. PDF text and vector graphics are rendered at the view
+resolution within the visible-region budget described above. PDF rendering uses
+an external helper, while windowing, editor integration, and image decoding are Rust. Source changes
 are checked when another frame is presented; there is no automatic media reload
 watcher. macOS, Wayland, IME composition, and touchpad pinch gestures still need hands-on
 platform verification. Ctrl-wheel zoom is supported; native pinch gestures are

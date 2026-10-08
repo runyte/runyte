@@ -22,6 +22,83 @@ struct Key {
     page: usize,
     modified: Option<std::time::SystemTime>,
     length: u64,
+    detail: Option<Detail>,
+}
+/// A bounded visible-region raster in physical pixels. Page coordinates remain
+/// those of the base raster, so sharper rendering never changes input geometry.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(super) struct Detail {
+    pub full: [u32; 2],
+    pub origin: [u32; 2],
+    pub size: [u32; 2],
+}
+impl Detail {
+    pub fn visible(
+        origin: [f32; 2],
+        size: [f32; 2],
+        area: [f32; 2],
+        density: f32,
+        base: [f32; 2],
+    ) -> Option<Self> {
+        if origin
+            .into_iter()
+            .chain(size)
+            .chain(area)
+            .chain(base)
+            .chain([density])
+            .any(|v| !v.is_finite())
+            || size
+                .into_iter()
+                .chain(area)
+                .chain(base)
+                .chain([density])
+                .any(|v| v <= 0.)
+        {
+            return None;
+        }
+        // Cap a single refinement at 4096 per axis and eight million pixels.
+        // Large/HiDPI windows degrade gracefully without allocating a full page.
+        let density = density
+            .min(4096. / area[0])
+            .min(4096. / area[1])
+            .min((8_000_000. / (area[0] * area[1])).sqrt())
+            .min(524288. / size[0].max(size[1]));
+        if size[0] * density <= base[0] && size[1] * density <= base[1] {
+            return None;
+        }
+        let full = size.map(|v| (v * density).ceil() as u32);
+        let mut start = [0; 2];
+        let mut end = [0; 2];
+        for axis in 0..2 {
+            let scale = full[axis] as f32 / size[axis];
+            start[axis] = ((-origin[axis] * scale).floor().max(0.) as u32).min(full[axis]);
+            end[axis] = (((area[axis] - origin[axis]) * scale).ceil().max(0.) as u32)
+                .min(full[axis])
+                .min(start[axis].saturating_add(4096));
+        }
+        let size = [
+            end[0].saturating_sub(start[0]),
+            end[1].saturating_sub(start[1]),
+        ];
+        (size[0] > 0 && size[1] > 0).then_some(Self {
+            full,
+            origin: start,
+            size,
+        })
+    }
+    pub fn geometry(&self, origin: [f32; 2], size: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        let scale = [size[0] / self.full[0] as f32, size[1] / self.full[1] as f32];
+        (
+            [
+                origin[0] + self.origin[0] as f32 * scale[0],
+                origin[1] + self.origin[1] as f32 * scale[1],
+            ],
+            [
+                self.size[0] as f32 * scale[0],
+                self.size[1] as f32 * scale[1],
+            ],
+        )
+    }
 }
 #[derive(Clone, Debug)]
 pub(super) struct Word {
@@ -54,6 +131,7 @@ impl Key {
             page,
             modified: metadata.as_ref().and_then(|m| m.modified().ok()),
             length: metadata.map_or(0, |m| m.len()),
+            detail: None,
         }
     }
     fn same_source(&self, other: &Self) -> bool {
@@ -85,6 +163,7 @@ struct Request {
 struct Schedule {
     // Oldest first; a displayed page moves to the back. Decoded memory stays bounded.
     cache: VecDeque<Entry>,
+    details: VecDeque<Entry>,
     sources: VecDeque<Source>,
     demand: VecDeque<Key>,
     speculative: VecDeque<Key>,
@@ -92,7 +171,10 @@ struct Schedule {
 }
 impl Schedule {
     fn queued(&self, key: &Key) -> bool {
-        self.cache.iter().any(|entry| entry.key == *key)
+        self.cache
+            .iter()
+            .chain(&self.details)
+            .any(|entry| entry.key == *key)
             || self.demand.contains(key)
             || self.speculative.contains(key)
             || self
@@ -127,9 +209,20 @@ impl Schedule {
             }
         }
     }
+    fn retain_details(&mut self, visible: &[Key]) {
+        self.demand
+            .retain(|key| key.detail.is_none() || visible.contains(key));
+        if let Some(active) = &self.active
+            && active.key.detail.is_some()
+            && !visible.contains(&active.key)
+        {
+            active.cancel.store(true, Ordering::Release);
+        }
+    }
     fn get(&mut self, key: Key) -> Option<Cached> {
         let stale = |old: &Key| old.path == key.path && !old.same_source(&key);
         self.cache.retain(|entry| !stale(&entry.key));
+        self.details.retain(|entry| !stale(&entry.key));
         self.sources.retain(|source| !stale(&source.anchor));
         self.demand.retain(|old| !stale(old));
         self.speculative.retain(|old| !stale(old));
@@ -137,6 +230,25 @@ impl Schedule {
             && stale(&active.key)
         {
             active.cancel.store(true, Ordering::Release);
+        }
+        if key.detail.is_some() {
+            if let Some(index) = self.details.iter().position(|entry| entry.key == key) {
+                let entry = self.details.remove(index).unwrap();
+                let value = entry.value.clone();
+                self.details.push_back(entry);
+                return Some(value);
+            }
+            if !self.queued(&key) {
+                if let Some(active) = &self.active
+                    && active.speculative
+                {
+                    active.cancel.store(true, Ordering::Release);
+                }
+                if self.demand.len() < QUEUED_PAGES {
+                    self.demand.push_back(key);
+                }
+            }
+            return None;
         }
         let cached = self
             .cache
@@ -215,6 +327,17 @@ impl Schedule {
         if active.cancel.load(Ordering::Acquire) || !loaded.key.same_source(current) {
             return (!active.speculative, None);
         }
+        if loaded.key.detail.is_some() {
+            if self.details.len() == CACHE_PAGES {
+                self.details.pop_front();
+            }
+            self.details.push_back(Entry {
+                key: loaded.key,
+                value: loaded.result.map(|(page, _)| page),
+                pages: None,
+            });
+            return (true, None);
+        }
         let mut publication = None;
         let (value, pages) = match loaded.result {
             Ok((image, pages)) => {
@@ -263,6 +386,7 @@ pub(super) struct Loader {
     results: mpsc::Receiver<Loaded>,
     schedule: Schedule,
     worker: Option<std::thread::JoinHandle<()>>,
+    visible_details: Vec<Key>,
 }
 impl Loader {
     pub fn new(bridge: Arc<super::Bridge>) -> Self {
@@ -297,6 +421,7 @@ impl Loader {
             results,
             schedule: Schedule::default(),
             worker: Some(worker),
+            visible_details: Vec::new(),
         }
     }
     fn dispatch(&mut self) {
@@ -321,6 +446,22 @@ impl Loader {
         }
         self.dispatch();
         value
+    }
+    pub fn begin_frame(&mut self) {
+        self.visible_details.clear();
+    }
+    pub fn detail(&mut self, path: &Path, page: usize, detail: Detail) -> Option<Cached> {
+        let mut key = Key::read(path, page);
+        key.detail = Some(detail);
+        if !key.is_pdf() {
+            return None;
+        }
+        self.visible_details.push(key.clone());
+        self.schedule.get(key)
+    }
+    pub fn end_frame(&mut self) {
+        self.schedule.retain_details(&self.visible_details);
+        self.dispatch();
     }
     pub fn poll(&mut self, bridge: &super::Bridge) -> bool {
         let mut changed = false;
@@ -457,29 +598,55 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
         );
         ensure!((1..=pages).contains(&key.page), "PDF page does not exist");
         let prefix = temporary.path().join("page");
+        let mut command = Command::new("pdftoppm");
+        command.args([
+            "-f",
+            &key.page.to_string(),
+            "-l",
+            &key.page.to_string(),
+            "-singlefile",
+            "-png",
+        ]);
+        if let Some(detail) = key.detail {
+            ensure!(
+                detail.full.into_iter().all(|v| (1..=524288).contains(&v))
+                    && detail.size.into_iter().all(|v| (1..=4096).contains(&v))
+                    && (0..2).all(|i| detail.origin[i]
+                        .checked_add(detail.size[i])
+                        .is_some_and(|end| end <= detail.full[i])),
+                "invalid PDF detail bounds"
+            );
+            command.args([
+                "-scale-dimension-before-rotation",
+                "-scale-to-x",
+                &detail.full[0].to_string(),
+                "-scale-to-y",
+                &detail.full[1].to_string(),
+                "-x",
+                &detail.origin[0].to_string(),
+                "-y",
+                &detail.origin[1].to_string(),
+                "-W",
+                &detail.size[0].to_string(),
+                "-H",
+                &detail.size[1].to_string(),
+            ]);
+        } else {
+            command.args(["-scale-to", "1600"]);
+        }
         wait(
-            Command::new("pdftoppm")
-                .args([
-                    "-f",
-                    &key.page.to_string(),
-                    "-l",
-                    &key.page.to_string(),
-                    "-singlefile",
-                    "-scale-to",
-                    "1600",
-                    "-png",
-                ])
-                .arg(&key.path)
-                .arg(&prefix)
-                .stdout(Stdio::null()),
+            command.arg(&key.path).arg(&prefix).stdout(Stdio::null()),
             cancel,
-            Some((&prefix.with_extension("png"), 16 * 1024 * 1024)),
+            Some((
+                &prefix.with_extension("png"),
+                if key.detail.is_some() { 64 } else { 16 } * 1024 * 1024,
+            )),
         )?;
         (prefix.with_extension("png"), pages)
     } else {
         (key.path.clone(), 1)
     };
-    let (words, text_error) = if pdf {
+    let (words, text_error) = if pdf && key.detail.is_none() {
         match pdf_words(&key.path, key.page, temporary.path(), cancel) {
             Ok(words) => (words, None),
             Err(error) => (Vec::new(), Some(format!("PDF text unavailable: {error:#}"))),
@@ -495,10 +662,16 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
     reader.limits(limits);
     use image::ImageDecoder;
     let mut decoder = reader.into_decoder()?;
+    if let Some(detail) = key.detail {
+        ensure!(
+            decoder.dimensions() == (detail.size[0], detail.size[1]),
+            "PDF renderer returned unexpected detail dimensions"
+        );
+    }
     let orientation = decoder.orientation()?;
     let mut decoded = image::DynamicImage::from_decoder(decoder)?;
     decoded.apply_orientation(orientation);
-    let decoded = if decoded.width() > 2048 || decoded.height() > 2048 {
+    let decoded = if !pdf && (decoded.width() > 2048 || decoded.height() > 2048) {
         decoded.thumbnail(2048, 2048)
     } else {
         decoded
