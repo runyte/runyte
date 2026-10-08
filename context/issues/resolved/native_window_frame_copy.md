@@ -1,4 +1,39 @@
-# Native window copies the whole cell grid for every host frame
+---
+title: "Native window copies the whole cell grid for every host frame"
+status: resolved
+reported: 2026-10-08
+resolved: 2026-10-08
+commit: de7405c
+---
+
+## Resolution
+
+Commit `de7405c` (`Share unchanged native cell rows between immutable frames`)
+replaces the full-buffer clone in `Surface::draw` with `GridBackend` in
+`src/native_frontend/grid.rs`. Ratatui already identifies changed cells; the
+backend now applies them directly to copy-on-write `Arc<[Cell]>` rows. Publishing
+clones row references rather than every cell. Multiple changes to one row copy
+it at most once while older frames still own it. The GUI receives a complete
+immutable `Grid`, including changes from frames it never painted.
+
+Resize and clear allocate a fresh grid and cannot alter retained frames. Cursor
+visibility and position still come from the backend. Standalone and attached
+windows share this path, and frame identities, acknowledgements and the
+latest-frame bridge are unchanged. The new backend is private to the native
+fullscreen surface; it is not a terminal emulator or scrollback implementation.
+
+`changed_rows_are_copied_and_skipped_frames_remain_complete` in
+`src/native_frontend/tests/grid.rs` verifies unchanged-row sharing, changed-row
+isolation, skipped frames, unchanged redraws and resize lifetime.
+`grid_backend_matches_ratatui_for_wide_cells_styles_clear_and_cursor` in the
+same file compares the backend against `TestBackend` across wide/combining text,
+styles, shorter replacements, cursor changes and all clear-region variants.
+
+Known limitation: the core still prepares and renders a complete Ratatui frame.
+This fix removes the publication copy; it does not remove layout or cell diff
+work, which belongs to separate rendering optimisations.
+
+## Report
 
 Every frame the host publishes to the native window (`--window`) copies the
 entire cell grid, even when one cell changed.
