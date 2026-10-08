@@ -1068,6 +1068,85 @@ pub fn render_host_frame_exact_colors_for_test(frame: &mut Frame<'_>, snapshot: 
     );
 }
 
+/// The theme's default background and foreground as the native window paints
+/// them: margins, `Reset` cell colours and media fills. A terminal leaves
+/// these to the emulator's own defaults; a window has no such defaults, so a
+/// `reset` theme colour becomes one that contrasts with the colour the theme
+/// does define.
+pub fn native_default_colors(
+    theme: &crate::config::Theme,
+) -> (ratatui::style::Color, ratatui::style::Color) {
+    use ratatui::style::Color as TuiColor;
+    // Black and white text contrast equally with a luminance of about 0.179.
+    const CONTRAST_MIDPOINT: f64 = 0.179;
+    let light = match (
+        theme.background.relative_luminance(),
+        theme.foreground.relative_luminance(),
+    ) {
+        (Some(background), _) => background >= CONTRAST_MIDPOINT,
+        (None, Some(foreground)) => foreground < CONTRAST_MIDPOINT,
+        (None, None) => false,
+    };
+    let background = match theme.background {
+        RunyteColor::Reset if light => TuiColor::Rgb(0xf8, 0xf8, 0xf8),
+        RunyteColor::Reset => TuiColor::Rgb(0x18, 0x18, 0x18),
+        color => to_tui_color_for(color, TerminalColorDepth::TrueColor),
+    };
+    let foreground = match theme.foreground {
+        RunyteColor::Reset if light => TuiColor::Rgb(0x20, 0x20, 0x20),
+        RunyteColor::Reset => TuiColor::Rgb(0xdd, 0xdd, 0xdd),
+        color => to_tui_color_for(color, TerminalColorDepth::TrueColor),
+    };
+    (background, foreground)
+}
+
+#[cfg(test)]
+#[test]
+fn native_default_colors_contrast_with_the_defined_theme_colour() {
+    use ratatui::style::Color as TuiColor;
+    let mut theme = Theme::try_from(&crate::config::ThemeDefinition::default()).unwrap();
+    theme.background = RunyteColor::Rgb(0x0b, 0x1f, 0x2a);
+    theme.foreground = RunyteColor::Rgb(0xe0, 0xe0, 0xe0);
+    assert_eq!(
+        native_default_colors(&theme),
+        (
+            TuiColor::Rgb(0x0b, 0x1f, 0x2a),
+            TuiColor::Rgb(0xe0, 0xe0, 0xe0)
+        )
+    );
+    // A terminal-default background under dark text becomes a light window.
+    theme.background = RunyteColor::Reset;
+    theme.foreground = RunyteColor::Rgb(0x10, 0x10, 0x10);
+    assert_eq!(
+        native_default_colors(&theme),
+        (
+            TuiColor::Rgb(0xf8, 0xf8, 0xf8),
+            TuiColor::Rgb(0x10, 0x10, 0x10)
+        )
+    );
+    theme.foreground = RunyteColor::Reset;
+    assert_eq!(
+        native_default_colors(&theme),
+        (
+            TuiColor::Rgb(0x18, 0x18, 0x18),
+            TuiColor::Rgb(0xdd, 0xdd, 0xdd)
+        )
+    );
+    // A mid-grey background still takes dark default text.
+    theme.background = RunyteColor::Rgb(0xa0, 0xa0, 0xa0);
+    assert_eq!(
+        native_default_colors(&theme).1,
+        TuiColor::Rgb(0x20, 0x20, 0x20)
+    );
+    // A reset background under mid-grey text becomes a dark window.
+    theme.background = RunyteColor::Reset;
+    theme.foreground = RunyteColor::Rgb(0x99, 0x99, 0x99);
+    assert_eq!(
+        native_default_colors(&theme).0,
+        TuiColor::Rgb(0x18, 0x18, 0x18)
+    );
+}
+
 /// Renders the standalone native window through the same snapshot geometry
 /// used to composite its overlays above media.
 pub fn render_native_frame(

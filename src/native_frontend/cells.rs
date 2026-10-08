@@ -93,9 +93,9 @@ fn background(frame: &FrameData, x: u16, y: u16) -> Option<Hsla> {
     }
     let cell = &frame.cells[(x, y)];
     let bg = if cell.modifier.contains(Modifier::REVERSED) {
-        color(cell.fg, 0xdddddd)
+        color(cell.fg, frame.foreground)
     } else {
-        color(cell.bg, 0x181818)
+        color(cell.bg, frame.background)
     };
     // Keep even root-coloured backgrounds as merged runs: their logical
     // ordering floor must match neighbouring rows when glyphs overhang.
@@ -162,9 +162,9 @@ pub(super) fn paint_cells(
                 separate |=
                     layout.width <= px(0.) || layout.width > px(width as f32 * metrics.width);
                 let mut fg = if cell.modifier.contains(Modifier::REVERSED) {
-                    color(cell.bg, 0x181818)
+                    color(cell.bg, frame.background)
                 } else {
-                    color(cell.fg, 0xdddddd)
+                    color(cell.fg, frame.foreground)
                 };
                 if cell.modifier.contains(Modifier::DIM) {
                     fg.l *= 0.65;
@@ -323,6 +323,8 @@ mod tests {
     fn frame() -> FrameData {
         FrameData {
             attachment: 0,
+            background: super::super::FALLBACK_BACKGROUND,
+            foreground: super::super::FALLBACK_FOREGROUND,
             id: None,
             cells: Buffer::empty(Rect::new(0, 0, 8, 2)),
             media: vec![],
@@ -381,6 +383,31 @@ mod tests {
                 (0, 1, 1, color(Color::Reset, 0x181818)),
                 (1, 1, 1, color(Color::Reset, 0x181818)),
                 (6, 1, 1, color(Color::Reset, 0x181818))
+            ]
+        );
+    }
+
+    #[test]
+    fn reset_colours_follow_the_frame_theme() {
+        let mut frame = frame();
+        frame.background = 0x0b1f2a;
+        frame.foreground = 0xe0e0e0;
+        frame.cells[(1, 0)].set_bg(Color::Red);
+        frame.cells[(2, 0)]
+            .set_fg(Color::Reset)
+            .set_bg(Color::Blue)
+            .set_style(Modifier::REVERSED);
+        let mut runs = vec![];
+        backgrounds(&frame, |x, y, w, c| runs.push((x, y, w, c)));
+        assert_eq!(
+            runs,
+            vec![
+                (0, 0, 1, color(Color::Rgb(0x0b, 0x1f, 0x2a), 0)),
+                (1, 0, 1, color(Color::Red, 0)),
+                // Reverse video takes the foreground default as its background.
+                (2, 0, 1, color(Color::Rgb(0xe0, 0xe0, 0xe0), 0)),
+                (3, 0, 5, color(Color::Rgb(0x0b, 0x1f, 0x2a), 0)),
+                (0, 1, 8, color(Color::Rgb(0x0b, 0x1f, 0x2a), 0)),
             ]
         );
     }

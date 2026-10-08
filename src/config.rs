@@ -666,7 +666,7 @@ impl Color {
     }
 
     /// Relative luminance as defined by WCAG, or `None` for `Reset`.
-    fn relative_luminance(self) -> Option<f64> {
+    pub(crate) fn relative_luminance(self) -> Option<f64> {
         let (red, green, blue) = self.channels()?;
         let channel = |value: u8| {
             let value = f64::from(value) / 255.0;

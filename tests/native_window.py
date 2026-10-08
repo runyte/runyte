@@ -259,6 +259,21 @@ try:
             break
         time.sleep(.25)
     assert len(set(initial)) > 8, "first editor frame remained blank"
+    def pixel(xpos, ypos):
+        im=x.XGetImage(d,win,xpos,ypos,1,1,0xffffffffffffffff,2)
+        assert im
+        value=x.XGetPixel(im,0,0)&0xffffff
+        x.XDestroyImage(im)
+        return value
+    if not (args.paint_styles or args.paint_benchmark or args.latency or args.mux):
+        # Margins left by a window that is not a whole number of cells use the
+        # theme background, the same colour as empty editor cells. Standalone
+        # only: below notes.txt's two lines, (600, 400) is an empty cell.
+        geometry=Attr();x.XGetWindowAttributes(d,win,C.byref(geometry))
+        x.XResizeWindow(d,win,1085,805);x.XFlush(d);time.sleep(1)
+        empty=pixel(600,400)
+        assert pixel(1083,400)==empty and pixel(600,803)==empty, ('margin differs from theme background', hex(empty), hex(pixel(1083,400)), hex(pixel(600,803)))
+        x.XResizeWindow(d,win,geometry.width,geometry.height);x.XFlush(d);time.sleep(1)
     if args.paint_styles:
         assert args.output and not args.mux, "style capture requires --output and standalone mode"
         command('terminal'); time.sleep(.5); text('cat styles.ansi'); key('Return'); time.sleep(.5)

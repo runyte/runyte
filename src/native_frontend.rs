@@ -57,9 +57,16 @@ struct MediaPane {
     page: usize,
     body: runyte::layout::Rect,
 }
+/// Window colours used where no cell supplies one, before the first frame.
+const FALLBACK_BACKGROUND: u32 = 0x181818;
+const FALLBACK_FOREGROUND: u32 = 0xdddddd;
+
 #[derive(Clone)]
 struct FrameData {
     attachment: u64,
+    /// The theme's default colours for this frame, as RGB.
+    background: u32,
+    foreground: u32,
     id: Option<runyte::workspace::FrameId>,
     cells: Buffer,
     media: Vec<MediaPane>,
@@ -142,6 +149,7 @@ struct Bridge {
     media: Mutex<Vec<MediaPane>>,
     painted_media: Mutex<Vec<MediaPane>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
+    default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
     metadata_paths: Mutex<Vec<PathBuf>>,
     blocked_media: Mutex<MediaInputMask>,
@@ -236,6 +244,11 @@ pub fn capture_media(
 
 fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
     let Some(bridge) = BRIDGE.get() else { return };
+    let (background, foreground) = runyte::ui::native_default_colors(&snapshot.editor.theme);
+    *bridge.default_colors.lock().unwrap() = (
+        rgb_value(background, FALLBACK_BACKGROUND),
+        rgb_value(foreground, FALLBACK_FOREGROUND),
+    );
     *bridge.overlays.lock().unwrap() =
         runyte::ui::overlay_rectangles(&snapshot.editor, &snapshot.overlays);
     *bridge.metadata_paths.lock().unwrap() = snapshot
@@ -411,8 +424,11 @@ impl Surface {
                 let (width, height) = *bridge.dimensions.lock().unwrap();
                 terminal.backend_mut().resize(width, height);
                 terminal.draw(draw).unwrap();
+                let (background, foreground) = *bridge.default_colors.lock().unwrap();
                 *bridge.frame.lock().unwrap() = Some(FrameData {
                     attachment: bridge.attachment.load(Ordering::Acquire),
+                    background,
+                    foreground,
                     id: *bridge.prepared.lock().unwrap(),
                     cells: terminal.backend().buffer().clone(),
                     media: bridge.media.lock().unwrap().clone(),
@@ -536,6 +552,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::R
         media: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
         overlays: Mutex::new(Vec::new()),
+        default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
         metadata_paths: Mutex::new(Vec::new()),
         blocked_media: Mutex::new(MediaInputMask::default()),
@@ -732,12 +749,17 @@ impl Render for NativeView {
         }
         let frame = self.frame.clone();
         let glyphs = self.glyphs.clone();
+        let (background, foreground) = frame
+            .as_ref()
+            .map_or((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND), |frame| {
+                (frame.background, frame.foreground)
+            });
         let mut root = div()
             .font_family("JetBrainsMono Nerd Font")
             .font_weight(FontWeight::MEDIUM)
             .text_size(px(metrics.font_size))
             .size_full()
-            .bg(rgb(0x181818))
+            .bg(rgb(background))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if view.composition.is_empty()
@@ -864,7 +886,7 @@ impl Render for NativeView {
                     .w(px(area.width as f32 * metrics.width))
                     .h(px(area.height as f32 * metrics.height))
                     .overflow_hidden()
-                    .bg(rgb(0x181818));
+                    .bg(rgb(background));
                 layer = match content {
                     Some(Ok(page)) => {
                         let area = self.media_area(pane);
@@ -910,8 +932,8 @@ impl Render for NativeView {
                                 .bottom(px(0.))
                                 .left(px(0.))
                                 .text_size(px(metrics.font_size * 0.8))
-                                .text_color(rgb(0xcccccc))
-                                .bg(rgba(0x181818dd))
+                                .text_color(rgb(foreground))
+                                .bg(rgba((background << 8) | 0xdd))
                                 .child(
                                     if pane
                                         .path
@@ -931,7 +953,7 @@ impl Render for NativeView {
                         )
                     }
                     Some(Err(error)) => layer.child(div().text_color(rgb(0xff8888)).child(error)),
-                    None => layer.child(div().text_color(rgb(0xcccccc)).child("Loading media…")),
+                    None => layer.child(div().text_color(rgb(foreground)).child("Loading media…")),
                 };
                 root = root.child(layer);
             }
@@ -1068,7 +1090,12 @@ fn mouse_event(
 }
 
 fn color(color: Color, default: u32) -> Hsla {
-    let value = match color {
+    rgb(rgb_value(color, default)).into()
+}
+
+/// Resolves a cell colour to RGB; `Reset` takes the given default.
+fn rgb_value(color: Color, default: u32) -> u32 {
+    match color {
         Color::Rgb(r, g, b) => (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
         Color::Reset => default,
         Color::Indexed(index) if index >= 232 => {
@@ -1106,8 +1133,7 @@ fn color(color: Color, default: u32) -> Hsla {
                 0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
             ][i]
         }
-    };
-    rgb(value).into()
+    }
 }
 // Composition is kept locally until committed, so it cannot execute modal
 // commands or leave partial edits in the host's transaction history.

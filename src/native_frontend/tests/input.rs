@@ -200,6 +200,8 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
     };
     let frame = super::FrameData {
         attachment: 0,
+        background: super::FALLBACK_BACKGROUND,
+        foreground: super::FALLBACK_FOREGROUND,
         id: None,
         cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)),
         media: vec![super::MediaPane {
@@ -294,6 +296,8 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
     };
     let mut frame = FrameData {
         attachment: 2,
+        background: super::FALLBACK_BACKGROUND,
+        foreground: super::FALLBACK_FOREGROUND,
         id: Some(FrameId::from_raw(10).into()),
         cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)),
         media: Vec::new(),
