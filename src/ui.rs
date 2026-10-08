@@ -1053,19 +1053,36 @@ pub fn render_host_frame(
     snapshot: &HostFrame,
     color_depth: TerminalColorDepth,
 ) {
-    render_attached_frame(frame, snapshot, color_depth);
+    render_attached_frame(frame, snapshot, SessionMode::Persistent, color_depth);
 }
 
 /// Preserves a transport-owned frame's exact RGB for presentation-oriented
 /// test backends.
 #[doc(hidden)]
 pub fn render_host_frame_exact_colors_for_test(frame: &mut Frame<'_>, snapshot: &HostFrame) {
-    render_attached_frame(frame, snapshot, TerminalColorDepth::TrueColor);
+    render_attached_frame(
+        frame,
+        snapshot,
+        SessionMode::Persistent,
+        TerminalColorDepth::TrueColor,
+    );
+}
+
+/// Renders the standalone native window through the same snapshot geometry
+/// used to composite its overlays above media.
+pub fn render_native_frame(
+    frame: &mut Frame<'_>,
+    snapshot: &HostFrame,
+    session: SessionMode,
+    color_depth: TerminalColorDepth,
+) {
+    render_attached_frame(frame, snapshot, session, color_depth);
 }
 
 fn render_attached_frame(
     frame: &mut Frame<'_>,
     snapshot: &HostFrame,
+    session: SessionMode,
     color_depth: TerminalColorDepth,
 ) {
     let mut theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
@@ -1084,7 +1101,7 @@ fn render_attached_frame(
         frame,
         &theme,
         &snapshot.editor.status,
-        SessionMode::Persistent,
+        session,
         to_tui_rect(snapshot.editor.geometry.status),
         to_tui_rect(snapshot.editor.geometry.message),
     );
@@ -1129,38 +1146,58 @@ fn render_attached_frame(
     );
 }
 
-fn draw_snapshot_overlay(
-    frame: &mut Frame<'_>,
-    theme: &TuiTheme,
-    overlay: &OverlaySnapshot,
-    editor: &EditorSnapshot,
-) {
+/// Cell rectangles painted by the snapshot renderer's visible overlays.
+/// Native frontends can composite these cells above media without revealing
+/// the editor cells beneath the rest of the image.
+pub fn overlay_rectangles(editor: &EditorSnapshot, overlays: &[OverlaySnapshot]) -> Vec<Rect> {
+    let completion_visible = overlays
+        .iter()
+        .any(|overlay| overlay.kind == OverlayKind::Completion);
+    overlays
+        .iter()
+        .filter(|overlay| overlay.kind != OverlayKind::Signature || !completion_visible)
+        .filter_map(|overlay| snapshot_overlay_area(editor, overlay).map(from_tui_rect))
+        .collect()
+}
+
+fn snapshot_overlay_area(editor: &EditorSnapshot, overlay: &OverlaySnapshot) -> Option<TuiRect> {
     let editor_area = editor.geometry.editor;
     if editor_area.width < 3 || editor_area.height < 3 {
-        return;
+        return None;
     }
     if overlay.layout == OverlayLayout::GitMergeReview {
-        draw_merge_review(frame, theme, overlay, editor_area);
-        return;
+        return Some(to_tui_rect(
+            crate::merge_review_layout::merge_review_layout(
+                editor_area,
+                overlay.message.as_deref().unwrap_or_default(),
+                overlay.input == crate::snapshot::OverlayInput::Text,
+            )
+            .area,
+        ));
     }
     if overlay.kind == OverlayKind::KeyHints {
-        draw_snapshot_key_hints(frame, theme, overlay, editor_area);
-        return;
+        let height = if overlay.message.is_some() {
+            3.min(editor_area.height)
+        } else if overlay.rows.is_empty() {
+            return None;
+        } else {
+            snapshot_key_hint_layout(overlay, editor_area).height
+        };
+        return Some(TuiRect::new(
+            editor_area.x,
+            editor_area.y + editor_area.height.saturating_sub(height),
+            editor_area.width,
+            height,
+        ));
     }
-    // A surface that owns its input keeps its query line whether or not
-    // anything has been typed into it, so its rows never move under the
-    // reader as the first character arrives. A surface that owns no input —
-    // key hints showing a pending stroke, a completion showing its filter —
-    // still shows the text it has, and shows nothing when it has none.
-    let shows_query =
-        overlay.input != crate::snapshot::OverlayInput::None || !overlay.query.is_empty();
-    let query_height = usize::from(shows_query);
-    let header_height = usize::from(overlay.column_header.is_some());
+    let query_height = usize::from(
+        overlay.input != crate::snapshot::OverlayInput::None || !overlay.query.is_empty(),
+    );
     let message_height = overlay
         .message
         .as_deref()
         .map_or(0, |message| message.lines().count());
-    let area = if overlay.layout == OverlayLayout::Setting {
+    Some(if overlay.layout == OverlayLayout::Setting {
         to_tui_rect(setting_popup_area(editor_area))
     } else if overlay.layout == OverlayLayout::SettingChoice {
         to_tui_rect(setting_choice_popup_area(editor_area))
@@ -1177,15 +1214,6 @@ fn draw_snapshot_overlay(
             }
             OverlayKind::FilePicker => to_tui_rect(centered(editor_area, 90, 85, 28, 8)),
             OverlayKind::BufferActions => to_tui_rect(action_menu_area(editor_area, overlay)),
-            OverlayKind::KeyHints => {
-                let height = (overlay.rows.len() as u16 + 3).clamp(3, editor_area.height.min(16));
-                to_tui_rect(Rect {
-                    x: editor_area.x,
-                    y: editor_area.y + editor_area.height.saturating_sub(height),
-                    width: editor_area.width,
-                    height,
-                })
-            }
             // Assistance attached to the interaction line: bottom left,
             // sized to the rows it holds and to the width they need, so the
             // same hints occupy the same corner in both renderers.
@@ -1207,7 +1235,36 @@ fn draw_snapshot_overlay(
             }
             _ => to_tui_rect(centered(editor_area, 80, 75, 28, 7)),
         }
+    })
+}
+
+fn draw_snapshot_overlay(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    overlay: &OverlaySnapshot,
+    editor: &EditorSnapshot,
+) {
+    let editor_area = editor.geometry.editor;
+    let Some(area) = snapshot_overlay_area(editor, overlay) else {
+        return;
     };
+    if overlay.layout == OverlayLayout::GitMergeReview {
+        draw_merge_review(frame, theme, overlay, editor_area);
+        return;
+    }
+    if overlay.kind == OverlayKind::KeyHints {
+        draw_snapshot_key_hints(frame, theme, overlay, editor_area, area);
+        return;
+    }
+    // A surface that owns its input keeps its query line whether or not
+    // anything has been typed into it, so its rows never move under the
+    // reader as the first character arrives. A surface that owns no input —
+    // key hints showing a pending stroke, a completion showing its filter —
+    // still shows the text it has, and shows nothing when it has none.
+    let shows_query =
+        overlay.input != crate::snapshot::OverlayInput::None || !overlay.query.is_empty();
+    let query_height = usize::from(shows_query);
+    let header_height = usize::from(overlay.column_header.is_some());
     let content_width = area.width.saturating_sub(2);
     let message_width = if overlay.layout == OverlayLayout::Preview
         && overlay.show_preview
@@ -1809,21 +1866,41 @@ fn draw_choice_explanation(
     );
 }
 
-/// Draws the presentation-neutral hint rows carried by an attached frame with
-/// the same responsive grid as the standalone frontend.
+/// The responsive grid shared by overlay compositing and hint painting.
+fn snapshot_key_hint_layout(
+    overlay: &OverlaySnapshot,
+    editor_area: Rect,
+) -> crate::key_hints::KeyHintLayout {
+    let widest_key = overlay
+        .rows
+        .iter()
+        .map(|row| UnicodeWidthStr::width(row.label.as_str()))
+        .max()
+        .unwrap_or_default();
+    let widest_description = overlay
+        .rows
+        .iter()
+        .map(|row| UnicodeWidthStr::width(row.detail.as_str()))
+        .max()
+        .unwrap_or_default();
+    key_hint_layout(
+        editor_area.width,
+        editor_area.height,
+        overlay.total_rows,
+        widest_key,
+        widest_description,
+        overlay.scroll_anchor.unwrap_or(overlay.row_offset),
+    )
+}
+
 fn draw_snapshot_key_hints(
     frame: &mut Frame<'_>,
     theme: &TuiTheme,
     overlay: &OverlaySnapshot,
     editor_area: Rect,
+    area: TuiRect,
 ) {
     if let Some(message) = &overlay.message {
-        let area = TuiRect::new(
-            editor_area.x,
-            editor_area.y + editor_area.height.saturating_sub(3),
-            editor_area.width,
-            3.min(editor_area.height),
-        );
         let popup = Paragraph::new(message.clone())
             .block(
                 Block::default()
@@ -1844,32 +1921,7 @@ fn draw_snapshot_key_hints(
         return;
     }
 
-    let widest_key = overlay
-        .rows
-        .iter()
-        .map(|row| UnicodeWidthStr::width(row.label.as_str()))
-        .max()
-        .unwrap_or_default();
-    let widest_description = overlay
-        .rows
-        .iter()
-        .map(|row| UnicodeWidthStr::width(row.detail.as_str()))
-        .max()
-        .unwrap_or_default();
-    let layout = key_hint_layout(
-        editor_area.width,
-        editor_area.height,
-        overlay.total_rows,
-        widest_key,
-        widest_description,
-        overlay.scroll_anchor.unwrap_or(overlay.row_offset),
-    );
-    let area = TuiRect::new(
-        editor_area.x,
-        editor_area.y + editor_area.height.saturating_sub(layout.height),
-        editor_area.width,
-        layout.height,
-    );
+    let layout = snapshot_key_hint_layout(overlay, editor_area);
     let range = if overlay.total_rows > layout.visible_rows {
         let controls = overlay
             .actions
@@ -2917,7 +2969,7 @@ fn severity_color(
 /// over the transport. Carrying it in the snapshot instead would put a
 /// question the host cannot answer about itself onto the wire.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SessionMode {
+pub enum SessionMode {
     /// The TUI and the workspace host are this one process.
     Standalone,
     /// This TUI is attached to a workspace host running elsewhere.
@@ -7634,6 +7686,124 @@ mod tests {
         overlay.preview = None;
         overlay.preview_title = None;
         overlay
+    }
+
+    #[test]
+    fn overlay_rectangles_cover_exactly_the_cells_painted_above_media() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let base = action_menu_overlay(&mut app, vec![("a", "First"), ("b", "Second")], 0);
+        let theme = TuiTheme::new(&app.theme);
+        let sentinel = ratatui::style::Color::Magenta;
+        for (width, height) in [(100, 40), (30, 12)] {
+            let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, width, height)));
+            let editor = app.snapshot(&prepared);
+            for (kind, layout, message) in [
+                (OverlayKind::BufferActions, OverlayLayout::Standard, None),
+                (OverlayKind::Prompt, OverlayLayout::Standard, None),
+                (OverlayKind::Prompt, OverlayLayout::Bottom, None),
+                (OverlayKind::Prompt, OverlayLayout::Setting, None),
+                (OverlayKind::Prompt, OverlayLayout::SettingChoice, None),
+                (OverlayKind::Confirmation, OverlayLayout::Standard, None),
+                (OverlayKind::FilePicker, OverlayLayout::Standard, None),
+                (OverlayKind::ResultList, OverlayLayout::Preview, None),
+                (OverlayKind::CommandPalette, OverlayLayout::Standard, None),
+                (OverlayKind::Completion, OverlayLayout::Standard, None),
+                (OverlayKind::PathCompletion, OverlayLayout::Standard, None),
+                (OverlayKind::KeyHints, OverlayLayout::Standard, None),
+                (
+                    OverlayKind::KeyHints,
+                    OverlayLayout::Standard,
+                    Some("Unknown key"),
+                ),
+                (
+                    OverlayKind::GitMergeReview,
+                    OverlayLayout::GitMergeReview,
+                    Some("Review changes"),
+                ),
+            ] {
+                let mut overlay = base.clone();
+                overlay.kind = kind;
+                overlay.layout = layout;
+                overlay.message = message.map(str::to_owned);
+                let areas = overlay_rectangles(&editor, std::slice::from_ref(&overlay));
+                assert_eq!(areas.len(), 1, "{kind:?} {layout:?}");
+                let area = areas[0];
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        frame.render_widget(
+                            Block::default().style(Style::default().bg(sentinel)),
+                            frame.area(),
+                        );
+                        draw_snapshot_overlay(frame, &theme, &overlay, &editor);
+                    })
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                for y in 0..height {
+                    for x in 0..width {
+                        let covered = x >= area.x
+                            && x < area.x + area.width
+                            && y >= area.y
+                            && y < area.y + area.height;
+                        assert_eq!(
+                            buffer[(x, y)].bg != sentinel,
+                            covered,
+                            "{kind:?} {layout:?}, {width}x{height}, cell {x},{y}, {area:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn overlay_rectangles_exclude_hidden_assistance_and_empty_hints() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let mut completion = action_menu_overlay(&mut app, vec![("a", "First")], 0);
+        completion.kind = OverlayKind::Completion;
+        let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, 100, 40)));
+        let mut editor = app.snapshot(&prepared);
+        let mut signature = completion.clone();
+        signature.kind = OverlayKind::Signature;
+        assert_eq!(
+            overlay_rectangles(&editor, &[signature.clone(), completion.clone()]),
+            overlay_rectangles(&editor, std::slice::from_ref(&completion)),
+        );
+        assert_eq!(overlay_rectangles(&editor, &[signature]).len(), 1);
+        let mut hints = completion.clone();
+        hints.kind = OverlayKind::KeyHints;
+        hints.rows.clear();
+        assert!(overlay_rectangles(&editor, &[hints]).is_empty());
+        editor.geometry.editor.width = 2;
+        assert!(overlay_rectangles(&editor, &[completion]).is_empty());
+    }
+
+    #[test]
+    fn native_snapshot_renderer_keeps_the_frontends_session_label() {
+        let app = App::new(Config::default(), None).unwrap();
+        let mut host = crate::workspace::WorkspaceHost::new(app);
+        let snapshot = host.prepare_frame(frame_geometry(TuiRect::new(0, 0, 100, 24)));
+        for (session, label) in [
+            (SessionMode::Editor, "editor"),
+            (SessionMode::Standalone, "ide"),
+            (SessionMode::Persistent, "ide+mux"),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_native_frame(frame, &snapshot, session, TerminalColorDepth::TrueColor);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let y = snapshot.editor.geometry.status.y;
+            let status = (0..100)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>();
+            assert!(status.contains(label), "{session:?}: {status:?}");
+            if session != SessionMode::Persistent {
+                assert!(!status.contains("ide+mux"), "{status:?}");
+            }
+        }
     }
 
     /// The content columns of the titled overlay, read off the corners of its

@@ -781,10 +781,12 @@ fn nested_space_tree_is_exact_primary_and_keeps_fast_compatibility_paths() {
                 Lookup::NoMatch
             ));
         }
-        assert!(
-            matches!(default_keymap().lookup_in(mode, BindingScope::Media, &sequence("gp")),
-            Lookup::Exact(binding) if binding.target == BindingTarget::Editor(EditorCommand::MediaPages))
-        );
+        for scope in [BindingScope::Media, BindingScope::PdfPages] {
+            assert!(matches!(
+                default_keymap().lookup_in(mode, scope, &sequence("gp")),
+                Lookup::NoMatch
+            ));
+        }
     }
 }
 

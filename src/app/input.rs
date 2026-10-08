@@ -4407,7 +4407,7 @@ impl App {
             return Ok(());
         }
         match command {
-            Command::MediaPages
+            Command::MediaShowPage
             | Command::MediaZoomIn
             | Command::MediaZoomOut
             | Command::MediaFit
@@ -4415,7 +4415,7 @@ impl App {
             | Command::MediaPanLeft
             | Command::MediaPanRight
             | Command::MediaCopySelection
-            | Command::MediaClearSelection
+            | Command::MediaBack
             | Command::MediaSelectAll => {
                 self.status("media commands require an image or PDF pane");
             }

@@ -1945,6 +1945,13 @@ async fn run(
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
         #[cfg(feature = "native")]
         native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
+        #[cfg(feature = "native")]
+        if arguments.window {
+            native_frontend::render_frame(frame, app.app(), &snapshot, color_depth);
+        } else {
+            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        }
+        #[cfg(not(feature = "native"))]
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     startup.mark(StartupPhase::EditorFramePresented);
@@ -1987,6 +1994,13 @@ async fn run(
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
         #[cfg(feature = "native")]
         native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
+        #[cfg(feature = "native")]
+        if arguments.window {
+            native_frontend::render_frame(frame, app.app(), &snapshot, color_depth);
+        } else {
+            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        }
+        #[cfg(not(feature = "native"))]
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
     })?;
     // This is a signal-restoration guard on Unix and a unit value elsewhere.
@@ -2109,13 +2123,14 @@ async fn run(
                                     );
                                     #[cfg(feature = "native")]
         native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
-        ui::render(
-                                        frame,
-                                        app.app(),
-                                        &snapshot.editor,
-                                        &key_hints,
-                                        color_depth,
-                                    );
+        #[cfg(feature = "native")]
+        if arguments.window {
+            native_frontend::render_frame(frame, app.app(), &snapshot, color_depth);
+        } else {
+            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        }
+        #[cfg(not(feature = "native"))]
+        ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
                                 })?;
                                 frame_pending = false;
                             }
@@ -2359,6 +2374,13 @@ async fn run(
         let snapshot = app.prepare_frame_with_hints(geometry, Some(&key_hints));
             #[cfg(feature = "native")]
         native_frontend::capture_media(&snapshot, app.app_mut(), &key_hints);
+        #[cfg(feature = "native")]
+        if arguments.window {
+            native_frontend::render_frame(frame, app.app(), &snapshot, color_depth);
+        } else {
+            ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
+        }
+        #[cfg(not(feature = "native"))]
         ui::render(frame, app.app(), &snapshot.editor, &key_hints, color_depth);
         })?;
         frame_pending = false;

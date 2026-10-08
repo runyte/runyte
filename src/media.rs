@@ -28,7 +28,7 @@ pub enum ViewAction {
     PanUp,
     PanDown,
     CopySelection,
-    ClearSelection,
+    Back,
     SelectAll,
     BeginSelection,
     ExtendLeft,

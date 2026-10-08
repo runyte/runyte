@@ -3976,9 +3976,6 @@ impl App {
             Some(ListAction::LspTrust { .. }) => {
                 unreachable!("permission choices are handled before closing the list")
             }
-            Some(ListAction::MediaPage { pane, buffer, page }) => {
-                self.choose_media_page(pane, buffer, page)
-            }
             Some(ListAction::Jump(location)) => self.jump_to(&location)?,
             Some(ListAction::OpenPath(path)) => self.open_file(path)?,
             Some(ListAction::OpenPathAtHeading(path, fragment)) => {

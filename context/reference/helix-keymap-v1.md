@@ -245,7 +245,7 @@ Backspace/Delete, Ctrl-u, and Ctrl-k. Prompts are labelled by flavour —
 | `gs` | first non-whitespace | matching motion | Implemented | Local text operation. |
 | `gt`, `gc`, `gb` | view top/center/bottom | matching view motions | Implemented | Uses the active pane viewport. |
 | `H`, `M`, `L` | not Helix bindings | `goto-window-top` / `-center` / `-bottom` | Added | Vim's letters for the three positions `gt`, `gc`, and `gb` already reach, with Vim's meaning. Helix leaves all three unbound, so they claim no key another binding wanted. Kept distinct from the `z` family on purpose: these move the cursor within a stationary viewport, while `zt`/`zz`/`zb` scroll the viewport under a stationary cursor. Extends in Select mode, and works in terminal review, because it is the same command the `g` sequence runs; like that sequence it is not a counted motion. |
-| `gp`, `gP` | next/previous paragraph | unbound in ordinary text | Deviation | Paragraph commands remain configurable, including counts and Select extension. `gp` is reserved for the media page picker; `gP` has no default binding. |
+| `gp`, `gP` | next/previous paragraph | unbound in ordinary text | Deviation | Paragraph commands remain configurable, including counts and Select extension. Neither spelling has a default binding. |
 | `gf` | goto file | `goto-file` | Implemented · Extended | Opens the selected path or web link exactly, or the complete target under a bare caret. Inferred file paths first resolve as written, then without trailing `.`, `,`, `:`, `;`, `!`, `?`, `)`, `]`, or `}` when no literal name exists; repeated punctuation is removed one character at a time. In Markdown source and rendered pages, a bare caret on an inline link or image label follows its destination; angle-bracketed destinations retain spaces and parentheses. A destination with a `#fragment` names a heading by its GitHub-style anchor (rendered heading text without link destinations, lowercased, punctuation other than `-` and `_` dropped, spaces as `-`, repeats numbered `-1`, `-2`; percent-encoding decoded): `#heading` moves within the current document and records a jump, `file.md#heading` opens the file and lands on the heading line, and a missing heading reports `heading not found`; when the file has several matches, the picker's choice still lands on the heading. A line is a heading exactly when the rendered page draws one, so headings in front matter, fenced or indented code, and underlines below a paragraph's continuation lines are ignored. No language server is involved, and `gd` keeps its LSP behavior. Rendered pages resolve paths beside their source document. Relative paths are resolved beside the active file or explorer and at the project root; multiple existing matches open a picker showing their absolute paths. A path that names nothing as written is retried percent-decoded, so `my%20notes.md` opens `my notes.md` while an existing `100%25.md` is still opened by its literal name. A directory opens as an editable explorer. Terminal Normal/review uses frozen review text and the terminal's validated current directory (falling back to its launch directory) plus the project root; opening a file leaves the child running. `https://`, `http://`, and `www.` links open the default browser, with HTTPS supplied for `www.` addresses, independently of the binary-file program cache. Inferred links exclude Markdown wrappers and trailing prose punctuation while retaining queries, fragments, and balanced parentheses. Inference stays within one buffer line; terminal review reconstructs web links across automatic wraps, from any part of the URL. Across an explicit newline it joins only a link a program broke inside indented text, as Codex and Claude Code do: the lower row must be indented (never at column 0), start at the column the upper row's text or its words after a short list or TUI marker start, and begin with a non-space; the upper row must end in part of a web link at the right edge its block wraps at (the widest nearby row of that block that the terminal did not wrap itself, and at least half the terminal width). A link ending short of that edge was followed by an ordinary space, so it is not joined; continuation-row indentation is left out of the link. Live width changes clear wrap provenance; frozen review retains it. |
 | `gw` | `goto_word` | `goto-word` | Deviation | Dims the active pane and assigns prefix-free labels to eligible visible words by projected distance from the cursor: nearby targets use one red key and farther targets use two neon-cyan keys of one hue. A two-key prefix narrows to red suffixes at the target cells. Labels never cross a wrap or viewport edge. Extends in Select mode and records a jumplist entry. In the directory tree, labels replace visible entry markers and select the chosen path without opening it or changing buffer jump history. |
 | `gd`, `gD`, `gy`, `gr`, `gi` | LSP goto operations | matching command identities | Implemented | One result moves the selection; several open the shared result picker. |
@@ -703,25 +703,29 @@ registry that Tab, dispatch and hints read. No binding is added.
 ## Experimental native window
 
 `--window` (the optional `native` feature) forwards keys through the existing
-frontend input boundary and registry. Media-specific bindings are described below. A native PDF
-projection uses one logical row per page, so row motions select pages. Native
-window close requests `:qa`; it does not bypass dirty-buffer protection.
+frontend input boundary and registry. Native window close requests `:qa`; it
+does not bypass dirty-buffer or running-terminal protection.
 
+The native media scope keeps PDF `j`/`k`, counts and file-boundary motions as
+page navigation. PageUp/PageDown and Ctrl-b/Ctrl-f move one displayed PDF page.
+`42gg` goes to page 42; `gg`, `ge`/`G`, and `j`/`k` retain first, last, and
+adjacent-page motions. Images use vertical motions for panning.
 
-The experimental native `Media` scope keeps PDF `j`/`k`, counts and file-boundary
-motions as page navigation. PageUp/PageDown and Ctrl-b/Ctrl-f move one PDF page.
-`+`/`=` and `-` zoom; `z f` fits; `z 1` uses actual raster pixels; `z h/j/k/l`
-pans and `z z` centers. Images use vertical motions for panning. `y`/Ctrl-c copy
-PDF text or a selected image region; `%` selects all and Escape clears it.
-These scoped commands, hints and help share the registry; ordinary text bindings
-are unchanged. Native mouse mappings are documented in the user guide.
+Escape first dismisses an overlay or pending key sequence, then clears a media
+selection. With neither active, it leaves a displayed PDF page for the PDF's
+read-only page buffer. This uses ordinary buffer motions, counts and search;
+Enter displays the page at the cursor, while Escape opens its source directory.
+Images have no page buffer and Escape opens their source directory directly.
+`Space e` opens the media source directory directly and selects the source file.
+`Space E` continues to open the editor working directory.
+
+There is no page-picker binding: `g p` and `g P` are unbound by default. The
+paragraph commands remain configurable. `+`/`=` and `-` zoom; `z f` fits;
+`z 1` uses actual raster pixels; `z h/j/k/l` pans and `z z` centers. `y`/Ctrl-c
+copy PDF text or a selected image region; `%` selects all.
 
 In media Select mode (`v`), `h/l` extend by PDF words and `j/k` by PDF text
 lines; images extend a rectangular selection corner. `v` stops extending and
 Escape clears the native selection and restores Normal mode. View commands
-under `z` continue panning in either mode.
-
-Media-scoped `g p` opens the PDF page picker. Global paragraph bindings `g p`
-and `g P` are removed; paragraph commands remain configurable. Its shared list accepts cursor navigation, a typed filter,
-Enter to display the chosen page, and Escape to cancel. `42gg` selects PDF page
-42; `gg`, `ge`/`G`, and `j`/`k` retain first, last, and adjacent-page motions.
+under `z` continue panning in either mode. These scoped commands, hints and help
+share the registry. Native mouse mappings are documented in the user guide.

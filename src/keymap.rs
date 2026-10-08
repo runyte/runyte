@@ -235,6 +235,8 @@ pub enum BindingScope {
     Global,
     /// A native image/PDF surface owns its pixel selection and view controls.
     Media,
+    /// Read-only PDF page rows with ordinary text navigation.
+    PdfPages,
     Directory,
     DirectoryTree,
     Settings,
@@ -281,6 +283,7 @@ impl BindingScope {
     pub const ALL: &'static [Self] = &[
         Self::Global,
         Self::Media,
+        Self::PdfPages,
         Self::Directory,
         Self::DirectoryTree,
         Self::Settings,
@@ -315,7 +318,7 @@ impl BindingScope {
         )
     }
     pub(crate) const fn owns_modal_input(self) -> bool {
-        self.is_merge_review() || matches!(self, Self::DirectoryTree | Self::Media)
+        self.is_merge_review() || matches!(self, Self::DirectoryTree | Self::Media | Self::PdfPages)
     }
 
     /// Whether the scope belongs to a generated view rather than to a document
@@ -2100,13 +2103,19 @@ fn built_in_bindings() -> Vec<Binding> {
             [Key::char(' '), Key::char('m'), Key::char('l')],
             Command::ListMacros,
         ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::PdfPages,
+            Key::plain(KeyCode::Escape),
+            Command::MediaBack,
+        ),
         // Enter alone opens an entry. A directory buffer is an ordinary buffer,
         // so `e` has to stay the word-end motion here as it is everywhere else.
         Binding::implemented_in(
             MODAL,
-            BindingScope::Media,
-            [Key::char('g'), Key::char('p')],
-            Command::MediaPages,
+            BindingScope::PdfPages,
+            Key::plain(KeyCode::Enter),
+            Command::MediaShowPage,
         ),
         Binding::implemented_in(
             MODAL,
@@ -2166,7 +2175,7 @@ fn built_in_bindings() -> Vec<Binding> {
             MODAL,
             BindingScope::Media,
             Key::plain(KeyCode::Escape),
-            Command::MediaClearSelection,
+            Command::MediaBack,
         ),
         Binding::implemented_in(
             MODAL,
@@ -3701,7 +3710,7 @@ mod tests {
             .filter(|scope| scope.is_special_buffer_scope())
             .count();
         assert_eq!(
-            special, 17,
+            special, 18,
             "special-buffer scope inventory changed; update the UI vocabulary"
         );
     }

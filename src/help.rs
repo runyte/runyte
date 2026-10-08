@@ -28,6 +28,7 @@ const KEY_COLUMN: usize = 12;
 pub enum HelpTopic {
     Text,
     Media,
+    PdfPages,
     Explorer,
     DirectoryTree,
     Config,
@@ -54,6 +55,7 @@ impl HelpTopic {
     pub const ALL: &'static [Self] = &[
         Self::Text,
         Self::Media,
+        Self::PdfPages,
         Self::Explorer,
         Self::DirectoryTree,
         Self::Config,
@@ -85,6 +87,7 @@ impl HelpTopic {
     pub fn for_context(scope: BindingScope) -> Self {
         match scope {
             BindingScope::Media => Self::Media,
+            BindingScope::PdfPages => Self::PdfPages,
             BindingScope::Directory => Self::Explorer,
             BindingScope::DirectoryTree => Self::DirectoryTree,
             BindingScope::Settings => Self::Config,
@@ -134,6 +137,7 @@ impl HelpTopic {
     pub fn title_for(self, _grammar: GrammarKind, read_only: bool) -> String {
         let context = match self {
             Self::Media => "MEDIA",
+            Self::PdfPages => "PDF PAGES",
             Self::Text => "TEXT",
             Self::Explorer => "EXPLORER",
             Self::DirectoryTree => "DIRECTORY TREE",
@@ -164,11 +168,15 @@ impl HelpTopic {
     /// renderer, so these strings describe ideas rather than terminal rows.
     pub fn overview_for(self, _grammar: GrammarKind) -> &'static [&'static str] {
         match self {
+            Self::PdfPages => &[
+                "Each read-only row names one PDF page. Use ordinary motions, counts and search to choose a row.",
+                "Enter displays the chosen page. Escape opens the containing directory with this PDF selected.",
+            ],
             Self::Media => &[
                 "Images and PDF pages are read-only. PDF line motions choose pages; image vertical motions pan.",
-                "Open the page picker to choose a PDF page with the cursor and Enter, or type a page number to filter. A count before gg jumps directly to that page.",
+                "Escape clears a selection first, then leaves the preview. PDFs return to their page rows; images return to their containing directory.",
                 "View alignment commands pan or center media. Zoom and fit commands appear in the key table below.",
-                "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape clears it and returns to Normal.",
+                "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape clears it and returns to Normal; another Escape leaves the preview.",
                 "Wheel pans; Ctrl-wheel zooms at the pointer; middle-drag pans. PDF left-drag selects text. Shift-left-drag selects an image region. Yank copies the selection to the system clipboard.",
             ],
             Self::Text => &[

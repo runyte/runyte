@@ -240,15 +240,12 @@ fn media_select_mode_extends_native_selection_without_changing_pdf_pages() {
     );
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert_eq!(app.mode, Mode::Normal);
-    assert_eq!(
-        app.media_requests.back().unwrap().action,
-        ViewAction::ClearSelection
-    );
+    assert_eq!(app.media_requests.back().unwrap().action, ViewAction::Back);
 }
 
 #[test]
-fn pdf_page_picker_filters_accepts_and_cancels_without_changing_source() {
-    let root = TestRuntimeRoot::new("media-page-picker").unwrap();
+fn pdf_back_opens_page_buffer_with_ordinary_motions_and_enter_previews() {
+    let root = TestRuntimeRoot::new("media-page-buffer").unwrap();
     let path = root.join("pages.pdf");
     fs::write(&path, b"%PDF fixture").unwrap();
     let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
@@ -256,60 +253,70 @@ fn pdf_page_picker_filters_accepts_and_cancels_without_changing_source() {
     app.open_file(path.clone()).unwrap();
     let buffer = app.active().buffer;
     app.buffers[buffer].replace_virtual_text("Page 1 of 4\nPage 2 of 4\nPage 3 of 4\nPage 4 of 4");
+    assert!(app.active_buffer().display_name().starts_with("[pdf]"));
     press(&mut app, 'j');
-    press(&mut app, 'g');
-    press(&mut app, 'p');
-    assert_eq!(app.list.as_ref().unwrap().selected, 1);
-    key(&mut app, KeyCode::Down, Modifiers::NONE);
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert!(app.list.is_none());
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 2);
-    for ch in ['g', 'p', '1'] {
-        press(&mut app, ch);
-    }
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
-    for ch in ['g', 'p', '4'] {
-        press(&mut app, ch);
-    }
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
-    for ch in ['g', 'g'] {
-        press(&mut app, ch);
-    }
-    for ch in ['g', 'p'] {
-        press(&mut app, ch);
-    }
-    key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(
+        app.media_requests.pop_back().unwrap().action,
+        crate::media::ViewAction::Back
+    );
+    // The frontend reports Back only when no native selection remains.
+    app.leave_native_media(app.active_pane, &path, 2);
+    assert!(app.active().shows_pdf_pages());
     assert!(app.list.is_none());
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 0);
+    assert_eq!(app.key_binding_scope(), BindingScope::PdfPages);
+    for ch in ['3', 'g', 'g', 'v', 'k'] {
+        press(&mut app, ch);
+    }
+    assert_eq!(app.mode, Mode::Select);
+    assert!(
+        app.media_requests.is_empty(),
+        "page rows use text selection"
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(
+        app.active().shows_pdf_pages(),
+        "Select mode cancels before leaving rows"
+    );
+    assert_eq!(app.mode, Mode::Normal);
+    press(&mut app, 'G');
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(!app.active().shows_pdf_pages());
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
+    app.leave_native_media(app.active_pane, &path, 4);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(app.active_buffer().is_directory());
+    assert!(!app.closed_buffers.contains(&buffer));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
+    assert!(!app.active().shows_pdf_pages());
     assert_eq!(fs::read(path).unwrap(), b"%PDF fixture");
 }
 
 #[test]
-fn pdf_page_picker_rejects_retargeted_pane_and_images() {
-    let root = TestRuntimeRoot::new("media-page-picker-stale").unwrap();
+fn queued_media_back_cannot_leave_another_page_or_document() {
+    let root = TestRuntimeRoot::new("media-back-stale").unwrap();
     let path = root.join("pages.pdf");
     fs::write(&path, b"%PDF fixture").unwrap();
     let image = root.join("image.png");
     fs::write(&image, b"PNG fixture").unwrap();
     let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
     app.native_media = true;
-    app.open_file(path).unwrap();
-    for ch in ['g', 'p'] {
-        press(&mut app, ch);
-    }
-    app.open_file(image).unwrap();
-    let image_buffer = app.active().buffer;
+    app.open_file(path.clone()).unwrap();
+    app.leave_native_media(app.active_pane, &path, 2);
+    assert!(!app.active().shows_pdf_pages());
+    app.open_file(image.clone()).unwrap();
+    app.leave_native_media(app.active_pane, &path, 1);
+    assert!(!app.active().shows_pdf_pages());
+    assert!(app.active_buffer().display_name().starts_with("[image]"));
+    app.leave_native_media(app.active_pane, &image, 1);
+    assert!(app.active_buffer().is_directory());
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.active().buffer, image_buffer);
-    assert!(app.status.contains("PDF page changed"));
-    for ch in ['g', 'p'] {
-        press(&mut app, ch);
-    }
-    assert!(app.list.is_none());
-    assert!(app.status.contains("requires a PDF"));
+    assert_eq!(
+        app.active_buffer().media_path.as_deref(),
+        Some(image.as_path())
+    );
 }
 
 #[test]
@@ -353,4 +360,120 @@ fn paragraph_commands_remain_available_to_configured_keys() {
     assert_eq!(app.mode, Mode::Select);
     assert_eq!(app.active().cursor(app.active_buffer()).row, 2);
     assert!(!app.active().selection.primary().is_empty());
+}
+
+#[test]
+fn media_space_e_opens_source_directory_and_selects_the_media_file() {
+    let root = TestRuntimeRoot::new("media-source-directory").unwrap();
+    let directory = root.join("documents");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("alpha.txt"), "earlier entry").unwrap();
+    for name in ["target.pdf", "target.png"] {
+        let file = directory.join(name);
+        fs::write(&file, b"binary fixture").unwrap();
+        let file = file.canonicalize().unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.working_directory = root.to_path_buf();
+        app.open_file(file.clone()).unwrap();
+        let media = app.active().buffer;
+        assert!(app.active_buffer().path.is_none());
+        assert_eq!(app.active_directory().as_path(), file.parent().unwrap());
+        press(&mut app, ' ');
+        press(&mut app, 'e');
+        assert!(app.active_buffer().is_directory());
+        assert_eq!(app.active_buffer().path.as_deref(), file.parent());
+        assert_eq!(
+            app.selected_directory_entry().unwrap().as_deref(),
+            Some(file.as_path())
+        );
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.active().buffer, media);
+        assert_eq!(app.active_buffer().media_path.as_ref(), Some(&file));
+        assert_eq!(app.working_directory, root.to_path_buf());
+    }
+}
+
+#[test]
+fn media_source_directory_depends_on_identity_not_supported_extension() {
+    let root = TestRuntimeRoot::new("media-future-directory").unwrap();
+    let directory = root.join("documents");
+    fs::create_dir(&directory).unwrap();
+    let file = directory.join("future-format.custom");
+    fs::write(&file, b"future format").unwrap();
+    let file = file.canonicalize().unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    let buffer = app.active().buffer;
+    app.buffers[buffer] = Buffer::virtual_text("future media", "Page 1");
+    app.buffers[buffer].media_path = Some(file.clone());
+    app.working_directory = root.to_path_buf();
+    press(&mut app, ' ');
+    press(&mut app, 'e');
+    assert_eq!(app.active_buffer().path.as_deref(), file.parent());
+    assert_eq!(
+        app.selected_directory_entry().unwrap().as_deref(),
+        Some(file.as_path())
+    );
+}
+
+#[test]
+fn retained_page_counts_initialize_reopened_buffers_and_only_change_when_needed() {
+    let root = TestRuntimeRoot::new("media-count-reattach").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path.clone()).unwrap();
+    app.update_native_media_pages(&path, 6);
+    let revision = app.active_buffer().revision();
+    app.update_native_media_pages(&path, 6);
+    assert_eq!(app.active_buffer().revision(), revision);
+    press(&mut app, 'G');
+    app.update_native_media_pages(&path, 2);
+    assert_eq!(app.active().cursor(app.active_buffer()).row, 1);
+    app.execute(parse_colon_command("bc").unwrap()).unwrap();
+    app.open_file(path.clone()).unwrap();
+    app.update_native_media_pages(&path, 6);
+    assert_eq!(app.active_buffer().text().len_lines(), 6);
+    app.update_native_media_pages(&path, 0);
+    app.update_native_media_pages(&path, 10_001);
+    assert_eq!(app.active_buffer().text().len_lines(), 6);
+}
+
+#[test]
+fn changed_pdf_page_count_preserves_each_panes_page_and_selection() {
+    use crate::buffer::Position;
+    let root = TestRuntimeRoot::new("media-page-count-width").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path.clone()).unwrap();
+    app.update_native_media_pages(&path, 9);
+    for ch in ['8', 'g', 'g'] {
+        press(&mut app, ch);
+    }
+    let first_pane = app.active_pane;
+    key(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
+    press(&mut app, 'v');
+    let second_pane = app.active_pane;
+    assert_ne!(first_pane, second_pane);
+    let anchor = Position { row: 3, col: 2 };
+    let head = Position { row: 6, col: 4 };
+    let selection = Selection::single(crate::selection::Range::new(
+        app.active_buffer().offset_of(anchor),
+        app.active_buffer().offset_of(head),
+    ));
+    app.active_mut().replace_selection(selection);
+    for pages in [10, 9] {
+        app.update_native_media_pages(&path, pages);
+        let buffer = app.active_buffer();
+        assert_eq!(app.panes[&first_pane].cursor(buffer).row, 7);
+        let selected = app.panes[&second_pane].selection.primary();
+        assert_eq!(buffer.position_of(selected.anchor), anchor);
+        assert_eq!(buffer.position_of(selected.head), head);
+    }
+    app.update_native_media_pages(&path, 4);
+    assert_eq!(app.panes[&first_pane].cursor(app.active_buffer()).row, 3);
+    assert_eq!(app.panes[&second_pane].cursor(app.active_buffer()).row, 3);
 }

@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, ensure};
 use gpui::RenderImage;
 use std::{
-    collections::HashMap,
+    collections::VecDeque,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -43,100 +43,331 @@ struct Loaded {
     result: Result<(Arc<Page>, usize), String>,
 }
 type Cached = Result<Arc<Page>, String>;
-pub(super) struct Loader {
-    requests: mpsc::SyncSender<Key>,
-    results: mpsc::Receiver<Loaded>,
-    cache: HashMap<Key, Option<Cached>>,
-    cancel: Arc<AtomicBool>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-impl Loader {
-    pub fn new(bridge: Arc<super::Bridge>) -> Self {
-        let (requests, input) = mpsc::sync_channel::<Key>(8);
-        let (output, results) = mpsc::sync_channel(8);
-        let cancel = Arc::new(AtomicBool::new(false));
-        let worker_cancel = cancel.clone();
-        let worker = std::thread::Builder::new()
-            .name("runyte-media".into())
-            .spawn(move || {
-                while !worker_cancel.load(Ordering::Acquire) {
-                    let key = match input.recv_timeout(Duration::from_millis(50)) {
-                        Ok(key) => key,
-                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                        Err(_) => break,
-                    };
-                    let result = load(&key, &worker_cancel).map_err(|error| format!("{error:#}"));
-                    if output.try_send(Loaded { key, result }).is_err() {
-                        break;
-                    }
-                    let _ = bridge.wake.try_send(());
-                }
-            })
-            .expect("start media worker");
-        Self {
-            requests,
-            results,
-            cache: HashMap::new(),
-            cancel,
-            worker: Some(worker),
-        }
-    }
-    pub fn get(&mut self, path: &Path, page: usize) -> Option<Cached> {
+const CACHE_PAGES: usize = 8;
+const QUEUED_PAGES: usize = 8;
+
+impl Key {
+    fn read(path: &Path, page: usize) -> Self {
         let metadata = path.metadata().ok();
-        let key = Key {
+        Self {
             path: path.to_owned(),
             page,
             modified: metadata.as_ref().and_then(|m| m.modified().ok()),
             length: metadata.map_or(0, |m| m.len()),
+        }
+    }
+    fn same_source(&self, other: &Self) -> bool {
+        self.path == other.path && self.modified == other.modified && self.length == other.length
+    }
+    fn is_pdf(&self) -> bool {
+        self.path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+    }
+}
+struct Entry {
+    key: Key,
+    value: Cached,
+    pages: Option<usize>,
+}
+struct Source {
+    anchor: Key,
+    pages: Option<usize>,
+    announced: bool,
+}
+#[derive(Clone)]
+struct Request {
+    key: Key,
+    speculative: bool,
+    cancel: Arc<AtomicBool>,
+}
+#[derive(Default)]
+struct Schedule {
+    // Oldest first; a displayed page moves to the back. Decoded memory stays bounded.
+    cache: VecDeque<Entry>,
+    sources: VecDeque<Source>,
+    demand: VecDeque<Key>,
+    speculative: VecDeque<Key>,
+    active: Option<Request>,
+}
+impl Schedule {
+    fn queued(&self, key: &Key) -> bool {
+        self.cache.iter().any(|entry| entry.key == *key)
+            || self.demand.contains(key)
+            || self.speculative.contains(key)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|job| job.key == *key && !job.cancel.load(Ordering::Acquire))
+    }
+    fn neighbors(&mut self, anchor: &Key, pages: usize) {
+        // Only explicit demand moves this window. Prefetch completion never fans out.
+        self.speculative.retain(|key| !key.same_source(anchor));
+        if !anchor.is_pdf() {
+            return;
+        }
+        for page in [
+            anchor.page.checked_add(1),
+            anchor.page.checked_sub(1),
+            anchor.page.checked_add(2),
+            anchor.page.checked_sub(2),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !(1..=pages).contains(&page) {
+                continue;
+            }
+            let key = Key {
+                page,
+                ..anchor.clone()
+            };
+            if !self.queued(&key) && self.speculative.len() < QUEUED_PAGES {
+                self.speculative.push_back(key);
+            }
+        }
+    }
+    fn get(&mut self, key: Key) -> Option<Cached> {
+        let stale = |old: &Key| old.path == key.path && !old.same_source(&key);
+        self.cache.retain(|entry| !stale(&entry.key));
+        self.sources.retain(|source| !stale(&source.anchor));
+        self.demand.retain(|old| !stale(old));
+        self.speculative.retain(|old| !stale(old));
+        if let Some(active) = &self.active
+            && stale(&active.key)
+        {
+            active.cancel.store(true, Ordering::Release);
+        }
+        let cached = self
+            .cache
+            .iter()
+            .position(|entry| entry.key == key)
+            .map(|i| {
+                let entry = self.cache.remove(i).unwrap();
+                let value = (entry.value.clone(), entry.pages);
+                self.cache.push_back(entry);
+                value
+            });
+        let previous = self
+            .sources
+            .iter()
+            .position(|source| source.anchor.same_source(&key))
+            .and_then(|i| self.sources.remove(i));
+        let moved = previous
+            .as_ref()
+            .is_none_or(|source| source.anchor.page != key.page);
+        let pages = previous
+            .as_ref()
+            .and_then(|source| source.pages)
+            .or_else(|| cached.as_ref().and_then(|(_, pages)| *pages));
+        let announced = previous.as_ref().is_some_and(|source| source.announced);
+        if self.sources.len() == CACHE_PAGES {
+            self.sources.pop_front();
+        }
+        self.sources.push_back(Source {
+            anchor: key.clone(),
+            pages,
+            announced,
+        });
+        if cached.is_none() {
+            self.speculative.retain(|old| *old != key);
+            if let Some(active) = &mut self.active {
+                if active.key == key && !active.cancel.load(Ordering::Acquire) {
+                    active.speculative = false;
+                } else if active.speculative {
+                    // A slow optional Poppler render must not hold up a requested page.
+                    active.cancel.store(true, Ordering::Release);
+                }
+            }
+            if !self.queued(&key) {
+                if self.demand.len() == QUEUED_PAGES {
+                    self.demand.pop_back();
+                }
+                self.demand.push_front(key.clone());
+            }
+        }
+        if moved && let Some(pages) = pages {
+            self.neighbors(&key, pages);
+        }
+        cached.map(|(value, _)| value)
+    }
+    fn next(&mut self) -> Option<Request> {
+        if self.active.is_some() {
+            return None;
+        }
+        let (key, speculative) = if let Some(key) = self.demand.pop_front() {
+            (key, false)
+        } else {
+            (self.speculative.pop_front()?, true)
         };
-        if let Some(cached) = self.cache.get(&key) {
-            return cached.clone();
+        let request = Request {
+            key,
+            speculative,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        self.active = Some(request.clone());
+        Some(request)
+    }
+    fn complete(&mut self, loaded: Loaded, current: &Key) -> (bool, Option<(PathBuf, usize)>) {
+        let Some(active) = self.active.take() else {
+            return (false, None);
+        };
+        if active.cancel.load(Ordering::Acquire) || !loaded.key.same_source(current) {
+            return (!active.speculative, None);
         }
-        // Keep at most eight entries, including in-flight requests.
-        if self.cache.len() >= 8 {
-            self.cache.retain(|_, value| value.is_none());
+        let mut publication = None;
+        let (value, pages) = match loaded.result {
+            Ok((image, pages)) => {
+                if let Some(source) = self
+                    .sources
+                    .iter_mut()
+                    .find(|source| source.anchor.same_source(&loaded.key))
+                {
+                    source.pages = Some(pages);
+                    if !source.announced && !active.speculative {
+                        source.announced = true;
+                        publication = Some((loaded.key.path.clone(), pages));
+                    }
+                }
+                (Ok(image), Some(pages))
+            }
+            Err(error) => (Err(error), None),
+        };
+        if self.cache.len() == CACHE_PAGES {
+            self.cache.pop_front();
         }
-        if self.cache.len() < 8 && self.requests.try_send(key.clone()).is_ok() {
-            self.cache.insert(key, None);
+        self.cache.push_back(Entry {
+            key: loaded.key.clone(),
+            value,
+            pages,
+        });
+        if !active.speculative
+            && let Some(pages) = pages
+        {
+            let anchor = self
+                .sources
+                .iter()
+                .find(|source| source.anchor.same_source(&loaded.key))
+                .map(|source| source.anchor.clone());
+            if let Some(anchor) = anchor {
+                self.neighbors(&anchor, pages);
+            }
         }
-        None
+        (!active.speculative, publication)
+    }
+}
+
+pub(super) struct Loader {
+    bridge: Arc<super::Bridge>,
+    requests: Option<mpsc::SyncSender<Request>>,
+    results: mpsc::Receiver<Loaded>,
+    schedule: Schedule,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl Loader {
+    pub fn new(bridge: Arc<super::Bridge>) -> Self {
+        let (requests, input) = mpsc::sync_channel::<Request>(1);
+        let (output, results) = mpsc::sync_channel(1);
+        let worker_bridge = bridge.clone();
+        let worker = std::thread::Builder::new()
+            .name("runyte-media".into())
+            .spawn(move || {
+                while let Ok(request) = input.recv() {
+                    let result = if request.cancel.load(Ordering::Acquire) {
+                        Err("media request canceled".into())
+                    } else {
+                        load(&request.key, &request.cancel).map_err(|error| format!("{error:#}"))
+                    };
+                    if output
+                        .try_send(Loaded {
+                            key: request.key,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let _ = worker_bridge.wake.try_send(());
+                }
+            })
+            .expect("start media worker");
+        Self {
+            bridge,
+            requests: Some(requests),
+            results,
+            schedule: Schedule::default(),
+            worker: Some(worker),
+        }
+    }
+    fn dispatch(&mut self) {
+        if let Some(request) = self.schedule.next()
+            && self.requests.as_ref().unwrap().try_send(request).is_err()
+        {
+            self.schedule.active = None;
+        }
+    }
+    pub fn get(&mut self, path: &Path, page: usize) -> Option<Cached> {
+        let key = Key::read(path, page);
+        let value = self.schedule.get(key.clone());
+        if let Some(pages) = self
+            .schedule
+            .cache
+            .iter()
+            .find(|entry| entry.key == key)
+            .and_then(|entry| entry.pages)
+        {
+            // Reopened buffers also need the count when their raster is already cached.
+            publish_count(&self.bridge, &key, pages);
+        }
+        self.dispatch();
+        value
     }
     pub fn poll(&mut self, bridge: &super::Bridge) -> bool {
         let mut changed = false;
         while let Ok(loaded) = self.results.try_recv() {
-            let current = loaded.key.path.metadata().ok();
-            if current.as_ref().and_then(|m| m.modified().ok()) != loaded.key.modified
-                || current.as_ref().map_or(0, |m| m.len()) != loaded.key.length
-            {
-                self.cache.remove(&loaded.key);
-                changed = true;
-                continue;
+            let current = Key::read(&loaded.key.path, loaded.key.page);
+            let (visible, publication) = self.schedule.complete(loaded, &current);
+            changed |= visible;
+            if let Some((_, pages)) = publication {
+                publish_count(bridge, &current, pages);
             }
-            let value = match loaded.result {
-                Ok((image, pages)) => {
-                    bridge
-                        .pages
-                        .lock()
-                        .unwrap()
-                        .push((loaded.key.path.clone(), pages));
-                    let (w, h) = *bridge.dimensions.lock().unwrap();
-                    bridge.send(crossterm::event::Event::Resize(w, h));
-                    Ok(image)
-                }
-                Err(error) => Err(error),
-            };
-            if self.cache.contains_key(&loaded.key) {
-                self.cache.insert(loaded.key, Some(value));
-            }
-            changed = true;
         }
+        self.dispatch();
         changed
     }
 }
 
+pub(super) type PageCount = (PathBuf, Option<std::time::SystemTime>, u64, usize);
+
+// Return true only when the host needs a new count. Cache hits refresh retention
+// without generating input or redraws, and a replaced source supersedes its old count.
+fn retain_count(counts: &mut Vec<PageCount>, key: &Key, pages: usize) -> bool {
+    let count = (key.path.clone(), key.modified, key.length, pages);
+    let previous = counts
+        .iter()
+        .position(|entry| entry.0 == key.path)
+        .map(|index| counts.remove(index));
+    let changed = previous.as_ref() != Some(&count);
+    if counts.len() == CACHE_PAGES {
+        counts.remove(0);
+    }
+    counts.push(count);
+    changed
+}
+
+fn publish_count(bridge: &super::Bridge, key: &Key, pages: usize) {
+    if retain_count(&mut bridge.pages.lock().unwrap(), key, pages) {
+        let (w, h) = *bridge.dimensions.lock().unwrap();
+        bridge.send(crossterm::event::Event::Resize(w, h));
+    }
+}
 impl Drop for Loader {
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Release);
+        if let Some(active) = &self.schedule.active {
+            active.cancel.store(true, Ordering::Release);
+        }
+        // Closing the channel wakes an idle worker; there is no idle polling timer.
+        self.requests.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -375,3 +606,7 @@ fn parse_words(text: &str) -> Result<Vec<Word>> {
 #[cfg(test)]
 #[path = "tests/media.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/media_loader.rs"]
+mod loader_tests;

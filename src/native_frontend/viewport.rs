@@ -25,6 +25,12 @@ pub struct Viewport {
     pub message: String,
 }
 impl Viewport {
+    /// Returns true only when Escape has no selection left to cancel.
+    pub fn back(&mut self) -> bool {
+        self.drag = None;
+        self.selection.take().is_none()
+    }
+
     pub fn new(page: usize) -> Self {
         Self {
             page,
@@ -213,5 +219,31 @@ mod tests {
         view.show_page(2);
         assert_eq!(view.center, [0.5; 2]);
         assert_eq!(view.zoom, 2.);
+    }
+}
+
+#[cfg(test)]
+mod back_tests {
+    use super::*;
+
+    #[test]
+    fn escape_clears_text_or_region_before_leaving_without_resetting_view() {
+        for selection in [
+            Selection::Text(1, 3),
+            Selection::Region([0.1, 0.2], [0.4, 0.5]),
+        ] {
+            let mut view = Viewport::new(4);
+            view.zoom = 2.;
+            view.center = [0.4, 0.6];
+            view.selection = Some(selection);
+            view.drag = Some(Drag::Pan([1., 2.]));
+            assert!(!view.back());
+            assert!(view.selection.is_none());
+            assert!(view.drag.is_none());
+            assert!(view.back());
+            assert_eq!(view.page, 4);
+            assert_eq!(view.zoom, 2.);
+            assert_eq!(view.center, [0.4, 0.6]);
+        }
     }
 }

@@ -57,8 +57,21 @@ witness is deferred rather than inferring authorization from visual equality.
 Media files are read-only generated projections with a separate `media_path`;
 they never acquire an editable file path, LSP document or save target. Existing
 file workflows intercept supported formats before external binary opening.
-PDF projections have one logical row per page, preserving existing page
-navigation through the modal command registry.
+PDF projections have one logical row per page. Escape clears native selection
+first, then enters the `[pdf]` page buffer; its ordinary text motions, counts
+and search choose a row, and Enter displays that page. Escape from page rows
+opens the PDF's directory with the file selected. Images use `[image]` and
+skip the page-buffer step. `Space e` goes directly to any media source's
+directory. Preview/page-buffer state belongs to the pane and is tied to the
+buffer identity; source page and view position survive returning via explorer.
+The old page-picker overlay and `g p` binding are removed.
+
+The native frontend renders owned snapshots using the same overlay geometry
+as the host-frame renderer. Images remain behind key hints and prompts;
+only overlay cells paint above them. Media mouse input is blocked while an
+overlay owns input, including clicks on hints that would otherwise land on
+hidden page rows. Pane page counts are initialized even when a page buffer
+is entered before the first raster has rendered.
 
 The `Media` binding scope adds zoom/fit/copy controls and owns its pixel
 selection semantics. Core commands emit bounded requests addressed to the
@@ -69,7 +82,14 @@ painted media geometry. Source replacement clears stale selections.
 
 One bounded media worker decodes images and invokes external Poppler helpers
 using argument vectors. Rasterization and text extraction stay off both UI
-loops. The cache holds eight results; input, decoded allocation, dimensions,
+loops. The LRU cache holds eight results. A bounded demand queue takes priority
+over speculative loading of two PDF pages on each side of the current page. New
+demand cancels an unrelated speculative job; speculative completion never
+extends its own prefetch window. The one worker blocks on its channel when
+idle. Fingerprinted page counts are retained separately in eight bounded
+entries so a reopened buffer can attach to cached rasters. Unchanged counts
+and speculative completions do not rewrite page rows or trigger redraws.
+Input, decoded allocation, dimensions,
 page count, helper duration and helper output have explicit limits. Child
 processes are killed and reaped on cancellation or limit failure. Scratch
 rasters and extracted XHTML live in temporary directories. JPEG orientation
@@ -141,12 +161,13 @@ configuration and attached a surface without errors or panics, then exited
 on SIGTERM. This establishes basic Wayland window startup/presentation only;
 Wayland gesture, clipboard and IME acceptance still require a platform run.
 
-## Fonts, desktop identity and page picker — 2026-10-08
+## Prior acceptance: fonts and page picker — a0646aa, 2026-10-08
 
-`g p` opens a shared PDF page picker at the current page. Cursor movement and
-filtering leave the document selection unchanged until Enter; cancellation
-keeps the original page. Rows capture pane/buffer identity and acceptance
-rejects stale destinations. `42gg` selects page 42 directly. Global `g p` and
+That commit initially used `g p` for a shared PDF page picker at the current
+page. The subsequent Esc/page-buffer design above replaces that interaction.
+Cursor movement and filtering left the document selection unchanged until Enter;
+cancellation kept the original page. Rows captured pane/buffer identity and
+acceptance rejected stale destinations. `42gg` selected page 42 directly. Global `g p` and
 `g P` paragraph bindings were removed to reserve the spelling consistently;
 the paragraph commands remain configurable in Normal and Select modes.
 
@@ -169,3 +190,20 @@ Canonical `cargo llvm-cov --locked --workspace` verification reported 92.01%
 line coverage (148,340 of 161,215), above the unchanged 89% floor. The optimized
 release build also passed the full isolated X11 acceptance with system font
 directories disabled and the real icon property checked.
+
+## Esc navigation and neighboring-page cache — 2026-10-08
+
+The full default suite, default/native all-target Clippy, formatting checks,
+and native adapter tests passed on Linux. Canonical workspace coverage measured
+92.05% lines (148,594 of 161,429), above the unchanged 89% floor.
+
+The isolated X11 release acceptance passed with system font directories disabled.
+It covers selection clearing before leaving previews, PDF page-buffer motions
+and Enter, image/PDF source-directory navigation, restoring a PDF page after
+reopening from explorer, and visible media beneath hints. Clicks on the media
+and hint rectangles cannot move hidden page rows. A warmed next-page transition
+passed its 150 ms display check; this is fixture acceptance, not a latency
+guarantee for arbitrary documents. Scheduler tests cover bounded neighboring
+prefetch, demand priority and cancellation, promotion of an in-flight neighbor,
+LRU eviction, and source invalidation. macOS interaction acceptance remains
+unverified locally.

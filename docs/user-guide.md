@@ -1717,10 +1717,24 @@ PNG, JPEG, GIF, WebP, BMP, and PDF paths open as read-only media projections in
 the destination pane, including from `:open`, the explorer, the directory tree,
 and startup filenames. Other binary types retain the external-program prompt.
 Media never becomes an editable source file or a save target. Ordinary pane,
-buffer, jump, and close commands remain available. PDFs represent one page per
-logical buffer row: `j`/`k`, counts, and first/last-line motions select pages.
-Images initially fit the pane while preserving aspect ratio. Zoom, pan, and
-selection belong to each pane, so split views of the same file can differ.
+buffer, jump, and close commands remain available. Titles identify PDFs with
+`[pdf]` and images with `[image]`. Images initially fit the pane while preserving
+aspect ratio. Zoom, pan, and selection belong to each pane, so split views of
+the same file can differ.
+
+PDFs have a read-only **page buffer** with one row per page. Escape from a PDF
+page reveals this buffer at the current page. Use normal editor motions,
+counts, or buffer search (`s` or `/`) to choose a row, then Enter displays that
+page. Moving the cursor in the page buffer does not display pages until Enter.
+`42gg` goes to page 42; `gg` and `ge`/`G` go to the first and last pages. Escape
+from the page buffer opens the source directory with the PDF selected.
+
+Images have no page buffer: Escape returns directly to the source directory.
+Escape first dismisses a pending overlay or key sequence, then clears an active
+media selection, before leaving the media surface. `Space e` goes directly to
+the source directory from either media type and selects the source file, just
+as it does from a rendered Markdown document. `Space E` still opens the editor's
+working directory.
 
 | Input in a media pane | Action |
 | --- | --- |
@@ -1730,13 +1744,12 @@ selection belong to each pane, so split views of the same file can differ.
 | `h` / `l` | Pan horizontally |
 | `j` / `k`, arrows, counts | PDF pages; vertical image panning |
 | `Ctrl-f` / `Ctrl-b`, PageDown / PageUp | Next / previous PDF page |
-| `g p` | Open the PDF page picker; Up/Down or Ctrl-p/Ctrl-n move, Enter displays the page, Escape cancels |
 | `42gg` / `gg` / `ge` or `G` | Go directly to PDF page 42 / first page / last page |
 | `z z` | Center the media |
 | `v`, then `h/j/k/l` or arrows | Extend a PDF word/line selection or an image-region corner; `v` again stops extending |
 | `%` | Select all page text, or the whole image when there is no text |
 | `y` / `Ctrl-c` | Copy selected PDF text or selected image region to the system clipboard |
-| Escape | Clear the selection and return to Normal mode |
+| Escape | Dismiss an overlay or clear selection first; then PDF page → page buffer → explorer, or image → explorer |
 | Wheel / Shift-wheel | Pan vertically / horizontally; at fit size, vertical PDF scrolling changes pages |
 | Ctrl-wheel (Cmd-wheel on macOS) | Zoom around the pointer |
 | Middle-drag, right-drag, or Alt-left-drag | Pan |
@@ -1744,12 +1757,9 @@ selection belong to each pane, so split views of the same file can differ.
 | Left-drag on an image | Pan; double-click toggles fit / 2× fit |
 | Shift-left-drag | Select a rectangular image region, including on PDFs |
 
-The PDF page picker starts on the current page and lists the known pages of the
-loaded PDF. Type a page number to filter the list; moving its cursor does not
-change the displayed page until Enter accepts it. `g p` is reserved for media
-page navigation. The paragraph commands `goto-next-paragraph` and
-`goto-previous-paragraph` remain available for configured keys without default
-bindings; `g p` and `g P` no longer move between text paragraphs.
+There is no separate PDF page picker or `g p` binding. The paragraph commands
+`goto-next-paragraph` and `goto-previous-paragraph` remain available for configured
+keys without default bindings; `g p` and `g P` do not move between text paragraphs.
 
 Scanned PDFs without embedded text use rectangular selection; this experiment
 does not perform OCR. Copying a region exports the displayed raster, including
@@ -1757,23 +1767,26 @@ alpha, without modifying the source file. PDF text selection additionally uses
 Poppler's `pdftotext`; if extraction fails, the page remains viewable and region
 selection stays available.
 
-The page row remains visible
-when a prompt or key-hint popup temporarily replaces the image with its text
-projection, so those overlays always remain readable.
+Prompts and key hints remain readable above the media surface. Opening them
+does not expose internal image placeholder rows or enter the PDF page buffer.
 
 PDF support requires Poppler's `pdfinfo` and `pdftoppm` executables. Rendering
 runs on one background worker and reports failures inside the pane. Input is
 limited to regular files up to 128 MiB, decoded images to 8192 pixels per axis
 and 64 MiB allocation, and PDFs to 10,000 pages. Images are reduced to at most
 2048 pixels per axis and PDF pages rasterized at 1600 pixels on their longest
-axis. Eight page/image results are cached. PDF subprocesses have a 15-second
-limit per invocation and are killed and reaped during cancellation.
+axis. Eight page/image results are cached using least-recently-used eviction.
+After a PDF page loads, up to two pages on either side are loaded in the
+background. Requested pages take priority and interrupt speculative rendering.
+First loads and jumps beyond the warmed pages can still show a loading message.
+PDF subprocesses have a 15-second limit per invocation and are killed and reaped
+during cancellation.
 
 Current scope: standalone `ide` and `editor` modes on Linux/macOS. `--window`
 with mux/host/lifecycle modes is rejected; the terminal frontend still supports
 those modes. The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
 Bold, and Bold Italic, at a fixed 15 logical pixels with a 9×20 logical pixel
-cell. No system installation of that font is required. PDF text search and
+cell. No system installation of that font is required. Search within PDF page contents and
 animated-image playback are not implemented; animated GIFs and WebP files show
 their first frame. Zoom magnifies the bounded raster rather than rendering unbounded
 resolution. PDF rendering uses an external helper,

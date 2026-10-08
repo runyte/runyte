@@ -239,6 +239,11 @@ try:
     region=clipboard(b'image/png');assert region.startswith(b'\x89PNG'),'region clipboard is not a PNG'
     assert 1 < struct.unpack('!I',region[16:20])[0] < width,'copied region did not crop image'
     screenshot('02d-region-selection')
+    key('g');time.sleep(.4);hint_image,_=screenshot('02e-image-hints');assert len(set(hint_image)) > 100, 'hints hid image'
+    key('Escape');time.sleep(.2)
+    key('Escape');time.sleep(.2)  # Clear the selected region first.
+    key('Escape');time.sleep(.3);screenshot('02f-image-explorer')
+    key('Return');time.sleep(.4);_,reopened_image=screenshot('02g-image-reopened')
     command('open pages.pdf');time.sleep(2);first_page,first_color=screenshot('03-pdf-first');assert first_color[2] > first_color[0] + 100, first_color
     # Left-drag across the first line selects real PDF words, not page markers.
     drag((130,155),(500,155));key('y');time.sleep(.3)
@@ -246,10 +251,17 @@ try:
     screenshot('03a-pdf-selection')
     key('Escape');key('v');key('l');key('y');time.sleep(.3)
     assert clipboard(b'UTF8_STRING').decode()=='Hello Runyte','keyboard PDF selection failed'
-    key('Escape');key('j');time.sleep(2);second_page,second_color=screenshot('04-pdf-second');assert second_color[0] > second_color[2] + 100, second_color
-    key('g');key('p');time.sleep(.3);screenshot('04a-page-picker')
-    key('1');key('Return');time.sleep(.7);_,picked_color=screenshot('04b-picked-first');assert picked_color[2] > picked_color[0] + 100, picked_color
-    key('g');key('p');key('Down');key('Return');time.sleep(.7);_,picked_color=screenshot('04c-picked-second');assert picked_color[0] > picked_color[2] + 100, picked_color
+    key('Escape');key('j');time.sleep(.15);second_page,second_color=screenshot('04-pdf-second');assert second_color[0] > second_color[2] + 100, second_color
+    key('g');time.sleep(.4);_,hint_color=screenshot('04a-pdf-hints');assert hint_color[0] > hint_color[2] + 100, 'hints hid PDF'
+    mouse(80,40);button(1,True);button(1,False)
+    mouse(200,650);button(1,True);button(1,False)  # Hints must not select hidden page rows.
+    key('Escape');time.sleep(.2)  # Cancel the key prefix, stay in preview.
+    _,after_hint_click=screenshot('04a-after-hint-click');assert after_hint_click[0] > after_hint_click[2] + 100, 'hint click changed the PDF page'
+    key('Escape');time.sleep(.4);_,rows_color=screenshot('04b-page-buffer');assert rows_color[0] < 100, 'Escape did not show page rows'
+    key('g');key('g');key('Return');time.sleep(.4);_,picked_color=screenshot('04c-picked-first');assert picked_color[2] > picked_color[0] + 100, picked_color
+    key('Escape');time.sleep(.3);key('j');key('Return');time.sleep(.4);_,picked_color=screenshot('04d-picked-second');assert picked_color[0] > picked_color[2] + 100, picked_color
+    key('Escape');time.sleep(.3);key('Escape');time.sleep(.3);screenshot('04e-pdf-explorer')
+    key('Return');time.sleep(.4);_,reopened_color=screenshot('04f-pdf-reopened');assert reopened_color[0] > reopened_color[2] + 100, 'PDF page was not retained'
     key('space');time.sleep(.5);screenshot('05-key-hints');key('Escape')
     x.XResizeWindow(d, win, 1000, 700);x.XFlush(d);time.sleep(.5)
     key('w', ctrl=True); key('v'); time.sleep(.5)
@@ -268,7 +280,7 @@ try:
     screenshot('08-dirty-refusal')
     command('write'); close_window(); p.wait(timeout=15)
     assert p.returncode==0,p.returncode
-    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/picker/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
+    print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal, dirty close refusal, quit')
 finally:
     if p.poll() is None:p.terminate();p.wait(timeout=15)
     log.close()

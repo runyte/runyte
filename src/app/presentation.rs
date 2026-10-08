@@ -918,7 +918,11 @@ impl App {
             return BindingScope::Terminal;
         }
         if self.active_buffer().media_path.is_some() {
-            return BindingScope::Media;
+            return if self.active().shows_pdf_pages() {
+                BindingScope::PdfPages
+            } else {
+                BindingScope::Media
+            };
         }
         if let Some(GeneratedViewIdentity::Plugin { owner, view }) =
             self.active_buffer().generated_view_identity()

@@ -104,7 +104,7 @@ them, regardless of which extensibility direction is chosen.
   under its pane, and a dirty one remains open and discoverable until saved or
   discarded. The editable
   explorer and commit-message buffer are special;
-  pathless scratch text is not. The complete scoped set is `Directory`,
+  pathless scratch text is not. The complete scoped set is `Media`, `PdfPages`, `Directory`,
   `Settings`, `GitStatus`, `GitBranches`, `GitConflicts`, `GitWorktrees`, `GitComparison`,
   `GitRevisionDiff`, `GitNetwork`, `GitLog`, `GitBlame`,
   `GitStash`, `WorkspaceSearch`, `Help`, `CommitMessage`, and `Diff` in
@@ -779,23 +779,26 @@ per-pane document-row origin, including when the cursor is outside the viewport.
 
 The optional GPUI window renders the same Runyte screen as a grid of logical
 pixel cells. A **media projection** is a read-only generated buffer with an
-explicit source path separate from its text save identity. Its pane body can
-show an image or one PDF page. PDF page numbers are ordinary logical rows, so
-existing motions select pages without a second keymap. Overlays and key hints
-temporarily show the text projection instead of the media surface.
+explicit source path separate from its text save identity. Titles identify
+PDF documents with `[pdf]` and images with `[image]`. Overlays and key hints
+remain above the media surface; image placeholder text is not a user-facing
+page, and opening a hint does not enter a PDF's page buffer.
+
+A **PDF page buffer** is the document's read-only list of pages, one logical
+row per page. Escape from a displayed PDF page enters the page buffer at its
+current page. Ordinary buffer cursor motions, counts and search choose a row;
+Enter displays that page. This is a buffer, not a filterable picker overlay.
+Escape from the page buffer opens the source directory with the PDF selected.
+Images have no page buffer: Escape opens their source directory directly.
+Escape dismisses an existing overlay or pending sequence and clears an active
+media selection before performing these navigation transitions. `Space e`
+opens the source directory directly and focuses its file for both media types.
 
 Native media zoom, pan and pixel/text selection are pane-local presentation
-state. A PDF still uses one logical buffer row per page for existing navigation;
-its extracted text selection and an image-region selection do not change those
-rows or the underlying read-only file.
+state. Extracted PDF text selection and image-region selection do not change
+the page buffer's rows or the underlying read-only file.
 
-The native media surface adds the seventeenth special-buffer binding scope.
-Unlike an ordinary text buffer, it owns pixel selection and clipboard actions;
-its scoped overrides are intentional and validated alongside other owned
-input surfaces. Ordinary text-buffer scopes still cannot shadow global keys.
-
-The native **PDF page picker** is a filterable result list headed **PDF pages**.
-Each row names one loaded page. It starts at the current page; cursor movement
-and filtering leave that page unchanged until Enter accepts a row. The choice
-is captured against its original pane and buffer, so a retargeted pane cannot
-apply a stale page choice to another document.
+The native media surface owns pixel selection and clipboard actions; its scoped
+overrides are intentional and validated alongside other owned input surfaces.
+Ordinary text-buffer scopes still cannot shadow global keys. The PDF page buffer
+uses ordinary text navigation and a contextual Enter action to display a page.

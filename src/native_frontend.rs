@@ -43,6 +43,37 @@ struct FrameData {
     cells: Buffer,
     media: Vec<MediaPane>,
     cursor: Option<ratatui::layout::Position>,
+    overlays: Vec<runyte::layout::Rect>,
+    media_input: bool,
+    metadata_paths: Vec<PathBuf>,
+}
+impl FrameData {
+    fn under_media(&self, x: u16, y: u16) -> bool {
+        let contains = |r: &runyte::layout::Rect| {
+            x >= r.x
+                && x < r.x.saturating_add(r.width)
+                && y >= r.y
+                && y < r.y.saturating_add(r.height)
+        };
+        self.media.iter().any(|pane| contains(&pane.body)) && !self.overlays.iter().any(contains)
+    }
+}
+#[derive(Default)]
+struct MediaInputMask {
+    blocked: Vec<runyte::layout::Rect>,
+}
+impl MediaInputMask {
+    fn blocks(&self, position: Point<Pixels>) -> bool {
+        let x = f32::from(position.x) / CELL_WIDTH;
+        let y = f32::from(position.y) / CELL_HEIGHT;
+        let contains = |r: &runyte::layout::Rect| {
+            x >= r.x as f32
+                && x < (r.x + r.width) as f32
+                && y >= r.y as f32
+                && y < (r.y + r.height) as f32
+        };
+        self.blocked.iter().any(contains)
+    }
 }
 pub struct NativeInput {
     event: Event,
@@ -55,12 +86,17 @@ struct Bridge {
     frame: Mutex<Option<FrameData>>,
     media: Mutex<Vec<MediaPane>>,
     painted_media: Mutex<Vec<MediaPane>>,
+    overlays: Mutex<Vec<runyte::layout::Rect>>,
+    media_input: AtomicBool,
+    metadata_paths: Mutex<Vec<PathBuf>>,
+    blocked_media: Mutex<MediaInputMask>,
     media_requests: Mutex<std::collections::VecDeque<runyte::media::ViewRequest>>,
     media_pointer: Mutex<Vec<(usize, PathBuf, i32)>>,
+    media_back: Mutex<Vec<(usize, PathBuf, usize)>>,
     dimensions: Mutex<(u16, u16)>,
     input: mpsc::Sender<NativeInput>,
     receiver: Mutex<Option<mpsc::Receiver<NativeInput>>>,
-    pages: Mutex<Vec<(PathBuf, usize)>>,
+    pages: Mutex<Vec<media::PageCount>>,
     close_requested: AtomicBool,
     done: AtomicBool,
     wake: async_channel::Sender<()>,
@@ -88,17 +124,19 @@ pub fn take_close_request() -> bool {
 
 pub fn update_media(app: &mut runyte::app::App) {
     let Some(bridge) = BRIDGE.get() else { return };
+    for (pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
+        app.leave_native_media(pane, &path, page);
+    }
     for (pane, path, delta) in bridge.media_pointer.lock().unwrap().drain(..) {
         app.navigate_native_media(pane, &path, delta);
     }
-    for (path, pages) in bridge.pages.lock().unwrap().drain(..) {
-        for buffer in &mut app.buffers {
-            if buffer.media_path.as_ref() == Some(&path) {
-                let text = (1..=pages)
-                    .map(|page| format!("Page {page} of {pages}\n"))
-                    .collect::<String>();
-                buffer.replace_virtual_text(text.trim_end());
-            }
+    let counts = bridge.pages.lock().unwrap().clone();
+    for (path, modified, length, pages) in &counts {
+        let metadata = path.metadata().ok();
+        if metadata.as_ref().and_then(|m| m.modified().ok()) == *modified
+            && metadata.as_ref().map_or(0, |m| m.len()) == *length
+        {
+            app.update_native_media_pages(path, *pages);
         }
     }
 }
@@ -117,34 +155,67 @@ pub fn capture_media(
             }
         }
     }
-    let media = if app.has_input_overlay()
-        || app.mode == runyte::app::Mode::Command
-        || !snapshot.overlays.is_empty()
-        || hints.is_visible()
-    {
-        Vec::new()
-    } else {
-        snapshot
-            .editor
-            .panes
-            .iter()
-            .filter_map(|view| {
-                let pane = app.panes.get(&view.pane_id)?;
-                if !view.drawable || pane.terminal.is_some() {
-                    return None;
-                }
-                let buffer = &app.buffers[pane.buffer];
-                Some(MediaPane {
-                    pane: view.pane_id,
-                    path: buffer.media_path.clone()?,
-                    page: buffer.position_of(pane.selection.primary().head).row + 1,
-                    body: view.body,
-                })
+    bridge.media_input.store(
+        !app.has_input_overlay()
+            && app.mode != runyte::app::Mode::Command
+            && snapshot.overlays.is_empty()
+            && !hints.is_visible(),
+        Ordering::Release,
+    );
+    *bridge.overlays.lock().unwrap() =
+        runyte::ui::overlay_rectangles(&snapshot.editor, &snapshot.overlays);
+    let counts = bridge.pages.lock().unwrap().clone();
+    *bridge.metadata_paths.lock().unwrap() = app
+        .panes
+        .values()
+        .filter_map(|pane| {
+            if !pane.shows_pdf_pages() {
+                return None;
+            }
+            let path = app.buffers[pane.buffer].media_path.as_ref()?;
+            let metadata = path.metadata().ok();
+            let modified = metadata.as_ref().and_then(|m| m.modified().ok());
+            let length = metadata.map_or(0, |m| m.len());
+            (!counts
+                .iter()
+                .any(|count| count.0 == *path && count.1 == modified && count.2 == length))
+            .then(|| path.clone())
+        })
+        .collect();
+    let media = snapshot
+        .editor
+        .panes
+        .iter()
+        .filter_map(|view| {
+            let pane = app.panes.get(&view.pane_id)?;
+            if !view.drawable || pane.terminal.is_some() || pane.shows_pdf_pages() {
+                return None;
+            }
+            let buffer = &app.buffers[pane.buffer];
+            Some(MediaPane {
+                pane: view.pane_id,
+                path: buffer.media_path.clone()?,
+                page: buffer.position_of(pane.selection.primary().head).row + 1,
+                body: view.body,
             })
-            .collect()
-    };
+        })
+        .collect();
     *bridge.media.lock().unwrap() = media;
     *bridge.prepared.lock().unwrap() = Some(snapshot.id);
+}
+
+pub fn render_frame(
+    frame: &mut ratatui::Frame<'_>,
+    app: &runyte::app::App,
+    snapshot: &runyte::workspace::HostFrame,
+    color_depth: runyte::ui::TerminalColorDepth,
+) {
+    let session = if app.is_editor_mode() {
+        runyte::ui::SessionMode::Editor
+    } else {
+        runyte::ui::SessionMode::Standalone
+    };
+    runyte::ui::render_native_frame(frame, snapshot, session, color_depth);
 }
 
 pub enum Surface {
@@ -175,6 +246,9 @@ impl Surface {
                     id: *bridge.prepared.lock().unwrap(),
                     cells: terminal.backend().buffer().clone(),
                     media: bridge.media.lock().unwrap().clone(),
+                    overlays: bridge.overlays.lock().unwrap().clone(),
+                    media_input: bridge.media_input.load(Ordering::Acquire),
+                    metadata_paths: bridge.metadata_paths.lock().unwrap().clone(),
                     cursor: terminal
                         .backend()
                         .cursor_visible()
@@ -277,8 +351,13 @@ pub fn launch(worker: fn() -> anyhow::Result<()>) -> anyhow::Result<()> {
         frame: Mutex::new(None),
         media: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
+        overlays: Mutex::new(Vec::new()),
+        media_input: AtomicBool::new(true),
+        metadata_paths: Mutex::new(Vec::new()),
+        blocked_media: Mutex::new(MediaInputMask::default()),
         media_requests: Mutex::new(Default::default()),
         media_pointer: Mutex::new(Vec::new()),
+        media_back: Mutex::new(Vec::new()),
         dimensions: Mutex::new((120, 40)),
         input,
         receiver: Mutex::new(Some(receiver)),
@@ -533,6 +612,9 @@ impl Render for NativeView {
             root = root.child(div().text_color(rgb(0xcccccc)).child("Opening workspace…"));
         }
         if let Some(frame) = &frame {
+            for path in &frame.metadata_paths {
+                self.media.get(path, 1);
+            }
             for pane in &frame.media {
                 let area = pane.body;
                 let content = self.media.get(&pane.path, pane.page);
@@ -591,12 +673,22 @@ impl Render for NativeView {
                                 .text_size(px(12.))
                                 .text_color(rgb(0xcccccc))
                                 .bg(rgba(0x181818dd))
-                                .child(format!(
-                                    "Page {} · {:.0}%  {}",
-                                    pane.page,
-                                    scale * 100.,
-                                    note
-                                )),
+                                .child(
+                                    if pane
+                                        .path
+                                        .extension()
+                                        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+                                    {
+                                        format!(
+                                            "Page {} · {:.0}%  {}",
+                                            pane.page,
+                                            scale * 100.,
+                                            note
+                                        )
+                                    } else {
+                                        format!("{:.0}%  {}", scale * 100., note)
+                                    },
+                                ),
                         )
                     }
                     Some(Err(error)) => layer.child(div().text_color(rgb(0xff8888)).child(error)),
@@ -619,7 +711,18 @@ impl Render for NativeView {
                     );
                     if let Some(frame) = &frame {
                         paint_cells(frame, bounds.origin, window, cx);
-                        *bridge.painted_media.lock().unwrap() = frame.media.clone();
+                        *bridge.blocked_media.lock().unwrap() = MediaInputMask {
+                            blocked: if frame.media_input {
+                                Vec::new()
+                            } else {
+                                frame.media.iter().map(|pane| pane.body).collect()
+                            },
+                        };
+                        *bridge.painted_media.lock().unwrap() = if frame.media_input {
+                            frame.media.clone()
+                        } else {
+                            Vec::new()
+                        };
                         let previous =
                             std::mem::replace(&mut *bridge.presented.lock().unwrap(), frame.id);
                         if previous != frame.id {
@@ -754,10 +857,7 @@ fn color(color: Color, default: u32) -> Hsla {
 fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx: &mut gpui::App) {
     for y in 0..frame.cells.area.height {
         for x in 0..frame.cells.area.width {
-            if frame.media.iter().any(|pane| {
-                let r = pane.body;
-                x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
-            }) {
+            if frame.under_media(x, y) {
                 continue;
             }
             let cell = &frame.cells[(x, y)];
@@ -776,10 +876,7 @@ fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx
     for y in 0..frame.cells.area.height {
         let mut x = 0;
         while x < frame.cells.area.width {
-            if frame.media.iter().any(|pane| {
-                let r = pane.body;
-                x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
-            }) {
+            if frame.under_media(x, y) {
                 x += 1;
                 continue;
             }
@@ -833,7 +930,10 @@ fn paint_cells(frame: &FrameData, origin: Point<Pixels>, window: &mut Window, cx
             x += width;
         }
     }
-    if let Some(cursor) = frame.cursor {
+    if let Some(cursor) = frame
+        .cursor
+        .filter(|cursor| !frame.under_media(cursor.x, cursor.y))
+    {
         let position = origin
             + point(
                 px(cursor.x as f32 * CELL_WIDTH),

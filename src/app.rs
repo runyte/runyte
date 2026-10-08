@@ -480,6 +480,8 @@ struct MarkdownOrigin {
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub buffer: usize,
+    /// Show the PDF page projection instead of its native preview in this pane.
+    pdf_page_list: Option<usize>,
     /// Buffers previously displayed by this pane, oldest to newest.
     ///
     /// Buffer fallback is view-local: closing a shared buffer can reveal a
@@ -554,9 +556,14 @@ pub struct Pane {
 }
 
 impl Pane {
+    pub fn shows_pdf_pages(&self) -> bool {
+        self.pdf_page_list == Some(self.buffer)
+    }
+
     fn new(buffer: usize) -> Self {
         Self {
             buffer,
+            pdf_page_list: None,
             buffer_history: Vec::new(),
             saved_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
@@ -583,6 +590,7 @@ impl Pane {
     }
 
     fn retarget(&mut self, buffer: usize) {
+        self.pdf_page_list = None;
         self.markdown_origin = None;
         self.remember_destination(OpenDestination::Buffer(buffer));
         // Even retargeting to the buffer already named leaves the terminal:
@@ -3864,11 +3872,6 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
-    MediaPage {
-        pane: usize,
-        buffer: usize,
-        page: usize,
-    },
     PluginEntry(usize),
     PluginLifecycle(crate::plugin::manager::Intent),
     PluginManagerBack,

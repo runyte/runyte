@@ -387,7 +387,7 @@ impl App {
         let file = if matches!(buffer.kind, BufferKind::File) {
             buffer.path.clone()
         } else {
-            None
+            buffer.media_path.clone()
         };
         let directory = self
             .buffer_directory(source)
@@ -403,8 +403,8 @@ impl App {
         Ok(())
     }
 
-    /// Files contribute their parent, explorers their current directory, and
-    /// pathless views fall back to the directory controlled by `:cd`.
+    /// Files and media sources contribute their parent, explorers their current
+    /// directory, and pathless views fall back to the directory controlled by `:cd`.
     pub(super) fn active_directory(&self) -> PathBuf {
         self.buffer_directory(self.active().buffer)
             .unwrap_or_else(|| self.working_directory.clone())
@@ -421,6 +421,7 @@ impl App {
         buffer
             .path
             .as_deref()
+            .or(buffer.media_path.as_deref())
             .and_then(|path| {
                 if buffer.is_directory() {
                     Some(path)
@@ -1026,8 +1027,16 @@ impl App {
             if let Some(index) = existing {
                 index
             } else {
+                let kind = if path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+                {
+                    "pdf"
+                } else {
+                    "image"
+                };
                 let mut buffer =
-                    Buffer::virtual_text(format!("[media] {}", path.display()), "Page 1");
+                    Buffer::virtual_text(format!("[{kind}] {}", path.display()), "Page 1");
                 buffer.media_path = Some(requested_identity.clone());
                 self.buffers.push(buffer);
                 self.syntax.push(None);
@@ -1076,6 +1085,16 @@ impl App {
         self.refresh_background_buffer(buffer_id);
         let directory_view = self.directory_views.get(path).cloned();
         let launch_selection = self.take_pending_launch_selection(buffer_id);
+        let is_media = self.buffers[buffer_id].media_path.is_some();
+        let media_position = if is_media && launch_selection.is_none() {
+            if buffer_id == was_showing {
+                Some(super::view_position::ViewPosition::capture(self.active()))
+            } else {
+                self.active().saved_view_positions.get(&buffer_id).cloned()
+            }
+        } else {
+            None
+        };
         let pane = self.active_mut();
         pane.retarget(buffer_id);
         if let Some(view) = directory_view {
@@ -1092,6 +1111,16 @@ impl App {
             pane.row_prefix_scroll = 0;
         }
         pane.preserve_scroll = false;
+        if let Some(saved) = media_position {
+            saved.restore(pane);
+        }
+        if is_media
+            && (pane.saved_view_positions.len() < 128
+                || pane.saved_view_positions.contains_key(&buffer_id))
+        {
+            pane.saved_view_positions
+                .insert(buffer_id, super::view_position::ViewPosition::capture(pane));
+        }
         self.lsp_touch(buffer_id);
         self.status(format!("opened {}", path.display()));
         self.report_new_registry_errors();
@@ -3225,11 +3254,24 @@ impl App {
         let pdf = path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
-        if command == C::MediaPages {
-            if pdf {
-                self.open_media_pages();
-            } else {
-                self.status("page picker requires a PDF");
+        if self.active().shows_pdf_pages() {
+            match command {
+                C::MediaShowPage => {
+                    self.active_mut().pdf_page_list = None;
+                    self.mode = Mode::Normal;
+                }
+                C::MediaBack => {
+                    if self.mode == Mode::Select {
+                        self.mode = Mode::Normal;
+                        let head = self.active().selection.primary().head;
+                        self.active_mut().replace_selection(Selection::point(head));
+                        return true;
+                    }
+                    if let Err(error) = self.open_active_directory_explorer() {
+                        self.action_failed(error.to_string());
+                    }
+                }
+                _ => return false,
             }
             return true;
         }
@@ -3271,9 +3313,9 @@ impl App {
             C::MoveDown if !pdf => A::PanDown,
             C::AlignViewCenter | C::AlignViewMiddle => A::Center,
             C::MediaCopySelection => A::CopySelection,
-            C::MediaClearSelection => {
+            C::MediaBack => {
                 self.mode = Mode::Normal;
-                A::ClearSelection
+                A::Back
             }
             C::MediaSelectAll => A::SelectAll,
             _ => return false,
@@ -3304,7 +3346,8 @@ impl App {
         let Some(target) = self.panes.get(&pane) else {
             return;
         };
-        if target.terminal.is_some()
+        if target.shows_pdf_pages()
+            || target.terminal.is_some()
             || self.buffers[target.buffer].media_path.as_deref() != Some(path)
         {
             return;
@@ -3327,47 +3370,79 @@ impl App {
 }
 
 impl App {
-    fn open_media_pages(&mut self) {
-        let buffer = self.active().buffer;
-        let pane = self.active_pane;
-        let pages = self.active_buffer().text().len_lines();
-        let selected = self
-            .active_buffer()
-            .position_of(self.active().selection.primary().head)
-            .row;
-        let items = (0..pages)
-            .map(|page| {
-                let label = format!("Page {}", page + 1);
-                PickerItem::searchable(label.clone(), format!("of {pages}"), label, page)
-            })
-            .collect();
-        self.list_actions = (0..pages)
-            .map(|page| ListAction::MediaPage { pane, buffer, page })
-            .collect();
-        let mut list = ListPicker::new("PDF pages", items).with_primary_action("to view page");
-        list.selected = selected.min(pages.saturating_sub(1));
-        self.list = Some(list);
-    }
-
-    pub(super) fn choose_media_page(&mut self, pane: usize, buffer: usize, page: usize) {
-        let valid = self
-            .panes
-            .get(&pane)
-            .is_some_and(|target| target.buffer == buffer && target.terminal.is_none())
-            && !self.closed_buffers.contains(&buffer)
-            && self.buffers.get(buffer).is_some_and(|buffer| {
-                buffer.media_path.is_some() && page < buffer.text().len_lines()
-            });
-        if !valid {
-            self.action_failed("PDF page changed; reopen the page picker");
+    /// The native frontend calls this only after Escape found no pixel/text selection.
+    /// Validate the captured preview so queued events cannot navigate another document.
+    pub fn leave_native_media(&mut self, pane: usize, path: &Path, page: usize) {
+        if self.has_input_overlay() || self.mode == Mode::Command || self.active_pane != pane {
             return;
         }
-        self.activate_pane_from_pointer(pane);
-        self.push_jump();
-        let offset = self.buffers[buffer].text().line_to_offset(page);
-        self.active_mut()
-            .replace_selection(Selection::point(offset));
-        self.active_mut().preserve_scroll = false;
+        let target = self.active();
+        let buffer = self.active_buffer();
+        if target.shows_pdf_pages()
+            || target.terminal.is_some()
+            || buffer.media_path.as_deref() != Some(path)
+            || buffer.position_of(target.selection.primary().head).row + 1 != page
+        {
+            return;
+        }
         self.mode = Mode::Normal;
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        {
+            self.active_mut().pdf_page_list = Some(self.active().buffer);
+        } else if let Err(error) = self.open_active_directory_explorer() {
+            self.action_failed(error.to_string());
+        }
+    }
+}
+
+impl App {
+    /// Retained page metadata can attach to a reopened PDF without rerendering it.
+    pub fn update_native_media_pages(&mut self, path: &Path, pages: usize) {
+        if !(1..=10_000).contains(&pages) {
+            return;
+        }
+        let first = format!("Page 1 of {pages}");
+        let mut changed = Vec::new();
+        for (id, buffer) in self.buffers.iter_mut().enumerate() {
+            if self.closed_buffers.contains(&id)
+                || buffer.media_path.as_deref() != Some(path)
+                || (buffer.text().len_lines() == pages
+                    && buffer.text().line_string(0).trim_end() == first)
+            {
+                continue;
+            }
+            let text = (1..=pages)
+                .map(|page| format!("Page {page} of {pages}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let previous = buffer.text().clone();
+            buffer.replace_virtual_text(&text);
+            // Page numbers are the stable identity. Changing "of 9" to "of 10"
+            // shifts every subsequent character offset without moving any page.
+            for pane in self.panes.values_mut() {
+                let remap = |range: crate::selection::Range| {
+                    crate::selection::Range::new(
+                        buffer.offset_of(previous.position_of(range.anchor)),
+                        buffer.offset_of(previous.position_of(range.head)),
+                    )
+                };
+                if pane.buffer == id {
+                    pane.replace_selection(pane.selection.transform(remap));
+                }
+                if let Some(saved) = pane.saved_view_positions.get_mut(&id) {
+                    *saved = super::view_position::ViewPosition {
+                        selection: saved.selection.transform(remap),
+                        scroll_row: saved.scroll_row.min(pages - 1),
+                        ..saved.clone()
+                    };
+                }
+            }
+            changed.push(id);
+        }
+        for id in changed {
+            self.normalize_buffer(id);
+        }
     }
 }

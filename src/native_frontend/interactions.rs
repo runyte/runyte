@@ -52,6 +52,15 @@ impl NativeView {
         event: &MouseDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self
+            .bridge
+            .blocked_media
+            .lock()
+            .unwrap()
+            .blocks(event.position)
+        {
+            return true;
+        }
         let Some(pane) = self.media_at(event.position) else {
             return false;
         };
@@ -111,6 +120,18 @@ impl NativeView {
         event: &MouseMoveEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self
+            .bridge
+            .blocked_media
+            .lock()
+            .unwrap()
+            .blocks(event.position)
+        {
+            for view in self.viewports.values_mut() {
+                view.drag = None;
+            }
+            return true;
+        }
         let Some(key) = self
             .viewports
             .iter()
@@ -177,13 +198,24 @@ impl NativeView {
         if dragged {
             cx.notify();
         }
-        dragged || self.media_at(position).is_some()
+        dragged
+            || self.media_at(position).is_some()
+            || self.bridge.blocked_media.lock().unwrap().blocks(position)
     }
     pub(super) fn media_scroll(
         &mut self,
         event: &ScrollWheelEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self
+            .bridge
+            .blocked_media
+            .lock()
+            .unwrap()
+            .blocks(event.position)
+        {
+            return true;
+        }
         let Some(pane) = self.media_at(event.position) else {
             return false;
         };
@@ -245,6 +277,26 @@ impl NativeView {
             else {
                 continue;
             };
+            if request.action == ViewAction::Back {
+                if pane.page != request.page {
+                    continue;
+                }
+                let view = self
+                    .viewports
+                    .entry((pane.pane, pane.path.clone()))
+                    .or_insert_with(|| Viewport::new(pane.page));
+                view.show_page(pane.page);
+                if view.back() {
+                    let mut back = self.bridge.media_back.lock().unwrap();
+                    if back.len() < 256 {
+                        back.push((pane.pane, pane.path, pane.page));
+                    }
+                    drop(back);
+                    let (w, h) = *self.bridge.dimensions.lock().unwrap();
+                    self.send(crossterm::event::Event::Resize(w, h));
+                }
+                continue;
+            }
             let Some(Ok(page)) = self.media.get(&pane.path, request.page) else {
                 let mut requests = self.bridge.media_requests.lock().unwrap();
                 if requests.len() < 256 {
@@ -277,7 +329,7 @@ impl NativeView {
                 ViewAction::PanRight => view.pan([-64., 0.], image, area),
                 ViewAction::PanUp => view.pan([0., 64.], image, area),
                 ViewAction::PanDown => view.pan([0., -64.], image, area),
-                ViewAction::ClearSelection => view.selection = None,
+                ViewAction::Back => unreachable!("back does not require a rendered page"),
                 ViewAction::BeginSelection => view.begin_selection(&page),
                 ViewAction::ExtendLeft => view.extend_selection(&page, -1, 0),
                 ViewAction::ExtendRight => view.extend_selection(&page, 1, 0),

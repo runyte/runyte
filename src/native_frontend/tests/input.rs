@@ -174,3 +174,54 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
         assert!(events.accepts_input(&host, &event, true));
     }
 }
+
+#[test]
+fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input() {
+    let body = runyte::layout::Rect {
+        x: 1,
+        y: 1,
+        width: 30,
+        height: 20,
+    };
+    let overlay = runyte::layout::Rect {
+        x: 5,
+        y: 15,
+        width: 20,
+        height: 5,
+    };
+    let frame = super::FrameData {
+        id: None,
+        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)),
+        media: vec![super::MediaPane {
+            pane: 0,
+            path: "pages.pdf".into(),
+            page: 2,
+            body,
+        }],
+        cursor: None,
+        overlays: vec![overlay],
+        media_input: false,
+        metadata_paths: Vec::new(),
+    };
+    assert!(frame.under_media(2, 2));
+    assert!(
+        !frame.under_media(6, 16),
+        "overlay cells must paint above image"
+    );
+    assert!(!frame.under_media(35, 2));
+    let mask = super::MediaInputMask {
+        blocked: vec![body],
+    };
+    let point = |x: f32, y: f32| {
+        gpui::point(
+            gpui::px(x * super::CELL_WIDTH),
+            gpui::px(y * super::CELL_HEIGHT),
+        )
+    };
+    assert!(mask.blocks(point(2., 2.)));
+    assert!(
+        mask.blocks(point(6., 16.)),
+        "hints cannot select underlying page rows"
+    );
+    assert!(!mask.blocks(point(35., 2.)));
+}

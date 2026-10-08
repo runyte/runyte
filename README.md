@@ -341,10 +341,14 @@ to create a local `Runyte.app` with the same icon and bundled font notices.
 The window keeps Runyte's cell layout, themes, command palette, key hints,
 configured bindings, splits, and integrated terminals. It adds no toolbars.
 Open an image or PDF with `:open`, the explorer, the directory tree, or a
-startup filename to view it inside a pane. On PDFs, `j`/`k` select the next or
-previous page; `gg`/`ge` and counts use the existing buffer motions. `42gg`
-jumps to page 42, and `g p` opens the page picker (filter, select, Enter). `+`/`-`
-zoom, `z f` fits, and `z h/j/k/l` pans. Ctrl-wheel zooms at the pointer;
+startup filename to view it inside a pane. On PDFs, `j`/`k` select adjacent
+pages and `42gg` jumps to page 42. Escape opens the PDF's page buffer: move or
+search to a page and press Enter to display it. Another Escape returns to the
+source directory; images return there directly. Escape first dismisses an
+open overlay or clears a media selection. `Space e` opens the source directory
+directly, with the file selected.
+
+`+`/`-` zoom, `z f` fits, and `z h/j/k/l` pans. Ctrl-wheel zooms at the pointer;
 middle-drag pans. Select PDF text with left-drag or image regions with
 Shift-drag, then `y` copies the selection.
 
