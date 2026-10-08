@@ -326,7 +326,7 @@ mod tests {
             background: super::super::FALLBACK_BACKGROUND,
             foreground: super::super::FALLBACK_FOREGROUND,
             id: None,
-            cells: Buffer::empty(Rect::new(0, 0, 8, 2)),
+            cells: Buffer::empty(Rect::new(0, 0, 8, 2)).into(),
             media: vec![],
             cursor: None,
             overlays: vec![],

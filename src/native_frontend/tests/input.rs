@@ -203,7 +203,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         background: super::FALLBACK_BACKGROUND,
         foreground: super::FALLBACK_FOREGROUND,
         id: None,
-        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)),
+        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)).into(),
         media: vec![super::MediaPane {
             pane: 0,
             path: "pages.pdf".into(),
@@ -299,7 +299,7 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
         background: super::FALLBACK_BACKGROUND,
         foreground: super::FALLBACK_FOREGROUND,
         id: Some(FrameId::from_raw(10).into()),
-        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)),
+        cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)).into(),
         media: Vec::new(),
         cursor: None,
         overlays: Vec::new(),
@@ -493,14 +493,14 @@ fn rapid_font_changes_preserve_intermediate_frame_metrics_and_bound_history() {
 
 #[test]
 fn attached_snapshot_renders_at_host_geometry_during_resize() {
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use ratatui::{Terminal, layout::Rect};
     let root = tempfile::tempdir().unwrap();
     let app =
         runyte::app::App::new_in_project(runyte::config::Config::default(), None, root.path())
             .unwrap();
     let mut host = runyte::workspace::WorkspaceHost::new(app);
     let snapshot = host.prepare_frame(runyte::ui::frame_geometry(Rect::new(0, 0, 120, 40)));
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut terminal = Terminal::new(super::grid::GridBackend::new(80, 24)).unwrap();
     super::draw_native_grid(
         &mut terminal,
         (80, 24),
@@ -510,12 +510,12 @@ fn attached_snapshot_renders_at_host_geometry_during_resize() {
         },
     )
     .unwrap();
-    assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 120, 40));
+    assert_eq!(terminal.backend().snapshot().area, Rect::new(0, 0, 120, 40));
     assert!(
-        terminal.backend().buffer().content[120 * 38..120 * 39]
+        terminal.backend().snapshot().rows[38]
             .iter()
             .any(|cell| cell.symbol() != " ")
     );
     super::draw_native_grid(&mut terminal, (80, 24), None, |_| {}).unwrap();
-    assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 80, 24));
+    assert_eq!(terminal.backend().snapshot().area, Rect::new(0, 0, 80, 24));
 }

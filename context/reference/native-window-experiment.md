@@ -425,3 +425,14 @@ being copied into a buffer sized for a newer window request. This preserves the
 host's actual grid identity in persistent-session mode without a protocol
 change, timer, or extra round trip. A stale grid during window resizing keeps
 its own size, with theme-coloured margins or clipping until its replacement.
+
+## Sharing immutable cell rows — 2026-10-08
+
+`Surface::draw` now uses a fullscreen `GridBackend` instead of copying a
+`TestBackend` buffer. Ratatui's changed-cell iterator updates copy-on-write
+`Arc<[Cell]>` rows; publishing a frame clones only the row references. A row is
+copied on its first change while a published frame still owns it, and subsequent
+changed cells reuse that row. Every frame retains the full grid, including
+changes in frames skipped by the GUI. Resize and clear produce a fresh grid
+without mutating any frame retained by the painter. The core renderer and
+Ratatui's own layout/diff buffers are unchanged.

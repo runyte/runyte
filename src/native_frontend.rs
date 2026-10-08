@@ -4,6 +4,7 @@
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
 mod cells;
+mod grid;
 mod icon;
 mod interactions;
 mod media;
@@ -12,12 +13,7 @@ mod viewport;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
 use futures_util::StreamExt;
 use gpui::{prelude::*, *};
-use ratatui::{
-    Terminal,
-    backend::{CrosstermBackend, TestBackend},
-    buffer::Buffer,
-    style::Color,
-};
+use ratatui::{Terminal, backend::CrosstermBackend, style::Color};
 use std::{
     io,
     path::PathBuf,
@@ -112,7 +108,7 @@ struct FrameData {
     background: u32,
     foreground: u32,
     id: Option<runyte::workspace::FrameId>,
-    cells: Buffer,
+    cells: grid::Grid,
     media: Vec<MediaPane>,
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
@@ -436,13 +432,13 @@ pub fn render_frame(
 
 pub enum Surface {
     Tui(Terminal<CrosstermBackend<io::Stdout>>),
-    Native(Terminal<TestBackend>),
+    Native(Terminal<grid::GridBackend>),
 }
 impl Surface {
     pub fn new(backend: CrosstermBackend<io::Stdout>, native: bool) -> io::Result<Self> {
         if native {
             Ok(Self::Native(
-                Terminal::new(TestBackend::new(120, 40)).unwrap(),
+                Terminal::new(grid::GridBackend::new(120, 40)).unwrap(),
             ))
         } else {
             Terminal::new(backend).map(Self::Tui)
@@ -492,7 +488,7 @@ impl Surface {
                     background,
                     foreground,
                     id: *bridge.prepared.lock().unwrap(),
-                    cells: terminal.backend().buffer().clone(),
+                    cells: terminal.backend().snapshot(),
                     media: bridge.media.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
@@ -512,7 +508,7 @@ impl Surface {
 /// An attached snapshot has already been laid out by the host. Rendering it
 /// into the latest requested grid would falsely label it with newer geometry.
 fn draw_native_grid(
-    terminal: &mut Terminal<TestBackend>,
+    terminal: &mut Terminal<grid::GridBackend>,
     requested: (u16, u16),
     snapshot_area: Option<runyte::layout::Rect>,
     draw: impl FnOnce(&mut ratatui::Frame<'_>),
