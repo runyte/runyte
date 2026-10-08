@@ -1713,6 +1713,11 @@ In standalone mode the window close button requests `:qa`, preserving
 unsaved-buffer and running-terminal refusal. In `--window --mux` it detaches,
 leaving all editor state and terminal sessions in the host.
 
+If the host cannot keep up and the bounded input queue fills, the window shows
+“Some input was lost. Click to dismiss.” The notice remains until clicked.
+Consecutive queued drags coalesce to their latest position; keys, clicks and
+paste keep their order.
+
 For the Runyte application icon on Wayland, register the desktop entry with
 `python3 contrib/native/package.py linux --binary target/debug/runyte` before
 opening a new window. X11 also receives an icon directly. A macOS `.app`

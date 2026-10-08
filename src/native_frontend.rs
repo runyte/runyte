@@ -6,6 +6,7 @@
 mod cells;
 mod grid;
 mod icon;
+mod input_queue;
 mod interactions;
 mod media;
 mod viewport;
@@ -22,7 +23,6 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
-use tokio::sync::mpsc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CellMetrics {
@@ -197,8 +197,8 @@ struct Bridge {
     media_pointer: Mutex<Vec<(u64, usize, PathBuf, i32)>>,
     media_back: Mutex<Vec<(u64, usize, PathBuf, usize)>>,
     dimensions: Mutex<(u16, u16)>,
-    input: mpsc::Sender<NativeInput>,
-    receiver: Mutex<Option<mpsc::Receiver<NativeInput>>>,
+    input: input_queue::Sender,
+    receiver: Mutex<Option<input_queue::Receiver>>,
     pages: Mutex<Vec<media::PageCount>>,
     close_requested: AtomicBool,
     done: AtomicBool,
@@ -214,7 +214,7 @@ impl Bridge {
             presentation_only: false,
         };
         if self.input.try_send(input).is_err() {
-            eprintln!("Runyte native input queue is full");
+            let _ = self.wake.try_send(());
         }
     }
 }
@@ -523,7 +523,7 @@ pub enum Events {
     Tui(EventStream),
     Native {
         attachment: Arc<AtomicU64>,
-        events: mpsc::Receiver<NativeInput>,
+        events: input_queue::Receiver,
         presented: Option<runyte::workspace::FrameId>,
         presentation_only: bool,
     },
@@ -613,7 +613,7 @@ impl Events {
 }
 
 pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::Result<()> {
-    let (input, receiver) = mpsc::channel(4096);
+    let (input, receiver) = input_queue::channel(4096);
     let (wake, wakes) = async_channel::bounded(1);
     let bridge = Arc::new(Bridge {
         attachment: Arc::new(AtomicU64::new(0)),
@@ -763,7 +763,7 @@ impl NativeView {
                         }
                         let loaded = view.media.poll(&view.bridge);
                         view.apply_media_requests(cx);
-                        if changed || loaded {
+                        if changed || loaded || view.bridge.input.overflowed() {
                             cx.notify();
                         }
                     })
@@ -1080,7 +1080,7 @@ impl Render for NativeView {
         let entity = cx.entity();
         let bridge = self.bridge.clone();
         let focus = self.focus.clone();
-        root.child(
+        let mut surface = root.child(
             canvas(
                 |_, _, _| (),
                 move |bounds, _, window, cx| {
@@ -1133,7 +1133,28 @@ impl Render for NativeView {
             )
             .absolute()
             .size_full(),
-        )
+        );
+        if self.bridge.input.overflowed() {
+            surface = surface.child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .bg(rgb(0x8b1a1a))
+                    .text_color(rgb(0xffffff))
+                    .px_2()
+                    .child("Some input was lost. Click to dismiss.")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                            view.bridge.input.dismiss_overflow();
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        surface
     }
 }
 

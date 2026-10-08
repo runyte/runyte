@@ -68,7 +68,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
     let mut host = WorkspaceHost::new(app);
     host.defer_frontend_presentation(true);
     let first = host.prepare_frame(FrameGeometry::default()).id;
-    let (send, events) = tokio::sync::mpsc::channel(8);
+    let (send, events) = super::input_queue::channel(8);
     let mut events = Events::Native {
         attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
@@ -168,7 +168,7 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
         WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
     host.defer_frontend_presentation(true);
     let first = host.prepare_frame(FrameGeometry::default()).id;
-    let (_send, events) = tokio::sync::mpsc::channel(1);
+    let (_send, events) = super::input_queue::channel(1);
     let events = Events::Native {
         attachment: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         events,
@@ -243,7 +243,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
 async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
     use super::{Events, NativeInput};
     use crossterm::event::{Event, KeyEvent};
-    let (send, receiver) = tokio::sync::mpsc::channel(8);
+    let (send, receiver) = super::input_queue::channel(8);
     let attachment = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2));
     let mut events = Events::Native {
         attachment,
