@@ -274,3 +274,29 @@ selected sections). Root formatting and default/native Clippy checks passed;
 55 and three ignored respectively. Canonical `cargo llvm-cov --locked --workspace`
 reported 92.05% line coverage (149,673 / 162,603), above the 89% floor.
 No macOS or Wayland runtime was tested.
+
+## Fast pane key follow-up
+
+The pane-focus correction recognized configured Ctrl-arrow chords but resolved
+other single keys against the default registry, which excludes the optional
+`editor.fast_pane_keys` bindings. Ctrl-h/j/k/l therefore dismissed the preview
+before moving focus. The frontend now recognizes these chords with the shared
+`is_fast_pane_key` classifier and forwards them without dismissal; the editor
+still decides whether they are enabled. Forwarding clears an unfinished preview
+navigation prefix. This does not extend preview navigation to arbitrary configured
+bindings.
+
+`native_fast_pane_strokes_and_repeats_reach_the_editor` in
+`src/native_frontend/tests/preview.rs` covers native key conversion, repeated keys,
+and enabled/disabled registry resolution. `tests/native_window.py --document-preview`
+enables fast pane keys and checks both horizontal and vertical motion, alongside
+the configured Ctrl-arrow checks; horizontal motion checks editing in the target
+pane and navigation on returning to the preview.
+
+Validation: formatting, default/native Clippy with warnings denied, and all 87
+native frontend tests passed (three ignored). The GUI harness was syntax-checked
+but not executed because this environment lacks an X11 test server. Full default
+suite attempts at default and four-thread concurrency reported unrelated context
+transport/process failures and stalled; sampled failing tests passed individually.
+The physical Ctrl-arrow symptom was not independently reproduced; this follow-up
+fixes the confirmed omission of the optional Ctrl-h/j/k/l bindings.

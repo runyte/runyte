@@ -160,7 +160,7 @@ if args.no_system_fonts:
     env['FONTCONFIG_FILE'] = str(fontconfig)
 if args.document_preview:
     with (storage / 'config/config.yaml').open('a') as config:
-        config.write('keys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n')
+        config.write('editor:\n  fast_pane_keys: true\nkeys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n')
     import shutil
     fixtures = pathlib.Path(__file__).resolve().parents[1] / 'contrib/document-preview/fixtures'
     for source in fixtures.iterdir():
@@ -421,12 +421,30 @@ try:
         key('j');time.sleep(.3)
         assert pixel(350,35) == 0x0099aa, 'returning focus did not restore preview navigation'
         key('k');time.sleep(.3)
+        for destination, returning in [('l', 'h'), ('Right', 'Left')]:
+            key('g')  # Pane focus must clear an unfinished preview navigation prefix.
+            key(destination,ctrl=True);time.sleep(.3)
+            assert pixel(350,400) == 0x0099aa, f'{destination} dismissed preview'
+            key('i');text('pane focus');key('Escape');command('write')
+            assert 'pane focus' in (root/'plain.txt').read_text(), 'pane shortcut did not focus source'
+            key('u');command('write')
+            key(returning,ctrl=True);time.sleep(.3)
+            key('j');time.sleep(.3)
+            assert pixel(350,35) == 0x0099aa, f'{returning} failed to restore preview navigation'
+            key('k');time.sleep(.3)
         key('Right',ctrl=True);command('quit');time.sleep(.6)
         command('hsplit plain.txt');time.sleep(.5)
         key('Up',ctrl=True);time.sleep(.6)
         assert pixel(350,200) == 0x0099aa, 'Ctrl-Up failed to focus the preview'
         key('Down',ctrl=True);time.sleep(.4)
         assert pixel(350,200) == 0x0099aa, 'Ctrl-Down dismissed the preview being left'
+        key('k',ctrl=True);time.sleep(.3)
+        key('j');time.sleep(.3)
+        assert pixel(350,35) == 0x0099aa, 'Ctrl-k failed to restore preview navigation'
+        key('j',ctrl=True);time.sleep(.3)
+        assert pixel(350,200) == 0x0099aa, 'fast vertical pane motion dismissed preview'
+        key('i');text('vertical focus');key('Escape');command('write')
+        assert 'vertical focus' in (root/'plain.txt').read_text(), 'Ctrl-j did not focus source'
         command('quit');time.sleep(.6)
         key('q')
         command('open markdown.md');command('preview');time.sleep(1)

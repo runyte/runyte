@@ -183,6 +183,11 @@ fn editor_pane_key(key: KeyEvent) -> bool {
     else {
         return false;
     };
+    // The editor decides whether fast pane keys are enabled. Keep the native
+    // surface intact while forwarding them, just as for configured Ctrl-arrows.
+    if runyte::keymap::is_fast_pane_key(stroke) {
+        return true;
+    }
     matches!(runyte::keymap::default_keymap().lookup(Mode::Normal, &KeySequence::new([stroke])),
         Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. }
         if matches!(binding.target, BindingTarget::Editor(C::FocusWindowLeft | C::FocusWindowRight | C::FocusWindowUp | C::FocusWindowDown | C::NextWindow)))

@@ -270,3 +270,39 @@ fn pane_focus_shortcuts_route_to_editor_without_dismissing_preview() {
         )));
     }
 }
+
+#[test]
+fn native_fast_pane_strokes_and_repeats_reach_the_editor() {
+    use crossterm::event::KeyEventKind;
+    use runyte::{
+        command::{EditorCommand as C, Mode},
+        keymap::{BindingTarget, KeySequence, Lookup},
+    };
+    for (spelling, command) in [
+        ("ctrl-h", C::FocusWindowLeft),
+        ("ctrl-j", C::FocusWindowDown),
+        ("ctrl-k", C::FocusWindowUp),
+        ("ctrl-l", C::FocusWindowRight),
+    ] {
+        let mut key =
+            super::super::translate_key(&gpui::Keystroke::parse(spelling).unwrap()).unwrap();
+        for kind in [KeyEventKind::Press, KeyEventKind::Repeat] {
+            key.kind = kind;
+            assert!(super::editor_pane_key(key), "{spelling}: {kind:?}");
+        }
+        let Some(runyte::input::InputEvent::Key(stroke)) =
+            runyte::tui::input::convert_event(crossterm::event::Event::Key(key)).unwrap()
+        else {
+            panic!("native pane key was lost");
+        };
+        let sequence = KeySequence::new([stroke]);
+        assert!(matches!(
+            runyte::keymap::keymap_for(true).lookup(Mode::Normal, &sequence),
+            Lookup::Exact(binding) if binding.target == BindingTarget::Editor(command)
+        ));
+        assert!(matches!(
+            runyte::keymap::keymap_for(false).lookup(Mode::Normal, &sequence),
+            Lookup::NoMatch
+        ));
+    }
+}

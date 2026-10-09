@@ -780,6 +780,7 @@ looked up through the existing Media registry: movement, pages, half-pages,
 from those same entries. Configured remappings and counted motions are not yet
 applied to this frontend-local surface. Native copy and window-size controls
 also apply while the document is visible. Ctrl-arrow shortcuts pass through to
-the editor’s configured keymap without dismissing the preview; no new default
+the editor’s configured keymap without dismissing the preview. Ctrl-h/j/k/l
+also pass through, with pane focus controlled by `editor.fast_pane_keys`; no new default
 binding is introduced. See
 [prototype controls and limits](../../contrib/document-preview/README.md).
