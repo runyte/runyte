@@ -702,6 +702,15 @@ registry that Tab, dispatch and hints read. No binding is added.
 
 ## Experimental native window
 
+Ctrl-left-click (Cmd-left-click on macOS) is a native pointer gesture for the
+same target resolution as `gf`. It uses the clicked character in documents,
+rendered Markdown and terminal panes, including live terminal input mode.
+It does not use an unrelated selection, enter terminal review, or forward the
+gesture to a mouse-reporting terminal child. Review clicks use frozen output;
+live clicks infer from current output with the same wrapped-URL rules.
+Overlays retain input ownership and extra modifiers do not match the gesture.
+The keyboard binding and its explicit-selection behavior are unchanged.
+
 `--window` (the optional `native` feature) forwards keys through the existing
 frontend input boundary and registry. Native window close requests `:qa`; it
 does not bypass dirty-buffer or running-terminal protection.

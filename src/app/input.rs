@@ -921,6 +921,21 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        if self.pointer_link_pressed {
+            match event.kind {
+                PointerEventKind::Up(PointerButton::Left) => {
+                    self.pointer_link_pressed = false;
+                    return Ok(PointerOutcome::Unchanged);
+                }
+                PointerEventKind::Drag(PointerButton::Left) => {
+                    return Ok(PointerOutcome::Unchanged);
+                }
+                PointerEventKind::Down(PointerButton::Left) => {
+                    self.pointer_link_pressed = false;
+                }
+                _ => {}
+            }
+        }
         if self.context_overlay_active() {
             return Ok(PointerOutcome::Unchanged);
         }
@@ -1044,6 +1059,30 @@ impl App {
                     .select_relative(3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
                 _ => {}
             }
+            return Ok(PointerOutcome::Changed);
+        }
+        if self.native_media
+            && event.kind == PointerEventKind::Down(PointerButton::Left)
+            && event.modifiers
+                == if cfg!(target_os = "macos") {
+                    Modifiers::SUPER
+                } else {
+                    Modifiers::CONTROL
+                }
+        {
+            self.pointer_link_pressed = true;
+            self.invalidate_all_partial_guards();
+            self.grammar.reset();
+            self.jump = None;
+            self.status_error = false;
+            if let Err(error) = self.open_pointer_link(event, view) {
+                // Navigation can fail after moving focus; publish that state
+                // and its error just as a directory-tree double click does.
+                self.action_failed(error.to_string());
+            }
+            self.retire_detached_ephemeral_buffers();
+            self.note_destination_activation();
+            self.refresh_navigator();
             return Ok(PointerOutcome::Changed);
         }
         let active_pane = self.active_pane;
@@ -1589,6 +1628,58 @@ impl App {
         }
         .min(end);
         Some(buffer.line_to_offset(document_row) + character)
+    }
+
+    /// Native link clicks use the same target resolver as `gf`, but always
+    /// infer from the clicked character rather than an existing selection.
+    fn open_pointer_link(&mut self, event: PointerEvent, view: &PreparedView) -> Result<()> {
+        let Some(pane) = view
+            .panes
+            .iter()
+            .find(|pane| pane.drawable && rect_contains(pane.body, event.column, event.row))
+        else {
+            return Ok(());
+        };
+        if self.terminal_of_pane(pane.pane_id) != pane.terminal {
+            return Ok(());
+        }
+        if let Some(terminal) = pane.terminal {
+            let Some(session) = self.terminals.get(terminal) else {
+                return Ok(());
+            };
+            let target = session.navigation_target_at_view_cell(
+                usize::from(pane.body.height),
+                usize::from(event.row - pane.body.y),
+                usize::from(event.column - pane.body.x),
+            );
+            let directory = session.directory().to_path_buf();
+            let reviewing = session.reviewing();
+            self.leave_directory_tree();
+            if self.active_pane != pane.pane_id {
+                self.enter_normal_mode();
+                self.activate_pane(pane.pane_id);
+                self.mode = if reviewing {
+                    Mode::Normal
+                } else {
+                    Mode::Insert
+                };
+            }
+            let result = self.open_navigation_target(target, Some(directory), true);
+            if self.active_terminal().is_none() && self.mode == Mode::Insert {
+                self.enter_normal_mode();
+            }
+            result
+        } else {
+            let Some(offset) =
+                self.pointer_text_offset(view, pane.pane_id, event.column, event.row)
+            else {
+                return Ok(());
+            };
+            self.activate_pane_from_pointer(pane.pane_id);
+            self.active_mut()
+                .replace_selection(Selection::point(offset));
+            self.goto_file_under_cursor()
+        }
     }
 
     fn forward_terminal_pointer(
