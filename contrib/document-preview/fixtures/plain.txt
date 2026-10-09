@@ -1,0 +1,4 @@
+Plain text
+    This indentation stays intact.
+<script>This must remain text.</script>
+Unicode: café — λ — 日本語

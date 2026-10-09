@@ -757,6 +757,7 @@ editor_commands! {
     ),
     ToggleSoftWrap => ("toggle-soft-wrap", "Toggle soft wrapping"),
     ToggleWhitespace => ("toggle-whitespace", "Toggle whitespace markers"),
+    PreviewDocument => ("preview-document", "Preview selection or buffer (native window)"),
     ToggleMarkdownRender => (
         "toggle-markdown-render",
         "Show a Markdown document as formatted text, or return to its source"
@@ -1335,6 +1336,7 @@ impl EditorCommand {
             | Self::ScrollViewUp => CommandCategory::View,
             Self::ToggleSoftWrap
             | Self::ToggleWhitespace
+            | Self::PreviewDocument
             | Self::ToggleMarkdownRender
             | Self::ToggleZen
             | Self::ToggleFullscreen => CommandCategory::View,
@@ -1984,6 +1986,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         "render",
         ["markdown"],
         "render",
+        NoArguments
+    ),
+    editor_spec!(
+        Editor::PreviewDocument,
+        "preview",
+        [],
+        "preview",
         NoArguments
     ),
     editor_spec!(Editor::ToggleZen, "zen", [], "zen", NoArguments),
@@ -3432,6 +3441,7 @@ fn invocation_from_parts(
                 | EditorCommand::SelectLineUp
                 | EditorCommand::SelectionRedo
                 | EditorCommand::ShowAbout
+                | EditorCommand::PreviewDocument
                 | EditorCommand::ToggleMarkdownRender
                 | EditorCommand::ToggleZen
                 | EditorCommand::ToggleFullscreen,

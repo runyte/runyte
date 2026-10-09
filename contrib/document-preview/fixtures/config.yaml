@@ -1,0 +1,10 @@
+# Keep this comment and authored key ordering.
+zebra: &defaults
+  enabled: true
+  items: [one, two, three] # Inline comment remains.
+alpha:
+  <<: *defaults
+  literal: '<script>this is text</script>'
+message: |
+  Preserve these lines
+    and this indentation.

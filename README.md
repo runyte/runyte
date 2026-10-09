@@ -355,6 +355,12 @@ Register again if you move the binary or switch to `target/release/runyte`.
 On macOS, use the [native desktop packaging guide](contrib/native/README.md)
 to create a local `Runyte.app` with the same icon and bundled font notices.
 
+This branch also includes an isolated [native document preview prototype](contrib/document-preview/README.md).
+After building its separate Blitz helper, `:preview` renders the selected text,
+or the whole buffer with no selection, including unsaved edits. It supports
+Markdown, static HTML, SVG, JSON, YAML, highlighted source and plain text.
+Escape returns to source. Existing `?`, `:render`, and `:markdown` are unchanged.
+
 The window keeps Runyte's cell layout, themes, command palette, key hints,
 configured bindings, splits, and integrated terminals. It adds no toolbars.
 Open an image or PDF with `:open`, the explorer, the directory tree, or a

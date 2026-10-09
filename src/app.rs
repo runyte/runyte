@@ -2893,6 +2893,8 @@ pub struct App {
     pending_external_opens: Vec<external_opening::Pending>,
     /// Allow the local graphical frontend to present read-only media buffers.
     pub native_media: bool,
+    pub(crate) document_previews: HashMap<usize, crate::document_preview::DocumentPreview>,
+    preview_generation: u64,
     pub media_requests: std::collections::VecDeque<crate::media::ViewRequest>,
     /// Programs previously chosen for binary files and their persisted default.
     pub programs: ProgramCache,
@@ -3657,6 +3659,8 @@ impl App {
             external_target: None,
             pending_external_opens: Vec::new(),
             native_media: false,
+            document_previews: HashMap::new(),
+            preview_generation: 0,
             media_requests: Default::default(),
             programs,
             prompt_origin_mode: Mode::Normal,

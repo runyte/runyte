@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><style>
+body { font: 18px sans-serif; margin: 24px; color: #243746; background: white; }
+.cards { display: flex; gap: 16px; }
+.card { padding: 20px; background: #e0efff; border: 2px solid #0969da; }
+@media (max-width: 500px) { .cards { flex-direction: column; } }
+</style></head><body>
+<h1>Static HTML</h1><p>Select this text. Resize this pane.</p>
+<div class="cards"><div class="card">Flex item one</div><div class="card">Flex item two</div></div>
+<p><a href="https://example.com">Hit-test this link without navigating</a></p>
+<img src="image.png" width="160" height="120" alt="local color grid">
+<script>document.body.innerHTML = 'SCRIPTS MUST NOT RUN';</script>
+</body></html>

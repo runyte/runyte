@@ -535,6 +535,7 @@ pub struct MediaSnapshot {
 /// One pane's owned title, geometry, viewport anchor, and visible rows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneSnapshot {
+    pub preview: Option<crate::document_preview::DocumentPreview>,
     pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
     pub area: Rect,
@@ -1087,6 +1088,7 @@ impl App {
                 && !self.directory_tree.focused
                 && self.jump.is_some();
             return PaneSnapshot {
+                preview: None,
                 media: None,
                 pane_id: prepared.pane_id,
                 area: prepared.area,
@@ -1152,6 +1154,11 @@ impl App {
             && !self.directory_tree.focused
             && self.jump.is_some();
         let mut snapshot = PaneSnapshot {
+            preview: self
+                .document_previews
+                .get(&prepared.pane_id)
+                .filter(|p| p.source == prepared.buffer_id)
+                .cloned(),
             media: buffer.media_path.as_ref().map(|path| MediaSnapshot {
                 path: path.clone(),
                 page: cursor.row + 1,

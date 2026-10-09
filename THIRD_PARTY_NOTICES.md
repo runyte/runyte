@@ -400,3 +400,16 @@ their own license and are not relicensed under Runyte's MPL-2.0.
 The native build carries a compatibility-patched copy of proc-macro-error2 2.0.1
 (MIT OR Apache-2.0) under `vendor/proc-macro-error2`. See its LICENSE-MIT,
 LICENSE-APACHE and RUNYTE-PATCH.md for provenance and the single source change.
+
+
+## Experimental native document preview helper
+
+The separately built helper in `contrib/document-preview` uses
+[Blitz](https://github.com/DioxusLabs/blitz) at
+`74fe1abf090732524c86d96e6cdb6f95d8f8d6dc` (MIT OR Apache-2.0),
+AnyRender/Vello CPU, Pulldown-cmark (MIT), Syntect (MIT), and their locked
+transitive dependencies. Blitz integrates Stylo (MPL-2.0), Taffy, Parley and
+usvg. Their upstream license terms remain applicable when distributing the
+helper. The helper has a separate Cargo.lock and is not linked into the normal
+terminal build. Its `preview.css` is original Runyte MPL-2.0 code; no GitHub CSS
+has been copied.

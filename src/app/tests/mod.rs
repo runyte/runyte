@@ -418,3 +418,5 @@ mod pasted_completion;
 
 mod native_media;
 mod pointer_links;
+
+mod document_preview;

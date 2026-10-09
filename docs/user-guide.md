@@ -4141,6 +4141,32 @@ brackets, text objects, and structural selection cannot use stale offsets.
 - Language detection, comments, editing, search, saving, and language servers
   do not need a syntax tree.
 
+### Native document preview prototype
+
+In the experimental native window, `:preview` captures selected text, or the
+whole current buffer when the selection is a bare caret. It includes unsaved
+edits and leaves the source text and selection intact. Multiple nonempty ranges
+are joined in document order with a newline. A selected SVG diagram is rendered
+graphically even inside a Markdown or source document.
+
+Build the separate helper using the [prototype instructions](../contrib/document-preview/README.md).
+Markdown uses proportional GitHub-like typography; static HTML and SVG render
+graphically. JSON is pretty-printed when valid and retains its original text
+with a diagnostic otherwise. YAML retains its comments, structure and ordering.
+Source code uses available syntax highlighting; other text uses monospace.
+
+Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally.
+The preview also uses the built-in PDF navigation keys: `j`/`k` and arrows,
+`h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1` resets).
+Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape dismisses an overlay
+first, then returns to source; `q` also returns to source.
+Invoke `:preview` again to refresh. Links expose their destination without
+navigating. Scripts and network fetching are disabled. Local raster images must
+be beneath the source document's directory. Captures are limited to 128 KiB;
+selecting a smaller section of a larger file is supported. The terminal frontend
+reports that this command needs `--window`. See the prototype instructions for
+resource limits, lifecycle and tested static CSS/SVG support.
+
 ### Rendered Markdown
 
 `?` in a Markdown document opens it as a page to read; `?` again returns to
@@ -5479,6 +5505,7 @@ The working directory starts where Runyte was launched.
 | `:path` | | Show the active buffer's absolute path in a wrapped popup; Tab offers copying it to the system clipboard (`s`) or the unnamed Runyte register (`r`) |
 | `:cd <path>` | | Change the working directory; retarget an active explorer |
 | `:explorer [path]` | `files` | Open an editable directory explorer |
+| `:preview` | — | Native document preview of selected text or the complete buffer |
 | `:render` | `markdown` | Render a Markdown document, or return to its source |
 | `:diff-disk` | | Compare a fresh disk snapshot with the active file buffer |
 | `:diff-remote` | | Compare a fresh remote snapshot with the active provider document |

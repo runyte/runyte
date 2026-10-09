@@ -766,3 +766,18 @@ Key labels use `Cmd` for the Command modifier on macOS and `Super` elsewhere.
 Both modifier spellings parse on every platform, including in configured
 bindings; they identify the same key and never translate ordinary Control keys.
 Native paste help lists Cmd-v first on macOS, followed by Ctrl-Shift-v.
+
+
+## Native document preview prototype
+
+`:preview` is a Runyte-only colon command (`preview-document`), with no new
+editor key binding or alias. It captures explicit selections, or the whole
+buffer for bare carets. Existing `?`, `:render` and `:markdown` keep their
+rendered-text behavior. The prototype's frontend-local Escape returns to the
+source; editor overlays retain precedence. Built-in PDF/media navigation is
+looked up through the existing Media registry: movement, pages, half-pages,
+`gg`/`ge`, zoom/reset, copy and back. Supported `g`/`z` prefix hints are derived
+from those same entries. Configured remappings and counted motions are not yet
+applied to this frontend-local surface. Native copy and window-size controls
+also apply while the document is visible. See
+[prototype controls and limits](../../contrib/document-preview/README.md).

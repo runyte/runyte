@@ -19,6 +19,8 @@ import zlib
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
+parser.add_argument("--document-preview", action="store_true", help="exercise the bounded Blitz document preview")
+parser.add_argument("--preview-helper", type=pathlib.Path, default=pathlib.Path("contrib/document-preview/target/debug/runyte-preview-helper"))
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--animations", action="store_true", help="exercise media playback, selection pause, and hidden-window idle")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
@@ -155,6 +157,15 @@ if args.no_system_fonts:
     fontconfig = storage / 'fonts.conf'
     fontconfig.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><reset-dirs/><cachedir>' + str(storage / 'font-cache') + '</cachedir></fontconfig>')
     env['FONTCONFIG_FILE'] = str(fontconfig)
+if args.document_preview:
+    import shutil
+    fixtures = pathlib.Path(__file__).resolve().parents[1] / 'contrib/document-preview/fixtures'
+    for source in fixtures.iterdir():
+        shutil.copyfile(source, root/source.name)
+    (root/'busy.md').write_text('| a | b |\n| - | - |\n' + '| content | content |\n' * 5000)
+    (root/'section.md').write_text('# First\n\n# Second\n\n')
+    (root/'selection.html').write_text('<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>')
+    env['RUNYTE_PREVIEW_HELPER'] = str(args.preview_helper.resolve())
 log=open(root/'window.log','w')
 launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
 if not args.mux:launch.append(str(root/'notes.txt'))
@@ -297,6 +308,86 @@ try:
         empty=pixel(600,400)
         assert pixel(1083,400)==empty and pixel(600,803)==empty, ('margin differs from theme background', hex(empty), hex(pixel(1083,400)), hex(pixel(600,803)))
         x.XResizeWindow(d,win,geometry.width,geometry.height);x.XFlush(d);time.sleep(1)
+    if args.document_preview:
+        command('open document.html')
+        command('preview'); time.sleep(2)
+        screenshot('preview-html')
+        assert pixel(600,400) == 0xffffff, 'HTML preview did not paint'
+        key('space'); time.sleep(.5)
+        screenshot('preview-hints')
+        key('Escape'); time.sleep(.4)
+        screenshot('preview-after-hints')
+        key('Escape'); time.sleep(.4)
+        screenshot('preview-source')
+        assert pixel(600,400) != 0xffffff, 'Escape failed to return to source'
+        command('open selection.html'); command('preview'); time.sleep(1)
+        x.XResizeWindow(d,win,3000,1700);x.XFlush(d);time.sleep(1.5)
+        screenshot('preview-selection-ready')
+        drag((10,32),(250,32)); time.sleep(1.2)
+        key('c',shift=True,ctrl=True)
+        copied = clipboard(b'UTF8_STRING')
+        assert b'Selectable text' in copied, ('preview selection did not reach system clipboard',copied)
+        screenshot('preview-selected')
+        x.XResizeWindow(d,win,1080,800);x.XFlush(d);time.sleep(1.2)
+        key('space');time.sleep(.5)
+        drag((30,32),(90,32));key('Escape');time.sleep(.4)
+        key('c',shift=True,ctrl=True)
+        assert clipboard(b'UTF8_STRING') == copied, 'overlay allowed hidden preview selection to change'
+        mouse(40,61);button(1,True);button(1,False);time.sleep(1)
+        screenshot('preview-link-hit')
+        mouse(600,400)
+        for _ in range(4):wheel(5)
+        time.sleep(1)
+        assert pixel(500,35) == 0x0099aa, 'preview did not scroll'
+        screenshot('preview-scrolled')
+        key('g');key('g');time.sleep(.8)
+        assert pixel(500,35) == 0xffffff, 'gg failed to reach document top'
+        key('j');time.sleep(.8)
+        assert pixel(500,35) == 0x0099aa, 'j failed to scroll document'
+        key('k');time.sleep(.8)
+        assert pixel(500,35) == 0xffffff, 'k failed to scroll back'
+        key('d',ctrl=True);time.sleep(.8)
+        assert pixel(500,35) == 0x0099aa, 'half-page movement failed'
+        key('u',ctrl=True);time.sleep(.8)
+        assert pixel(500,35) == 0xffffff, 'half-page return failed'
+        key('f',ctrl=True);time.sleep(.8)
+        assert pixel(500,35) == 0x0099aa, 'page movement failed'
+        key('g');key('g');time.sleep(.8)
+        before_zoom, _ = screenshot('preview-keyboard-top')
+        key('equal');time.sleep(.8)
+        after_zoom, _ = screenshot('preview-zoom')
+        assert before_zoom != after_zoom, 'document zoom did not change raster'
+        key('z');key('1');time.sleep(.8)
+        reset_zoom, _ = screenshot('preview-zoom-reset')
+        assert before_zoom == reset_zoom, 'z1 failed to restore document zoom'
+        key('q')
+        command('open markdown.md');command('preview');time.sleep(1)
+        screenshot('preview-markdown')
+        x.XResizeWindow(d,win,650,700);x.XFlush(d);time.sleep(1.2)
+        screenshot('preview-narrow')
+        key('equal',ctrl=True);time.sleep(1)
+        screenshot('preview-scaled')
+        assert pixel(600,400) == 0xffffff, 'font resize lost preview'
+        key('Escape');command('open drawing.svg');command('preview');time.sleep(1)
+        screenshot('preview-svg')
+        assert pixel(100,100) != 0xffffff, 'SVG was not graphical'
+        key('Escape');command('open section.md');key('g');key('g');key('j');key('j');key('x')
+        command('preview');time.sleep(1)
+        screenshot('preview-section')
+        drag((35,90),(190,90));time.sleep(1)
+        key('c',shift=True,ctrl=True)
+        assert b'Second' in clipboard(b'UTF8_STRING'), 'selected preview lost its final character'
+        key('Escape')
+        command('write')
+        assert (root/'section.md').read_text() == '# First\n\n# Second\n\n', 'preview modified source'
+        command('render');command('render');time.sleep(.3)
+        assert pixel(500,400) != 0xffffff, 'render/source toggle revived a dismissed native preview'
+        command('open busy.md')
+        text(':preview');key('Return');time.sleep(.05)
+        key('Escape');key('i');text('Responsive ');key('Escape');command('write')
+        assert (root/'busy.md').read_text().startswith('Responsive '), 'helper blocked return to source and editing'
+        print('Document preview composition, overlay, Escape, clipboard, scroll, resize, scaling, SVG and selected-section checks passed', flush=True)
+        raise SystemExit(0)
     if args.paint_styles:
         assert args.output and not args.mux, "style capture requires --output and standalone mode"
         command('terminal'); time.sleep(.5); text('cat styles.ansi'); key('Return'); time.sleep(.5)

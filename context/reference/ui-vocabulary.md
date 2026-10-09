@@ -821,3 +821,11 @@ starting size. Ctrl-plus/minus changes only the current window; cell drawing,
 mouse coordinates, media bounds, IME caret bounds, and PTY geometry use the
 same scaled metrics. Contextual help appends the reserved window controls
 from `keymap::native_window`.
+
+
+The experimental **document preview** is a native frontend surface over a pane's
+source buffer, not a rendered-page buffer or a browser pane. A bounded capture
+contains selected text or the entire current buffer. Engine types, raster,
+scroll and document-text selection belong to the native frontend and its helper.
+The source buffer keeps its editing state. See the
+[prototype lifecycle](../../contrib/document-preview/README.md).

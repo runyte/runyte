@@ -206,6 +206,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         foreground: super::FALLBACK_FOREGROUND,
         id: None,
         cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 30)).into(),
+        previews: Vec::new(),
         media: vec![super::MediaPane {
             pane: 0,
             path: "pages.pdf".into(),
@@ -303,6 +304,7 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
         foreground: super::FALLBACK_FOREGROUND,
         id: Some(FrameId::from_raw(10).into()),
         cells: ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)).into(),
+        previews: Vec::new(),
         media: Vec::new(),
         cursor: None,
         overlays: Vec::new(),
