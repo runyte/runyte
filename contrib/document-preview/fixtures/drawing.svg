@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320">
+  <defs><linearGradient id="sky"><stop stop-color="#0969da"/><stop offset="1" stop-color="#79c0ff"/></linearGradient></defs>
+  <rect x="10" y="10" width="620" height="300" rx="20" fill="url(#sky)"/>
+  <circle cx="140" cy="155" r="75" fill="#ffdf5d"/>
+  <path d="M 270 230 L 350 65 L 435 230 Z" fill="#3fb950" stroke="#fff" stroke-width="6"/>
+  <text x="250" y="280" font-family="sans-serif" font-size="26" fill="white">Static SVG preview</text>
+</svg>

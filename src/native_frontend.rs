@@ -11,6 +11,7 @@ mod input_queue;
 mod interactions;
 mod media;
 pub(crate) mod pdf;
+mod preview;
 mod viewport;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers};
@@ -112,6 +113,7 @@ struct FrameData {
     id: Option<runyte::workspace::FrameId>,
     cells: grid::Grid,
     media: Vec<MediaPane>,
+    previews: Vec<preview::Pane>,
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
     media_input: bool,
@@ -125,7 +127,9 @@ impl FrameData {
                 && y >= r.y
                 && y < r.y.saturating_add(r.height)
         };
-        self.media.iter().any(|pane| contains(&pane.body)) && !self.overlays.iter().any(contains)
+        (self.media.iter().any(|pane| contains(&pane.body))
+            || self.previews.iter().any(|pane| contains(&pane.body)))
+            && !self.overlays.iter().any(contains)
     }
 }
 #[derive(Default)]
@@ -189,6 +193,7 @@ struct Bridge {
     presented: Mutex<Option<runyte::workspace::FrameId>>,
     frame: Mutex<Option<FrameData>>,
     media: Mutex<Vec<MediaPane>>,
+    previews: Mutex<Vec<preview::Pane>>,
     painted_media: Mutex<Vec<MediaPane>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
@@ -320,6 +325,20 @@ fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[med
                 path: media.path.clone(),
                 page: media.page,
                 body: pane.body,
+            })
+        })
+        .collect();
+    *bridge.previews.lock().unwrap() = snapshot
+        .editor
+        .panes
+        .iter()
+        .filter_map(|pane| {
+            (pane.drawable).then_some(())?;
+            Some(preview::Pane {
+                pane: pane.pane_id,
+                active: pane.active,
+                body: pane.body,
+                document: pane.preview.clone()?,
             })
         })
         .collect();
@@ -492,6 +511,7 @@ impl Surface {
                     id: *bridge.prepared.lock().unwrap(),
                     cells: terminal.backend().snapshot(),
                     media: bridge.media.lock().unwrap().clone(),
+                    previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
                     metadata_paths: bridge.metadata_paths.lock().unwrap().clone(),
@@ -644,6 +664,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::R
         presented: Mutex::new(None),
         frame: Mutex::new(None),
         media: Mutex::new(Vec::new()),
+        previews: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
@@ -737,6 +758,7 @@ struct NativeView {
     frame: Option<std::rc::Rc<FrameData>>,
     glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
+    previews: preview::Views,
     composition: String,
     scroll: ScrollAccumulator,
     image_clipboard: Option<arboard::Clipboard>,
@@ -787,7 +809,7 @@ impl NativeView {
                             }
                             view.frame = Some(std::rc::Rc::new(frame));
                         }
-                        let loaded = view.media.poll(&view.bridge);
+                        let loaded = view.media.poll(&view.bridge) | view.previews.poll();
                         view.apply_media_requests(cx);
                         if changed || loaded || view.bridge.input.overflowed() {
                             cx.notify();
@@ -806,6 +828,7 @@ impl NativeView {
             frame_metrics: CellMetrics::new(font_size),
             geometry_requests,
             media: media::Loader::new(bridge.clone()),
+            previews: preview::Views::default(),
             bridge,
             focus,
             frame,
@@ -912,7 +935,7 @@ impl Render for NativeView {
             *self.bridge.dimensions.lock().unwrap() = dimensions;
             self.send(Event::Resize(dimensions.0, dimensions.1));
         }
-        let frame = self.frame.clone();
+        let frame = self.prepare_previews(window);
         let glyphs = self.glyphs.clone();
         let (background, foreground) = frame
             .as_ref()
@@ -930,7 +953,7 @@ impl Render for NativeView {
                 if view.composition.is_empty()
                     && let Some(mut key) = translate_key(&event.keystroke)
                 {
-                    if view.window_shortcut(key, cx) {
+                    if view.preview_key(key, cx) || view.window_shortcut(key, cx) {
                         cx.stop_propagation();
                         return;
                     }
@@ -944,7 +967,9 @@ impl Render for NativeView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|view, event: &MouseDownEvent, _, cx| {
-                    if view.media_mouse_down(event, cx) {
+                    if view.preview_pointer(event.position, 0, cx)
+                        || view.media_mouse_down(event, cx)
+                    {
                         return;
                     }
                     view.send(mouse_event(
@@ -958,7 +983,9 @@ impl Render for NativeView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|view, event: &MouseUpEvent, _, cx| {
-                    if view.media_mouse_up(event.position, cx) {
+                    if view.preview_pointer(event.position, 2, cx)
+                        || view.media_mouse_up(event.position, cx)
+                    {
                         return;
                     }
                     view.send(mouse_event(
@@ -970,7 +997,7 @@ impl Render for NativeView {
                 }),
             )
             .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
-                if view.media_mouse_move(event, cx) {
+                if view.preview_pointer(event.position, 1, cx) || view.media_mouse_move(event, cx) {
                     return;
                 }
                 if event.pressed_button == Some(MouseButton::Left) {
@@ -983,7 +1010,7 @@ impl Render for NativeView {
                 }
             }))
             .on_scroll_wheel(cx.listener(|view, event: &ScrollWheelEvent, _, cx| {
-                if view.media_scroll(event, cx) {
+                if view.preview_scroll(event, cx) || view.media_scroll(event, cx) {
                     return;
                 }
                 if matches!(event.touch_phase, TouchPhase::Started) {
@@ -1186,6 +1213,9 @@ impl Render for NativeView {
                 };
                 root = root.child(layer);
             }
+        }
+        if let Some(frame) = &frame {
+            root = self.preview_layers(frame, root, &mut painted_images);
         }
         self.media.end_frame();
         for (key, view) in &mut self.viewports {

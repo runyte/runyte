@@ -118,6 +118,7 @@ impl Coverage {
                 .media
                 .iter()
                 .map(|pane| (&pane.body, true))
+                .chain(frame.previews.iter().map(|pane| (&pane.body, true)))
                 .chain(frame.overlays.iter().map(|rect| (rect, false)))
             {
                 if y >= rect.y && y < rect.y.saturating_add(rect.height) {
@@ -363,7 +364,9 @@ fn media_row(frame: &FrameData, y: u16) -> bool {
     frame
         .media
         .iter()
-        .any(|pane| y >= pane.body.y && y < pane.body.y.saturating_add(pane.body.height))
+        .map(|p| p.body)
+        .chain(frame.previews.iter().map(|p| p.body))
+        .any(|body| y >= body.y && y < body.y.saturating_add(body.height))
 }
 
 struct PaintedCell {
@@ -466,6 +469,7 @@ mod tests {
             foreground: super::super::FALLBACK_FOREGROUND,
             id: None,
             cells: Buffer::empty(Rect::new(0, 0, 8, 2)).into(),
+            previews: vec![],
             media: vec![],
             cursor: None,
             overlays: vec![],

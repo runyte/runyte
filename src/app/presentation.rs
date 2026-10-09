@@ -1117,6 +1117,78 @@ impl App {
         self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
     }
 
+    /// Capture selected text, or the complete buffer, for the native preview.
+    pub(super) fn preview_document(&mut self) {
+        if !self.native_media {
+            self.action_failed(":preview requires the native window (--window)");
+            return;
+        }
+        let source = self.active().buffer;
+        if self.active().terminal.is_some() || self.buffers[source].media_path.is_some() {
+            self.action_failed(":preview requires a text buffer");
+            return;
+        }
+        let spans = self
+            .operative_spans()
+            .into_iter()
+            .zip(self.active().selection.ranges())
+            .filter_map(|(span, range)| (!range.is_empty()).then_some(span))
+            .collect::<Vec<_>>();
+        let (text, selection_only) =
+            match crate::document_preview::capture(&self.buffers[source], &spans) {
+                Ok(capture) => capture,
+                Err(error) => {
+                    self.action_failed(error);
+                    return;
+                }
+            };
+        let mut language = super::buffer_language(&self.buffers[source], &self.registry)
+            .map(|id| self.registry.language_name(id).to_owned())
+            .unwrap_or_else(|| {
+                if self.scratch_reads_as_markdown(source) {
+                    "markdown"
+                } else {
+                    "text"
+                }
+                .into()
+            });
+        if language == "xml"
+            && self.buffers[source]
+                .path
+                .as_ref()
+                .is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")))
+        {
+            language = "svg".into();
+        }
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        // Retain at most eight captures; engine state belongs exclusively to the frontend.
+        if self.document_previews.len() >= 8
+            && !self.document_previews.contains_key(&self.active_pane)
+            && let Some(oldest) = self
+                .document_previews
+                .iter()
+                .min_by_key(|(_, p)| p.generation)
+                .map(|(id, _)| *id)
+        {
+            self.document_previews.remove(&oldest);
+        }
+        self.document_previews.insert(
+            self.active_pane,
+            crate::document_preview::DocumentPreview {
+                generation: self.preview_generation,
+                source,
+                text,
+                selection_only,
+                language,
+                path: self.buffers[source].path.clone(),
+            },
+        );
+        self.visible_pane_snapshots.borrow_mut().clear();
+        self.status(
+            "Preview: Escape returns to source; drag selects; Ctrl-Shift-c copies; wheel scrolls",
+        );
+    }
+
     /// Shows the active Markdown document as formatted text, or returns from
     /// such a page to the document it was rendered from.
     ///

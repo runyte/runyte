@@ -6565,6 +6565,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            preview: None,
             media: None,
             pane_id: 0,
             area: Rect {
@@ -6634,6 +6635,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            preview: None,
             media: None,
             pane_id: 0,
             area: Rect {
@@ -6720,6 +6722,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            preview: None,
             media: None,
             pane_id: 0,
             area: Rect {
@@ -6808,6 +6811,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            preview: None,
             media: None,
             pane_id: 0,
             area: Rect {
@@ -6881,6 +6885,7 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            preview: None,
             media: None,
             pane_id: 0,
             area: Rect {

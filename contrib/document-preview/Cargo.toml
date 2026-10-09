@@ -1,0 +1,24 @@
+[package]
+name = "runyte-preview-helper"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false, features = ["system-fonts", "svg"] }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
+blitz-paint = { features = ["svg"], git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
+anyrender = "0.14"
+anyrender_vello_cpu = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pulldown-cmark = "0.13"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+roxmltree = "0.20"
+markup5ever = "0.40"
+taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "2d936b7701f64b0fe95e50f1bfdcfc65a9f88f6f", default-features = false }
+[workspace]
+
+[dependencies.image]
+version = "0.25"
+default-features = false
+features = ["png", "jpeg", "webp"]

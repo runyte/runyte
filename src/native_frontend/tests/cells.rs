@@ -10,6 +10,7 @@ fn frame() -> FrameData {
         foreground: 0xdddddd,
         id: None,
         cells: Buffer::empty(Rect::new(0, 0, 8, 2)).into(),
+        previews: Vec::new(),
         media: vec![],
         cursor: None,
         overlays: vec![],
@@ -121,4 +122,39 @@ fn prepared_wide_and_hidden_cells_preserve_logical_advance_and_styles() {
     let mut expected = color(Color::Blue, 0);
     expected.l *= 0.65;
     assert_eq!(row.cells[1].fg, expected);
+}
+
+#[test]
+fn document_preview_hides_source_cells_but_preserves_overlay_cells() {
+    let mut frame = frame();
+    frame.previews.push(super::super::preview::Pane {
+        pane: 1,
+        active: true,
+        body: runyte::layout::Rect {
+            x: 1,
+            y: 0,
+            width: 6,
+            height: 2,
+        },
+        document: runyte::document_preview::DocumentPreview {
+            generation: 1,
+            source: 0,
+            text: "hello".into(),
+            language: "text".into(),
+            path: None,
+            selection_only: false,
+        },
+    });
+    frame.overlays.push(runyte::layout::Rect {
+        x: 3,
+        y: 0,
+        width: 2,
+        height: 1,
+    });
+    let covered = super::Coverage::row(&frame, 0);
+    assert!(covered.hides(1));
+    assert!(!covered.hides(3));
+    assert!(!covered.hides(0));
+    assert!(frame.under_media(1, 0));
+    assert!(!frame.under_media(3, 0));
 }

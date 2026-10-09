@@ -1004,6 +1004,7 @@ mod tests {
                 terminal_theme_colors: true,
                 mode: Mode::Normal,
                 panes: vec![PaneSnapshot {
+                    preview: None,
                     media: None,
                     pane_id: 1,
                     area: Rect::default(),
@@ -1717,6 +1718,7 @@ impl TryFrom<MediaSnapshot> for core::MediaSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    pub preview: Option<DocumentPreview>,
     pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
     pub area: Rect,
@@ -1944,6 +1946,7 @@ impl From<TerminalView> for crate::terminal::TerminalView {
 impl From<core::PaneSnapshot> for PaneSnapshot {
     fn from(value: core::PaneSnapshot) -> Self {
         Self {
+            preview: value.preview.map(Into::into),
             media: value.media.map(Into::into),
             pane_id: value.pane_id,
             area: value.area.into(),
@@ -1974,6 +1977,7 @@ impl TryFrom<PaneSnapshot> for core::PaneSnapshot {
     type Error = String;
     fn try_from(value: PaneSnapshot) -> Result<Self, Self::Error> {
         Ok(Self {
+            preview: value.preview.map(TryInto::try_into).transpose()?,
             media: value.media.map(TryInto::try_into).transpose()?,
             pane_id: value.pane_id,
             area: value.area.into(),
@@ -2535,5 +2539,50 @@ impl From<Color> for CoreColor {
             Color::DarkGray => Self::DarkGray,
             Color::Rgb(r, g, b) => Self::Rgb(r, g, b),
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DocumentPreview {
+    generation: u64,
+    source: usize,
+    selection_only: bool,
+    text: String,
+    language: String,
+    path: Option<Vec<u8>>,
+}
+impl From<crate::document_preview::DocumentPreview> for DocumentPreview {
+    fn from(p: crate::document_preview::DocumentPreview) -> Self {
+        Self {
+            generation: p.generation,
+            source: p.source,
+            selection_only: p.selection_only,
+            text: p.text,
+            language: p.language,
+            path: p.path.map(|p| encode_path(&p)),
+        }
+    }
+}
+impl TryFrom<DocumentPreview> for crate::document_preview::DocumentPreview {
+    type Error = String;
+    fn try_from(p: DocumentPreview) -> Result<Self, String> {
+        if p.text.len() > crate::document_preview::MAX_BYTES || p.language.len() > 64 {
+            return Err("preview capture exceeds limit".into());
+        }
+        let path = p
+            .path
+            .map(|p| {
+                super::validate_path_bytes(&p)?;
+                decode_path(p).map_err(|e| e.to_string())
+            })
+            .transpose()?;
+        Ok(Self {
+            generation: p.generation,
+            source: p.source,
+            selection_only: p.selection_only,
+            text: p.text,
+            language: p.language,
+            path,
+        })
     }
 }

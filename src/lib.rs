@@ -99,3 +99,5 @@ pub mod wrap;
 
 /// Experimental extension wire contract and process service.
 pub mod plugin;
+
+pub mod document_preview;
