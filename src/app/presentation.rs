@@ -1117,6 +1117,20 @@ impl App {
         self.generated_highlights_revision = self.generated_highlights_revision.wrapping_add(1);
     }
 
+    /// Dismiss only the capture the frontend actually displayed.
+    pub fn dismiss_document_preview(&mut self, pane: usize, generation: u64) -> bool {
+        if !self
+            .document_previews
+            .get(&pane)
+            .is_some_and(|capture| capture.generation == generation)
+        {
+            return false;
+        }
+        self.document_previews.remove(&pane);
+        self.visible_pane_snapshots.borrow_mut().clear();
+        true
+    }
+
     /// Capture selected text, or the complete buffer, for the native preview.
     pub(super) fn preview_document(&mut self) {
         if !self.native_media {

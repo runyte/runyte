@@ -10,6 +10,11 @@ export RUNYTE_PREVIEW_HELPER="$PWD/contrib/document-preview/target/release/runyt
 ./target/debug/runyte --window --editor contrib/document-preview/fixtures/markdown.md
 ```
 
+The dismissal fix uses private client/host protocol 77. Before upgrading an
+existing persistent session, save work and stop it using its compatible client,
+then relaunch with the rebuilt binary. Restarting only the window is insufficient
+when its host still runs the old binary.
+
 The helper can alternatively be installed beside the Runyte executable as
 `runyte-preview-helper`. It has its own locked dependency graph; default and
 native Runyte builds do not link Blitz. No browser installation is needed.
@@ -52,9 +57,11 @@ by its XML root, including when selected inside Markdown or a source file.
 - A new split shows the source; `:preview` opts that pane in independently.
   Closing or switching away releases the frontend view. At most eight captures
   remain in the host; returning to the same source in the same pane can reopen
-  that captured version unless it was dismissed (the frontend remembers eight
-  dismissals). A new native attachment can reopen the capture with fresh scroll
-  and selection. The terminal frontend shows the source and explains that `:preview`
+  that captured version unless it was dismissed. `q`, Escape and editing-key exits
+  remove the matching capture from the host, so dismissal survives workspace
+  switches and frontend reattachment. A new native attachment can reopen an
+  undismissed capture with fresh scroll and selection. The terminal frontend
+  shows the source and explains that `:preview`
   requires `--window`. Captures are host memory, not saved persistent state.
 
 `?`, `:render`, and `:markdown` retain their existing generated-text behavior.

@@ -872,6 +872,8 @@ impl NativeView {
             return true;
         }
         if key.code == KeyCode::Esc || navigation == Some(Navigation::Back) {
+            self.bridge
+                .dismiss_preview(frame.attachment, pane.pane, pane.document.generation);
             state.cancel();
             state.hidden = true;
             state.cache = None;
@@ -913,6 +915,8 @@ impl NativeView {
         if !matches!(key.code, KeyCode::Char(':' | ' '))
             && !(key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL))
         {
+            self.bridge
+                .dismiss_preview(frame.attachment, pane.pane, pane.document.generation);
             state.cancel();
             state.hidden = true;
             state.cache = None;

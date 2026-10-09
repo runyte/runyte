@@ -137,3 +137,48 @@ fn preview_selection_matches_yank_inclusive_and_pointer_half_open_semantics() {
     assert_eq!(app.buffers.len(), buffer_count);
     assert_eq!(app.document_previews.len(), 2);
 }
+
+#[test]
+fn dismissing_a_preview_removes_host_capture_without_changing_source() {
+    let root = TestRuntimeRoot::new("preview-dismiss").unwrap();
+    let path = root.join("notes.md");
+    fs::write(&path, "# Source\n").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path).unwrap();
+    press(&mut app, 'i');
+    press(&mut app, 'X');
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    let pane = app.active_pane;
+    let source = app.active().buffer;
+    let text = app.active_buffer().to_string();
+    let selection = app.active().selection.clone();
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    let first = app.document_previews[&pane].generation;
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    let current = app.document_previews[&pane].generation;
+    assert!(
+        !app.dismiss_document_preview(pane, first),
+        "a stale frontend cannot dismiss a refreshed capture"
+    );
+    assert!(!app.dismiss_document_preview(usize::MAX, current));
+    assert!(app.dismiss_document_preview(pane, current));
+    assert!(
+        !app.dismiss_document_preview(pane, current),
+        "dismissal is idempotent"
+    );
+    // Reattaching a native frontend uses this same retained host state.
+    app.native_media = false;
+    app.native_media = true;
+    assert!(app.document_previews.is_empty());
+    assert_eq!(app.active().buffer, source);
+    assert_eq!(app.active_buffer().to_string(), text);
+    assert_eq!(app.active().selection, selection);
+    assert!(app.active_buffer().dirty);
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    assert!(app.document_previews[&pane].generation > current);
+    assert!(!app.dismiss_document_preview(pane, current));
+}

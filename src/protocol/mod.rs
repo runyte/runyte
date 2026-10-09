@@ -203,7 +203,9 @@ use crate::workspace::{
 // Version 74 adds native media attachment capabilities, pane metadata, media
 // actions and requests, and cross-platform paint acknowledgements.
 // Version 75 adds zoom-aware vertical PDF media actions.
-pub const VERSION: u32 = 76;
+// Version 76 adds native document preview captures.
+// Version 77 adds generation-checked dismissal of those captures.
+pub const VERSION: u32 = 77;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -482,6 +484,10 @@ pub enum ClientRequest {
         pane: usize,
         path: Vec<u8>,
         page: usize,
+    },
+    DismissDocumentPreview {
+        pane: usize,
+        generation: u64,
     },
     MediaPages {
         path: Vec<u8>,
@@ -809,6 +815,7 @@ impl ClientRequest {
                 validate_path_bytes(path)?;
                 require((1..=10_000).contains(page), "invalid media page")
             }
+            Self::DismissDocumentPreview { .. } => Ok(()),
             Self::MediaPages { path, pages } => {
                 validate_path_bytes(path)?;
                 require((1..=10_000).contains(pages), "invalid media page count")
@@ -1547,7 +1554,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 76);
+        assert_eq!(VERSION, 77);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

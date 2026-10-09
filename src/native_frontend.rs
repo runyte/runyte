@@ -203,6 +203,7 @@ struct Bridge {
     media_requests: Mutex<std::collections::VecDeque<PendingMediaRequest>>,
     media_pointer: Mutex<Vec<(u64, usize, PathBuf, i32)>>,
     media_back: Mutex<Vec<(u64, usize, PathBuf, usize)>>,
+    preview_dismissals: Mutex<Vec<(u64, usize, u64)>>,
     dimensions: Mutex<(u16, u16)>,
     input: input_queue::Sender,
     receiver: Mutex<Option<input_queue::Receiver>>,
@@ -213,6 +214,16 @@ struct Bridge {
     wakes: async_channel::Receiver<()>,
 }
 impl Bridge {
+    fn dismiss_preview(&self, attachment: u64, pane: usize, generation: u64) {
+        let mut pending = self.preview_dismissals.lock().unwrap();
+        if pending.len() < 256 {
+            pending.push((attachment, pane, generation));
+        }
+        drop(pending);
+        // Wake the editor loop, which drains lifecycle requests before subsequent input.
+        let (width, height) = *self.dimensions.lock().unwrap();
+        self.send(Event::Resize(width, height));
+    }
     fn send(&self, event: Event) {
         let input = NativeInput {
             attachment: self.painted_attachment.load(Ordering::Acquire),
@@ -235,6 +246,11 @@ pub fn take_close_request() -> bool {
 
 pub fn update_media(app: &mut runyte::app::App) {
     let Some(bridge) = BRIDGE.get() else { return };
+    for (attachment, pane, generation) in bridge.preview_dismissals.lock().unwrap().drain(..) {
+        if attachment == bridge.attachment.load(Ordering::Acquire) {
+            app.dismiss_document_preview(pane, generation);
+        }
+    }
     for (attachment, pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
         if attachment != bridge.attachment.load(Ordering::Acquire) {
             continue;
@@ -354,6 +370,12 @@ pub fn attached_media_requests(
         return Vec::new();
     };
     let mut requests = Vec::new();
+    for (attachment, pane, generation) in bridge.preview_dismissals.lock().unwrap().drain(..) {
+        if attachment == bridge.attachment.load(Ordering::Acquire) {
+            requests.push(ClientRequest::DismissDocumentPreview { pane, generation });
+        }
+    }
+
     for (attachment, pane, path, page) in bridge.media_back.lock().unwrap().drain(..) {
         if attachment != bridge.attachment.load(Ordering::Acquire) {
             continue;
@@ -402,6 +424,7 @@ pub fn begin_attachment() {
     bridge.media_requests.lock().unwrap().clear();
     bridge.media_pointer.lock().unwrap().clear();
     bridge.media_back.lock().unwrap().clear();
+    bridge.preview_dismissals.lock().unwrap().clear();
     bridge.media.lock().unwrap().clear();
     bridge.painted_media.lock().unwrap().clear();
     *bridge.presented.lock().unwrap() = None;
@@ -674,6 +697,7 @@ pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::R
         media_requests: Mutex::new(Default::default()),
         media_pointer: Mutex::new(Vec::new()),
         media_back: Mutex::new(Vec::new()),
+        preview_dismissals: Mutex::new(Vec::new()),
         dimensions: Mutex::new((120, 40)),
         input,
         receiver: Mutex::new(Some(receiver)),
