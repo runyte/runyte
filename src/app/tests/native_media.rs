@@ -116,6 +116,113 @@ fn native_startup_preserves_first_target_and_first_explicit_position() {
     assert_eq!(app.active().cursor(app.active_buffer()).row, 1);
 }
 
+#[test]
+fn native_startup_restores_first_directory_after_retargeting() {
+    let root = TestRuntimeRoot::new("media-launch-directories").unwrap();
+    let first = root.join("first");
+    let second = root.join("second");
+    fs::create_dir(&first).unwrap();
+    fs::create_dir(&second).unwrap();
+    for name in ["a", "b", "c"] {
+        fs::write(first.join(name), "").unwrap();
+    }
+    let text = root.join("notes.txt");
+    fs::write(&text, "notes").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_native_targets(vec![
+        LaunchTarget::at(
+            &first,
+            LaunchPosition {
+                line: std::num::NonZeroUsize::new(2).unwrap(),
+                column: None,
+            },
+        ),
+        LaunchTarget::new(&second),
+        LaunchTarget::new(&text),
+    ])
+    .unwrap();
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&first));
+    assert_eq!(app.cursor_position().row, 1);
+    assert!(
+        app.buffers
+            .iter()
+            .any(|buffer| buffer.path.as_ref() == Some(&text))
+    );
+}
+
+#[test]
+fn native_pdf_launch_positions_wait_for_metadata_and_apply_once() {
+    for (line, pages, expected) in [(2, 4, 1), (20, 4, 3), (2, 1, 0)] {
+        let root = TestRuntimeRoot::new("media-launch-pages").unwrap();
+        let path = root.join("pages.PDF");
+        fs::write(&path, b"%PDF fixture").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_native_targets(vec![LaunchTarget::at(
+            &path,
+            LaunchPosition {
+                line: std::num::NonZeroUsize::new(line).unwrap(),
+                column: None,
+            },
+        )])
+        .unwrap();
+        let id = app.active().buffer;
+        assert!(app.launch_positions.contains_key(&id));
+        app.update_native_media_pages(&path, 0);
+        assert!(app.launch_positions.contains_key(&id));
+        app.update_native_media_pages(&path, pages);
+        assert_eq!(app.cursor_position().row, expected);
+        assert!(!app.launch_positions.contains_key(&id));
+        app.active_mut().replace_selection(Selection::point(0));
+        app.update_native_media_pages(&path, pages + 1);
+        assert_eq!(app.cursor_position().row, 0);
+    }
+}
+
+#[test]
+fn native_background_pdf_launch_position_survives_switches_before_metadata() {
+    for reopen in [false, true] {
+        let root = TestRuntimeRoot::new("media-background-launch-pages").unwrap();
+        let text = root.join("notes.txt");
+        let path = root.join("pages.pdf");
+        fs::write(&text, "notes").unwrap();
+        fs::write(&path, b"%PDF fixture").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_native_targets(vec![
+            LaunchTarget::new(&text),
+            LaunchTarget::at(
+                &path,
+                LaunchPosition {
+                    line: std::num::NonZeroUsize::new(3).unwrap(),
+                    column: None,
+                },
+            ),
+        ])
+        .unwrap();
+        let text_id = app.active().buffer;
+        let pdf = app
+            .buffers
+            .iter()
+            .position(|buffer| buffer.media_path.as_ref() == Some(&path))
+            .unwrap();
+        app.switch_buffer(pdf);
+        assert!(app.launch_positions.contains_key(&pdf));
+        app.open_file(text.clone()).unwrap();
+        app.update_native_media_pages(&path, 4);
+        assert_eq!(app.active().buffer, text_id);
+        assert_eq!(app.cursor_position().row, 0);
+        if reopen {
+            app.open_file(path.clone()).unwrap();
+        } else {
+            app.switch_buffer(pdf);
+        }
+        assert_eq!(app.cursor_position().row, 2);
+        assert!(!app.launch_positions.contains_key(&pdf));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn native_media_refuses_fifo_without_reading_it() {

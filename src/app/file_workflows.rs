@@ -976,11 +976,24 @@ impl App {
         for target in unique {
             self.open_native_target(target)?;
             if first.is_none() {
-                first = Some((self.active().buffer, self.active().selection.clone()));
+                first = Some((
+                    self.active().buffer,
+                    self.active().selection.clone(),
+                    self.active_buffer()
+                        .is_directory()
+                        .then(|| self.active_buffer().path.clone())
+                        .flatten(),
+                ));
             }
         }
-        if let Some((buffer, selection)) = first {
-            self.switch_buffer(buffer);
+        if let Some((buffer, selection, directory)) = first {
+            // Later directories retarget the pane's explorer in place, so its
+            // buffer ID alone no longer identifies the first destination.
+            if let Some(path) = directory {
+                self.open_file(path)?;
+            } else {
+                self.switch_buffer(buffer);
+            }
             self.active_mut().replace_selection(selection);
         }
         Ok(())
@@ -1664,10 +1677,12 @@ impl App {
             self.buffers[buffer_id].generated_view_identity(),
             Some(crate::buffer::GeneratedViewIdentity::Plugin { .. })
         );
-        let saved_position = self.active().saved_view_positions.get(&buffer_id).cloned();
-        let selection = self
-            .take_pending_launch_selection(buffer_id)
-            .unwrap_or_else(|| Selection::point(0));
+        let launch_selection = self.take_pending_launch_selection(buffer_id);
+        let saved_position = launch_selection
+            .is_none()
+            .then(|| self.active().saved_view_positions.get(&buffer_id).cloned())
+            .flatten();
+        let selection = launch_selection.unwrap_or_else(|| Selection::point(0));
         let pane = self.active_mut();
         pane.retarget(buffer_id);
         pane.directory_buffer = explorer;
@@ -3464,6 +3479,23 @@ impl App {
             changed.push(id);
         }
         for id in changed {
+            // Only consume a launch position when a pane can display it. A
+            // background PDF keeps it for the next activation instead.
+            if self.panes.values().any(|pane| pane.buffer == id)
+                && let Some(selection) = self.take_pending_launch_selection(id)
+            {
+                for pane in self.panes.values_mut() {
+                    if pane.buffer == id {
+                        pane.replace_selection(selection.clone());
+                    }
+                    if let Some(saved) = pane.saved_view_positions.get_mut(&id) {
+                        *saved = super::view_position::ViewPosition {
+                            selection: selection.clone(),
+                            ..saved.clone()
+                        };
+                    }
+                }
+            }
             self.normalize_buffer(id);
         }
     }

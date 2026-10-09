@@ -123,6 +123,17 @@ impl App {
     }
 
     pub(super) fn take_pending_launch_selection(&mut self, buffer: usize) -> Option<Selection> {
+        let document = &self.buffers[buffer];
+        if document.media_path.as_ref().is_some_and(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        }) && document.text().len_lines() == 1
+            && document.text().line_string(0) == "Page 1"
+        {
+            // The initial PDF projection has no page count yet. Clamping here
+            // would discard any requested page beyond the placeholder.
+            return None;
+        }
         let position = self.launch_positions.remove(&buffer)?;
         Some(selection_for_launch_position(
             &self.buffers[buffer],
