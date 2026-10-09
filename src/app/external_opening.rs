@@ -15,6 +15,8 @@ pub(super) enum Intent {
 pub(super) struct Pending {
     intent: Intent,
     ticket: LaunchTicket,
+    /// The action whose interaction-line echo reports this launch.
+    action: Option<u64>,
 }
 
 impl App {
@@ -29,12 +31,16 @@ impl App {
             Intent::Program { path, program } => (self.ports.program_opener)(program, path),
         };
         match result {
-            Ok(Dispatch::Accepted) => self.finish_external_open(intent, Ok(())),
+            Ok(Dispatch::Accepted) => self.finish_external_open(intent, Ok(()), None),
             Ok(Dispatch::Pending(ticket)) => {
-                self.pending_external_opens.push(Pending { intent, ticket });
+                self.pending_external_opens.push(Pending {
+                    intent,
+                    ticket,
+                    action: self.active_action_id,
+                });
                 self.status("Opening external application…");
             }
-            Err(error) => self.finish_external_open(intent, Err(error)),
+            Err(error) => self.finish_external_open(intent, Err(error), None),
         }
     }
 
@@ -47,7 +53,7 @@ impl App {
         while index < self.pending_external_opens.len() {
             if let Some(result) = self.pending_external_opens[index].ticket.poll(now) {
                 let pending = self.pending_external_opens.remove(index);
-                self.finish_external_open(pending.intent, result);
+                self.finish_external_open(pending.intent, result, pending.action);
                 changed = true;
             } else {
                 index += 1;
@@ -56,8 +62,11 @@ impl App {
         changed
     }
 
-    fn finish_external_open(&mut self, intent: Intent, result: Result<()>) {
+    /// A launch that completes later also finishes the echo of the action
+    /// that requested it, which until now could only say it was pending.
+    fn finish_external_open(&mut self, intent: Intent, result: Result<()>, action: Option<u64>) {
         if let Err(error) = result {
+            self.mark_action_feedback_failed(action, &error.to_string());
             let (source, title) = match intent {
                 Intent::Browser(_) => ("Browser", "Browser launch failed"),
                 Intent::Directory(_) => ("File manager", "System file manager launch failed"),
@@ -88,5 +97,7 @@ impl App {
                 }
             }
         }
+        let status = self.status.clone();
+        self.update_action_feedback(action, &status);
     }
 }

@@ -738,7 +738,9 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
   their frozen text. Supported wrapped terminal URLs resolve from any of their
   rows. This gesture, including its drag and release, is never sent to the child.
   Extra modifiers retain their ordinary mouse behavior; prompts and overlays
-  keep ownership of input.
+  keep ownership of input. The interaction line names the gesture and its
+  result, such as
+  `Ctrl-left-click (opened https://example.com in the default browser)`.
 - **Terminal panes.** A click focuses a live terminal in Insert mode; a
   reviewed terminal stays in Normal/review until a terminal insert key returns
   to the live screen. A left drag in review selects cells and enters Select

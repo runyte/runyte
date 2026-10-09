@@ -397,3 +397,97 @@ fn native_link_click_reports_open_failures_and_runs_buffer_lifecycle() {
     assert_eq!(app.unread_notification_counts().errors, 1);
     assert!(app.status.contains("test browser unavailable"));
 }
+
+fn link_spelling() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd-left-click"
+    } else {
+        "Ctrl-left-click"
+    }
+}
+
+#[test]
+fn native_link_click_echoes_gesture_and_outcome_on_the_interaction_line() {
+    let (root, mut app, opened) = fixture();
+    let target = root.join("target.txt");
+    fs::write(&target, "target").unwrap();
+    let source = root.join("links.txt");
+    fs::write(&source, "https://example.com/echo\ntarget.txt\n").unwrap();
+    app.open_file(source.clone()).unwrap();
+    let view = app.prepare_view(geometry(80));
+    let (column, row) = text_cell(&app, &view, app.active_pane, 3);
+    click(&mut app, &view, column, row);
+    assert_eq!(*opened.lock().unwrap(), ["https://example.com/echo"]);
+    assert_eq!(
+        app.displayed_status_message(),
+        format!(
+            "{} (opened https://example.com/echo in the default browser)",
+            link_spelling()
+        )
+    );
+    assert!(!app.displayed_status_message_is_error());
+
+    // A click that reaches no pane is not a link action and keeps the echo.
+    click(&mut app, &view, 0, 11);
+    assert!(app.displayed_status_message().contains("example.com/echo"));
+
+    let (column, row) = text_cell(&app, &view, app.active_pane, 26);
+    click(&mut app, &view, column, row);
+    assert_eq!(app.active_buffer().path.as_ref(), Some(&target));
+    // The echo names the opened path; Windows may spell it canonically.
+    let echo = app.displayed_status_message();
+    assert!(echo.starts_with(&format!("{} (opened ", link_spelling())));
+    assert!(echo.ends_with("target.txt)"));
+
+    app.open_file(source).unwrap();
+    app.ports.browser = Box::new(|_| bail!("test browser unavailable"));
+    let view = app.prepare_view(geometry(80));
+    let (column, row) = text_cell(&app, &view, app.active_pane, 3);
+    click(&mut app, &view, column, row);
+    assert!(app.displayed_status_message().starts_with(link_spelling()));
+    assert!(
+        app.displayed_status_message()
+            .contains("test browser unavailable")
+    );
+    assert!(app.displayed_status_message_is_error());
+}
+
+#[test]
+fn native_link_click_echo_follows_a_pending_browser_launch_to_completion() {
+    let (root, mut app, _) = fixture();
+    let source = root.join("links.txt");
+    fs::write(&source, "https://example.com/pending\n").unwrap();
+    app.open_file(source).unwrap();
+    let view = app.prepare_view(geometry(80));
+    let (column, row) = text_cell(&app, &view, app.active_pane, 3);
+    for outcome in [Ok(()), Err(anyhow::anyhow!("browser refused"))] {
+        let now = Instant::now();
+        let (sender, ticket) = external_open::LaunchTicket::channel(now + Duration::from_secs(5));
+        let ticket = Mutex::new(Some(ticket));
+        app.ports.browser = Box::new(move |_| {
+            Ok(external_open::Dispatch::Pending(
+                ticket.lock().unwrap().take().unwrap(),
+            ))
+        });
+        click(&mut app, &view, column, row);
+        assert_eq!(
+            app.displayed_status_message(),
+            format!("{} (Opening external application…)", link_spelling())
+        );
+        let failed = outcome.is_err();
+        sender.send(outcome).unwrap();
+        assert!(app.poll_external_opens(now));
+        if failed {
+            assert!(app.displayed_status_message().contains("browser refused"));
+            assert!(app.displayed_status_message_is_error());
+        } else {
+            assert_eq!(
+                app.displayed_status_message(),
+                format!(
+                    "{} (opened https://example.com/pending in the default browser)",
+                    link_spelling()
+                )
+            );
+        }
+    }
+}

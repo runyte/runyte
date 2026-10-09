@@ -1075,11 +1075,34 @@ impl App {
             self.grammar.reset();
             self.jump = None;
             self.status_error = false;
-            if let Err(error) = self.open_pointer_link(event, view) {
+            // A followed link is a completed action like `gf`, so it gets its
+            // own echo identity: a browser launch that finishes later updates
+            // this click's interaction line rather than an older key's.
+            let previous_action = self.active_action_id;
+            self.active_action_id = Some(self.next_action_id);
+            self.next_action_id = self.next_action_id.wrapping_add(1).max(1);
+            let state = CommandState::capture(self);
+            let attempted = self.open_pointer_link(event, view).unwrap_or_else(|error| {
                 // Navigation can fail after moving focus; publish that state
                 // and its error just as a directory-tree double click does.
                 self.action_failed(error.to_string());
+                true
+            });
+            if attempted {
+                let outcome = state.outcome(self, CommandOutcomeHint::Infer);
+                let spelling = if cfg!(target_os = "macos") {
+                    "Cmd-left-click"
+                } else {
+                    "Ctrl-left-click"
+                };
+                self.action_feedback = None;
+                self.report_completed_action(
+                    spelling,
+                    "Open the file or web link under the pointer",
+                    outcome,
+                );
             }
+            self.active_action_id = previous_action;
             self.retire_detached_ephemeral_buffers();
             self.note_destination_activation();
             self.refresh_navigator();
@@ -1632,20 +1655,21 @@ impl App {
 
     /// Native link clicks use the same target resolver as `gf`, but always
     /// infer from the clicked character rather than an existing selection.
-    fn open_pointer_link(&mut self, event: PointerEvent, view: &PreparedView) -> Result<()> {
+    /// Returns whether the click reached text a link could be read from.
+    fn open_pointer_link(&mut self, event: PointerEvent, view: &PreparedView) -> Result<bool> {
         let Some(pane) = view
             .panes
             .iter()
             .find(|pane| pane.drawable && rect_contains(pane.body, event.column, event.row))
         else {
-            return Ok(());
+            return Ok(false);
         };
         if self.terminal_of_pane(pane.pane_id) != pane.terminal {
-            return Ok(());
+            return Ok(false);
         }
         if let Some(terminal) = pane.terminal {
             let Some(session) = self.terminals.get(terminal) else {
-                return Ok(());
+                return Ok(false);
             };
             let target = session.navigation_target_at_view_cell(
                 usize::from(pane.body.height),
@@ -1668,17 +1692,17 @@ impl App {
             if self.active_terminal().is_none() && self.mode == Mode::Insert {
                 self.enter_normal_mode();
             }
-            result
+            result.map(|()| true)
         } else {
             let Some(offset) =
                 self.pointer_text_offset(view, pane.pane_id, event.column, event.row)
             else {
-                return Ok(());
+                return Ok(false);
             };
             self.activate_pane_from_pointer(pane.pane_id);
             self.active_mut()
                 .replace_selection(Selection::point(offset));
-            self.goto_file_under_cursor()
+            self.goto_file_under_cursor().map(|()| true)
         }
     }
 

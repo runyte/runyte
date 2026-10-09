@@ -58,6 +58,19 @@ Regression coverage in `src/app/tests/pointer_links.rs`:
 `pointer_navigation_uses_scrollback_and_alternate_screen_without_entering_review`;
 its existing wrapped-link tests also cover the shared inference used by `gf`.
 
+A later fix gives a link click the action echo `gf` already had. Pointer
+input never reached `report_completed_action`, so the interaction line kept
+showing a previous key's echo. The click now takes its own action identity
+and echoes `Ctrl-left-click (…)` (`Cmd-left-click` on macOS) with the
+outcome, such as `opened <url> in the default browser`. A click that reaches
+no text leaves the echo alone. A browser launch still pending on Windows
+records that identity, so its completion or failure updates this echo, and
+the echo of a keyboard `gf`, instead of leaving `Opening external
+application…` behind. Covered by
+`native_link_click_echoes_gesture_and_outcome_on_the_interaction_line` and
+`native_link_click_echo_follows_a_pending_browser_launch_to_completion` in
+`src/app/tests/pointer_links.rs`.
+
 Known limitation: Pixel-only PDF and image previews do not expose `gf` text
 targets; their existing pixel selection and pan gestures are unchanged.
 
