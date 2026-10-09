@@ -31,12 +31,12 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: &[
-            KeyStroke::ctrl('V'),
             #[cfg(target_os = "macos")]
             KeyStroke::new(
                 crate::input::KeyCode::Char('v'),
                 crate::input::Modifiers::SUPER,
             ),
+            KeyStroke::ctrl('V'),
         ],
         description: "Paste system clipboard text at the cursor",
         action: Action::PasteText,

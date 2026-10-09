@@ -748,7 +748,12 @@ execution read the same registry. They apply while overlays or terminals own
 input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
 binding for clipboard yank in Normal/Select/Insert/Replace and Terminal Insert;
 media scopes copy the native selection. Ordinary Ctrl-c stays child input.
-On macOS, Cmd-c (`Super-c`) is also bound to clipboard yank in text and
-terminal review, and to native selection copy in media. Cmd-v (`Super-v`) is
+On macOS, Cmd-c (`Cmd-c` or `Super-c` in configuration) is also bound to clipboard yank in text and
+terminal review, and to native selection copy in media. Cmd-v (`Cmd-v` or `Super-v`) is
 an additional native-window literal-paste shortcut; Ctrl-Shift-v remains
 available. These Command aliases do not change other Command keys.
+
+Key labels use `Cmd` for the Command modifier on macOS and `Super` elsewhere.
+Both modifier spellings parse on every platform, including in configured
+bindings; they identify the same key and never translate ordinary Control keys.
+Native paste help lists Cmd-v first on macOS, followed by Ctrl-Shift-v.

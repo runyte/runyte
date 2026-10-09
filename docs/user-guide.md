@@ -850,7 +850,7 @@ under [Insert and Replace modes](#insert-and-replace-modes).
 | `Tab` | Open contextual actions for the selection or row under the caret |
 | `Ctrl-s` | Save |
 | `Ctrl-C` (Ctrl-Shift-c) | Copy the selection to the system clipboard |
-| `Super-c` (Cmd-c, macOS) | Copy the selection to the system clipboard |
+| `Cmd-c` (macOS) | Copy the selection to the system clipboard |
 | `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it; also bound in Insert mode |
 | `:` | Open the command palette |
 | `\|` | Shell pipe key (reserved; use `:pipe <shell-command>`) |
@@ -1044,7 +1044,7 @@ The keys shared by Insert and Replace modes:
 | `Ctrl-c` | Comment or uncomment the lines holding the carets |
 | `Ctrl-s` | Save |
 | `Ctrl-C` (Ctrl-Shift-c) | Copy the selection to the system clipboard |
-| `Super-c` (Cmd-c, macOS) | Copy the selection to the system clipboard |
+| `Cmd-c` (macOS) | Copy the selection to the system clipboard |
 | `Ctrl-v` / `Alt-v` | Paste the system clipboard, storing an image in the workspace and writing a numbered Markdown link to it |
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
@@ -1884,8 +1884,9 @@ Window-local font and literal-paste shortcuts are reserved frontend controls,
 listed in contextual help; they do not participate in editor key remapping.
 On macOS, Cmd-c also copies, and Cmd-v also pastes literal
 clipboard text. Ctrl-Shift-c/v remain available. The Command modifier is
-spelled `Super` in the shared key registry and configuration (`Super-c` and
-`Super-v`). Other Command shortcuts are left unchanged.
+displayed as `Cmd` in macOS help and key hints. Configuration accepts both
+`Cmd-c` and `Super-c` for the same key (and likewise for other Command keys),
+on every platform. Other Command shortcuts are left unchanged.
 Search within PDF page contents is not implemented.
 Image zoom and scanned PDF content remain limited by their
 source resolution. PDF text and vector graphics are rendered at the view

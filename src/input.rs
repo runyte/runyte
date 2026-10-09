@@ -146,7 +146,8 @@ impl KeyStroke {
         self
     }
 
-    /// The stable, frontend-independent label used by hints and help.
+    /// The frontend-independent label used by hints and help.
+    /// Command is spelled `Cmd` on macOS; both spellings parse on every platform.
     pub fn label(self) -> String {
         let modifiers = self.modifiers.label();
         let code = self.code.label();
@@ -157,7 +158,7 @@ impl KeyStroke {
         }
     }
 
-    /// Parses the stable, frontend-independent spelling emitted by
+    /// Parses the frontend-independent spelling emitted by
     /// [`Self::label`]. The spelling describes the logical key reported by a
     /// frontend, so Shift is rejected for character keys: terminals report
     /// the shifted character itself and that character is layout-dependent.
@@ -174,6 +175,7 @@ impl KeyStroke {
                 ("Ctrl-", Modifiers::CONTROL),
                 ("Alt-", Modifiers::ALT),
                 ("Super-", Modifiers::SUPER),
+                ("Cmd-", Modifiers::SUPER),
                 ("Shift-", Modifiers::SHIFT),
                 ("Hyper-", Modifiers::HYPER),
                 ("Meta-", Modifiers::META),
@@ -276,7 +278,8 @@ impl Modifiers {
         self
     }
 
-    /// The stable modifier portion of a key label, without a trailing dash.
+    /// The modifier portion of a key label, without a trailing dash.
+    /// Command uses its macOS name on macOS and `Super` elsewhere.
     pub fn label(self) -> String {
         let mut names = Vec::new();
         // Preserve the current key-hint ordering before appending the two
@@ -288,7 +291,11 @@ impl Modifiers {
             names.push("Alt");
         }
         if self.contains(Self::SUPER) {
-            names.push("Super");
+            names.push(if cfg!(target_os = "macos") {
+                "Cmd"
+            } else {
+                "Super"
+            });
         }
         if self.contains(Self::SHIFT) {
             names.push("Shift");
@@ -876,7 +883,14 @@ mod tests {
             | Modifiers::HYPER
             | Modifiers::META;
         let stroke = KeyStroke::new(KeyCode::Char('X'), modifiers);
-        assert_eq!(stroke.label(), "Ctrl-Alt-Super-Shift-Hyper-Meta-X");
+        assert_eq!(
+            stroke.label(),
+            if cfg!(target_os = "macos") {
+                "Ctrl-Alt-Cmd-Shift-Hyper-Meta-X"
+            } else {
+                "Ctrl-Alt-Super-Shift-Hyper-Meta-X"
+            }
+        );
         assert_eq!(
             format!("{:<40}", KeyStroke::ctrl('w')),
             "Ctrl-w                                  "
