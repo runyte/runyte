@@ -4162,7 +4162,8 @@ Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizonta
 The preview also uses the built-in PDF navigation keys: `j`/`k` and arrows,
 `h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1` resets).
 Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape dismisses an overlay
-first, then returns to source; `q` also returns to source.
+first, then returns to source; `q` also returns to source. A dismissed preview
+stays closed when switching workspaces or reattaching to its persistent session.
 Invoke `:preview` again to refresh. Links expose their destination without
 navigating. Scripts and network fetching are disabled. Local raster images must
 be beneath the source document's directory. Captures are limited to 128 KiB;

@@ -642,6 +642,7 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
         ClientRequest::FrameDrawn { .. } => role == ClientRole::Interactive,
         ClientRequest::MediaNavigate { .. }
         | ClientRequest::MediaBack { .. }
+        | ClientRequest::DismissDocumentPreview { .. }
         | ClientRequest::MediaPages { .. }
         | ClientRequest::Input { .. }
         | ClientRequest::Invoke { .. }
@@ -856,6 +857,19 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_dismissal_is_an_interactive_client_request() {
+        let request = ClientRequest::DismissDocumentPreview {
+            pane: 2,
+            generation: 17,
+        };
+        let bytes = serde_json::to_vec(&request).unwrap();
+        let decoded: ClientRequest = serde_json::from_slice(&bytes).unwrap();
+        assert!(decoded.validate().is_ok());
+        assert!(request_allowed_for_role(&decoded, ClientRole::Interactive));
+        assert!(!request_allowed_for_role(&decoded, ClientRole::Control));
+    }
 
     #[cfg(windows)]
     fn control_hello(project: Vec<u8>, protocol: u32) -> ClientRequest {

@@ -233,3 +233,37 @@ commands from the built-in registry follow the same route. Ordinary arrow keys
 still navigate the document. Regression coverage includes all four directions
 in `src/native_frontend/tests/preview.rs` and configured horizontal/vertical pane
 switches with return-to-preview navigation in `tests/native_window.py`.
+
+## Persistent dismissal correction
+
+Dismissal previously existed only in the frontend's bounded tombstone map.
+Workspace attachment changes reset that map while the retained host still held
+the capture, so a dismissed view reappeared on return. The native frontend now
+queues a pane/generation dismissal, wakes the editor loop, and drains the request
+before subsequent input. Standalone mode removes the capture directly;
+persistent mode sends the private `DismissDocumentPreview` request. Only the
+interactive native attachment may use it. Attachment identity prevents delivery
+to a different workspace; capture generation rejects delayed requests after a
+refresh. The source buffer and its editing state remain untouched.
+
+Private protocol version 77 requires matching client and host binaries. Existing
+sessions should be saved and stopped through a compatible client before upgrading;
+a window-only restart does not upgrade its retained host. Undismissed captures
+can still reopen on reattachment, but `q`, Escape and editing-key exits remove the
+host capture. An explicit `:preview` creates a fresh generation normally.
+
+Behavior coverage in `src/app/tests/document_preview.rs` checks retained state,
+idempotence, stale generations, missing panes, source preservation and explicit
+reopen. `src/workspace/transport_shared.rs` checks wire decoding and interactive
+role admission. `tests/native_window.py --document-preview --mux` exercises real
+workspace visits, both dismissal keys, an independent second workspace's preview,
+and explicit reopen. Runtime fixtures use isolated configuration and storage.
+
+Verification on Linux/X11 with Xvfb and lavapipe passed both the persistent
+workspace round-trip above and the standalone preview acceptance suite (including
+pane focus, scrolling, clipboard, overlays, resize, display scaling, SVG and
+selected sections). Root formatting and default/native Clippy checks passed;
+`cargo test` passed 4,695 tests and the native frontend suite passed 86, with
+55 and three ignored respectively. Canonical `cargo llvm-cov --locked --workspace`
+reported 92.05% line coverage (149,673 / 162,603), above the 89% floor.
+No macOS or Wayland runtime was tested.

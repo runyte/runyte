@@ -2995,11 +2995,14 @@ async fn run_host_server(
                                 host.app_mut().leave_native_media(pane, &decode_path(path)?, page);
                                 changed = true;
                             }
+                            ClientRequest::DismissDocumentPreview { pane, generation } if host.app().native_media => {
+                                changed |= host.app_mut().dismiss_document_preview(pane, generation);
+                            }
                             ClientRequest::MediaPages { path, pages } if host.app().native_media => {
                                 host.app_mut().update_native_media_pages(&decode_path(path)?, pages);
                                 changed = true;
                             }
-                            ClientRequest::MediaNavigate { .. } | ClientRequest::MediaBack { .. } | ClientRequest::MediaPages { .. } => {}
+                            ClientRequest::MediaNavigate { .. } | ClientRequest::MediaBack { .. } | ClientRequest::MediaPages { .. } | ClientRequest::DismissDocumentPreview { .. } => {}
                             ClientRequest::Input { event, repeated, presented_frame } => {
                                 let input: InputEvent = event.clone().into();
                                 if !host.accepts_frontend_input(&input, presented_frame.map(Into::into), frame_pending || host.finder_scan_refills() || host.plugin_presentation_pending()) { continue; }

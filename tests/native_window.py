@@ -311,6 +311,30 @@ try:
         empty=pixel(600,400)
         assert pixel(1083,400)==empty and pixel(600,803)==empty, ('margin differs from theme background', hex(empty), hex(pixel(1083,400)), hex(pixel(600,803)))
         x.XResizeWindow(d,win,geometry.width,geometry.height);x.XFlush(d);time.sleep(1)
+    if args.document_preview and args.mux:
+        destination = storage/'other'
+        destination.mkdir()
+        subprocess.run(['git','init','-q',str(destination)],check=True,env=env)
+        (destination/'other.html').write_text('<body style="margin:0"><div style="height:2000px;background:#ee00ee">Other workspace</div></body>')
+        command('open selection.html');command('preview');time.sleep(1)
+        assert pixel(600,400) == 0x0099aa, 'source workspace did not preview'
+        key('q')
+        command('session-attach '+str(destination));time.sleep(1)
+        command('open other.html');command('preview');time.sleep(1)
+        assert pixel(600,400) == 0xee00ee, 'destination workspace did not preview'
+        key('w',ctrl=True);key('a');time.sleep(1)
+        assert pixel(600,400) != 0x0099aa, 'dismissed preview revived after workspace return'
+        key('w',ctrl=True);key('a');time.sleep(1)
+        assert pixel(600,400) == 0xee00ee, 'dismissal affected another workspace capture'
+        key('q');key('w',ctrl=True);key('a');time.sleep(1)
+        command('preview');time.sleep(1)
+        assert pixel(600,400) == 0x0099aa, 'explicit preview could not reopen after dismissal'
+        key('Escape');key('w',ctrl=True);key('a');time.sleep(1)
+        assert pixel(600,400) != 0xee00ee, 'destination dismissal was not retained'
+        key('w',ctrl=True);key('a');time.sleep(1)
+        assert pixel(600,400) != 0x0099aa, 'Escape dismissal revived after workspace return'
+        print('Persistent preview dismissal survives workspace visits; other captures and explicit reopen remain intact', flush=True)
+        raise SystemExit(0)
     if args.document_preview:
         command('open document.html')
         command('preview'); time.sleep(2)
