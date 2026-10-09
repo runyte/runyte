@@ -16,6 +16,12 @@ belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
 current sources take precedence.
 
+Proposed work:
+
+- [Browser panes](proposed/PLAN_BROWSER_PANES.md): a design stub for interactive
+  web pages in native panes, evaluating CEF off-screen rendering, platform
+  portability and browser lifecycle ownership before implementation.
+
 The retained completed records cover:
 
 - [Aligned indentation and document overrides](completed/PLAN_INDENTATION_OVERRIDES.md):
