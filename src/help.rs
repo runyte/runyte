@@ -295,7 +295,7 @@ const TERMINAL_OVERVIEW: &[&str] = &[
 const MOUSE_OVERVIEW: &[&str] = &[
     "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.",
     "Right-clicking any current selection copies all current selections to the system clipboard, exactly like {binding:Space c y}, without moving or replacing them.",
-    "A reviewed terminal accepts the same drag-selection and right-click copy gestures. A live terminal that requests SGR mouse input receives its mouse events instead. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred.",
+    "A reviewed terminal accepts the same drag-selection and right-click copy gestures. In the native window, Ctrl-left-click (Cmd-left-click on macOS) follows the link under the pointer like {binding:g f}, including live terminal output. Other live terminal mouse events go to the child when it requests SGR mouse input. Runyte's mouse capture replaces the terminal's native text selection; set editor.mouse to false and restart when native selection is preferred.",
 ];
 
 const HELP_TRAILER: &str = ":help opens the general Runyte manual; :help <topic> jumps to one of\n\

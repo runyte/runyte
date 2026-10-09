@@ -713,6 +713,7 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
 | --- | --- |
 | Click | Focus a pane and place the caret |
 | Shift-click | Extend the selection |
+| Ctrl-left-click in the native window (Cmd-left-click on macOS) | Follow the file path or web link under the pointer, like `gf`, including live terminal output |
 | Drag | Select, entering Select mode |
 | Drag past the top or bottom row | Scroll and keep extending |
 | Wheel | Scroll the pane under the pointer |
@@ -730,6 +731,14 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
   before it, so a drag covers the characters it started and ended on, in
   either direction. Pressing past a line's end places the caret on its last
   character, or past it in Insert mode, as keyboard motion does.
+- **Native link clicks.** Ctrl-left-click (Cmd-left-click on macOS) uses the
+  clicked character, ignoring existing selections. It follows the same paths,
+  Markdown labels and heading links, and web URLs as `gf` in document views and
+  terminal panes. Live terminals stay in input mode; reviewed terminals use
+  their frozen text. Supported wrapped terminal URLs resolve from any of their
+  rows. This gesture, including its drag and release, is never sent to the child.
+  Extra modifiers retain their ordinary mouse behavior; prompts and overlays
+  keep ownership of input.
 - **Terminal panes.** A click focuses a live terminal in Insert mode; a
   reviewed terminal stays in Normal/review until a terminal insert key returns
   to the live screen. A left drag in review selects cells and enters Select
@@ -3138,7 +3147,9 @@ titles.
 
 **Mouse.** SGR mouse reports are forwarded inside the pane body when the child
 asks for them. Borders stay Runyte's, and the wheel scrolls review history
-when the child has not asked for the pointer.
+when the child has not asked for the pointer. In the native window,
+Ctrl-left-click (Cmd-left-click on macOS) follows links instead, even while
+the terminal is in input mode and requesting mouse reports.
 
 **Colour queries.** Read-only `OSC 10;?` and `OSC 11;?` queries get the theme's
 default foreground and background, so light- and dark-aware programs pick

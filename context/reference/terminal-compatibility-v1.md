@@ -155,6 +155,12 @@ Deliberate limits:
 
 ## Wrapped web links in review
 
+Native Ctrl-left-click (Cmd-left-click on macOS) uses the same inference at the
+clicked terminal cell. A live terminal is read through a temporary snapshot;
+its mode, scroll and review state remain unchanged. An existing review supplies
+its frozen text instead. The gesture's press, drag and release are editor-owned
+even when the child has enabled SGR mouse reporting.
+
 Automatic wraps retain the preceding row's identity and occupied column count
 through scrollback. Frozen review captures that provenance, letting `gf` infer a
 complete web URL from any of its rows without joining explicit newlines or

@@ -3230,6 +3230,9 @@ pub struct App {
     indentation_prompt_hint: Option<String>,
     settings_origin_buffer: Option<usize>,
     pointer_drag: Option<PointerDrag>,
+    /// The release and drags of a link click remain editor-owned even when
+    /// navigation opens a popup or changes the pane underneath the pointer.
+    pointer_link_pressed: bool,
     pointer_autoscroll: Option<mouse_autoscroll::Autoscroll>,
     /// Code actions backing a code-action picker.
     lsp_actions: Vec<ActionEntry>,
@@ -3773,6 +3776,7 @@ impl App {
             indentation_prompt_hint: None,
             settings_origin_buffer: None,
             pointer_drag: None,
+            pointer_link_pressed: false,
             pointer_autoscroll: None,
             lsp_actions: Vec::new(),
             lsp_action_source: None,

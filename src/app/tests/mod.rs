@@ -417,3 +417,4 @@ mod finder_disk_budget;
 mod pasted_completion;
 
 mod native_media;
+mod pointer_links;

@@ -385,3 +385,64 @@ fn an_indented_link_ending_before_the_wrap_edge_is_not_joined() {
         Some("https://example.com/abcde".into())
     );
 }
+
+#[test]
+fn pointer_navigation_reads_live_or_frozen_cells_without_mutating_review() {
+    for frozen in [false, true] {
+        let mut terminal = session(24, 4);
+        terminal.feed("界 https://example.com/界/e\u{301}/long/path".as_bytes());
+        if frozen {
+            terminal.begin_review();
+            terminal.select_all_review();
+            terminal.feed(b"\x1b[2J\x1b[Hreplacement");
+        }
+        let revision = terminal.revision();
+        let input = terminal.input_generation();
+        let selection = terminal
+            .review
+            .as_ref()
+            .map(|review| review.selection.clone());
+        for (row, column) in [(0, 8), (1, 0), (1, 1), (1, 4)] {
+            assert_eq!(
+                terminal
+                    .navigation_target_at_view_cell(4, row, column)
+                    .as_deref(),
+                Some("https://example.com/界/e\u{301}/long/path"),
+                "row {row}, column {column}, frozen {frozen}"
+            );
+        }
+        assert_eq!(terminal.navigation_target_at_view_cell(4, 2, 0), None);
+        assert_eq!(terminal.navigation_target_at_view_cell(4, 1, 23), None);
+        assert_eq!(terminal.navigation_target_at_view_cell(4, 4, 0), None);
+        assert_eq!(terminal.revision(), revision);
+        assert_eq!(terminal.input_generation(), input);
+        assert_eq!(
+            terminal
+                .review
+                .as_ref()
+                .map(|review| review.selection.clone()),
+            selection
+        );
+    }
+}
+
+#[test]
+fn pointer_navigation_uses_scrollback_and_alternate_screen_without_entering_review() {
+    let mut terminal = session(40, 2);
+    terminal.feed(b"https://example.com/old\r\nnew\r\nnewer");
+    terminal.scroll_back(1);
+    let revision = terminal.revision();
+    assert_eq!(
+        terminal.navigation_target_at_view_cell(2, 0, 8).as_deref(),
+        Some("https://example.com/old")
+    );
+    assert_eq!(terminal.scroll, 1);
+    assert_eq!(terminal.revision(), revision);
+    assert!(!terminal.reviewing());
+    terminal.feed(b"\x1b[?1049hhttps://example.com/alternate");
+    assert_eq!(
+        terminal.navigation_target_at_view_cell(2, 0, 8).as_deref(),
+        Some("https://example.com/alternate")
+    );
+    assert!(!terminal.reviewing());
+}
