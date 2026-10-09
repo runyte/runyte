@@ -265,11 +265,29 @@ fn native_link_click_resolves_terminal_relative_paths_without_creating_review() 
         )
         .into_bytes(),
     });
-    assert_eq!(app.terminals.get(terminal).unwrap().directory(), directory);
+    // OSC 7 uses a file URI, which drops the Windows verbatim path prefix.
+    // Compare filesystem identities rather than the two path spellings.
+    assert_eq!(
+        app.terminals
+            .get(terminal)
+            .unwrap()
+            .directory()
+            .canonicalize()
+            .unwrap(),
+        directory.canonicalize().unwrap()
+    );
     let view = app.prepare_view(geometry(42));
     let body = view.pane(app.active_pane).unwrap().body;
     click(&mut app, &view, body.x + 5, body.y);
-    assert_eq!(app.active_buffer().path.as_ref(), Some(&target));
+    assert_eq!(
+        app.active_buffer()
+            .path
+            .as_ref()
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        target.canonicalize().unwrap()
+    );
     assert!(app.active_terminal().is_none());
     assert_eq!(app.mode, Mode::Normal);
     let session = app.terminals.get(terminal).unwrap();

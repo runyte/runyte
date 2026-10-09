@@ -35,6 +35,11 @@ Cmd-left-click on macOS, following the native platform shortcut convention
 rather than using Control on every platform as the original report requested.
 Extra modifiers and overlays retain their existing input behavior.
 
+The terminal-relative-path test canonicalizes the reported directory and opened
+file before comparing them with the fixture paths. OSC 7 file URIs do not retain
+the Windows verbatim path prefix, so lexical equality rejected equivalent paths
+in Windows CI. The assertions still require the intended directory and file.
+
 Regression coverage in `src/app/tests/pointer_links.rs`:
 
 - `native_link_click_uses_clicked_pane_and_markdown_label_not_selection`
