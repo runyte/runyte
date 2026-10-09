@@ -124,8 +124,8 @@ requiring a browser. Do not settle the broader browser engine decision from this
 result.
 
 The follow-up below retains a DOM/font context and CPU renderer in a killable
-helper and coalesces viewport updates. Next, add overscanned/tiled painting or a
-GPU scene path to remove exposed edges during rapid scrolling. Follow that with
+helper, coalesces viewport updates and caches adjacent document regions. Next,
+consider a GPU scene or tile path for large jumps and multiple active previews. Follow that with
 packaged fonts, stronger asset isolation and actual macOS,
 Wayland and physical HiDPI acceptance before promoting the feature.
 
@@ -166,8 +166,8 @@ Pending scroll updates coalesce. In-flight frames may complete and be displayed
 without overwriting a newer target. The frontend immediately translates the
 current raster using fractional offsets, clamped to engine-reported document
 bounds, while the worker fills the new viewport. Hit testing waits for matching
-geometry. This avoids freezing the image while painting but can expose a blank
-edge on fast motion; overscan/tiles remain a next step. It does not synthesize
+geometry. This first retained-renderer version could expose a blank edge on
+fast motion; the adjacent-cache follow-up below addresses cache-covered scrolling. It does not synthesize
 inertia or animate keyboard jumps. Real engine tests assert exact 1.25-pixel
 scroll increments, selection clearing, zoom/resize and capture replacement.
 
@@ -183,3 +183,42 @@ zoom/reset and `q`, alongside 3000×1700 window selection. Root tests, formattin
 Clippy and helper checks passed; 82 native tests passed with three ignored.
 The earlier default-workspace coverage remains applicable because these
 follow-ups change only native-feature code and the separate helper.
+
+## Adjacent-content cache
+
+After committing the prototype as `04ba89f`, `exp` was merged as `c4a75c7` and
+pushed to `origin/exp-html`. The merge was clean. Its canonical coverage was
+92.04% (149,638 of 162,576 lines), with the 89% floor unchanged.
+
+The separate cache change paints an expanded document-space rectangle around the
+visible viewport without changing its CSS dimensions or display resolution.
+Normal-sized windows cache roughly one viewport above/below and a quarter-width
+on either side; large windows reduce that margin to keep each raster within
+eight million pixels and 8192 pixels per axis. The visible viewport retains its
+existing four-million-pixel limit. Selection retains the unselected raster.
+
+Scrolling inside the cached guard area only changes GPUI image placement.
+Approaching the boundary requests a new surrounding rectangle while the current
+viewport is still covered. Late replies cannot rewind a target moved by a cache
+hit. Jumps beyond the cached area keep the last fully painted region on screen
+until the replacement arrives. Fixed/sticky HTML falls back to exact viewport
+painting because those elements cannot safely be translated with document pixels.
+
+The helper test crops an adjacent cached region and compares it byte-for-byte
+with a fresh viewport render, with a height media query guarding against accidental
+layout changes. Native tests cover prefetch margins, fractional/zoomed coordinates,
+large-jump coverage, resize invalidation and stale-result handling. The X11 harness
+pauses only its own helper with SIGSTOP and checks forward/reverse cached scrolling
+and the bottom edge, then resumes it in a finally block. This proves cached motion
+is independent of a redraw, beyond a screenshot or warm-render timing.
+
+The cache is finite; arbitrarily large jumps still wait for the worker. A GPU
+scene/tile path could further reduce large-raster upload and replacement costs.
+Full website CSS compatibility and other platform/backend support remain unproven.
+
+Cache verification passed on the same Linux/X11 Xvfb + lavapipe backend: the
+paused-helper window acceptance, real-engine pixel comparison, nine helper tests,
+and 85 native frontend tests (three ignored). Formatting, default/native/helper
+Clippy and the full editor test suite passed. No new macOS or Wayland claim is
+made. Cached scroll hits perform no renderer request; arbitrary jump latency
+remains bounded by rendering a replacement rather than a frame-rate guarantee.

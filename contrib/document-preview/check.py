@@ -18,7 +18,7 @@ def render(text, language='html', **kwargs):
     assert result.returncode == 0, result.stderr.decode(errors='replace')
     header, pixels = result.stdout.split(b'\n', 1)
     header = json.loads(header)
-    assert len(pixels) == header['width'] * header['height'] * 4
+    assert len(pixels) == header['raster_width'] * header['raster_height'] * 4
     return header, pixels, (time.monotonic()-start)*1000
 
 # Known CSS geometry permits exact text hit tests independent of editor geometry.
@@ -98,8 +98,8 @@ def update(request):
     server.stdin.write(json.dumps(request).encode() + b'\n')
     server.stdin.flush()
     header = json.loads(server.stdout.readline())
-    pixels = server.stdout.read(header['width'] * header['height'] * 4)
-    assert len(pixels) == header['width'] * header['height'] * 4
+    pixels = server.stdout.read(header['raster_width'] * header['raster_height'] * 4)
+    assert len(pixels) == header['raster_width'] * header['raster_height'] * 4
     return header, pixels, (time.monotonic() - start) * 1000
 try:
     request = dict(text='<body style="margin:0;font:20px monospace">Selectable text<div style="height:3000px;background:#09a"></div></body>',
@@ -135,3 +135,23 @@ finally:
     server.stdin.close()
     server.wait(timeout=6)
     assert server.returncode == 0, server.stderr.read().decode(errors='replace')
+
+
+# The cached raster must contain the exact adjacent viewport, not a taller layout.
+# A media query detects accidentally changing the CSS viewport height to overscan.
+html = '<style>body{margin:0;background:white}div{height:2400px;background:linear-gradient(#f00,#00f)}@media(min-height:500px){div{background:#0f0}}</style><div></div>'
+for display_scale in (1, 2):
+    width, height = 640 * display_scale, 360 * display_scale
+    cache_header, cached, _ = render(html, width=width, height=height, scale=display_scale, adjacent=True)
+    assert cache_header['cacheable'] and cache_header['raster_height'] > 720 * display_scale
+    assert cache_header['raster_width'] > width
+    assert cache_header['origin'] == [0,0]
+    _, current, _ = render(html, width=width, height=height, scale=display_scale, scroll=[0,180])
+    stride = cache_header['raster_width'] * 4
+    cropped = b''.join(cached[y*stride:y*stride+width*4] for y in range(180*display_scale,540*display_scale))
+    assert cropped == current, 'adjacent cache changed layout or failed to preload real pixels'
+for position in ('fixed', 'sticky'):
+    fixed = html + '<header style="position:' + position + ';top:0;background:white">Viewport anchor</header>'
+    header, _, _ = render(fixed, adjacent=True)
+    assert not header['cacheable'] and header['raster_height'] == header['height'], header
+print('Adjacent raster matches a later viewport exactly; CSS viewport layout and fixed/sticky fallback passed')

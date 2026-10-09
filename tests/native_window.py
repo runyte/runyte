@@ -9,6 +9,7 @@ import ctypes as C
 import json
 import statistics
 import os
+import signal
 import pathlib
 import struct
 import subprocess
@@ -353,6 +354,30 @@ try:
         key('f',ctrl=True);time.sleep(.8)
         assert pixel(500,35) == 0x0099aa, 'page movement failed'
         key('g');key('g');time.sleep(.8)
+        # Pause only this window's helper. Cached scrolling must still paint the
+        # bottom edge, proving that it is independent of a completed redraw.
+        helper_children = set()
+        for task in (pathlib.Path('/proc')/str(p.pid)/'task').iterdir():
+            try:
+                candidates = (task/'children').read_text().split()
+            except OSError:
+                continue
+            for child in candidates:
+                try:
+                    if (pathlib.Path('/proc')/child/'exe').resolve() == args.preview_helper.resolve():
+                        helper_children.add(int(child))
+                except OSError:
+                    pass
+        assert helper_children, 'preview helper was not available for cache independence check'
+        try:
+            for child in helper_children: os.kill(child, signal.SIGSTOP)
+            key('d',ctrl=True);time.sleep(.15)
+            assert pixel(500,720) == 0x0099aa, 'cached scroll exposed an unpainted bottom edge with helper paused'
+            key('u',ctrl=True);time.sleep(.15)
+            assert pixel(500,35) == 0xffffff, 'cached reverse scroll failed with helper paused'
+        finally:
+            for child in helper_children: os.kill(child, signal.SIGCONT)
+        print('Adjacent viewport cache scrolls in both directions with renderer paused', flush=True)
         before_zoom, _ = screenshot('preview-keyboard-top')
         key('equal');time.sleep(.8)
         after_zoom, _ = screenshot('preview-zoom')

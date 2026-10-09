@@ -110,8 +110,8 @@ can be opened as text and previewed directly. The file checks are not a sandbox
 against concurrent hostile filesystem replacement.
 
 Budgets: 128 KiB captured text, 256 selected ranges, eight host captures, at most
-16 local image requests of 2 MiB and 2048×2048 pixels each, 4096 pixels per viewport
-axis and four million viewport pixels (large/HiDPI panes reduce raster resolution
+16 local image requests of 2 MiB and 2048×2048 pixels each, 4096 pixels per visible viewport
+axis and four million visible viewport pixels (large/HiDPI panes reduce raster resolution
 while preserving logical layout and hit coordinates), five seconds wall time per request,
 and 2 GiB address space on Linux. The request deadline replaces the former
 process-lifetime CPU limit, which cannot apply to a retained renderer. Pending requests are bounded
@@ -121,11 +121,21 @@ available. Images, parsing, highlighting, layout and rasterization run off both
 editor input loops. No helper or timer starts until a preview is requested.
 The process limit is failure containment, not a general OS security sandbox.
 
-Scroll offsets preserve fractional pixels. GPUI shifts the current raster
-immediately while the worker paints the next viewport; intermediate frames are
-displayed during input bursts. A fast scroll can briefly expose an unpainted edge.
-There is no added wheel inertia or keyboard-scroll animation; precise trackpad
-deltas are preserved. Large panes reduce raster resolution to stay within budget.
+Scroll offsets preserve fractional pixels. The active preview keeps an adjacent
+raster around the visible area: up to a viewport above/below and a quarter-width
+to either side, reduced to fit an eight-million-pixel / 8192-axis cache budget.
+This preserves the visible viewport's resolution and CSS layout. Cached scrolling
+only moves the image; it does not ask the helper to redraw. Approaching a cache
+edge refreshes the surrounding area while it is still painted. A jump beyond the
+cache temporarily retains the last fully painted area until the new one arrives,
+instead of exposing blank edges. Selection overlays retain the unselected cache.
+Resize, zoom, source refresh and close invalidate or release the relevant cache.
+
+The cache is bounded to one unselected raster per pane (at most 32 MB of RGBA)
+plus its current viewport/selection raster, shared when they are the same image.
+Fixed/sticky positioned HTML disables adjacent caching and uses exact viewport
+redraws. Complex viewport-dependent CSS is not a compatibility claim. No wheel
+inertia or keyboard-scroll animation is added; precise trackpad deltas survive.
 
 ## Verification
 

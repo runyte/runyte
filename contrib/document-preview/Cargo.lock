@@ -1647,6 +1647,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syntect",
+ "taffy",
 ]
 
 [[package]]

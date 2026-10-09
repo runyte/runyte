@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Read, Write};
 mod assets;
 mod format;
+mod raster;
 
 #[derive(Clone, Deserialize)]
 struct Request {
@@ -23,6 +24,8 @@ struct Request {
     zoom: f32,
     scroll: [f64; 2],
     selection: Option<[[f32; 2]; 2]>,
+    #[serde(default)]
+    adjacent: bool,
 }
 #[derive(Serialize)]
 struct Reply {
@@ -32,6 +35,10 @@ struct Reply {
     link: Option<String>,
     scroll: [f64; 2],
     max_scroll: [f64; 2],
+    raster_width: u32,
+    raster_height: u32,
+    origin: [f64; 2],
+    cacheable: bool,
 }
 fn default_zoom() -> f32 {
     1.0
@@ -155,12 +162,27 @@ fn build_document(request: &Request) -> HtmlDocument {
     doc
 }
 
-type Cache = (
-    Request,
-    HtmlDocument,
-    anyrender_vello_cpu::VelloCpuImageRenderer,
-    Vec<u8>,
-);
+struct Cache {
+    request: Request,
+    doc: HtmlDocument,
+    renderer: anyrender_vello_cpu::VelloCpuImageRenderer,
+    pixels: Vec<u8>,
+    render_size: [u32; 2],
+    cacheable: bool,
+}
+fn viewport_independent(doc: &HtmlDocument) -> bool {
+    doc.query_selector_all("*")
+        .unwrap_or_default()
+        .into_iter()
+        .all(|id| {
+            doc.get_node(id).is_none_or(|node| {
+                !matches!(
+                    node.taffy_position(),
+                    taffy::Position::Fixed | taffy::Position::Sticky
+                )
+            })
+        })
+}
 
 fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std::error::Error>> {
     if request.text.len() > 128 * 1024
@@ -176,27 +198,41 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
     {
         return Err("preview exceeds input or viewport budget".into());
     }
-    let same_document = cache.as_ref().is_some_and(|(old, _, _, _)| {
+    let same_document = cache.as_ref().is_some_and(|cache| {
+        let old = &cache.request;
         old.text == request.text
             && old.language == request.language
             && old.path == request.path
             && old.selection_only == request.selection_only
     });
     if !same_document {
-        *cache = Some((
-            request.clone(),
-            build_document(&request),
-            anyrender_vello_cpu::VelloCpuImageRenderer::new(request.width, request.height),
-            Vec::new(),
-        ));
+        let doc = build_document(&request);
+        let cacheable = viewport_independent(&doc);
+        *cache = Some(Cache {
+            request: request.clone(),
+            doc,
+            cacheable,
+            renderer: anyrender_vello_cpu::VelloCpuImageRenderer::new(
+                request.width,
+                request.height,
+            ),
+            pixels: Vec::new(),
+            render_size: [request.width, request.height],
+        });
     }
-    let (old, doc, renderer, pixels) = cache.as_mut().unwrap();
+    let Cache {
+        request: old,
+        doc,
+        renderer,
+        pixels,
+        render_size,
+        cacheable,
+    } = cache.as_mut().unwrap();
     if old.width != request.width
         || old.height != request.height
         || old.scale != request.scale
         || old.zoom != request.zoom
     {
-        renderer.resize(request.width, request.height);
         doc.set_viewport(Viewport::new(
             request.width,
             request.height,
@@ -204,6 +240,7 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
             ColorScheme::Light,
         ));
         doc.resolve(0.0);
+        *cacheable = viewport_independent(doc);
     }
     *old = request.clone();
     doc.clear_text_selection();
@@ -233,14 +270,35 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
                 .map(str::to_owned);
         }
     }
+    let scroll = [doc.viewport_scroll().x, doc.viewport_scroll().y];
+    let adjacent = request.adjacent && *cacheable && request.selection.is_none();
+    let raster = raster::Raster::new(
+        request.width,
+        request.height,
+        f64::from(request.scale * request.zoom),
+        scroll,
+        adjacent,
+    );
+    if *render_size != [raster.width, raster.height] {
+        renderer.resize(raster.width, raster.height);
+        *render_size = [raster.width, raster.height];
+    }
     let reply = Reply {
         width: request.width,
         height: request.height,
         selected: doc.get_selected_text().unwrap_or_default(),
         link,
-        scroll: [doc.viewport_scroll().x, doc.viewport_scroll().y],
+        scroll,
+        raster_width: raster.width,
+        raster_height: raster.height,
+        origin: raster.origin,
+        cacheable: adjacent,
         max_scroll: [maximum.x, maximum.y],
     };
+    doc.set_viewport_scroll(blitz_dom::Point {
+        x: raster.origin[0],
+        y: raster.origin[1],
+    });
     renderer.reset();
     renderer.render_to_vec(
         |scene| {
@@ -248,14 +306,18 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
                 scene,
                 doc,
                 f64::from(request.scale * request.zoom),
-                request.width,
-                request.height,
+                raster.width,
+                raster.height,
                 0,
                 0,
             )
         },
         pixels,
     );
+    doc.set_viewport_scroll(blitz_dom::Point {
+        x: scroll[0],
+        y: scroll[1],
+    });
     let mut out = std::io::stdout().lock();
     serde_json::to_writer(&mut out, &reply)?;
     out.write_all(b"\n")?;

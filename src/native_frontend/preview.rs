@@ -29,6 +29,7 @@ struct Request {
     zoom: f32,
     scroll: [f64; 2],
     selection: Option<[[f32; 2]; 2]>,
+    adjacent: bool,
 }
 #[derive(Deserialize)]
 struct Reply {
@@ -38,12 +39,64 @@ struct Reply {
     link: Option<String>,
     scroll: [f64; 2],
     max_scroll: [f64; 2],
+    raster_width: u32,
+    raster_height: u32,
+    origin: [f64; 2],
+    cacheable: bool,
 }
 struct Output {
     scale: f32,
     zoom: f32,
     reply: Reply,
     image: Arc<RenderImage>,
+}
+impl Output {
+    fn matches(&self, request: &Request) -> bool {
+        self.reply.width == request.width
+            && self.reply.height == request.height
+            && self.scale == request.scale
+            && self.zoom == request.zoom
+    }
+    fn display_scroll(&self, target: [f64; 2]) -> [f64; 2] {
+        if !self.reply.cacheable {
+            return self.reply.origin;
+        }
+        let scale = f64::from(self.scale * self.zoom);
+        std::array::from_fn(|axis| {
+            let viewport = f64::from([self.reply.width, self.reply.height][axis]) / scale;
+            let extent =
+                f64::from([self.reply.raster_width, self.reply.raster_height][axis]) / scale;
+            target[axis].clamp(
+                self.reply.origin[axis],
+                self.reply.origin[axis] + extent - viewport,
+            )
+        })
+    }
+    fn covers(&self, scroll: [f64; 2], guard: bool) -> bool {
+        if !self.reply.cacheable {
+            return false;
+        }
+        let scale = f64::from(self.scale * self.zoom);
+        for axis in 0..2 {
+            let viewport = f64::from([self.reply.width, self.reply.height][axis]) / scale;
+            let cached =
+                f64::from([self.reply.raster_width, self.reply.raster_height][axis]) / scale;
+            let margin = if guard {
+                ((cached - viewport) * 0.25).min(viewport * 0.5)
+            } else {
+                0.0
+            };
+            let start = (scroll[axis] - margin).max(0.0);
+            let end =
+                (scroll[axis] + viewport + margin).min(self.reply.max_scroll[axis] + viewport);
+            if self.reply.origin[axis] > start + 1e-6
+                || self.reply.origin[axis] + cached < end - 1e-6
+            {
+                return false;
+            }
+        }
+        true
+    }
 }
 struct Job {
     cancel: Arc<AtomicBool>,
@@ -64,7 +117,8 @@ struct State {
     generation: u64,
     serial: u64,
     request: Option<Request>,
-    output: Option<Result<Output, String>>,
+    output: Option<Result<Arc<Output>, String>>,
+    cache: Option<Arc<Output>>,
     scroll: [f64; 2],
     selection: Option<[[f32; 2]; 2]>,
     dragging: bool,
@@ -295,11 +349,22 @@ fn render_request(
             let reply: Reply = serde_json::from_slice(&header).map_err(|e| e.to_string())?;
             if (reply.width, reply.height) != expected
                 || reply.selected.len() > 128 * 1024
-                || u64::from(reply.width) * u64::from(reply.height) > 4_000_000
+                || reply.raster_width < reply.width
+                || reply.raster_height < reply.height
+                || reply.raster_width > 8192
+                || reply.raster_height > 8192
+                || u64::from(reply.raster_width) * u64::from(reply.raster_height) > 8_000_000
+                || reply
+                    .origin
+                    .iter()
+                    .chain(reply.scroll.iter())
+                    .chain(reply.max_scroll.iter())
+                    .any(|x| !x.is_finite() || *x < 0.0)
             {
                 return Err("Invalid preview dimensions or selection".into());
             }
-            let mut pixels = vec![0; reply.width as usize * reply.height as usize * 4];
+            let mut pixels =
+                vec![0; reply.raster_width as usize * reply.raster_height as usize * 4];
             output.read_exact(&mut pixels).map_err(|e| e.to_string())?;
             Ok((reply, pixels))
         })();
@@ -340,8 +405,8 @@ fn render_request(
     for pixel in pixels.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
-    let pixels =
-        image::RgbaImage::from_raw(reply.width, reply.height, pixels).ok_or("Invalid raster")?;
+    let pixels = image::RgbaImage::from_raw(reply.raster_width, reply.raster_height, pixels)
+        .ok_or("Invalid raster")?;
     Ok(Output {
         scale: request.scale,
         zoom: request.zoom,
@@ -414,25 +479,31 @@ impl Views {
             if let Some(state) = self.states.get_mut(&done.pane)
                 && state.generation == done.generation
             {
-                if let Ok(output) = &done.result {
-                    if !state.request.as_ref().is_some_and(|r| {
-                        r.width == output.reply.width
-                            && r.height == output.reply.height
-                            && r.zoom == output.zoom
-                            && r.scale == output.scale
-                    }) {
+                let result = done.result.map(Arc::new);
+                if let Ok(output) = &result {
+                    if !state.request.as_ref().is_some_and(|r| output.matches(r)) {
                         continue;
                     }
-                    if state.serial == done.serial {
+                    if state.serial == done.serial
+                        && state
+                            .request
+                            .as_ref()
+                            .is_some_and(|r| r.scroll == state.scroll)
+                    {
                         state.scroll = output.reply.scroll;
                         if let Some(request) = &mut state.request {
                             request.scroll = state.scroll;
                         }
                     }
-                    // Present intermediate frames during a burst, without losing the newer target.
-                    state.output = Some(done.result);
+                    if output.reply.cacheable {
+                        state.cache = Some(output.clone());
+                    }
+                    // A cache hit can move the target without queuing a request. Never rewind it.
+                    state.output = Some(result);
+                    state.clamp_scroll();
                 } else if state.serial == done.serial {
-                    state.output = Some(done.result);
+                    state.cache = None;
+                    state.output = Some(result);
                 }
             }
         }
@@ -472,6 +543,7 @@ impl NativeView {
                     keys: Default::default(),
                     request: None,
                     output: None,
+                    cache: None,
                     scroll: [0.0; 2],
                     selection: None,
                     dragging: false,
@@ -500,7 +572,15 @@ impl NativeView {
                 zoom: state.zoom,
                 scroll: state.scroll,
                 selection: state.selection,
+                adjacent: pane.active,
             };
+            if request.selection.is_none()
+                && state.cache.as_ref().is_some_and(|cache| {
+                    cache.matches(&request) && cache.covers(request.scroll, true)
+                })
+            {
+                continue;
+            }
             if state.request.as_ref() == Some(&request) {
                 continue;
             }
@@ -543,20 +623,31 @@ impl NativeView {
                 .h(px(area.height as f32 * self.metrics.height))
                 .overflow_hidden()
                 .bg(rgb(0xffffff));
-            layer = match &state.output {
+            let cached = state.cache.as_ref().filter(|cache| {
+                state.selection.is_none()
+                    && state
+                        .request
+                        .as_ref()
+                        .is_some_and(|request| cache.matches(request))
+            });
+            let displayed = cached
+                .map(Ok)
+                .or_else(|| state.output.as_ref().map(|result| result.as_ref()));
+            layer = match displayed {
                 Some(Ok(output)) => {
                     images.push(output.image.clone());
+                    let display_scroll = output.display_scroll(state.scroll);
                     layer.child(
                         img(output.image.clone())
                             .absolute()
-                            .left(px(((output.reply.scroll[0] - state.scroll[0])
+                            .left(px(((output.reply.origin[0] - display_scroll[0])
                                 * f64::from(state.zoom))
                                 as f32))
-                            .top(px(((output.reply.scroll[1] - state.scroll[1])
+                            .top(px(((output.reply.origin[1] - display_scroll[1])
                                 * f64::from(state.zoom))
                                 as f32))
-                            .w(px(area.width as f32 * self.metrics.width))
-                            .h(px(area.height as f32 * self.metrics.height)),
+                            .w(px(output.reply.raster_width as f32 / output.scale))
+                            .h(px(output.reply.raster_height as f32 / output.scale)),
                     )
                 }
                 Some(Err(error)) => {
@@ -569,7 +660,8 @@ impl NativeView {
                         .child("Preparing document preview… Escape returns to source"),
                 ),
             };
-            if let Some(Ok(output)) = &state.output
+            if state.selection.is_some()
+                && let Some(Ok(output)) = &state.output
                 && let Some(link) = &output.reply.link
             {
                 let link: String = link.chars().take(200).collect();
@@ -637,14 +729,12 @@ impl NativeView {
         // A resized or scrolled old raster may remain visible while its replacement
         // is prepared. Do not start a selection against geometry not yet displayed.
         if phase == 0
-            && !state.output.as_ref().is_some_and(|result| {
-                result.as_ref().is_ok_and(|output| {
-                    state.request.as_ref().is_some_and(|request| {
-                        output.reply.width == request.width
-                            && output.reply.height == request.height
-                            && output.scale == request.scale
-                            && output.zoom == request.zoom
-                            && output.reply.scroll == state.scroll
+            && !state.request.as_ref().is_some_and(|request| {
+                state.cache.as_ref().is_some_and(|cache| {
+                    cache.matches(request) && cache.covers(state.scroll, false)
+                }) || state.output.as_ref().is_some_and(|result| {
+                    result.as_ref().is_ok_and(|output| {
+                        output.matches(request) && output.reply.scroll == state.scroll
                     })
                 })
             })
@@ -753,6 +843,8 @@ impl NativeView {
         if key.code == KeyCode::Esc || navigation == Some(Navigation::Back) {
             state.cancel();
             state.hidden = true;
+            state.cache = None;
+            state.output = None;
             self.previews
                 .dismissed
                 .insert(pane.pane, pane.document.generation);
@@ -792,6 +884,8 @@ impl NativeView {
         {
             state.cancel();
             state.hidden = true;
+            state.cache = None;
+            state.output = None;
             self.previews
                 .dismissed
                 .insert(pane.pane, pane.document.generation);
