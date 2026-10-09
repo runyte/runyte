@@ -399,17 +399,39 @@ impl Text {
     /// Clamps an offset to the document.
     ///
     /// In Normal mode the caret sits *on* a character, so it may not rest on a
-    /// row's terminator unless the row is empty. In Insert mode it may.
+    /// row's terminator unless the row is empty. In Insert mode it may. In
+    /// either mode it rests at the start of a user-perceived character, never
+    /// between the code points of an emoji sequence or a base and its marks.
     pub fn clamp_offset(&self, offset: Offset, insert: bool) -> Offset {
         let offset = offset.min(self.len_chars());
         if insert {
-            return offset;
+            return self.grapheme_floor(offset);
         }
         let row = self.offset_to_row(offset);
         let start = self.line_to_offset(row);
         let len = self.line_len(row);
         let max = start + len.saturating_sub(1);
-        if len == 0 { start } else { offset.min(max) }
+        if len == 0 {
+            start
+        } else {
+            self.grapheme_floor(offset.min(max))
+        }
+    }
+
+    /// The start of the user-perceived character containing `offset`.
+    pub fn grapheme_floor(&self, offset: Offset) -> Offset {
+        crate::grapheme::floor(self.rope.slice(..), offset)
+    }
+
+    /// The offset just past the user-perceived character at `offset`.
+    pub fn next_grapheme(&self, offset: Offset) -> Offset {
+        crate::grapheme::next(self.rope.slice(..), offset)
+    }
+
+    /// The start of the user-perceived character before the one containing
+    /// `offset`.
+    pub fn previous_grapheme(&self, offset: Offset) -> Offset {
+        crate::grapheme::previous(self.rope.slice(..), offset)
     }
 
     pub fn apply(&mut self, transaction: &Transaction) -> Revert {

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Pure character-offset movement and selection-span calculations.
+//!
+//! Offsets count code points, but every caret this module produces rests at
+//! the start of a user-perceived character: stepping crosses a whole emoji
+//! sequence or base-and-marks cluster at once, and a selection's inclusive end
+//! covers its cluster entirely.
 
 // Application-module dependencies:
 use super::{
@@ -30,15 +35,25 @@ pub(super) fn word_class(character: char, long: bool) -> u8 {
     }
 }
 
+/// Starts of the characters after the one at `offset`, skipping line feeds.
 pub(super) fn offsets_after(buffer: &Buffer, offset: Offset) -> impl Iterator<Item = Offset> + '_ {
     let len = buffer.len_chars();
-    (offset + 1..len).filter(move |candidate| buffer.char_at(*candidate) != Some('\n'))
+    std::iter::successors(Some(buffer.next_grapheme(offset)), |candidate| {
+        Some(buffer.next_grapheme(*candidate))
+    })
+    .take_while(move |candidate| *candidate < len)
+    .filter(move |candidate| buffer.char_at(*candidate) != Some('\n'))
 }
 
+/// Starts of the characters before the one at `offset`, nearest first,
+/// skipping line feeds.
 pub(super) fn offsets_before(buffer: &Buffer, offset: Offset) -> impl Iterator<Item = Offset> + '_ {
-    (0..offset)
-        .rev()
-        .filter(move |candidate| buffer.char_at(*candidate) != Some('\n'))
+    let start = buffer.grapheme_floor(offset);
+    std::iter::successors(
+        (start > 0).then(|| buffer.previous_grapheme(start)),
+        |candidate| (*candidate > 0).then(|| buffer.previous_grapheme(*candidate)),
+    )
+    .filter(move |candidate| buffer.char_at(*candidate) != Some('\n'))
 }
 
 pub(super) fn next_offset(buffer: &Buffer, offset: Offset) -> Option<Offset> {
@@ -551,7 +566,7 @@ pub(super) fn operative_span(buffer: &Buffer, range: &Range) -> (Offset, Offset)
         }
     }
     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
-    (from, (to + 1).min(row_end).max(from))
+    (from, buffer.next_grapheme(to).min(row_end).max(from))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -717,6 +732,24 @@ pub(super) fn move_offset(
     viewport_height: usize,
     scroll_row: usize,
 ) -> Offset {
+    // Word and line motions scan code points; whatever they land on, the
+    // caret rests where the character containing it starts.
+    buffer.grapheme_floor(move_offset_unsnapped(
+        buffer,
+        offset,
+        motion,
+        viewport_height,
+        scroll_row,
+    ))
+}
+
+fn move_offset_unsnapped(
+    buffer: &Buffer,
+    offset: Offset,
+    motion: Motion,
+    viewport_height: usize,
+    scroll_row: usize,
+) -> Offset {
     let position = buffer.position_of(offset);
     let last_row = buffer.last_row();
     let on_row = |row: usize| {
@@ -727,7 +760,7 @@ pub(super) fn move_offset(
     match motion {
         Motion::Left => {
             if position.col > 0 {
-                offset - 1
+                buffer.previous_grapheme(offset)
             } else if position.row > 0 {
                 buffer.row_end_offset(position.row - 1, false)
             } else {
@@ -735,8 +768,9 @@ pub(super) fn move_offset(
             }
         }
         Motion::Right => {
-            if position.col + 1 < buffer.line_len(position.row) {
-                offset + 1
+            let next = buffer.next_grapheme(offset);
+            if next < buffer.line_to_offset(position.row) + buffer.line_len(position.row) {
+                next
             } else if position.row < last_row {
                 buffer.line_to_offset(position.row + 1)
             } else {

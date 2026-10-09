@@ -9,12 +9,21 @@ use super::*;
 
 /// A unique temporary path per test, so nothing is written into the
 /// repository and concurrent tests cannot collide.
+///
+/// The clock alone does not make it unique: macOS reports microseconds, so
+/// two tests sharing a name, as every merge fixture does, could start in the
+/// same tick and initialize one repository twice. The counter can't repeat.
 pub(super) fn temporary(name: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    temporary_directory().join(format!("runyte-lsp-{}-{nanos}-{name}", std::process::id()))
+    temporary_directory().join(format!(
+        "runyte-lsp-{}-{nanos}-{sequence}-{name}",
+        std::process::id()
+    ))
 }
 
 /// An app whose active buffer looks like a saved Rust file, with a handle

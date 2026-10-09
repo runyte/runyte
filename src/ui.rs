@@ -518,13 +518,13 @@ fn fit_row(spans: Vec<Span<'static>>, width: usize, ground: Option<Style>) -> Li
             continue;
         }
         let mut content = String::new();
-        for character in span.content.chars() {
-            let cells = character.width().unwrap_or(0);
+        for cluster in span.content.graphemes(true) {
+            let cells = crate::grapheme::width(cluster);
             if used + cells > width {
                 break;
             }
             used += cells;
-            content.push(character);
+            content.push_str(cluster);
         }
         if !content.is_empty() {
             fitted.push(Span::styled(content, span.style));
@@ -1032,11 +1032,8 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
             ),
         );
     }
-    let cells = app
-        .command
-        .chars()
-        .take(app.command_cursor)
-        .map(|character| character.width().unwrap_or(0))
+    let cells = crate::grapheme::cells(app.command.chars().take(app.command_cursor))
+        .map(|(_, cells)| cells)
         .sum::<usize>();
     let x = inner
         .x
@@ -1437,12 +1434,14 @@ fn draw_snapshot_overlay(
     } else {
         (
             overlay.query.clone(),
-            overlay
-                .query
-                .chars()
-                .take(overlay.query_cursor.unwrap_or(0))
-                .map(|character| character.width().unwrap_or(0))
-                .sum(),
+            crate::grapheme::cells(
+                overlay
+                    .query
+                    .chars()
+                    .take(overlay.query_cursor.unwrap_or(0)),
+            )
+            .map(|(_, cells)| cells)
+            .sum(),
         )
     };
     let mut query_height = 0;
@@ -2572,7 +2571,7 @@ fn terminal_line(
                 style.add_modifier(Modifier::UNDERLINED)
             };
         }
-        spans.push(Span::styled(cell.text(), style));
+        spans.push(Span::styled(cell.display_text(), style));
     }
     Line::from(spans)
 }
@@ -3576,11 +3575,8 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         )),
         rows[0],
     );
-    let query_cells = picker
-        .query
-        .chars()
-        .take(picker.query_cursor)
-        .map(|character| character.width().unwrap_or(0))
+    let query_cells = crate::grapheme::cells(picker.query.chars().take(picker.query_cursor))
+        .map(|(_, cells)| cells)
         .sum::<usize>();
     let query_x = rows[0]
         .x
@@ -3761,11 +3757,8 @@ fn draw_resource_finder(
         )),
         rows[0],
     );
-    let query_cells = picker
-        .query
-        .chars()
-        .take(picker.query_cursor)
-        .map(|character| character.width().unwrap_or(0))
+    let query_cells = crate::grapheme::cells(picker.query.chars().take(picker.query_cursor))
+        .map(|(_, cells)| cells)
         .sum::<usize>();
     let query_x = rows[0]
         .x
@@ -5282,18 +5275,18 @@ fn wrapped_text_rows(text: &str, width: u16) -> usize {
 
 /// Keep the insertion point visible without splitting Unicode characters.
 fn prompt_query_window(query: &str, cursor: usize, width: u16) -> (String, usize) {
-    let mut cells: usize = query
-        .chars()
-        .take(cursor)
-        .map(|c| c.width().unwrap_or(0))
+    let mut cells: usize = crate::grapheme::cells(query.chars().take(cursor))
+        .map(|(_, cells)| cells)
         .sum();
     let mut start = 0;
-    for (byte, character) in query.char_indices().take(cursor) {
-        if cells < usize::from(width.max(1)) {
+    let mut characters = 0;
+    for (byte, cluster) in query.grapheme_indices(true) {
+        if characters >= cursor || cells < usize::from(width.max(1)) {
             break;
         }
-        cells = cells.saturating_sub(character.width().unwrap_or(0));
-        start = byte + character.len_utf8();
+        cells = cells.saturating_sub(crate::grapheme::width(cluster));
+        characters += cluster.chars().count();
+        start = byte + cluster.len();
     }
     (query[start..].to_owned(), cells)
 }

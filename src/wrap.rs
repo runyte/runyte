@@ -8,8 +8,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use unicode_width::UnicodeWidthChar;
-
 use crate::buffer::{Buffer, Position};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,13 +120,14 @@ pub(crate) fn line_screen_column(
     let spans = line_segments(buffer, row, width, tab_width);
     let segment = spans[index_in(&spans, column)];
     let mut cell = segment.start_cell;
-    for character in buffer
-        .text()
-        .line(row)
-        .chars_at(segment.start)
-        .take(column.saturating_sub(segment.start))
-    {
-        cell += cell_width(character, cell, tab_width.max(1));
+    for (character, cells) in crate::grapheme::cells(
+        buffer
+            .text()
+            .line(row)
+            .chars_at(segment.start)
+            .take(column.saturating_sub(segment.start)),
+    ) {
+        cell += cell_width(character, cells, cell, tab_width.max(1));
     }
     cell - segment.start_cell
 }
@@ -150,14 +149,16 @@ pub(crate) fn line_column_for_screen(
     let segment = spans[segment_index.min(spans.len() - 1)];
     let target = segment.start_cell.saturating_add(desired);
     let mut cell = segment.start_cell;
-    for (index, character) in buffer
-        .text()
-        .line(row)
-        .chars_at(segment.start)
-        .take(segment.end - segment.start)
-        .enumerate()
+    for (index, (character, cells)) in crate::grapheme::cells(
+        buffer
+            .text()
+            .line(row)
+            .chars_at(segment.start)
+            .take(segment.end - segment.start),
+    )
+    .enumerate()
     {
-        cell += cell_width(character, cell, tab_width.max(1));
+        cell += cell_width(character, cells, cell, tab_width.max(1));
         if cell > target {
             return segment.start + index;
         }
@@ -233,8 +234,10 @@ pub fn segments(line: &str, width: usize, tab_width: usize) -> Vec<Segment> {
     // it by rescanning the line instead would make wrapping quadratic in line
     // length, which a minified one-line document turns into a stall.
     let mut last_word_boundary: Option<(usize, usize)> = None;
-    for (column, character) in line.chars().enumerate() {
-        let character_width = cell_width(character, cell, tab_width);
+    // Measuring whole clusters puts a cluster's width on its first code point
+    // and none on the rest, so no break can fall inside one.
+    for (column, (character, cells)) in crate::grapheme::cells(line.chars()).enumerate() {
+        let character_width = cell_width(character, cells, cell, tab_width);
         if column > start && cell - start_cell + character_width > width {
             // `cell` is the running offset of `column` itself, because the
             // character's own width is only added once the break is decided.
@@ -904,12 +907,11 @@ pub fn cells_from_column(
     let start_column = start_column.min(line.chars().count());
     let end_column = end_column.max(start_column);
     let mut cell = 0;
-    for character in line
-        .chars()
+    for (character, cells) in crate::grapheme::cells(line.chars())
         .skip(start_column)
         .take(end_column - start_column)
     {
-        cell += cell_width(character, cell, tab_width.max(1));
+        cell += cell_width(character, cells, cell, tab_width.max(1));
     }
     cell
 }
@@ -1053,13 +1055,12 @@ pub fn column_for_screen(
     let segment = spans[segment_index.min(spans.len() - 1)];
     let target_cell = segment.start_cell + desired;
     let mut cell = segment.start_cell;
-    for (column, character) in line
-        .chars()
+    for (column, (character, cells)) in crate::grapheme::cells(line.chars())
         .enumerate()
         .take(segment.end)
         .skip(segment.start)
     {
-        let next = cell + cell_width(character, cell, tab_width);
+        let next = cell + cell_width(character, cells, cell, tab_width);
         if next > target_cell {
             return column;
         }
@@ -1071,8 +1072,8 @@ pub fn column_for_screen(
 fn cell_at(line: &str, column: usize, tab_width: usize) -> usize {
     let tab_width = tab_width.max(1);
     let mut cell = 0;
-    for character in line.chars().take(column) {
-        cell += cell_width(character, cell, tab_width);
+    for (character, cells) in crate::grapheme::cells(line.chars()).take(column) {
+        cell += cell_width(character, cells, cell, tab_width);
     }
     cell
 }
@@ -1090,8 +1091,11 @@ pub fn column_for_cell_from(
     let start_cell = cell_at(line, start_column, tab_width);
     let target = start_cell.saturating_add(screen_cell);
     let mut cell = start_cell;
-    for (column, character) in line.chars().enumerate().skip(start_column) {
-        let next = cell.saturating_add(cell_width(character, cell, tab_width.max(1)));
+    for (column, (character, cells)) in crate::grapheme::cells(line.chars())
+        .enumerate()
+        .skip(start_column)
+    {
+        let next = cell.saturating_add(cell_width(character, cells, cell, tab_width.max(1)));
         if target < next {
             return column;
         }
@@ -1115,8 +1119,11 @@ pub fn column_for_scrolled_cell(
 ) -> usize {
     let start_column = start_column.min(line.chars().count());
     let mut cell = 0usize;
-    for (column, character) in line.chars().enumerate().skip(start_column) {
-        let next = cell.saturating_add(cell_width(character, cell, tab_width.max(1)));
+    for (column, (character, cells)) in crate::grapheme::cells(line.chars())
+        .enumerate()
+        .skip(start_column)
+    {
+        let next = cell.saturating_add(cell_width(character, cells, cell, tab_width.max(1)));
         if screen_cell < next {
             return column;
         }
@@ -1125,12 +1132,14 @@ pub fn column_for_scrolled_cell(
     line.chars().count()
 }
 
-fn cell_width(character: char, cell: usize, tab_width: usize) -> usize {
+/// Cells a code point advances by: a tab to its next stop, anything else by
+/// `cells`, its share of its cluster's width from [`crate::grapheme::cells`].
+fn cell_width(character: char, cells: usize, cell: usize, tab_width: usize) -> usize {
     let tab_width = tab_width.max(1);
     if character == '\t' {
         tab_width - cell % tab_width
     } else {
-        UnicodeWidthChar::width(character).unwrap_or(0)
+        cells
     }
 }
 

@@ -829,6 +829,13 @@ impl App {
                 |segment| segment.start..segment.end,
             );
             let line: Vec<char> = line_string.chars().collect();
+            // A label replaces the two characters it covers, so neither may
+            // carry a mark or joiner that would be left behind.
+            let starts = crate::grapheme::clusters(line.iter().copied())
+                .flat_map(|cluster| {
+                    std::iter::once(true).chain(std::iter::repeat_n(false, cluster.chars - 1))
+                })
+                .collect::<Vec<_>>();
             let mut word_start = None;
             // One past the end closes a word that runs to the end of the row.
             for column in 0..=line.len() {
@@ -843,6 +850,8 @@ impl App {
                                 )
                             })
                             && line[begin..begin + 2].iter().copied().all(is_single_cell)
+                            && starts[begin + 1]
+                            && starts.get(begin + 2).is_none_or(|start| *start)
                         {
                             let screen_col = visual.segment.map_or_else(
                                 || {
@@ -1230,7 +1239,10 @@ impl App {
                     let row = buffer.offset_to_row(head);
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     if head < row_end {
-                        Some(Change::new(head, head + 1, character.to_string()))
+                        // Overtyping replaces a whole character, never one
+                        // code point of an emoji sequence.
+                        let end = buffer.next_grapheme(head).min(row_end);
+                        Some(Change::new(head, end, character.to_string()))
                     } else {
                         Some(Change::new(head, head, character.to_string()))
                     }
@@ -1625,7 +1637,7 @@ impl App {
                     continue;
                 }
             }
-            ordinary.push((head - 1, head));
+            ordinary.push((buffer.previous_grapheme(head), head));
         }
         let mut changes = crlf_safe_deletions(buffer, ordinary);
         changes.extend(special);
@@ -1673,7 +1685,8 @@ impl App {
 
     pub(super) fn edit_delete(&mut self) {
         let buffer_id = self.active().buffer;
-        let len = self.active_buffer().len_chars();
+        let buffer = self.active_buffer();
+        let len = buffer.len_chars();
         let spans = self
             .active()
             .selection
@@ -1683,7 +1696,7 @@ impl App {
                 if !range.is_empty() {
                     return Some((range.from(), range.to()));
                 }
-                (range.head < len).then_some((range.head, range.head + 1))
+                (range.head < len).then(|| (range.head, buffer.next_grapheme(range.head)))
             })
             .collect::<Vec<_>>();
         let changes = crlf_safe_deletions(&self.buffers[buffer_id], spans);
@@ -2229,11 +2242,11 @@ impl App {
         if range.is_empty() || self.active().selection_semantics() != SelectionSemantics::Runyte {
             return range;
         }
-        let end = self.active_buffer().len_chars();
+        let buffer = self.active_buffer();
         if range.anchor <= range.head {
-            Range::new(range.anchor, (range.head + 1).min(end))
+            Range::new(range.anchor, buffer.next_grapheme(range.head))
         } else {
-            Range::new((range.anchor + 1).min(end), range.head)
+            Range::new(buffer.next_grapheme(range.anchor), range.head)
         }
     }
 
@@ -3698,7 +3711,7 @@ impl App {
                 } else {
                     let row = buffer.offset_to_row(range.to());
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
-                    (range.to() + 1).min(row_end)
+                    buffer.next_grapheme(range.to()).min(row_end)
                 };
                 (at, at, text, false)
             })

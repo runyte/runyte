@@ -219,6 +219,11 @@ impl Emulator {
         }
         match action {
             Action::Print(character) => {
+                // A code point that continues the previous cell's cluster
+                // never moves the cursor, so it cannot complete a line.
+                if self.grid().joins(*character, self.modes.insert) {
+                    return 0;
+                }
                 let width = character.width().unwrap_or(0).min(self.grid().columns());
                 usize::from(
                     width > 0

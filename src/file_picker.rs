@@ -1085,10 +1085,11 @@ impl FilePicker {
         if self.query_cursor == 0 {
             return;
         }
-        let from = char_to_byte(&self.query, self.query_cursor - 1);
+        let start = crate::grapheme::str_previous(&self.query, self.query_cursor);
+        let from = char_to_byte(&self.query, start);
         let to = char_to_byte(&self.query, self.query_cursor);
         self.query.replace_range(from..to, "");
-        self.query_cursor -= 1;
+        self.query_cursor = start;
         self.rank(true, false);
     }
 
@@ -1096,10 +1097,11 @@ impl FilePicker {
         if self.query_cursor == 0 {
             return;
         }
-        let from = char_to_byte(&self.query, self.query_cursor - 1);
+        let start = crate::grapheme::str_previous(&self.query, self.query_cursor);
+        let from = char_to_byte(&self.query, start);
         let to = char_to_byte(&self.query, self.query_cursor);
         self.query.replace_range(from..to, "");
-        self.query_cursor -= 1;
+        self.query_cursor = start;
         self.note_query_changed();
     }
 
@@ -1108,7 +1110,8 @@ impl FilePicker {
             return;
         }
         let from = char_to_byte(&self.query, self.query_cursor);
-        let to = char_to_byte(&self.query, self.query_cursor + 1);
+        let end = crate::grapheme::str_next(&self.query, self.query_cursor);
+        let to = char_to_byte(&self.query, end);
         self.query.replace_range(from..to, "");
         self.rank(true, false);
     }
@@ -1118,7 +1121,8 @@ impl FilePicker {
             return;
         }
         let from = char_to_byte(&self.query, self.query_cursor);
-        let to = char_to_byte(&self.query, self.query_cursor + 1);
+        let end = crate::grapheme::str_next(&self.query, self.query_cursor);
+        let to = char_to_byte(&self.query, end);
         self.query.replace_range(from..to, "");
         self.note_query_changed();
     }
@@ -1263,11 +1267,12 @@ impl FilePicker {
     }
 
     pub fn query_left(&mut self) {
-        self.query_cursor = self.query_cursor.saturating_sub(1);
+        self.query_cursor = crate::grapheme::str_previous(&self.query, self.query_cursor);
     }
 
     pub fn query_right(&mut self) {
-        self.query_cursor = (self.query_cursor + 1).min(self.query.chars().count());
+        self.query_cursor = crate::grapheme::str_next(&self.query, self.query_cursor)
+            .min(self.query.chars().count());
     }
 
     pub fn down(&mut self) {

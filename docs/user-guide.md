@@ -42,7 +42,9 @@ reading from top to bottom.
   indentation, and pane-local code folding
 - Word completion from every open buffer, including the explorer, with no
   language server and no trigger key required
-- Unicode-aware buffer positions and terminal widths
+- Unicode-aware buffer positions and terminal widths: an emoji such as `🤷‍♀️`
+  or `👍🏽`, or a letter with its accents, is one character to the caret,
+  selections, deletion, wrapping and the integrated terminal
 
 **Languages**
 
@@ -1033,7 +1035,8 @@ travels with the working copy, not the commit.
 - Entering collapses every selection to its active head.
 - A caret at line end appends instead of overwriting.
 - A newline inserts a line break rather than consuming the existing one.
-- Unicode characters are replaced one for one, and CRLF stays one line ending.
+- Characters, including whole emoji sequences, are replaced one for one, and
+  CRLF stays one line ending.
 - The whole Replace session is one undo checkpoint.
 - Lowercase `r` is the single-character Normal-mode command and never enters
   Replace mode.

@@ -188,6 +188,7 @@ mod directory_tree;
 mod editing;
 mod editing_and_buffers;
 mod editor_mode;
+mod emoji;
 mod external_dispatch;
 mod git;
 mod git_comparison;
