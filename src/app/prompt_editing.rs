@@ -19,18 +19,32 @@ pub(super) fn prompt_delete_range(value: &mut String, start: usize, end: usize) 
     value.replace_range(start..end, "");
 }
 
+/// Deletes the whole character before the cursor, never one code point of
+/// an emoji sequence or a base without its marks.
 pub(super) fn prompt_backspace(value: &mut String, cursor: &mut usize) {
     if *cursor == 0 {
         return;
     }
-    prompt_delete_range(value, *cursor - 1, *cursor);
-    *cursor -= 1;
+    let start = crate::grapheme::str_previous(value, *cursor);
+    prompt_delete_range(value, start, *cursor);
+    *cursor = start;
 }
 
 pub(super) fn prompt_delete(value: &mut String, cursor: usize) {
     if cursor < value.chars().count() {
-        prompt_delete_range(value, cursor, cursor + 1);
+        let end = crate::grapheme::str_next(value, cursor);
+        prompt_delete_range(value, cursor, end);
     }
+}
+
+/// The cursor one whole character to the left.
+pub(super) fn prompt_left(value: &str, cursor: usize) -> usize {
+    crate::grapheme::str_previous(value, cursor)
+}
+
+/// The cursor one whole character to the right, stopping at the end.
+pub(super) fn prompt_right(value: &str, cursor: usize) -> usize {
+    crate::grapheme::str_next(value, cursor).min(value.chars().count())
 }
 
 pub(super) fn prompt_word_backward(value: &str, cursor: usize) -> usize {

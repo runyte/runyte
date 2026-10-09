@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{Result, bail, ensure};
 use regex::{Regex, RegexBuilder};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 #[cfg(any(unix, windows))]
@@ -4335,12 +4336,12 @@ fn bounded_outline_component(value: &str, max_bytes: usize, max_cells: usize) ->
     let cell_budget = max_cells.saturating_sub(display_cells(ELLIPSIS));
     let mut bounded = String::new();
     let mut cells = 0usize;
-    for character in value.chars() {
-        let width = UnicodeWidthChar::width(character).unwrap_or(0).max(1);
-        if bounded.len() + character.len_utf8() > byte_budget || cells + width > cell_budget {
+    for cluster in value.graphemes(true) {
+        let width = crate::grapheme::width(cluster).max(1);
+        if bounded.len() + cluster.len() > byte_budget || cells + width > cell_budget {
             break;
         }
-        bounded.push(character);
+        bounded.push_str(cluster);
         cells += width;
     }
     if max_bytes >= ELLIPSIS.len() && max_cells >= display_cells(ELLIPSIS) {
@@ -4351,33 +4352,41 @@ fn bounded_outline_component(value: &str, max_bytes: usize, max_cells: usize) ->
 
 fn display_cells(value: &str) -> usize {
     value
-        .chars()
-        .map(|character| UnicodeWidthChar::width(character).unwrap_or(0).max(1))
+        .graphemes(true)
+        .map(|cluster| crate::grapheme::width(cluster).max(1))
         .sum()
 }
 
-/// Terminal cells before a character boundary, including tab expansion.
+/// Terminal cells before a character boundary, including tab expansion. A
+/// cluster counts once, by its whole width; a zero-width one still takes a
+/// cell so a caret on it has somewhere to be.
 fn visual_column(line: &str, column: usize, tab_width: usize) -> usize {
     let tab_width = tab_width.max(1);
-    line.chars().take(column).fold(0, |cell, character| {
-        cell + if character == '\t' {
-            tab_width - cell % tab_width
-        } else {
-            UnicodeWidthChar::width(character).unwrap_or(0).max(1)
-        }
-    })
+    crate::grapheme::starts(line.chars())
+        .take(column)
+        .fold(0, |cell, (character, width)| {
+            cell + if character == '\t' {
+                tab_width - cell % tab_width
+            } else {
+                width.map_or(0, |width| width.max(1))
+            }
+        })
 }
 
-/// Finds the character that occupies a display column. Callers pad a short
-/// line first, so the target always has a character to land on.
+/// Finds the character that occupies a display column: the start of a
+/// cluster, never a code point inside one. Callers pad a short line first, so
+/// the target always has a character to land on.
 fn column_at_visual_column(line: &str, target: usize, tab_width: usize) -> usize {
     let mut cell = 0;
-    for (column, character) in line.chars().enumerate() {
+    for (column, (character, width)) in crate::grapheme::starts(line.chars()).enumerate() {
+        let Some(width) = width else {
+            continue;
+        };
         let next = cell
             + if character == '\t' {
                 tab_width.max(1) - cell % tab_width.max(1)
             } else {
-                UnicodeWidthChar::width(character).unwrap_or(0).max(1)
+                width.max(1)
             };
         if target < next {
             return column;

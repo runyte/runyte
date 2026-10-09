@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use super::{App, prompt_backspace, prompt_delete, prompt_insert};
+use super::{App, prompt_backspace, prompt_delete, prompt_insert, prompt_left, prompt_right};
 use crate::{
     input::{InputEvent, KeyCode, Modifiers},
     plugin::{
@@ -450,11 +450,11 @@ impl App {
                                 None
                             }
                             KeyCode::Left => {
-                                surface.cursor = surface.cursor.saturating_sub(1);
+                                surface.cursor = prompt_left(value, surface.cursor);
                                 None
                             }
                             KeyCode::Right => {
-                                surface.cursor = (surface.cursor + 1).min(value.chars().count());
+                                surface.cursor = prompt_right(value, surface.cursor);
                                 None
                             }
                             KeyCode::Home => {

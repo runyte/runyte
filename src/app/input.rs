@@ -27,8 +27,9 @@ use super::{
     is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
     keymap_for, mapped_applied_path, operative_span, persistent_session_availability, pointer_pane,
     pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
-    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
+    prompt_left, prompt_right, prompt_word_backward, prompt_word_forward, quote_path_hint,
+    rect_contains, resolve_command, resolved_operation_path, row_characters,
+    unclosed_or_complete_quoted_path,
 };
 
 /// How soon a second left press on the same directory tree entry must follow
@@ -2586,32 +2587,35 @@ impl App {
                     let row = self.active_buffer().offset_to_row(range.head);
                     let row_end = self.active_buffer().line_to_offset(row)
                         + self.active_buffer().line_len(row);
-                    return Range::new(range.head, (range.head + 1).min(row_end));
+                    let next = self.active_buffer().next_grapheme(range.head);
+                    return Range::new(range.head, next.min(row_end));
                 }
                 return range;
             }
+            let past = |offset: usize| {
+                if inclusive {
+                    self.active_buffer().next_grapheme(offset).min(end)
+                } else {
+                    offset
+                }
+            };
             if range.anchor <= range.head {
-                Range::new(
-                    range.anchor,
-                    range.head.saturating_add(usize::from(inclusive)).min(end),
-                )
+                Range::new(range.anchor, past(range.head))
             } else {
-                Range::new(
-                    range.anchor.saturating_add(usize::from(inclusive)).min(end),
-                    range.head,
-                )
+                Range::new(past(range.anchor), range.head)
             }
         })
     }
 
     pub(super) fn vim_half_open_to_inclusive(&self, selection: Selection) -> Selection {
+        let buffer = self.active_buffer();
         selection.transform(|range| {
             if range.is_empty() {
                 range
             } else if range.anchor < range.head {
-                Range::new(range.anchor, range.head - 1)
+                Range::new(range.anchor, buffer.previous_grapheme(range.head))
             } else {
-                Range::new(range.anchor - 1, range.head)
+                Range::new(buffer.previous_grapheme(range.anchor), range.head)
             }
         })
     }
@@ -2740,14 +2744,16 @@ impl App {
                 let buffer = self.active_buffer();
                 let selection = self.active().selection.transform(|range| {
                     let position = buffer.position_of(range.head);
+                    let line_end =
+                        buffer.line_to_offset(position.row) + buffer.line_len(position.row);
                     let head = if motion == VimMotion::Left {
                         if position.col > 0 {
-                            range.head - 1
+                            buffer.previous_grapheme(range.head)
                         } else {
                             range.head
                         }
-                    } else if position.col + 1 < buffer.line_len(position.row) {
-                        range.head + 1
+                    } else if buffer.next_grapheme(range.head) < line_end {
+                        buffer.next_grapheme(range.head)
                     } else {
                         range.head
                     };
@@ -3085,7 +3091,7 @@ impl App {
                         let selection = self.active().selection.transform(|range| {
                             let row = buffer.offset_to_row(range.head);
                             let end = buffer.line_to_offset(row) + buffer.line_len(row);
-                            Range::new(range.head, (range.head + 1).min(end))
+                            Range::new(range.head, buffer.next_grapheme(range.head).min(end))
                         });
                         self.active_mut().replace_selection(selection);
                     }
@@ -3119,7 +3125,7 @@ impl App {
             let selection = self.active().selection.transform(|range| {
                 let row = buffer.offset_to_row(range.head);
                 let end = buffer.line_to_offset(row) + buffer.line_len(row);
-                Range::new(range.head, (range.head + 1).min(end))
+                Range::new(range.head, buffer.next_grapheme(range.head).min(end))
             });
             self.active_mut().replace_selection(selection);
         }
@@ -4043,10 +4049,10 @@ impl App {
             }
             KeyCode::Tab => self.complete_selected_command(),
             KeyCode::Left => {
-                self.command_cursor = self.command_cursor.saturating_sub(1);
+                self.command_cursor = prompt_left(&self.command, self.command_cursor);
             }
             KeyCode::Right => {
-                self.command_cursor = (self.command_cursor + 1).min(self.command.chars().count());
+                self.command_cursor = prompt_right(&self.command, self.command_cursor);
             }
             KeyCode::Char(ch) => {
                 prompt_insert(&mut self.command, self.command_cursor, ch);
@@ -5325,9 +5331,9 @@ impl App {
                 prompt_delete(&mut self.command, self.command_cursor);
                 self.command_selection = 0;
             }
-            KeyCode::Left => self.command_cursor = self.command_cursor.saturating_sub(1),
+            KeyCode::Left => self.command_cursor = prompt_left(&self.command, self.command_cursor),
             KeyCode::Right => {
-                self.command_cursor = (self.command_cursor + 1).min(self.command.chars().count());
+                self.command_cursor = prompt_right(&self.command, self.command_cursor);
             }
             KeyCode::Home => self.command_cursor = 0,
             KeyCode::End => self.command_cursor = self.command.chars().count(),
@@ -5513,9 +5519,11 @@ impl App {
         match key.code {
             KeyCode::Char('c') => self.close_prompt(),
             KeyCode::Char('s') => return self.save(None, false),
-            KeyCode::Char('b') => self.command_cursor = self.command_cursor.saturating_sub(1),
+            KeyCode::Char('b') => {
+                self.command_cursor = prompt_left(&self.command, self.command_cursor);
+            }
             KeyCode::Char('f') => {
-                self.command_cursor = (self.command_cursor + 1).min(self.command.chars().count());
+                self.command_cursor = prompt_right(&self.command, self.command_cursor);
             }
             KeyCode::Char('a') => self.command_cursor = 0,
             KeyCode::Char('e') => self.command_cursor = self.command.chars().count(),
@@ -5687,7 +5695,7 @@ impl App {
             if after {
                 let row = buffer.offset_to_row(range.to());
                 let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
-                Range::point((range.to() + 1).min(row_end))
+                Range::point(buffer.next_grapheme(range.to()).min(row_end))
             } else {
                 Range::point(range.from())
             }
@@ -6791,14 +6799,18 @@ fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke
             *cursor += 1;
         }
         (KeyCode::Backspace, _) if *cursor > 0 => {
-            *cursor -= 1;
-            characters.remove(*cursor);
+            let start = crate::grapheme::str_previous(input, *cursor);
+            characters.drain(start..*cursor);
+            *cursor = start;
         }
         (KeyCode::Delete, _) if *cursor < characters.len() => {
-            characters.remove(*cursor);
+            let end = crate::grapheme::str_next(input, *cursor);
+            characters.drain(*cursor..end);
         }
-        (KeyCode::Left, _) => *cursor = cursor.saturating_sub(1),
-        (KeyCode::Right, _) => *cursor = (*cursor + 1).min(characters.len()),
+        (KeyCode::Left, _) => *cursor = crate::grapheme::str_previous(input, *cursor),
+        (KeyCode::Right, _) => {
+            *cursor = crate::grapheme::str_next(input, *cursor).min(characters.len());
+        }
         (KeyCode::Home, _) => *cursor = 0,
         (KeyCode::End, _) => *cursor = characters.len(),
         _ => return,

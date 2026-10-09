@@ -1864,13 +1864,16 @@ impl From<TerminalCell> for crate::terminal::Cell {
         Self {
             character: value.character,
             combining: {
-                let mut combining = ['\0'; 3];
+                let mut combining = ['\0'; crate::terminal::COMBINING_CAPACITY];
                 for (target, source) in combining.iter_mut().zip(value.combining.iter().copied()) {
                     *target = source;
                 }
                 combining
             },
-            combining_len: value.combining.len().min(3) as u8,
+            combining_len: value
+                .combining
+                .len()
+                .min(crate::terminal::COMBINING_CAPACITY) as u8,
             width: value.width,
             foreground: value.foreground.into(),
             background: value.background.into(),

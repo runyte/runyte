@@ -148,7 +148,15 @@ Deliberate limits:
   palette queries, and OSC 52 are ignored.
 - Only SGR (`DECSET 1006`) mouse reports are forwarded; pane borders remain
   editor-owned.
-- A cell retains at most three zero-width combining marks.
+- A cell holds one user-perceived character: a code point that continues the
+  cluster before the cursor, such as a combining mark, variation selector,
+  skin tone, regional indicator or the parts of a joined emoji, joins that
+  cell instead of taking a column. A selector that makes a one-cell symbol an
+  emoji widens it when the next column is free. A cell retains at most three
+  code points after its first; later ones fall back to ordinary placement.
+  Each cell is drawn with text that measures its own width, so a sequence
+  written without its presentation selectors, such as `🤷‍♂`, is drawn in emoji
+  presentation and copied exactly as written.
 - Integrated sessions survive only their workspace-host process. They do not
   survive a force stop, host crash/replacement, logout, reboot, or machine
   failure.

@@ -1819,7 +1819,7 @@ mod tests {
     fn maximum_terminal_geometry_fits_the_wire_frame_budget() {
         let cell = frame::TerminalCell {
             character: '\u{10ffff}',
-            combining: vec!['\u{10ffff}'; 3],
+            combining: vec!['\u{10ffff}'; crate::terminal::COMBINING_CAPACITY],
             width: 2,
             foreground: frame::TerminalColor::Rgb(255, 255, 255),
             background: frame::TerminalColor::Rgb(255, 255, 255),

@@ -2996,6 +2996,22 @@ impl Buffer {
         self.text.clamp_offset(offset, insert)
     }
 
+    /// The start of the user-perceived character containing `offset`.
+    pub fn grapheme_floor(&self, offset: Offset) -> Offset {
+        self.text.grapheme_floor(offset)
+    }
+
+    /// The offset just past the user-perceived character at `offset`.
+    pub fn next_grapheme(&self, offset: Offset) -> Offset {
+        self.text.next_grapheme(offset)
+    }
+
+    /// The start of the user-perceived character before the one containing
+    /// `offset`.
+    pub fn previous_grapheme(&self, offset: Offset) -> Offset {
+        self.text.previous_grapheme(offset)
+    }
+
     /// Clamps a view coordinate. Retained for callers that still think in rows
     /// and columns, such as rendering and the file picker.
     pub fn clamp(&self, position: Position, insert: bool) -> Position {
@@ -3011,7 +3027,7 @@ impl Buffer {
         if insert {
             start + len
         } else {
-            start + len.saturating_sub(1)
+            self.text.grapheme_floor(start + len.saturating_sub(1))
         }
     }
 

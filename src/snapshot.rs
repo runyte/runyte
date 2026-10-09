@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     app::{App, MaximizedView, Mode, PreparedPane, PreparedView, PromptKind},
@@ -857,11 +857,13 @@ impl App {
         let prompt_cursor_column = (self.mode == Mode::Command
             && !matches!(self.prompt_kind, PromptKind::SettingValue(_)))
         .then(|| {
-            self.prompt_prefix()
-                .chars()
-                .chain(self.command.chars().take(self.command_cursor))
-                .map(character_cells)
-                .sum()
+            crate::grapheme::cells(
+                self.prompt_prefix()
+                    .chars()
+                    .chain(self.command.chars().take(self.command_cursor)),
+            )
+            .map(|(_, cells)| cells)
+            .sum()
         });
         let is_prompt =
             matches!(self.prompt_kind, PromptKind::SettingValue(_)) || self.mode == Mode::Command;
@@ -1725,14 +1727,25 @@ impl App {
             .git_status_count_columns(prepared.buffer_id, context.row)
             .or_else(|| self.git_comparison_count_columns(prepared.buffer_id, context.row));
 
-        for (col, character) in buffer
-            .text()
-            .line(context.row)
-            .chars_at(start_col.min(line_len))
-            .take(end_col.saturating_sub(start_col))
-            .enumerate()
+        for (col, (character, cluster_width)) in crate::grapheme::starts(
+            buffer
+                .text()
+                .line(context.row)
+                .chars_at(start_col.min(line_len))
+                .take(end_col.saturating_sub(start_col)),
+        )
+        .enumerate()
         {
             let col = start_col + col;
+            // A code point that continues a cluster draws with it: its
+            // width was counted on the cluster's first code point, and no
+            // style may change inside one, or a frontend would receive half
+            // an emoji sequence in each of two runs.
+            let Some(cluster_width) = cluster_width else {
+                current.push(character);
+                drawn_end = col + 1;
+                continue;
+            };
             let remaining = visible_end.saturating_sub(visual_col);
             if let Some((label, part)) = label_at(row_start + col) {
                 if remaining == 0 {
@@ -1806,7 +1819,7 @@ impl App {
                 }
                 visual_col += width;
             } else {
-                let width = UnicodeWidthChar::width(character).unwrap_or(0);
+                let width = cluster_width;
                 if width > remaining {
                     break;
                 }
@@ -1956,11 +1969,7 @@ fn push_text_run(runs: &mut Vec<TextRun>, current: &mut String, metadata: TextRu
 }
 
 fn display_cells(text: &str) -> usize {
-    text.chars().map(character_cells).sum()
-}
-
-fn character_cells(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0)
+    crate::grapheme::str_width(text)
 }
 
 /// Finds the bounded character boundary that occupies `cell_limit` cells.
@@ -1976,14 +1985,19 @@ fn visible_character_end(
     let tab_width = tab_width.max(1);
     let mut column = start_column;
     let mut cells = 0_usize;
-    for (scanned, character) in characters.enumerate() {
+    for (scanned, (character, cluster_width)) in crate::grapheme::starts(characters).enumerate() {
         if scanned >= cell_limit.saturating_add(ZERO_WIDTH_SCAN_LIMIT) {
             break;
         }
+        // The rest of a cluster always accompanies its first code point.
+        let Some(cluster_width) = cluster_width else {
+            column += 1;
+            continue;
+        };
         let width = if character == '\t' {
             tab_width - cells % tab_width
         } else {
-            character_cells(character)
+            cluster_width
         };
         if width > 0 && cells.saturating_add(width) > cell_limit {
             break;
@@ -2001,13 +2015,13 @@ fn clip_fragments_to_cells<'a>(
     let mut width = 0;
     let mut clipped = String::with_capacity(limit);
     for fragment in fragments {
-        for character in fragment.chars() {
-            let next = width + character_cells(character);
+        for cluster in fragment.graphemes(true) {
+            let next = width + crate::grapheme::width(cluster);
             if next > limit {
                 return clipped;
             }
             width = next;
-            clipped.push(character);
+            clipped.push_str(cluster);
         }
     }
     clipped
@@ -2021,8 +2035,8 @@ fn clip_fragment_cell_range(fragment: &str, start: usize, limit: usize) -> Strin
     let end = start.saturating_add(limit);
     let mut position = 0usize;
     let mut clipped = String::with_capacity(limit);
-    for character in fragment.chars() {
-        let width = character_cells(character);
+    for cluster in fragment.graphemes(true) {
+        let width = crate::grapheme::width(cluster);
         let next = position.saturating_add(width);
         if next <= start {
             position = next;
@@ -2036,7 +2050,7 @@ fn clip_fragment_cell_range(fragment: &str, start: usize, limit: usize) -> Strin
         if next > end {
             break;
         }
-        clipped.push(character);
+        clipped.push_str(cluster);
         position = next;
     }
     clipped
@@ -2499,6 +2513,49 @@ mod tests {
             "one cell represents the line-end caret"
         );
         assert_eq!(caret_runs[0].text, "¬");
+    }
+
+    #[test]
+    fn an_emoji_is_drawn_whole_in_one_run_with_its_measured_width() {
+        let shrug = "🤷\u{200D}♀\u{FE0F}";
+        let mut config = Config::default();
+        config.editor.line_numbers = false;
+        let mut app = App::new(config, None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(
+            0,
+            format!("a{shrug}b👨\u{200D}👩\u{200D}👧c"),
+        ));
+        app.panes.get_mut(&0).unwrap().selection = Selection::point(1);
+
+        let snapshot = prepared_snapshot(&mut app, 20, 6);
+        let SnapshotRow::Text(row) = &snapshot.pane(0).unwrap().rows[0] else {
+            panic!("first row is text");
+        };
+        let caret = row
+            .runs
+            .iter()
+            .find(|run| {
+                matches!(
+                    run.kind,
+                    TextRunKind::Text {
+                        role: TextRole::Caret,
+                        ..
+                    }
+                )
+            })
+            .expect("caret run");
+        assert_eq!(caret.text, shrug, "the caret covers the whole emoji");
+        let text = row
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>();
+        assert!(text.starts_with(&format!("a{shrug}b👨\u{200D}👩\u{200D}👧c")));
+        // Code-point sums would make this row eleven cells wide.
+        assert_eq!(
+            display_cells(&format!("a{shrug}b👨\u{200D}👩\u{200D}👧c")),
+            7
+        );
     }
 
     #[test]

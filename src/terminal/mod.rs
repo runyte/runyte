@@ -67,7 +67,7 @@ use crate::jump_labels::{JumpLabels, LabelPart};
 use crate::selection::{Range, Selection};
 
 use emulator::Emulator;
-pub use grid::{Attributes, Cell, Color, TerminalLineId};
+pub use grid::{Attributes, COMBINING_CAPACITY, Cell, Color, TerminalLineId};
 
 /// The effective default colours a child may ask its terminal to report.
 ///
@@ -2146,7 +2146,7 @@ impl TerminalSession {
                     continue;
                 };
                 cell.character = character;
-                cell.combining = ['\0'; 3];
+                cell.combining = ['\0'; grid::COMBINING_CAPACITY];
                 cell.combining_len = 0;
                 cell.width = 1;
                 view.highlights.push(TerminalHighlight {

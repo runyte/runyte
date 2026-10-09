@@ -167,6 +167,11 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/text.rs`: rope storage, character offsets, and transactions. Every
   buffer mutation goes through a transaction; nothing writes text directly.
 - `src/selection.rs`: normalized multi-range selections over offsets.
+- `src/grapheme.rs`: user-perceived characters (extended grapheme clusters).
+  Offsets stay `char` offsets, but carets rest only on cluster starts and
+  every layout path measures a cluster whole with the same width the cell
+  buffer uses, so emoji sequences neither split nor misalign. Searches are
+  bounded so hostile runs of marks stay cheap.
 - `src/syntax/`: tree-sitter highlighting. The only module aware of
   `tree-house`; everything above it sees `Scope` values and character offsets.
   Grammars are statically linked, not loaded from disk.
