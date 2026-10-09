@@ -22,7 +22,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// The most `char`s one cluster may span. Real clusters are far shorter: the
-/// longest emoji sequences, families with skin tones, have eleven.
+/// longest standard emoji, a kiss with two skin tones, has ten.
 pub const MAX_CLUSTER_CHARS: usize = 32;
 
 /// Terminal cells one cluster occupies. A single code point keeps its own

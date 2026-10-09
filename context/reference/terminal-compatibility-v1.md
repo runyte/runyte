@@ -152,8 +152,9 @@ Deliberate limits:
   cluster before the cursor, such as a combining mark, variation selector,
   skin tone, regional indicator or the parts of a joined emoji, joins that
   cell instead of taking a column. A selector that makes a one-cell symbol an
-  emoji widens it when the next column is free. A cell retains at most three
-  code points after its first; later ones fall back to ordinary placement.
+  emoji widens it when the next column is free. A cell retains at most ten
+  code points after its first, enough for every standard emoji sequence;
+  later ones fall back to ordinary placement.
   Each cell is drawn with text that measures its own width, so a sequence
   written without its presentation selectors, such as `🤷‍♂`, is drawn in emoji
   presentation and copied exactly as written.

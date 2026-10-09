@@ -86,10 +86,11 @@ pub struct Pen {
     pub attributes: Attributes,
 }
 
-/// Code points a cell holds after its first. Three covers canonical marks,
-/// skin tones and simple joined emoji without making a cell own a heap
-/// allocation or weakening the workspace memory bound.
-pub const COMBINING_CAPACITY: usize = 3;
+/// Code points a cell holds after its first. The longest standard emoji, a
+/// kiss with two skin tones, has nine; one more is spare. A cell still owns
+/// no heap allocation, and the workspace budget is in bytes, so a larger
+/// cell means fewer scrollback cells rather than more memory.
+pub const COMBINING_CAPACITY: usize = 10;
 
 /// One grid cell.
 ///
@@ -1550,13 +1551,35 @@ mod tests {
     }
 
     #[test]
+    fn the_longest_standard_emoji_fit_one_cell() {
+        for emoji in [
+            "👨\u{200D}👩\u{200D}👧\u{200D}👦",
+            "👩🏻\u{200D}❤\u{FE0F}\u{200D}💋\u{200D}👨🏼",
+            "🏃🏽\u{200D}♀\u{FE0F}\u{200D}➡\u{FE0F}",
+            "🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
+        ] {
+            let mut grid = Grid::new(6, 1, false);
+            write(&mut grid, emoji);
+            write(&mut grid, "x");
+            assert_eq!(grid.lines[0][0].text(), emoji);
+            assert_eq!(grid.lines[0][0].width, 2, "{emoji}");
+            assert_eq!(grid.lines[0][2].character, 'x', "{emoji}");
+            assert_cells_match_their_text(&grid);
+        }
+    }
+
+    #[test]
     fn a_full_cell_leaves_further_code_points_to_the_ordinary_rules() {
-        let mut grid = Grid::new(10, 1, false);
-        write(&mut grid, "👨\u{200D}👩\u{200D}👧\u{200D}👦");
+        let mut grid = Grid::new(4, 1, false);
+        write(
+            &mut grid,
+            &format!("e{}", "\u{301}".repeat(COMBINING_CAPACITY + 2)),
+        );
         assert_eq!(
             usize::from(grid.lines[0][0].combining_len),
             COMBINING_CAPACITY
         );
+        assert_eq!(grid.cursor.column, 1);
         assert_cells_match_their_text(&grid);
     }
 }
