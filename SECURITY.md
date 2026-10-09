@@ -34,10 +34,11 @@ credited in the advisory unless they ask not to be.
 
 ## Scope
 
-The provisional native Windows implementation is in scope, including console
-paste, clipboard bounds, file replacement and ConPTY process ownership. The
-[Windows support table](docs/user-guide.md#windows-support) lists deferred
-services; their unavailable states are part of the boundary. Windows executables
+The native Windows implementation is in scope, including console paste,
+clipboard bounds, file replacement, ConPTY process ownership, persistent
+sessions, plugins and MCP/context access. The
+[Windows support guide](docs/user-guide.md#windows-support) lists unsupported
+operations and platform limits; their refusal paths are part of the boundary. Windows executables
 are currently unsigned.
 
 Runyte is a local terminal editor. The boundary that matters is what content

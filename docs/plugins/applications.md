@@ -798,7 +798,9 @@ ten-second deadline as other control handlers.
 
 Forms use Tab/Shift-Tab or Up/Down for fields, Left/Right/Space for choices and
 booleans, Enter to submit valid values, and Escape/Ctrl-c to cancel. Text editing
-uses scalar cursor movement, Home/End, Backspace/Delete and bounded literal paste.
+moves the cursor and deletes by extended grapheme cluster, with Home/End and
+bounded literal paste. Field length limits and protocol text offsets still count
+Unicode scalars.
 `ui.pick` displays and filters candidates using the ordinary picker matcher;
 Up/Down selects and Enter accepts. `ui.confirm` uses the native confirmation vocabulary: Enter accepts with
 `confirmed: true`, while Escape/Ctrl-c cancels with no values.

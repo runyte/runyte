@@ -7868,12 +7868,13 @@ src/
   clipboard.rs    testable operating-system clipboard adapters
   text.rs         rope storage, character offsets, and transactions
   selection.rs    multi-range selections over character offsets
+  grapheme.rs     bounded grapheme-cluster navigation and display widths
   syntax/         tree-sitter highlighting and the bundled grammar table
   lsp/            asynchronous language-server transport and typed events
   git/            bounded Git commands, projections, diffs, and status tracking
   terminal/       PTYs, emulation, bounded scrollback, and terminal sessions
   workspace/      persistent host state, attachment, and service lifecycle
-  protocol/       private versioned DTOs for bundled local clients (Unix)
+  protocol/       private versioned DTOs for bundled local clients on Unix/Windows
   command.rs      editor commands and shared display metadata
   headless.rs     frontend-independent semantic editor test facade
   snapshot.rs     owned presentation-neutral editor and overlay snapshots
@@ -7896,6 +7897,11 @@ src/
   keymap.rs       declarative bindings and sequence lookup
   layout.rs       recursive split tree
   notification.rs bounded workspace-lifetime history and its buffer document
+  media.rs        native media classification and presentation operations
+  document_preview.rs
+                  bounded, engine-independent document captures
+  native_frontend.rs, native_frontend/
+                  optional GPUI window, media/PDF workers and preview rendering
   ui.rs           Ratatui widgets and editor frame composition
   wrap.rs         Unicode cell-aware visual-line and soft-wrap geometry
   main.rs         CLI, event loop, and Crossterm terminal lifecycle

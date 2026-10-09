@@ -33,7 +33,9 @@ Its lifecycle closure records delivered implementation, not certification of
 unverified release gates. This register does not establish registry publication.
 
 The external agent context transport adds the negotiated
-`runyte.context.v1` profile on a separate, natively granted Unix socket.
+`runyte.context.v1` profile on a separate, natively granted local transport:
+a Unix socket on Linux/macOS or a named pipe on Windows. The published Python
+client supports Unix sockets; the built-in Rust MCP adapter supports both.
 Its schema and independently vendorable Python client live in
 `docs/plugins/runyte-context-1.schema.json` and `docs/plugins/context_client.py`.
 `docs/plugins/check_context.py` verifies closed request shapes, old-transport

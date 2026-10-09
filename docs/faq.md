@@ -2,8 +2,9 @@
 
 ## Does Runyte run natively on Windows?
 
-This source tree has provisional native Windows support for standalone editing,
-file management, text clipboard and integrated ConPTY terminals. Native Windows
+Runyte runs natively on x86-64 Windows 11 24H2 or later in Windows Terminal.
+It supports editing, file management, clipboard integration, ConPTY terminals,
+persistent sessions, language servers, plugins and MCP access. Windows release
 builds are available starting with 0.3.2. See the [Windows guide](user-guide.md#windows-support)
 for build requirements and the explicit feature limits.
 

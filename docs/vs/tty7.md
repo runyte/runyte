@@ -2,11 +2,11 @@
 
 [All comparisons](README.md) · Last verified: 2026-09-26
 
-Scope: Runyte in this repository and tty7’s published documentation checked on the date above; no comparative performance measurements.
+Scope: tty7’s published documentation and the original Runyte comparison were checked on the date above; no comparative performance measurements. The Runyte native-window qualification was updated against this checkout on 2026-10-09; tty7 claims were not reverified.
 
 ## Summary
 
-tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte runs inside an existing terminal and makes a modal editor the centre of its workspace. Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
+tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte makes a modal editor the centre of its workspace. Its released interface runs inside an existing terminal; this branch also offers an [experimental native GPUI window](../user-guide.md#experimental-native-window). Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
 
 This comparison spans different layers: tty7 can provide the terminal in which Runyte runs. Its command-input editing is distinct from Runyte’s project-file editor.
 

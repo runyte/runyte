@@ -1,10 +1,11 @@
 # Native window experiment
 
 This branch adds an opt-in GPUI 0.2.2 frontend, built with `--features native`
-and selected with `--window`. It supports standalone editor and IDE modes.
+and selected with `--window`. It supports editor, IDE and persistent mux modes.
 The experiment stays on `exp`; do not merge this branch into `dev` or `main`.
-The terminal frontend remains the default. The public plugin contract and
-persistent-session transport do not gain a new client protocol.
+The terminal frontend remains the default. The public plugin contract is
+unchanged; native and terminal attachments share the versioned private
+bundled-client protocol and require matching client/host binaries.
 
 ## Ownership
 
@@ -20,7 +21,9 @@ The native desktop identity is `com.runyte.Runyte`. Its icons derive from
 backplate. Linux Wayland resolves the matching installed desktop entry. X11
 also receives `_NET_WM_ICON` from one bounded background scan matching this
 process's PID and exact window class. GPUI 0.2.2's X11 raw-handle accessors are
-unimplemented, so the adapter does not call them or vendor the toolkit.
+unimplemented, so the adapter does not call them. GPUI is vendored under
+`vendor/gpui` with Linux frame scheduling and paint fixes described in its
+[patch record](../../vendor/gpui/RUNYTE-PATCH.md).
 The macOS helper builds a local `.app` with an ICNS resource, launcher and
 project/dependency/font notices. Installation, regeneration and platform
 limits are documented in [the native packaging guide](../../contrib/native/README.md).
@@ -57,11 +60,14 @@ witness is deferred rather than inferring authorization from visual equality.
 Media files are read-only generated projections with a separate `media_path`;
 they never acquire an editable file path, LSP document or save target. Existing
 file workflows intercept supported formats before external binary opening.
-PDF projections have one logical row per page. Escape clears native selection
-first, then enters the `[pdf]` page buffer; its ordinary text motions, counts
-and search choose a row, and Enter displays that page. Escape from page rows
-opens the PDF's directory with the file selected. Images use `[image]` and
-skip the page-buffer step. `Space e` goes directly to any media source's
+PDF projections have one logical row per page. Escape first dismisses overlays
+or pending keys, then restores zoomed-in media to fit while preserving selection,
+then clears selection, and finally enters the `[pdf]` page buffer. Its ordinary
+text motions, counts and search choose a row, and Enter displays that page.
+Escape or `q` from page rows opens the PDF's directory with the file selected;
+in Select mode it first clears selection and returns to Normal. In media
+previews, `q` follows the same fit, clear-selection and leave order as Escape.
+Images use `[image]` and skip the page-buffer step. `Space e` goes directly to any media source's
 directory. Preview/page-buffer state belongs to the pane and is tied to the
 buffer identity; source page and view position survive returning via explorer.
 The old page-picker overlay and `g p` binding are removed.
@@ -150,6 +156,17 @@ limits of this authored corpus are in the startup-performance register.
 GPUI publishes text clipboard data on Linux; `arboard` supplies image clipboard
 ownership because GPUI 0.2.2 does not publish image MIME data to other Linux
 applications. Both are Rust integrations; Poppler is installed separately.
+
+## Native document previews
+
+`:preview` displays a bounded capture of selected text or the complete source
+buffer through a separately built Blitz helper. Host state owns captures and
+dismissals; the frontend owns scroll, selection and cached rasters. Source
+editing state is preserved. The [document-preview reference](native-document-preview.md)
+records ownership, rendering boundaries, lifecycle and dated verification; the
+[prototype guide](../../contrib/document-preview/README.md) covers build steps,
+controls and resource limits. This static preview does not implement the
+[browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
 
 ## Validation
 

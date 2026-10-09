@@ -10,9 +10,11 @@ server:
    `~/.config/runyte/config.yaml` on Unix or `%APPDATA%\runyte\config.yaml` on
    Windows. When combining snippets, keep one `lsp:`
    heading and place every language entry below it.
-3. Exit and reopen standalone Runyte. For a persistent session, use
-   `runyte --session-restart [WORKSPACE]` and repeat any non-default
-   `--config PATH`. Then open a file in that language, approve workspace LSP execution in the
+3. Run `:config-reload` in each running workspace that should adopt the new
+   definitions. Unchanged servers keep running; servers with changed definitions
+   stop and start again on the next request. Changing `lsp.enable` itself
+   requires restarting the editor or persistent session. Then open a file in
+   that language, approve workspace LSP execution in the
    first-open prompt (or `:lsp-trust`), and run `:lsp-status`.
    `:service-health` reports whether the active document has a configured and
    attached server. A launch failure appears in `:lsp-status` after the first

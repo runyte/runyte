@@ -283,7 +283,7 @@ Each archive has one top-level directory named
 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, the complete `licenses/`
 directory, and `config.example.yaml`. Linux archives are built on Ubuntu 22.04
 to retain the glibc 2.35 floor. The macOS executables are unsigned and are not
-notarized. Windows executables are also unsigned. Windows Phase-1 scope is documented in the packaged README.
+notarized. Windows executables are also unsigned. The packaged README links to the current Windows support and limitations guide.
 
 To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
 `shasum -a 256 <archive>` on macOS and compare the complete digest with the

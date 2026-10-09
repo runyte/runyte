@@ -141,8 +141,8 @@ duplication, and writer startup, with output queued before cleanup.
 
 Deliberate limits:
 
-- Windows Phase 1 provides provisional standalone ConPTY support on x86-64
-  Windows 11 24H2 or later with Windows Terminal; see the native limits below.
+- Windows uses ConPTY on x86-64 Windows 11 24H2 or later with Windows Terminal,
+  including persistent sessions; see the native limits below.
 - Kitty graphics, sixel, iTerm images, and resize reflow are unsupported.
 - Read-only OSC 10/11 default-colour queries are supported. Colour setters,
   palette queries, and OSC 52 are ignored.

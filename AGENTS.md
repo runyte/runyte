@@ -280,6 +280,17 @@ and the order of the push. Do not infer any of those from the commit history.
   words, paragraphs, and the bounded balanced-pair scan delimiter objects fall
   back to without a syntax tree. Knows nothing about syntax trees, buffers, or
   selections.
+- `src/media.rs`: native media classification and presentation operations;
+  media projections have no editable file identity.
+- `src/document_preview.rs`: bounded, engine-independent text captures.
+  `src/app/presentation.rs` owns capture and dismissal state; the host retains
+  captures across frontend attachment changes.
+- `src/native_frontend.rs` and `src/native_frontend/`: optional GPUI window,
+  cell composition, native input, clipboard, media workers and PDF helpers.
+  `preview.rs` owns document-preview presentation and the separate Blitz helper
+  lifecycle; engine dependencies stay in `contrib/document-preview`. Current
+  ownership and limits live in `context/reference/native-window-experiment.md`
+  and `context/reference/native-document-preview.md`.
 - `src/ui.rs`: Ratatui rendering.
 - `src/workspace/`: workspace identity and state plus the optional persistent
   session host, bounded local protocol, attachment transport, and lifecycle.

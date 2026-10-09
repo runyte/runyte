@@ -1,7 +1,10 @@
-# Native document preview feasibility
+# Native document preview
 
-Investigated on 2026-10-09 from Runyte `6c478af`, on branch `exp-html`.
-This is a static document experiment, not approval or implementation of the
+Current behavior includes the prototype (`04ba89f`), adjacent cache (`9fd18d0`),
+pane-focus correction (`6cf4223`) and persistent dismissal fix (`d4fcd70`),
+merged into `exp` through `de5c743` on 2026-10-09. The dated evidence below
+originated in the investigation from `6c478af` on `exp-html`.
+This is a static document experiment, not implementation of the
 [broader browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
 The [prototype guide](../../contrib/document-preview/README.md) contains exact
 build/run instructions, fixtures, controls, resource policy and supported subset.
@@ -16,15 +19,18 @@ is recognized even inside Markdown or source code. Capturing and formatting neve
 change source text, selection, undo history or viewport. Existing `?`, `:render`
 and `:markdown` behavior remains separate.
 
-Shared state holds bounded, presentation-neutral text captures keyed by pane;
-private bundled-client protocol version 76 carries those values. Native views
-own scroll, hit coordinates, selection and images. Blitz types exist only in the
+Shared state holds bounded, presentation-neutral text captures keyed by pane.
+Private bundled-client protocol version 77 carries captures and dismissals.
+Native views own scroll, hit coordinates, selection and images. Blitz types exist only in the
 separate, locked `contrib/document-preview` helper crate. The root dependency graph
 is unchanged. A split initially shows source; each pane opts in independently.
-Switching source or closing drops the view and cancels work. Reattachment can
-reopen the host capture with fresh presentation state. Explicit dismissals are
-remembered within a bounded frontend cache. Terminal clients retain source and
-report that the command requires the native window.
+Switching source or closing drops the frontend view and cancels work. Returning
+to the same source/pane or reattaching can reopen an undismissed host capture
+with fresh presentation state. Escape, `q` and editing-key exits remove the
+matching pane/generation capture from the host, so dismissal survives workspace
+switches and reattachment. Captures are host memory, not saved persistent state.
+Terminal clients retain source and report that the command requires the native
+window.
 
 Formatting uses pulldown-cmark GFM, Syntect and an original bundled MPL-2.0
 GitHub-like stylesheet. JSON is pretty printed only in the preview; invalid JSON
@@ -41,9 +47,11 @@ uses Ctrl-Shift-c (Cmd-c is implemented but untested on macOS).
 
 The helper is created on demand, never during ordinary editing. Parsing,
 highlighting, fonts, assets, layout and painting run outside both editor loops.
-Work queues and responses are bounded; superseded, dismissed and dropped views
-cancel their helper. Limits include 128 KiB of captured text, eight captures,
-five seconds per-request wall time and Linux address-space containment.
+Work queues and responses are bounded; hidden, refreshed and closed views
+cancel obsolete work. The retained helper is released when no preview remains
+visible or after 30 seconds without a request. Limits include 128 KiB of captured
+text, eight captures, five seconds per-request wall time and Linux address-space
+containment.
 Failures remain dismissible diagnostics. This is not an OS security sandbox.
 
 ## Engine evidence and integration boundaries
@@ -83,7 +91,7 @@ Several boundaries required explicit handling:
   admitted, with request, byte and dimension limits. Traversal and symlinks out
   are denied. Concurrent hostile filesystem replacement is outside this policy.
 
-## Observed verification
+## Initial verification — 2026-10-09
 
 Tested on Linux, X11 through an isolated Xvfb display, using Vulkan lavapipe for
 GPUI and Vello CPU for documents. No macOS or native Wayland runtime was tested.
@@ -116,18 +124,17 @@ fixture observations on this machine, not benchmarks or production guarantees.
 These initial measurements predate the retained-renderer follow-up below.
 There is no recurring preview work before invocation.
 
-## Recommendation and remaining limitations
+## Remaining limitations
 
-Retain Blitz as the candidate for static documents; it crossed the difficult
-selection, raster composition, scrolling and editor ownership boundaries without
-requiring a browser. Do not settle the broader browser engine decision from this
-result.
+Blitz serves static documents; this integration does not settle the broader
+browser-engine decision. The current implementation retains a DOM/font context
+and CPU renderer in a killable helper, coalesces viewport updates and caches
+adjacent document regions. Large jumps and multiple active previews still incur
+raster upload and replacement costs. Packaged fonts, stronger asset isolation
+and macOS, Wayland and physical HiDPI acceptance remain future work.
 
-The follow-up below retains a DOM/font context and CPU renderer in a killable
-helper, coalesces viewport updates and caches adjacent document regions. Next,
-consider a GPU scene or tile path for large jumps and multiple active previews. Follow that with
-packaged fonts, stronger asset isolation and actual macOS,
-Wayland and physical HiDPI acceptance before promoting the feature.
+The follow-up sections below preserve the implementation diagnoses and checks
+recorded on 2026-10-09; their intermediate behavior and measurements are historical.
 
 SVG text is graphical rather than selectable. Blitz copy joins some block
 boundaries with spaces, so copied code may lose authored line breaks. Nested HTML

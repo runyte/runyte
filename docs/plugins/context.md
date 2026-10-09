@@ -1,7 +1,8 @@
 # Scoped workspace context transport
 
 The external context profile uses the stable `runyte-1` application envelopes
-over a separate, opt-in, owner-private Unix socket. It is not the bundled
+over a separate, opt-in, owner-private local transport: a Unix socket on
+Linux/macOS or a named pipe on Windows. It is not the bundled
 frontend/control protocol and does not register a plugin process. The required
 feature is `runyte.context.v1`. Ordinary process applications and their frozen
 fixtures retain their existing contract.
@@ -10,7 +11,9 @@ The [context schema](runyte-context-1.schema.json) describes this separate
 profile. The current base schema links it without admitting context requests on
 ordinary plugin process connections. The independently vendorable
 [Python client](context_client.py) uses Python 3.10+ and the standard library;
-it does not import the process-plugin SDK.
+it does not import the process-plugin SDK. This Python client supports Unix
+sockets only. The built-in [MCP adapter](../mcp.md) supports both Unix and Windows
+through the Rust context transport.
 
 ```python
 from context_client import ContextClient

@@ -166,5 +166,6 @@ DISPLAY=:95 python3 tests/native_window.py --document-preview --output /tmp/runy
 `check.py` uses `RUNYTE_PREVIEW_HELPER`, falling back to the debug helper and tests actual Blitz selection, links,
 scrolling, 2× rendering, all formats, local asset denial and selected SVG dispatch.
 The GUI harness uses temporary workspace/configuration/runtime directories.
-The [development record](../../context/reviews/native_document_preview.md) states
-which checks and platforms were actually verified and the recommendation.
+The [document-preview reference](../../context/reference/native-document-preview.md)
+records ownership, lifecycle, remaining limits and which checks and platforms
+were actually verified.
