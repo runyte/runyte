@@ -2,6 +2,7 @@
 
 use super::*;
 use ropey::Rope;
+use unicode_width::UnicodeWidthStr;
 
 const EMOJI: [&str; 10] = ["🤷‍♂", "🤷‍♀️", "😀", "😗", "🤡", "👍🏽", "🇵🇱", "❤️", "👨‍👩‍👧‍👦", "1️⃣"];
 
@@ -31,6 +32,11 @@ fn emoji_sequences_are_one_cluster_with_their_drawn_width() {
         assert_eq!(
             measured[0].width,
             UnicodeWidthStr::width(emoji),
+            "{emoji:?}"
+        );
+        assert_eq!(
+            measured[0].width,
+            usize::from(ratatui::buffer::CellWidth::cell_width(emoji)),
             "{emoji:?}"
         );
     }
@@ -85,8 +91,16 @@ fn cells_put_a_cluster_width_on_its_first_code_point() {
     assert_eq!(
         clusters("\u{301}x".chars()).collect::<Vec<_>>(),
         [
-            Cluster { chars: 1, width: 0 },
-            Cluster { chars: 1, width: 1 }
+            Cluster {
+                first: '\u{301}',
+                chars: 1,
+                width: 0
+            },
+            Cluster {
+                first: 'x',
+                chars: 1,
+                width: 1
+            }
         ]
     );
 }
@@ -142,4 +156,20 @@ fn long_flag_runs_and_hostile_marks_stay_bounded() {
     assert!(end <= MAX_CLUSTER_CHARS, "unbounded cluster reached {end}");
     let middle = floor(text, 5_000);
     assert!(5_000 - middle <= MAX_CLUSTER_CHARS);
+}
+
+#[test]
+fn halfwidth_sound_marks_take_the_cell_the_buffer_gives_them() {
+    // U+FF9E is a grapheme extender that terminals and the cell buffer draw in
+    // a cell of its own, so its kana and it are one character two cells wide.
+    for text in ["ｶﾞ", "ﾊﾟ", "ｶﾞｷﾞ"] {
+        assert_eq!(
+            str_width(text),
+            usize::from(ratatui::buffer::CellWidth::cell_width(text)),
+            "{text}"
+        );
+    }
+    assert_eq!(str_width("ｶﾞ"), 2);
+    assert_eq!(clusters("ｶﾞ".chars()).count(), 1);
+    assert_eq!(width("ﾞ"), 1);
 }

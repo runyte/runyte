@@ -8,31 +8,37 @@
 //! one, and its width must be measured as a whole, because the sum of its
 //! code points' widths is not what a terminal or the native grid draws.
 //!
-//! [`width`] is the one measure every layout path uses. It agrees with the
-//! cell buffer both frontends draw from, which places each cluster by the
-//! same `unicode-width` string width.
+//! [`width`] is the one measure every layout path uses. It is the measure the
+//! cell buffer both frontends draw from places each cluster by, so layout and
+//! drawing cannot disagree about where a character ends.
 //!
 //! Every search here is bounded by [`MAX_CLUSTER_CHARS`]. A hostile line of
 //! nothing but combining marks must not turn one keystroke or one frame into
 //! a scan of the whole line; past the bound it is split into pieces that
 //! long, which only such text can notice.
 
+use ratatui::buffer::CellWidth;
 use ropey::RopeSlice;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete, UnicodeSegmentation};
+use unicode_width::UnicodeWidthChar;
 
 /// The most `char`s one cluster may span. Real clusters are far shorter: the
 /// longest standard emoji, a kiss with two skin tones, has ten.
 pub const MAX_CLUSTER_CHARS: usize = 32;
 
-/// Terminal cells one cluster occupies. A single code point keeps its own
-/// width, so control characters stay zero-width exactly as before.
+/// Terminal cells one cluster occupies, as the cell buffer measures it. That
+/// is the `unicode-width` string width plus a cell for each halfwidth katakana
+/// sound mark, which terminals draw beside its kana. A single code point
+/// keeps its own width, so control characters stay zero-width as before.
 pub fn width(cluster: &str) -> usize {
     let mut characters = cluster.chars();
     match (characters.next(), characters.next()) {
         (None, _) => 0,
+        (Some(character @ ('\u{FF9E}' | '\u{FF9F}')), None) => {
+            usize::from(cluster.cell_width()).max(UnicodeWidthChar::width(character).unwrap_or(0))
+        }
         (Some(character), None) => UnicodeWidthChar::width(character).unwrap_or(0),
-        _ => UnicodeWidthStr::width(cluster),
+        _ => usize::from(cluster.cell_width()),
     }
 }
 
@@ -44,6 +50,8 @@ pub fn str_width(text: &str) -> usize {
 /// One cluster read from a stream of `char`s.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Cluster {
+    /// The cluster's first code point.
+    pub first: char,
     /// Code points in the cluster, at least one.
     pub chars: usize,
     /// Terminal cells, as [`width`] measures them.
@@ -91,6 +99,7 @@ impl<I: Iterator<Item = char>> Clusters<I> {
             chars += 1;
         }
         Cluster {
+            first,
             chars,
             width: width(&self.cluster),
         }
@@ -103,7 +112,11 @@ impl<I: Iterator<Item = char>> Iterator for Clusters<I> {
     fn next(&mut self) -> Option<Cluster> {
         let first = self.characters.next()?;
         if let Some(width) = self.ascii(first) {
-            return Some(Cluster { chars: 1, width });
+            return Some(Cluster {
+                first,
+                chars: 1,
+                width,
+            });
         }
         Some(self.read(first, |_| {}))
     }
@@ -207,6 +220,12 @@ pub(crate) fn extends(cluster: &mut String, next: char) -> bool {
 /// The start of the cluster containing `offset`: `offset` itself when it is
 /// already a boundary. Offsets at or past the end clamp to the end.
 pub fn floor(text: RopeSlice<'_>, offset: usize) -> usize {
+    if offset >= text.len_chars() {
+        return text.len_chars();
+    }
+    if quick_boundary(text, offset) == Some(true) {
+        return offset;
+    }
     cluster_at(text, offset).0
 }
 
@@ -231,14 +250,9 @@ pub fn cluster_at(text: RopeSlice<'_>, offset: usize) -> (usize, usize) {
     if offset >= len {
         return (len, len);
     }
-    // Most text is ASCII on both sides of the offset, where both boundaries
-    // are known without segmenting anything.
-    let character = text.char(offset);
-    if character.is_ascii()
-        && !(character == '\n' && offset > 0 && text.char(offset - 1) == '\r')
-        && text
-            .get_char(offset + 1)
-            .is_none_or(|next| next.is_ascii() && !(character == '\r' && next == '\n'))
+    // Most code points are a cluster of their own, which the boundaries on
+    // either side settle without segmenting a window.
+    if quick_boundary(text, offset) == Some(true) && quick_boundary(text, offset + 1) == Some(true)
     {
         return (offset, offset + 1);
     }
@@ -254,6 +268,42 @@ pub fn cluster_at(text: RopeSlice<'_>, offset: usize) -> (usize, usize) {
     }
     (offset, offset + 1)
 }
+
+/// Whether a cluster boundary falls before the code point at `offset`, read
+/// from the code points around it. ASCII on both sides is settled at once;
+/// anything else asks the segmenter about this one position in the rope's own
+/// chunks. `None` when that needs more preceding text than a few chunks, as a
+/// long run of flags does, and the caller falls back to a bounded window.
+fn quick_boundary(text: RopeSlice<'_>, offset: usize) -> Option<bool> {
+    let len = text.len_chars();
+    if offset == 0 || offset >= len {
+        return Some(true);
+    }
+    let before = text.char(offset - 1);
+    let at = text.char(offset);
+    if before.is_ascii() && at.is_ascii() {
+        return Some(!(before == '\r' && at == '\n'));
+    }
+    let byte = text.char_to_byte(offset);
+    // The chunk holding the boundary's right side; the segmenter asks for
+    // the text before it when it needs that too.
+    let (chunk, chunk_start, _, _) = text.chunk_at_byte(byte);
+    let mut cursor = GraphemeCursor::new(byte, text.len_bytes(), true);
+    for _ in 0..QUICK_CONTEXT_CHUNKS {
+        match cursor.is_boundary(chunk, chunk_start) {
+            Ok(boundary) => return Some(boundary),
+            Err(GraphemeIncomplete::PreContext(end)) => {
+                let (context, context_start, _, _) = text.chunk_at_byte(end - 1);
+                cursor.provide_context(&context[..end - context_start], context_start);
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// Preceding chunks [`quick_boundary`] may read before deferring to a window.
+const QUICK_CONTEXT_CHUNKS: usize = 4;
 
 /// A known boundary at or before `offset` from which segmenting reaches it.
 ///

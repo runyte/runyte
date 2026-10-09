@@ -21,7 +21,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Cells between the longest annotated row and the hint column.
 pub const GAP: usize = 2;
@@ -151,12 +151,12 @@ impl RowHints {
         let mut rendered = " ".repeat(padding);
         let mut width = padding;
         let mut visible_hint = false;
-        for character in text.chars() {
-            let cells = display_cells_of(character);
+        for cluster in text.graphemes(true) {
+            let cells = crate::grapheme::width(cluster);
             if width + cells > remaining_cells {
                 break;
             }
-            rendered.push(character);
+            rendered.push_str(cluster);
             width += cells;
             visible_hint |= cells > 0;
         }
@@ -164,13 +164,10 @@ impl RowHints {
     }
 }
 
-/// The display width of `text` in terminal cells.
+/// The display width of `text` in terminal cells, each character measured
+/// whole.
 pub fn display_cells(text: &str) -> usize {
-    text.chars().map(display_cells_of).sum()
-}
-
-fn display_cells_of(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0)
+    crate::grapheme::str_width(text)
 }
 
 #[cfg(test)]

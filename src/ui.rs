@@ -609,11 +609,18 @@ fn elided_label(
 ) -> Vec<(Option<usize>, char)> {
     let characters = label.chars().enumerate().map(|(index, c)| (Some(index), c));
     let whole = || characters.clone().collect::<Vec<_>>();
-    let width = |run: &[(Option<usize>, char)]| {
-        run.iter()
-            .map(|(_, character)| character.width().unwrap_or(0))
-            .sum::<usize>()
+    // Each character's width sits on its first code point, and only a
+    // character's first code point may start or end what is kept, so an
+    // ellipsis never cuts an emoji sequence apart.
+    let cells = crate::grapheme::starts(label.chars())
+        .map(|(_, width)| width)
+        .collect::<Vec<_>>();
+    let cells_of = |item: &(Option<usize>, char)| match item.0 {
+        Some(index) => cells[index].unwrap_or(0),
+        None => item.1.width().unwrap_or(0),
     };
+    let starts = |item: &(Option<usize>, char)| item.0.is_none_or(|index| cells[index].is_some());
+    let width = |run: &[(Option<usize>, char)]| run.iter().map(cells_of).sum::<usize>();
     let all = whole();
     let Some(from) = elide_from.filter(|from| *from < all.len()) else {
         return all;
@@ -654,29 +661,57 @@ fn elided_label(
     let mut tail_start = name.len();
     let mut tail_width = 0;
     while tail_start > 0 {
-        let next = name[tail_start - 1].1.width().unwrap_or(0);
+        let mut start = tail_start - 1;
+        while start > 0 && !starts(&name[start]) {
+            start -= 1;
+        }
+        let next = width(&name[start..tail_start]);
         if tail_width + next > tail_room {
             break;
         }
         tail_width += next;
-        tail_start -= 1;
+        tail_start = start;
     }
     let head_room = room - 1 - tail_width;
     let mut front_end = 0;
     let mut front_width = 0;
     while front_end < tail_start {
-        let next = name[front_end].1.width().unwrap_or(0);
+        let mut end = front_end + 1;
+        while end < tail_start && !starts(&name[end]) {
+            end += 1;
+        }
+        let next = width(&name[front_end..end]);
         if front_width + next > head_room {
             break;
         }
         front_width += next;
-        front_end += 1;
+        front_end = end;
     }
     let mut kept = head.to_vec();
     kept.extend_from_slice(&name[..front_end]);
     kept.push((None, '…'));
     kept.extend_from_slice(&name[tail_start..]);
     fill(kept)
+}
+
+/// Spans built one per code point, merged wherever a code point continues the
+/// character the previous span ends with: a frontend measures and places each
+/// span on its own, so half an emoji sequence per span would be drawn as two.
+/// The merged span keeps the style of the character's first code point.
+fn join_clusters(spans: impl IntoIterator<Item = Span<'static>>) -> Vec<Span<'static>> {
+    let mut joined: Vec<Span<'static>> = Vec::new();
+    for span in spans {
+        if let Some(previous) = joined.last_mut()
+            && let Some(first) = span.content.chars().next()
+            && let Some(last) = previous.content.graphemes(true).next_back()
+            && crate::grapheme::extends(&mut last.to_owned(), first)
+        {
+            previous.content.to_mut().push_str(&span.content);
+            continue;
+        }
+        joined.push(span);
+    }
+    joined
 }
 
 /// The tint covering character `position` of a row's label, or of its
@@ -1574,7 +1609,7 @@ fn draw_snapshot_overlay(
                 .filter(|text| !text.is_empty())
                 .map(|text| text.width() + 2)
                 .sum::<usize>();
-        spans.extend(
+        spans.extend(join_clusters(
             elided_label(
                 &row.label,
                 row.elide_from,
@@ -1596,7 +1631,7 @@ fn draw_snapshot_overlay(
                 }
                 Span::styled(character.to_string(), character_style)
             }),
-        );
+        ));
         let mut detail_style = ground.fg(if row.dimmed && !selected {
             theme.jump_text_muted
         } else {
@@ -1612,14 +1647,16 @@ fn draw_snapshot_overlay(
                 .iter()
                 .copied()
                 .collect::<std::collections::HashSet<_>>();
-            spans.extend(row.detail.chars().enumerate().map(|(position, character)| {
-                let style = if detail_emphasized.contains(&position) {
-                    detail_style.fg(emphasis_color).bold()
-                } else {
-                    detail_style
-                };
-                Span::styled(character.to_string(), style)
-            }));
+            spans.extend(join_clusters(row.detail.chars().enumerate().map(
+                |(position, character)| {
+                    let style = if detail_emphasized.contains(&position) {
+                        detail_style.fg(emphasis_color).bold()
+                    } else {
+                        detail_style
+                    };
+                    Span::styled(character.to_string(), style)
+                },
+            )));
         }
         let trailing = tinted_trailing(
             &row.trailing_detail,
@@ -4042,23 +4079,27 @@ fn matched_path_line(
     if width == 0 {
         return Line::default();
     }
-    let characters = path.chars().collect::<Vec<_>>();
-    let total_width = characters
-        .iter()
-        .map(|character| character.width().unwrap_or(0))
-        .sum::<usize>();
+    // Whole characters, each with the index of its first code point, which is
+    // how match positions count.
+    let mut clusters = Vec::new();
+    let mut index = 0;
+    for cluster in path.graphemes(true) {
+        clusters.push((index, cluster));
+        index += cluster.chars().count();
+    }
+    let total_width = crate::grapheme::str_width(path);
     let truncated = total_width > width;
     let start = if truncated {
         let budget = width.saturating_sub(1);
         let mut used = 0;
-        let mut start = characters.len();
-        for (index, character) in characters.iter().enumerate().rev() {
-            let cells = character.width().unwrap_or(0);
+        let mut start = clusters.len();
+        for (position, (_, cluster)) in clusters.iter().enumerate().rev() {
+            let cells = crate::grapheme::width(cluster);
             if used + cells > budget {
                 break;
             }
             used += cells;
-            start = index;
+            start = position;
         }
         start
     } else {
@@ -4068,14 +4109,11 @@ fn matched_path_line(
     if truncated {
         spans.push(Span::styled("…", Style::default().fg(normal)));
     }
-    for (index, character) in characters.into_iter().enumerate().skip(start) {
+    for (index, cluster) in clusters.into_iter().skip(start) {
+        let matched = (index..index + cluster.chars().count()).any(|at| positions.contains(&at));
         spans.push(Span::styled(
-            character.to_string(),
-            Style::default().fg(if positions.contains(&index) {
-                accent
-            } else {
-                normal
-            }),
+            cluster.to_owned(),
+            Style::default().fg(if matched { accent } else { normal }),
         ));
     }
     Line::from(spans)
@@ -4363,28 +4401,31 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
                         .filter(|text| !text.is_empty())
                         .map(|text| text.width() + 2)
                         .sum::<usize>();
-                    let mut spans = elided_label(
-                        &item.label,
-                        item.elide_from,
-                        row_width.saturating_sub(reserved),
-                    )
-                    .into_iter()
-                    .map(|(source, character)| {
-                        let style = match source {
-                            Some(index) if emphasized.contains(&index) => {
-                                Style::default().fg(app.theme.accent).bold()
-                            }
-                            Some(index) => {
-                                match tint_at(&item.tints, false, index).filter(|_| tinted) {
-                                    Some(tint) => Style::default().fg(tint_color(&app.theme, tint)),
-                                    None => Style::default().fg(text_color),
+                    let mut spans = join_clusters(
+                        elided_label(
+                            &item.label,
+                            item.elide_from,
+                            row_width.saturating_sub(reserved),
+                        )
+                        .into_iter()
+                        .map(|(source, character)| {
+                            let style = match source {
+                                Some(index) if emphasized.contains(&index) => {
+                                    Style::default().fg(app.theme.accent).bold()
                                 }
-                            }
-                            None => Style::default().fg(text_color),
-                        };
-                        Span::styled(character.to_string(), style)
-                    })
-                    .collect::<Vec<_>>();
+                                Some(index) => {
+                                    match tint_at(&item.tints, false, index).filter(|_| tinted) {
+                                        Some(tint) => {
+                                            Style::default().fg(tint_color(&app.theme, tint))
+                                        }
+                                        None => Style::default().fg(text_color),
+                                    }
+                                }
+                                None => Style::default().fg(text_color),
+                            };
+                            Span::styled(character.to_string(), style)
+                        }),
+                    );
                     // A row's detail is the muted half of what it says, in
                     // both layouts. The snapshot renderer an attached client
                     // uses has always drawn it here; dropping it in this one
@@ -8692,6 +8733,30 @@ mod tests {
 
     #[test]
     fn an_overlong_destination_name_keeps_its_file_name() {
+        // An ellipsis never cuts an emoji sequence apart.
+        let family = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+        let label = format!("* [file]  {}", family.repeat(20));
+        let kept = elided_label(&label, Some(10), 30)
+            .into_iter()
+            .map(|(_, character)| character)
+            .collect::<String>();
+        assert!(kept.contains('…'));
+        for piece in kept[10..].split('…') {
+            let piece = piece.trim_end();
+            assert_eq!(
+                piece.chars().count() % 7,
+                0,
+                "{piece:?} holds part of an emoji"
+            );
+        }
+        assert_eq!(crate::grapheme::str_width(&kept), 30);
+        let spans = join_clusters(
+            family
+                .chars()
+                .map(|character| Span::raw(character.to_string())),
+        );
+        assert_eq!(spans.len(), 1);
+
         let drawn = |label: &str, from, budget| {
             elided_label(label, from, budget)
                 .into_iter()

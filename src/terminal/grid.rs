@@ -1551,6 +1551,16 @@ mod tests {
     }
 
     #[test]
+    fn a_halfwidth_sound_mark_widens_its_kana_to_the_cells_it_is_drawn_in() {
+        let mut grid = Grid::new(6, 1, false);
+        write(&mut grid, "ｶﾞx");
+        assert_eq!(grid.lines[0][0].text(), "ｶﾞ");
+        assert_eq!(grid.lines[0][0].width, 2);
+        assert_eq!(grid.lines[0][2].character, 'x');
+        assert_cells_match_their_text(&grid);
+    }
+
+    #[test]
     fn the_longest_standard_emoji_fit_one_cell() {
         for emoji in [
             "👨\u{200D}👩\u{200D}👧\u{200D}👦",

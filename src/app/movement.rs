@@ -36,13 +36,17 @@ pub(super) fn word_class(character: char, long: bool) -> u8 {
 }
 
 /// Starts of the characters after the one at `offset`, skipping line feeds.
+///
+/// Characters are streamed from one boundary rather than found one search at
+/// a time, so a long scan such as a missed `f` costs about what reading the
+/// code points does.
 pub(super) fn offsets_after(buffer: &Buffer, offset: Offset) -> impl Iterator<Item = Offset> + '_ {
-    let len = buffer.len_chars();
-    std::iter::successors(Some(buffer.next_grapheme(offset)), |candidate| {
-        Some(buffer.next_grapheme(*candidate))
+    let mut position = buffer.next_grapheme(offset);
+    crate::grapheme::clusters(buffer.text().rope().chars_at(position)).filter_map(move |cluster| {
+        let start = position;
+        position += cluster.chars;
+        (cluster.first != '\n').then_some(start)
     })
-    .take_while(move |candidate| *candidate < len)
-    .filter(move |candidate| buffer.char_at(*candidate) != Some('\n'))
 }
 
 /// Starts of the characters before the one at `offset`, nearest first,
@@ -64,9 +68,17 @@ pub(super) fn previous_offset(buffer: &Buffer, offset: Offset) -> Option<Offset>
     offsets_before(buffer, offset).next()
 }
 
+/// The first code point of the user-perceived character containing `offset`.
+///
+/// Word classes read this rather than the code point itself: an accent, a
+/// skin tone or the parts of a joined emoji belong to the character they
+/// continue, so they never end one word and start another.
+pub(super) fn base_char(buffer: &Buffer, offset: Offset) -> Option<char> {
+    buffer.char_at(buffer.grapheme_floor(offset))
+}
+
 pub(super) fn class_at(buffer: &Buffer, offset: Offset, long: bool) -> Option<u8> {
-    buffer
-        .char_at(offset)
+    base_char(buffer, offset)
         .filter(|ch| *ch != '\n')
         .map(|ch| word_class(ch, long))
 }
@@ -80,7 +92,7 @@ pub(super) fn class_at(buffer: &Buffer, offset: Offset, long: bool) -> Option<u8
 /// characters, or the last word of a row and the first word of the next row
 /// read as one word and `w`, `b`, and `e` all step over the boundary.
 pub(super) fn word_class_at(buffer: &Buffer, offset: Offset, long: bool) -> Option<u8> {
-    buffer.char_at(offset).map(|ch| word_class(ch, long))
+    base_char(buffer, offset).map(|ch| word_class(ch, long))
 }
 
 /// Next offset for a word scan, line terminators included.
@@ -219,9 +231,9 @@ pub(super) fn select_word_motion(
 ) -> Range {
     let len = buffer.len_chars();
     let (anchor, head) = if range.anchor <= range.head {
-        (range.anchor, (range.head + 1).min(len))
+        (range.anchor, buffer.next_grapheme(range.head))
     } else {
-        (range.anchor + 1, range.head)
+        (buffer.next_grapheme(range.anchor), range.head)
     };
     let backward = target == WordTarget::PreviousStart;
     if (backward && head == 0) || (!backward && head >= len) {
@@ -231,8 +243,8 @@ pub(super) fn select_word_motion(
     // whole of a previous selection.
     let start = match (backward, anchor < head) {
         (false, true) => (head - 1, head),
-        (false, false) => (head, head + 1),
-        (true, true) => (head, head - 1),
+        (false, false) => (head, buffer.next_grapheme(head)),
+        (true, true) => (head, buffer.grapheme_floor(head - 1)),
         (true, false) => (head + 1, head),
     };
     let (anchor, head) = if backward {
@@ -240,9 +252,16 @@ pub(super) fn select_word_motion(
     } else {
         walk_word_forward(buffer, start, target, long)
     };
+    // The walk reads code points; the range it leaves rests on characters.
     match anchor.cmp(&head) {
-        std::cmp::Ordering::Less => Range::new(anchor, head - 1),
-        std::cmp::Ordering::Greater => Range::new(anchor - 1, head),
+        std::cmp::Ordering::Less => Range::new(
+            buffer.grapheme_floor(anchor),
+            buffer.grapheme_floor(head - 1),
+        ),
+        std::cmp::Ordering::Greater => Range::new(
+            buffer.grapheme_floor(anchor - 1),
+            buffer.grapheme_floor(head),
+        ),
         std::cmp::Ordering::Equal => range,
     }
 }
@@ -254,7 +273,7 @@ fn walk_word_forward(
     long: bool,
 ) -> (Offset, Offset) {
     let len = buffer.len_chars();
-    let mut previous = head.checked_sub(1).and_then(|at| buffer.char_at(at));
+    let mut previous = head.checked_sub(1).and_then(|at| base_char(buffer, at));
     while head < len
         && let Some(character) = buffer.char_at(head).filter(|ch| is_line_ending(*ch))
     {
@@ -266,7 +285,7 @@ fn walk_word_forward(
     }
     let head_start = head;
     while head < len
-        && let Some(next) = buffer.char_at(head)
+        && let Some(next) = base_char(buffer, head)
     {
         if previous.is_none_or(|previous| reached_word_target(target, previous, next, long)) {
             if head == head_start {
@@ -287,7 +306,7 @@ fn walk_word_backward(
     target: WordTarget,
     long: bool,
 ) -> (Offset, Offset) {
-    let mut previous = buffer.char_at(head);
+    let mut previous = base_char(buffer, head);
     while head > 0
         && let Some(character) = buffer.char_at(head - 1).filter(|ch| is_line_ending(*ch))
     {
@@ -299,7 +318,7 @@ fn walk_word_backward(
     }
     let head_start = head;
     while head > 0
-        && let Some(next) = buffer.char_at(head - 1)
+        && let Some(next) = base_char(buffer, head - 1)
     {
         if previous.is_none_or(|previous| reached_word_target(target, previous, next, long)) {
             if head == head_start {
@@ -315,10 +334,13 @@ fn walk_word_backward(
 }
 
 pub(super) fn word_end(buffer: &Buffer, offset: Offset, long: bool) -> Offset {
+    // The end found must lie past the whole character under the caret, not
+    // on a mark of its own that reads as the end of its word.
+    let past = buffer.next_grapheme(offset);
     let mut candidate = offset;
     loop {
         let class = word_class_at(buffer, candidate, long).unwrap_or(0);
-        if class != 0 && candidate != offset {
+        if class != 0 && candidate >= past {
             let next_class = word_scan_next(buffer, candidate)
                 .and_then(|next| word_class_at(buffer, next, long));
             if next_class != Some(class) {
@@ -392,7 +414,7 @@ pub(super) fn insert_word_forward(buffer: &Buffer, offset: Offset) -> Offset {
         }
         candidate = next;
     }
-    (candidate + 1).min(len)
+    buffer.next_grapheme(candidate).min(len)
 }
 
 /// Inclusive-start, exclusive-end bounds of the word under `offset`, confined
@@ -417,7 +439,7 @@ pub(super) fn word_bounds(buffer: &Buffer, offset: Offset) -> (Offset, Offset) {
         }
         end = next;
     }
-    (start, end + 1)
+    (start, buffer.next_grapheme(end))
 }
 
 /// The half-open span an operation acts on: the range plus the character under

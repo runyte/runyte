@@ -71,8 +71,8 @@ fn word_class(character: char, long: bool) -> WordClass {
 
 /// The run of characters sharing `offset`'s class, never crossing a line.
 fn run(text: &Text, offset: Offset, long: bool) -> Span {
-    let class = text.char_at(offset).map(|ch| word_class(ch, long));
-    let same = |at: Offset| text.char_at(at).map(|ch| word_class(ch, long)) == class;
+    let class = class_at(text, offset, long);
+    let same = |at: Offset| class_at(text, at, long) == class;
     let mut from = offset;
     while from > 0 && same(from - 1) {
         from -= 1;
@@ -84,8 +84,12 @@ fn run(text: &Text, offset: Offset, long: bool) -> Span {
     Span::new(from, to)
 }
 
+/// The class of the user-perceived character containing `offset`. An accent
+/// or the parts of a joined emoji take the class of the character they
+/// continue, so a run never ends inside one.
 fn class_at(text: &Text, offset: Offset, long: bool) -> Option<WordClass> {
-    text.char_at(offset).map(|ch| word_class(ch, long))
+    text.char_at(text.grapheme_floor(offset))
+        .map(|ch| word_class(ch, long))
 }
 
 /// The word under `offset`, as Vim's `iw` and `aw` read it.

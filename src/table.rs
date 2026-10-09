@@ -13,7 +13,7 @@
 //! with the Unicode width where there is one, so a formatted table lines up in
 //! the pane it was formatted in.
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Where a column's content sits inside its cell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -274,16 +274,16 @@ fn expand_tabs(cell: &str, tab_width: usize) -> String {
     let tab_width = tab_width.max(1);
     let mut expanded = String::with_capacity(cell.len());
     let mut column = 0;
-    for character in cell.chars() {
-        if character == '\t' {
+    for cluster in cell.graphemes(true) {
+        if cluster == "\t" {
             let run = tab_width - column % tab_width;
             for _ in 0..run {
                 expanded.push(' ');
             }
             column += run;
         } else {
-            expanded.push(character);
-            column += character_width(character);
+            expanded.push_str(cluster);
+            column += display_width(cluster);
         }
     }
     expanded
@@ -343,16 +343,22 @@ fn dashes(output: &mut String, run: usize, alignment: Alignment) {
 /// Tabs never reach here: `expand_tabs` has already turned them into the spaces
 /// they stand for, which is why this needs no column to count from.
 fn display_width(text: &str) -> usize {
-    text.chars().map(character_width).sum()
-}
-
-fn character_width(character: char) -> usize {
-    UnicodeWidthChar::width(character).unwrap_or(0).max(1)
+    text.graphemes(true)
+        .map(|cluster| crate::grapheme::width(cluster).max(1))
+        .sum()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_table_pads_an_emoji_by_the_cells_it_is_drawn_in() {
+        assert_eq!(
+            format_table("| a | b |\n|---|---|\n| 👍🏽 | 🤷\u{200D}♀\u{FE0F} |", 4).as_deref(),
+            Some("| a  | b  |\n|----|----|\n| 👍🏽 | 🤷\u{200D}♀\u{FE0F} |")
+        );
+    }
 
     #[test]
     fn format_table_pads_every_column_to_its_widest_cell() {

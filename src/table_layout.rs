@@ -220,11 +220,13 @@ impl Layout {
                 .to_string();
             let mut position = 0;
             let mut positions = vec![0];
-            for ch in text.chars() {
+            // A character's width belongs to its first code point, so the
+            // rest of an emoji sequence adds nothing to the cell's position.
+            for (ch, cells) in crate::grapheme::cells(text.chars()) {
                 position += if ch == '\t' {
                     tab.max(1) - position % tab.max(1)
                 } else {
-                    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                    cells
                 };
                 positions.push(position);
             }

@@ -774,17 +774,20 @@ impl WorkspaceHost {
                         let mut runs = Vec::new();
                         for run in &row.runs {
                             let mut text = String::new();
-                            for character in run.text.chars() {
-                                let columns = unicode_width::UnicodeWidthChar::width(character)
-                                    .unwrap_or(0)
-                                    .max(1);
-                                if character.len_utf8() > bytes_left || columns > cells_left {
+                            // Whole characters only, so a clipped run never
+                            // ends inside an emoji sequence.
+                            for cluster in unicode_segmentation::UnicodeSegmentation::graphemes(
+                                run.text.as_str(),
+                                true,
+                            ) {
+                                let columns = crate::grapheme::width(cluster).max(1);
+                                if cluster.len() > bytes_left || columns > cells_left {
                                     clipped = true;
                                     break;
                                 }
                                 cells_left -= columns;
-                                bytes_left -= character.len_utf8();
-                                text.push(character);
+                                bytes_left -= cluster.len();
+                                text.push_str(cluster);
                             }
                             runs.push(json!({"text":text,"kind":match run.kind {TextRunKind::Text{whitespace:true,..}=>"whitespace",TextRunKind::Text{..}=>"text",TextRunKind::JumpLabel(_)=>"jump_label",TextRunKind::InlineDiagnostic(_)=>"diagnostic",TextRunKind::FoldMarker=>"fold_marker",TextRunKind::Hint=>"hint"}}));
                             if clipped {

@@ -1256,9 +1256,15 @@ impl App {
                         )
                     },
                     |segment| {
-                        segment.end.min(segment.start.saturating_add(
+                        bounded_cluster_end(
+                            buffer
+                                .text()
+                                .line(document_row)
+                                .chars_at(segment.start.min(line_len))
+                                .take(segment.end.saturating_sub(segment.start)),
+                            segment.start,
                             prepared.text_width.saturating_add(ZERO_WIDTH_SCAN_LIMIT),
-                        ))
+                        )
                     },
                 )
                 .min(line_len);
@@ -1707,10 +1713,14 @@ impl App {
                 )
             },
             |segment| {
-                segment.end.min(
-                    segment
-                        .start
-                        .saturating_add(context.text_width.saturating_add(ZERO_WIDTH_SCAN_LIMIT)),
+                bounded_cluster_end(
+                    buffer
+                        .text()
+                        .line(context.row)
+                        .chars_at(segment.start.min(line_len))
+                        .take(segment.end.saturating_sub(segment.start)),
+                    segment.start,
+                    context.text_width.saturating_add(ZERO_WIDTH_SCAN_LIMIT),
                 )
             },
         );
@@ -1983,29 +1993,70 @@ fn visible_character_end(
     tab_width: usize,
 ) -> usize {
     let tab_width = tab_width.max(1);
+    let budget = cell_limit.saturating_add(ZERO_WIDTH_SCAN_LIMIT);
     let mut column = start_column;
     let mut cells = 0_usize;
-    for (scanned, (character, cluster_width)) in crate::grapheme::starts(characters).enumerate() {
-        if scanned >= cell_limit.saturating_add(ZERO_WIDTH_SCAN_LIMIT) {
+    let mut scanned = 0_usize;
+    for cluster in crate::grapheme::clusters(characters) {
+        if scanned >= budget {
             break;
         }
-        // The rest of a cluster always accompanies its first code point.
-        let Some(cluster_width) = cluster_width else {
-            column += 1;
+        if cluster.width == 0 && cluster.first != '\t' {
+            let taken = scan_cost(cluster).min(budget - scanned);
+            column += taken;
+            scanned += taken;
             continue;
-        };
-        let width = if character == '\t' {
+        }
+        scanned += 1;
+        let width = if cluster.first == '\t' {
             tab_width - cells % tab_width
         } else {
-            cluster_width
+            cluster.width
         };
-        if width > 0 && cells.saturating_add(width) > cell_limit {
+        if cells.saturating_add(width) > cell_limit {
             break;
         }
-        column += 1;
+        column += cluster.chars;
         cells = cells.saturating_add(width);
     }
     column
+}
+
+/// What one cluster costs against a row's scan budget. A visible character
+/// costs one whatever its length, because a row of joined emoji is content
+/// and each cluster is itself bounded. A cluster with no width costs every
+/// code point, so a hostile run of marks stays as cheap to bound as before;
+/// being invisible, it may also be cut anywhere.
+fn scan_cost(cluster: crate::grapheme::Cluster) -> usize {
+    if cluster.width == 0 { cluster.chars } else { 1 }
+}
+
+/// The end of what a wrapped segment shows from `start`, bounded by the same
+/// scan budget as an unwrapped row. A segment already fits its row; this only
+/// bounds one made of nothing but zero-width marks, and never ends inside a
+/// visible character.
+fn bounded_cluster_end(
+    characters: impl Iterator<Item = char>,
+    start: usize,
+    budget: usize,
+) -> usize {
+    let mut end = start;
+    let mut scanned = 0_usize;
+    for cluster in crate::grapheme::clusters(characters) {
+        if scanned >= budget {
+            break;
+        }
+        let cost = scan_cost(cluster);
+        if cluster.width == 0 {
+            let taken = cost.min(budget - scanned);
+            end += taken;
+            scanned += taken;
+        } else {
+            end += cluster.chars;
+            scanned += cost;
+        }
+    }
+    end
 }
 
 fn clip_fragments_to_cells<'a>(
@@ -2556,6 +2607,36 @@ mod tests {
             display_cells(&format!("a{shrug}b👨\u{200D}👩\u{200D}👧c")),
             7
         );
+    }
+
+    #[test]
+    fn a_row_of_joined_emoji_is_drawn_to_the_edge_wrapped_or_not() {
+        let family = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+        for soft_wrap in [false, true] {
+            let mut config = Config::default();
+            config.editor.line_numbers = false;
+            config.editor.soft_wrap = soft_wrap;
+            let mut app = App::new(config, None).unwrap();
+            app.buffers[0].apply(&Transaction::insert(0, family.repeat(80)));
+
+            let snapshot = prepared_snapshot(&mut app, 170, 6);
+            let pane = snapshot.pane(0).unwrap();
+            let SnapshotRow::Text(row) = &pane.rows[0] else {
+                panic!("first row is text");
+            };
+            let drawn = row
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>();
+            let shown = pane.text_width / 2;
+            assert!(
+                drawn.starts_with(&family.repeat(shown.min(80))),
+                "soft wrap {soft_wrap}: {} cells drawn of {}",
+                display_cells(&drawn),
+                pane.text_width
+            );
+        }
     }
 
     #[test]

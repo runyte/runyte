@@ -459,6 +459,42 @@ const INDENTED_LINK_ROWS: usize = 16;
 /// wraps at.
 const WRAP_EDGE_WINDOW: usize = 64;
 
+impl TerminalReview {
+    /// The first offset of the cell holding `offset`. A cell can hold a
+    /// whole emoji sequence or a letter and its marks, and every code point
+    /// in it shares the cell's column; a caret only rests on the first.
+    fn cell_start(&self, offset: usize) -> usize {
+        let Some(line) = self.lines.get(review_line_for_offset(self, offset)) else {
+            return offset;
+        };
+        if offset < line.text_start || offset >= line.text_end {
+            return offset;
+        }
+        let column = line.char_columns[offset - line.text_start];
+        let mut start = offset;
+        while start > line.text_start && line.char_columns[start - 1 - line.text_start] == column {
+            start -= 1;
+        }
+        start
+    }
+
+    /// The offset just past the cell holding `offset`.
+    fn cell_end(&self, offset: usize) -> usize {
+        let Some(line) = self.lines.get(review_line_for_offset(self, offset)) else {
+            return offset + 1;
+        };
+        if offset < line.text_start || offset >= line.text_end {
+            return offset + 1;
+        }
+        let column = line.char_columns[offset - line.text_start];
+        let mut end = offset + 1;
+        while end < line.text_end && line.char_columns[end - line.text_start] == column {
+            end += 1;
+        }
+        end
+    }
+}
+
 impl ReviewLine {
     fn characters<'a>(&self, text: &'a [char]) -> &'a [char] {
         // Blank rows at the end of the snapshot are trimmed from its text.
@@ -1110,12 +1146,14 @@ impl TerminalSession {
             .iter()
             .map(|range| {
                 let from = range.from();
+                // A selection's last cell is copied whole, joined emoji and
+                // all, whichever of its code points the end rests on.
                 let to = if range.is_empty() && textless {
                     from
                 } else if range.is_empty() {
-                    (from + 1).min(text.len())
+                    review.cell_end(from).min(text.len())
                 } else {
-                    range.to().saturating_add(1).min(text.len())
+                    review.cell_end(range.to()).min(text.len())
                 };
                 text[from.min(text.len())..to.min(text.len())]
                     .iter()
@@ -1130,7 +1168,12 @@ impl TerminalSession {
         let review = self.ensure_review();
         let selection = review.selection.clone();
         review.selection = selection.transform(|range| {
-            let target = review_motion_target(review, range.head, motion, viewport_rows);
+            let target = review.cell_start(review_motion_target(
+                review,
+                range.head,
+                motion,
+                viewport_rows,
+            ));
             if extend {
                 range.extend_to(target)
             } else {
@@ -1163,6 +1206,7 @@ impl TerminalSession {
         let line = &review.lines[line_index];
         review_offset_at_column(line, column)
             .or_else(|| (line.text_start < line.text_end).then(|| line.text_end - 1))
+            .map(|offset| review.cell_start(offset))
     }
 
     /// The fixed end a Shift-click or drag extends from in review mode.
@@ -2346,11 +2390,11 @@ fn review_motion_target(
     let line_index = review_line_for_offset(review, head);
     let line = review.lines.get(line_index);
     match motion {
-        ReviewMotion::Left => (0..head.min(text_len))
+        ReviewMotion::Left => (0..review.cell_start(head).min(text_len))
             .rev()
             .find(|offset| characters[*offset] != '\n')
             .unwrap_or(head),
-        ReviewMotion::Right => (head.saturating_add(1)..text_len)
+        ReviewMotion::Right => (review.cell_end(head)..text_len)
             .find(|offset| characters[*offset] != '\n')
             .unwrap_or(head),
         ReviewMotion::LineStart => line.map_or(0, |line| line.text_start),
@@ -3552,6 +3596,27 @@ mod tests {
         let measured = WORKSPACE_SCROLLBACK_CELLS * std::mem::size_of::<Cell>();
         assert!(measured <= WORKSPACE_TERMINAL_CELL_BYTES);
         assert!(WORKSPACE_TERMINAL_CELL_BYTES - measured < std::mem::size_of::<Cell>());
+    }
+
+    #[test]
+    fn review_motion_and_copy_take_whole_joined_cells() {
+        let mut session = session(12, 3);
+        session.feed("a👍🏽b".as_bytes());
+        session.ensure_review();
+        assert!(session.set_review_selection(0, 0));
+        session.move_review(ReviewMotion::Right, false);
+        assert_eq!(session.review_selection_text(), "👍🏽");
+        session.move_review(ReviewMotion::Right, false);
+        assert_eq!(session.review_selection_text(), "b");
+        session.move_review(ReviewMotion::Left, false);
+        assert_eq!(session.review_selection_text(), "👍🏽");
+
+        assert!(session.set_review_selection(0, 0));
+        session.move_review(ReviewMotion::Right, true);
+        assert_eq!(session.review_selection_text(), "a👍🏽");
+        // A selection ending on any code point of a cell copies all of it.
+        assert!(session.set_review_selection(0, 2));
+        assert_eq!(session.review_selection_text(), "a👍🏽");
     }
 
     #[test]

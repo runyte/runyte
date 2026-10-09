@@ -2613,9 +2613,11 @@ impl App {
             if range.is_empty() {
                 range
             } else if range.anchor < range.head {
-                Range::new(range.anchor, buffer.previous_grapheme(range.head))
+                // The character that ends before `head`, whether `head` is a
+                // boundary or, from a span built per code point, inside one.
+                Range::new(range.anchor, buffer.grapheme_floor(range.head - 1))
             } else {
-                Range::new(buffer.previous_grapheme(range.anchor), range.head)
+                Range::new(buffer.grapheme_floor(range.anchor - 1), range.head)
             }
         })
     }

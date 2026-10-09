@@ -226,7 +226,8 @@ impl GlyphCache {
                 let width = if symbol.len() == 1 && symbol.is_ascii() {
                     1
                 } else {
-                    unicode_width::UnicodeWidthStr::width(symbol).max(1)
+                    // The buffer placed this cell by the same measure.
+                    usize::from(ratatui::buffer::CellWidth::cell_width(symbol)).max(1)
                 };
                 if symbol != " " && !cell.modifier.contains(Modifier::HIDDEN) {
                     let mut fg = if cell.modifier.contains(Modifier::REVERSED) {
