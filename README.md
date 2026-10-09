@@ -46,8 +46,10 @@ Runyte runs on Linux, macOS, and Windows 11.
 | ARM64  | Linux      | ❌ | ✅ | ❌ |
 | x86-64 | macOS      | ❌ | ✅ | ❌ |
 | ARM64  | macOS      | ✅ | ✅ | ✅ |
-| x86-64 | Windows 11 | ✅ | ✅ | ✅ |
+| x86-64 | Windows 11 | ✅ | ✅ | 🟡 |
 | ARM64  | Windows 11 | ❌ | ❌ | ❌ |
+
+🟡 Occasional hands-on testing.
 
 This project is well tested. Test coverage is about 92% of lines, and CI requires at least 89%.
 
