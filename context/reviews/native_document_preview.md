@@ -222,3 +222,14 @@ and 85 native frontend tests (three ignored). Formatting, default/native/helper
 Clippy and the full editor test suite passed. No new macOS or Wayland claim is
 made. Cached scroll hits perform no renderer request; arbitrary jump latency
 remains bounded by rendering a replacement rather than a frame-rate guarantee.
+
+## Pane-focus shortcut correction
+
+Unrecognized preview keys previously dismissed the surface before editor dispatch,
+which incorrectly closed it when configured Ctrl-arrow bindings changed pane
+focus. Modified directional shortcuts now reach the editor keymap without
+changing the preview's visibility, cache, selection or scroll. Single-key focus
+commands from the built-in registry follow the same route. Ordinary arrow keys
+still navigate the document. Regression coverage includes all four directions
+in `src/native_frontend/tests/preview.rs` and configured horizontal/vertical pane
+switches with return-to-preview navigation in `tests/native_window.py`.

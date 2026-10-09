@@ -159,6 +159,8 @@ if args.no_system_fonts:
     fontconfig.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd"><fontconfig><reset-dirs/><cachedir>' + str(storage / 'font-cache') + '</cachedir></fontconfig>')
     env['FONTCONFIG_FILE'] = str(fontconfig)
 if args.document_preview:
+    with (storage / 'config/config.yaml').open('a') as config:
+        config.write('keys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n')
     import shutil
     fixtures = pathlib.Path(__file__).resolve().parents[1] / 'contrib/document-preview/fixtures'
     for source in fixtures.iterdir():
@@ -385,6 +387,23 @@ try:
         key('z');key('1');time.sleep(.8)
         reset_zoom, _ = screenshot('preview-zoom-reset')
         assert before_zoom == reset_zoom, 'z1 failed to restore document zoom'
+        command('vsplit plain.txt');time.sleep(.5)
+        key('Left',ctrl=True);time.sleep(.6)
+        assert pixel(350,400) == 0x0099aa, 'focus into preview lost its rendered view'
+        key('Right',ctrl=True);time.sleep(.4)
+        assert pixel(350,400) == 0x0099aa, 'Ctrl-Right dismissed the preview being left'
+        key('Left',ctrl=True);time.sleep(.4)
+        assert pixel(350,400) == 0x0099aa, 'returning focus failed to preserve preview'
+        key('j');time.sleep(.3)
+        assert pixel(350,35) == 0x0099aa, 'returning focus did not restore preview navigation'
+        key('k');time.sleep(.3)
+        key('Right',ctrl=True);command('quit');time.sleep(.6)
+        command('hsplit plain.txt');time.sleep(.5)
+        key('Up',ctrl=True);time.sleep(.6)
+        assert pixel(350,200) == 0x0099aa, 'Ctrl-Up failed to focus the preview'
+        key('Down',ctrl=True);time.sleep(.4)
+        assert pixel(350,200) == 0x0099aa, 'Ctrl-Down dismissed the preview being left'
+        command('quit');time.sleep(.6)
         key('q')
         command('open markdown.md');command('preview');time.sleep(1)
         screenshot('preview-markdown')

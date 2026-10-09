@@ -162,6 +162,32 @@ fn navigation_command(target: runyte::keymap::BindingTarget, page: f64) -> Optio
         _ => return None,
     })
 }
+// Pane focus belongs to the editor even while a document owns navigation.
+fn editor_pane_key(key: KeyEvent) -> bool {
+    // These directional chords are resolved by the editor's configured keymap,
+    // not by the preview's built-in document-navigation subset.
+    if key.modifiers == KeyModifiers::CONTROL
+        && matches!(
+            key.code,
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+        )
+    {
+        return true;
+    }
+    use runyte::{
+        command::{EditorCommand as C, Mode},
+        keymap::{BindingTarget, KeySequence, Lookup},
+    };
+    let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
+        runyte::tui::input::convert_event(Event::Key(key))
+    else {
+        return false;
+    };
+    matches!(runyte::keymap::default_keymap().lookup(Mode::Normal, &KeySequence::new([stroke])),
+        Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. }
+        if matches!(binding.target, BindingTarget::Editor(C::FocusWindowLeft | C::FocusWindowRight | C::FocusWindowUp | C::FocusWindowDown | C::NextWindow)))
+}
+
 fn preview_navigation(
     keys: &mut runyte::keymap::KeySequence,
     key: KeyEvent,
@@ -803,6 +829,11 @@ impl NativeView {
             return false;
         };
         let state = self.previews.states.get_mut(&pane.pane).unwrap();
+        if editor_pane_key(key) {
+            state.keys.clear();
+            cx.notify();
+            return false;
+        }
         let page = f64::from(pane.body.height as f32 * self.metrics.height / state.zoom);
         let navigation = preview_navigation(&mut state.keys, key, page);
         match navigation {

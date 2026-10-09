@@ -249,3 +249,24 @@ fn an_in_flight_cache_refresh_cannot_rewind_a_newer_cached_scroll() {
     );
     assert!(views.states[&1].output.as_ref().unwrap().is_err());
 }
+
+#[test]
+fn pane_focus_shortcuts_route_to_editor_without_dismissing_preview() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    for direction in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down] {
+        assert!(super::editor_pane_key(KeyEvent::new(
+            direction,
+            KeyModifiers::CONTROL
+        )));
+        assert!(!super::editor_pane_key(KeyEvent::new(
+            direction,
+            KeyModifiers::NONE
+        )));
+    }
+    for key in ['i', 'q', 'j', 'f'] {
+        assert!(!super::editor_pane_key(KeyEvent::new(
+            KeyCode::Char(key),
+            KeyModifiers::NONE
+        )));
+    }
+}

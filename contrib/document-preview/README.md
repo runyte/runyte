@@ -42,7 +42,9 @@ by its XML root, including when selected inside Markdown or a source file.
 - Left-drag selects document text; `y` or Ctrl-Shift-c copies it (Cmd-c on macOS is
   implemented but not platform-tested). Clicking a link displays its destination;
   navigation is disabled. SVG text is graphical and is not selectable.
-- `Space`, `Ctrl-w` and `:` retain editor command routing. Prompts and key hints
+- `Space`, `Ctrl-w` and `:` retain editor command routing. Configured Ctrl-arrow
+  shortcuts also reach the editor without dismissing the preview, so pane focus
+  can move away and back while preserving the document view. Prompts and key hints
   draw above the preview and own input. Escape first dismisses those surfaces,
   then returns to source. Other editing keys return to source before dispatch.
 - Use the editor's pane-focus commands before selecting in an inactive preview.

@@ -779,5 +779,7 @@ looked up through the existing Media registry: movement, pages, half-pages,
 `gg`/`ge`, zoom/reset, copy and back. Supported `g`/`z` prefix hints are derived
 from those same entries. Configured remappings and counted motions are not yet
 applied to this frontend-local surface. Native copy and window-size controls
-also apply while the document is visible. See
+also apply while the document is visible. Ctrl-arrow shortcuts pass through to
+the editor’s configured keymap without dismissing the preview; no new default
+binding is introduced. See
 [prototype controls and limits](../../contrib/document-preview/README.md).
