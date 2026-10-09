@@ -341,10 +341,9 @@ fn address_space_limit() -> Result<libc::rlim_t> {
             status == libc::KERN_SUCCESS,
             "read PDF helper memory baseline"
         );
-        return info
-            .virtual_size
+        info.virtual_size
             .checked_add(1024 * 1024 * 1024)
-            .context("PDF helper address-space limit overflow");
+            .context("PDF helper address-space limit overflow")
     }
     #[cfg(not(target_os = "macos"))]
     Ok(1024 * 1024 * 1024)
