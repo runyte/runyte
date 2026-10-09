@@ -454,53 +454,56 @@ fn media_select_mode_extends_native_selection_without_changing_pdf_pages() {
 
 #[test]
 fn pdf_back_opens_page_buffer_with_ordinary_motions_and_enter_previews() {
-    let root = TestRuntimeRoot::new("media-page-buffer").unwrap();
-    let path = root.join("pages.pdf");
-    fs::write(&path, b"%PDF fixture").unwrap();
-    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
-    app.native_media = true;
-    app.open_file(path.clone()).unwrap();
-    let buffer = app.active().buffer;
-    app.buffers[buffer].replace_virtual_text("Page 1 of 4\nPage 2 of 4\nPage 3 of 4\nPage 4 of 4");
-    assert!(app.active_buffer().display_name().starts_with("[pdf]"));
-    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert_eq!(
-        app.media_requests.pop_back().unwrap().action,
-        crate::media::ViewAction::Back
-    );
-    // The frontend reports Back only when no native selection remains.
-    app.leave_native_media(app.active_pane, &path, 2);
-    assert!(app.active().shows_pdf_pages());
-    assert!(app.list.is_none());
-    assert_eq!(app.key_binding_scope(), BindingScope::PdfPages);
-    for ch in ['3', 'g', 'g', 'v', 'k'] {
-        press(&mut app, ch);
+    for back in [KeyCode::Escape, KeyCode::Char('q')] {
+        let root = TestRuntimeRoot::new("media-page-buffer").unwrap();
+        let path = root.join("pages.pdf");
+        fs::write(&path, b"%PDF fixture").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_file(path.clone()).unwrap();
+        let buffer = app.active().buffer;
+        app.buffers[buffer]
+            .replace_virtual_text("Page 1 of 4\nPage 2 of 4\nPage 3 of 4\nPage 4 of 4");
+        assert!(app.active_buffer().display_name().starts_with("[pdf]"));
+        key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+        key(&mut app, back, Modifiers::NONE);
+        assert_eq!(
+            app.media_requests.pop_back().unwrap().action,
+            crate::media::ViewAction::Back
+        );
+        // The frontend reports Back only when no native selection remains.
+        app.leave_native_media(app.active_pane, &path, 2);
+        assert!(app.active().shows_pdf_pages());
+        assert!(app.list.is_none());
+        assert_eq!(app.key_binding_scope(), BindingScope::PdfPages);
+        for ch in ['3', 'g', 'g', 'v', 'k'] {
+            press(&mut app, ch);
+        }
+        assert_eq!(app.mode, Mode::Select);
+        assert!(
+            app.media_requests.is_empty(),
+            "page rows use text selection"
+        );
+        key(&mut app, back, Modifiers::NONE);
+        assert!(
+            app.active().shows_pdf_pages(),
+            "Select mode cancels before leaving rows"
+        );
+        assert_eq!(app.mode, Mode::Normal);
+        press(&mut app, 'G');
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert!(!app.active().shows_pdf_pages());
+        assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
+        app.leave_native_media(app.active_pane, &path, 4);
+        key(&mut app, back, Modifiers::NONE);
+        assert!(app.active_buffer().is_directory());
+        assert!(!app.closed_buffers.contains(&buffer));
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(app.active().buffer, buffer);
+        assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
+        assert!(!app.active().shows_pdf_pages());
+        assert_eq!(fs::read(path).unwrap(), b"%PDF fixture");
     }
-    assert_eq!(app.mode, Mode::Select);
-    assert!(
-        app.media_requests.is_empty(),
-        "page rows use text selection"
-    );
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert!(
-        app.active().shows_pdf_pages(),
-        "Select mode cancels before leaving rows"
-    );
-    assert_eq!(app.mode, Mode::Normal);
-    press(&mut app, 'G');
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert!(!app.active().shows_pdf_pages());
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
-    app.leave_native_media(app.active_pane, &path, 4);
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert!(app.active_buffer().is_directory());
-    assert!(!app.closed_buffers.contains(&buffer));
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.active().buffer, buffer);
-    assert_eq!(app.active().cursor(app.active_buffer()).row, 3);
-    assert!(!app.active().shows_pdf_pages());
-    assert_eq!(fs::read(path).unwrap(), b"%PDF fixture");
 }
 
 #[test]

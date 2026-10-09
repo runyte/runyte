@@ -1404,7 +1404,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     let macos_bindings = if cfg!(target_os = "macos") { 3 } else { 0 };
     assert_eq!(
         bindings.len(),
-        504 + macos_bindings,
+        505 + macos_bindings,
         "current binding inventory changed"
     );
 
@@ -1430,7 +1430,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     }
     assert_eq!(
         rows.len(),
-        990 + 2 * macos_bindings,
+        992 + 2 * macos_bindings,
         "mode-expanded binding inventory changed"
     );
 

@@ -1756,7 +1756,8 @@ current page. Use normal editor motions,
 counts, or buffer search (`s` or `/`) to choose a row, then Enter displays that
 page. Moving the cursor in the page buffer does not display pages until Enter.
 `42gg` goes to page 42; `gg` and `ge`/`G` go to the first and last pages. Escape
-from the page buffer opens the source directory with the PDF selected.
+or `q` from the page buffer opens the source directory with the PDF selected.
+In Select mode, either key first clears the selection and returns to Normal mode.
 
 Images have no page buffer: leaving their preview opens the source directory.
 Escape first dismisses a pending overlay or key sequence. On zoomed-in media,
@@ -1768,8 +1769,8 @@ as it does from a rendered Markdown document. `Space E` still opens the editor's
 working directory.
 
 In a PDF or image preview, `q` performs the same fit, clear-selection, and
-leave-preview action as Escape, in both Normal and Select mode. Overlays,
-pending key sequences, and the PDF page buffer retain their own bindings.
+leave-preview action as Escape, in both Normal and Select mode. Overlays
+and pending key sequences retain their own bindings.
 
 | Input in a media pane | Action |
 | --- | --- |

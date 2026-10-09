@@ -2144,6 +2144,12 @@ fn built_in_bindings() -> Vec<Binding> {
             Key::plain(KeyCode::Escape),
             Command::MediaBack,
         ),
+        Binding::implemented_in(
+            MODAL,
+            BindingScope::PdfPages,
+            Key::char('q'),
+            Command::MediaBack,
+        ),
         // Enter alone opens an entry. A directory buffer is an ordinary buffer,
         // so `e` has to stay the word-end motion here as it is everywhere else.
         Binding::implemented_in(

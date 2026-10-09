@@ -717,12 +717,14 @@ Escape first dismisses an overlay or pending key sequence, then resets a
 zoomed-in image or PDF to fit size in one press while preserving its selection. Further
 presses clear the selection and leave the displayed PDF page for the PDF's
 read-only page buffer. This uses ordinary buffer motions, counts and search;
-Enter displays the page at the cursor, while Escape opens its source directory.
+Enter displays the page at the cursor, while Escape or `q` opens its source
+directory. In Select mode, either key first clears the selection and returns
+to Normal mode.
 Images follow the same fit-then-clear sequence and open their source directory;
 they have no page buffer.
-`q` aliases `media-back` in the Media scope in Normal and Select mode, following
-the same fit-then-clear sequence as Escape. It does not change bindings in
-overlays, pending sequences, or the PDF page buffer.
+`q` aliases `media-back` in the Media and PdfPages scopes in Normal and Select
+mode, following the same back action as Escape. It does not change bindings in
+overlays or pending sequences.
 `Space e` opens the media source directory directly and selects the source file.
 `Space E` continues to open the editor working directory.
 

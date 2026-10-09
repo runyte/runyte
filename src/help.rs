@@ -170,7 +170,7 @@ impl HelpTopic {
         match self {
             Self::PdfPages => &[
                 "Each read-only row names one PDF page. Use ordinary motions, counts and search to choose a row.",
-                "Enter displays the chosen page. Escape opens the containing directory with this PDF selected.",
+                "Enter displays the chosen page. Escape or q opens the containing directory with this PDF selected; in Select mode, it first returns to Normal.",
             ],
             Self::Media => &[
                 "Images and PDF pages are read-only. Normal-mode vertical motions pan zoomed PDFs and choose pages at fit size; image vertical motions always pan.",
