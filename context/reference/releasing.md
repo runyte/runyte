@@ -181,7 +181,9 @@ The example version below is 0.2.1. Substitute the real one.
 12. **Require a green binary workflow for the exact tag.** Wait for the
     `Binary release` workflow triggered by step 11. Verify that its event is
     the pushed tag and that the validated source SHA is the release commit.
-    Every build and the publishing job must pass. Diagnose a failed build;
+    Terminal/Linux desktop builds and the publishing job must pass. The
+    independent universal macOS desktop job does not block those assets; its
+    failure blocks manual macOS distribution. Diagnose a failed build;
     rerunning a failed job is safe because publishing replaces only assets
     with the expected names and preserves the release body.
 
@@ -316,9 +318,13 @@ environment override, before uploading. Publishing requires this job to succeed
 and includes the desktop archive in `SHA256SUMS`.
 
 Historical tags without `crates/runyte-desktop/Cargo.toml` retain their original
-artifact set and `runyte-<tag>-<target>` names, and skip the desktop job. Desktop CI also packages the executable
-into local macOS apps, but these are not published desktop
-artifacts. The macOS window still requires platform validation.
+artifact set and `runyte-<tag>-<target>` names, and skip the desktop job. The independent `macos-desktop` job builds the desktop executable and native
+launcher for ARM64 and x86-64 with `MACOSX_DEPLOYMENT_TARGET=11.0`, combines
+both with `lipo`, and checks both slices for the deployment floor and system-only
+library links. It runs headless engine acceptance, then retains
+`Runyte-<version>-unsigned.app.zip` made by `ditto` as a workflow artifact only.
+The publishing job neither depends on this job nor downloads its artifact.
+The macOS window still requires manual platform validation before distribution.
 
 ### Curl installation and updates
 

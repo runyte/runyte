@@ -272,6 +272,56 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  macos-desktop:
+    name: Build universal macOS desktop app
+    needs: validate
+    if: needs.validate.outputs.desktop == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+      - name: macOS build dependencies
+        run: |
+          xcodebuild -version
+          brew install cmake pkgconf
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures from the validated tag
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p runyte-desktop --features app-launcher --bins --target "$target"
+          done
+          mkdir "$RUNNER_TEMP/universal"
+          for binary in runyte-desktop runyte-app-launcher; do
+            lipo -create "target/aarch64-apple-darwin/release/$binary" \
+              "target/x86_64-apple-darwin/release/$binary" -output "$RUNNER_TEMP/universal/$binary"
+          done
+      - name: Package and accept the universal app
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
+          python3 contrib/packaging/package.py macos --binary "$RUNNER_TEMP/universal/runyte-desktop" \
+            --launcher "$RUNNER_TEMP/universal/runyte-app-launcher" --output "$RUNNER_TEMP/Runyte.app"
+          python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/Runyte.app" "$RUNNER_TEMP/Runyte-${VERSION}-unsigned.app.zip"
+      - name: Retain unsigned app for manual macOS acceptance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Runyte-${{ needs.validate.outputs.version }}-unsigned.app
+          path: ${{ runner.temp }}/Runyte-${{ needs.validate.outputs.version }}-unsigned.app.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish:
     name: Publish GitHub Release
     needs: [validate, build, desktop]

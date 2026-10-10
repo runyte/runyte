@@ -208,6 +208,34 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
     assert!(source.contains("expected=\"$expected (terminal edition)\""));
     assert!(source.contains(r#"{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"}"#));
 
+    let macos = &workflow["jobs"]["macos-desktop"];
+    assert_eq!(macos["runs-on"], "macos-15");
+    assert!(
+        !workflow["jobs"]["publish"]["needs"]
+            .as_sequence()
+            .unwrap()
+            .contains(&serde_yaml::Value::from("macos-desktop"))
+    );
+    let macos_steps = macos["steps"].as_sequence().unwrap();
+    assert!(
+        macos_steps
+            .iter()
+            .any(|step| step["env"]["MACOSX_DEPLOYMENT_TARGET"] == "11.0")
+    );
+    let artifact = macos_steps.last().unwrap();
+    assert!(
+        !artifact["with"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("release-")
+    );
+    assert!(
+        artifact["with"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("-unsigned.app.zip")
+    );
+
     assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
     assert!(source.contains("${TERMINAL_PREFIX}-${RELEASE_TAG}-${TARGET}.tar.xz"));
     assert!(source.contains("sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS"));
