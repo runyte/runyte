@@ -1069,3 +1069,48 @@ from the pre-migration implementation. Independent subagent review found no
 substantive issues; its pixel-limit precision correction was applied.
 `git diff --check` passed. Documentation only; no runtime measurements or Rust
 gates apply to this phase.
+
+### Phase 2 — local acceptance, 2026-10-10
+
+Implemented in `e977f35` (`Move the command-line program into the library`).
+The CLI and its inline tests now live in the library; terminal paths retain
+concrete surfaces and event streams, and the window adapter supplies boxed
+window services. Edition and frontend are passed explicitly through startup
+and host clipboard construction; no new process-global state was added.
+Moved ordinary module support directories with their parent modules. Direct
+`#[path = "tui/…"]` declarations still resolve from `src/` and keep their paths.
+
+Independent subagent review was repeated after corrections. It caught one
+remaining Windows inline-test reexecution name, which now has the `cli::`
+prefix. Successful fixture wrappers check that one test passed. Regression
+coverage verifies supplied clipboard use by desktop editor and host
+construction without a window attachment. The frontend architecture guard
+now names `cli.rs` and `cli/window.rs` instead of `main.rs`; core input
+consumers remain subject to the same restrictions.
+
+Linux x86-64 local gates passed:
+
+- `cargo fmt --check`;
+- `cargo clippy --all-targets -- -D warnings` and `cargo test`;
+- `cargo clippy --features native --all-targets -- -D warnings`;
+- `cargo test --features native --bin runyte native_frontend`: 87 passed,
+  three existing ignored tests;
+- `cargo +1.88 check --all-targets --locked`;
+- `tests/native_window.py --window-controls`, standalone and `--mux`, on a
+  dedicated Xvfb display with lavapipe: clipboard copy/paste, terminal paste,
+  font resizing, saved font configuration and persistent parent-editor wait;
+- `git diff --check`.
+
+Canonical `cargo llvm-cov --locked --workspace`, Rust 1.97.1 and
+cargo-llvm-cov 0.9.1:
+
+| Measure | Before (`b6cdddf`) | After (`e977f35`) |
+| --- | ---: | ---: |
+| Covered lines | 149,882 | 150,029 |
+| Total lines | 162,805 | 163,040 |
+| Line coverage | 92.06% | 92.02% |
+
+The decrease is 0.04 percentage points, within the 0.10 limit; the enforced
+89% floor is unchanged. Windows CI for the phase head is pending authorization
+to push `exp` to `origin`. Phase 3 has not started: the plan requires that CI
+gate before proceeding.
