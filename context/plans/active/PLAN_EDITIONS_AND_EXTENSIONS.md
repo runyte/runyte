@@ -1114,3 +1114,11 @@ The decrease is 0.04 percentage points, within the 0.10 limit; the enforced
 89% floor is unchanged. Windows CI for the phase head is pending authorization
 to push `exp` to `origin`. Phase 3 has not started: the plan requires that CI
 gate before proceeding.
+
+Phase 2 CI follow-up: the maintainer authorized pushes of `exp` for CI and
+continuation through the implementation before the manual Apple DMG work.
+Pushed `f7146ab`; its Windows lint step failed. Independent review found
+`ratatui::Terminal` remained imported on Windows after all uses became
+Unix-only. Limited that import to Unix; formatting, denied-warning all-target
+Clippy and the complete local test suite pass again. The corrective diff was
+independently reviewed. Windows acceptance remains required before Phase 3.

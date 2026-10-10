@@ -88,7 +88,9 @@ use crossterm::{
 use futures_util::FutureExt;
 #[cfg(not(windows))]
 use futures_util::StreamExt;
-use ratatui::{Terminal, backend::CrosstermBackend};
+#[cfg(unix)]
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 const STATUS_ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
 /// How often work that arrives faster than anyone can read it is allowed to
