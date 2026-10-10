@@ -1395,3 +1395,24 @@ kind. The bounded FIFO includes text commits and pointer input, coalesces
 adjacent compatible drags, and waits for whole-frame publication. Independent
 review is clear after fixing wheel-batch ordering and ignored-input acknowledgment.
 This changes no public plugin or context protocol.
+
+
+Preview routing is fixed in `941abd3`, with the resolved diagnosis recorded in
+`36daebd`. Full terminal tests, terminal and desktop clippy, native/preview/
+desktop tests, and real standalone and persistent preview acceptance pass.
+Independent review is clear. The persistent fixture now waits for positive
+rendered-state checks across workspace transitions; zoom reset retains exact
+raster equality with bounded asynchronous completion. The previous Windows
+CI run is still finishing; all its other terminal jobs passed, including
+unchanged macOS performance budgets.
+
+### Phase 7 — integration preparation, 2026-10-10
+
+The maintainer authorized continuing the entire plan except the joint Apple
+DMG step. The trial merge of `exp` at `702b83f` into `dev` at `18ed42d` had no
+conflicts; its temporary worktree was removed. Independent review found no
+semantic conflict in the dev-only input-feedback commit. That commit is now
+merged into `exp` so final validation covers the combined tree before updating
+`dev`. Desktop CI also follows `dev` and `main`, retaining `exp` coverage.
+No version or release is changed. Final platform CI, coverage and the merge
+report remain in progress; signed/notarized Apple distribution remains manual.

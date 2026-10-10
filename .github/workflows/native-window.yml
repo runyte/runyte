@@ -4,9 +4,9 @@ name: Desktop edition
 
 on:
   push:
-    branches: [exp]
+    branches: [exp, dev, main]
   pull_request:
-    branches: [exp]
+    branches: [exp, dev, main]
   workflow_dispatch:
 
 permissions:
