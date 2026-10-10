@@ -208,7 +208,7 @@ try:
     icon = window_property(b'_NET_WM_ICON')
     assert icon[:2] == [128,128] and len(icon) == 2 + 128*128, 'missing Runyte window icon'
     assert 0xff323232 in icon[2:] and 0xfff3f1eb in icon[2:], 'unexpected icon pixels'
-    def key(sym,shift=False,ctrl=False):
+    def key(sym,shift=False,ctrl=False,delay=.025):
         modifiers=[]
         if shift:modifiers.append(x.XKeysymToKeycode(d,x.XStringToKeysym(b'Shift_L')))
         if ctrl:modifiers.append(x.XKeysymToKeycode(d,x.XStringToKeysym(b'Control_L')))
@@ -217,13 +217,13 @@ try:
         assert code,sym
         xt.XTestFakeKeyEvent(d,code,1,0);xt.XTestFakeKeyEvent(d,code,0,0)
         for m in reversed(modifiers):xt.XTestFakeKeyEvent(d,m,0,0)
-        x.XFlush(d);time.sleep(.025)
-    def text(s):
+        x.XFlush(d);time.sleep(delay)
+    def text(s,delay=.025):
         specials={'&':('7',True), '\'':('apostrophe',False), ':':('semicolon',True),' ':('space',False),'/':('slash',False),'.':('period',False),'-':('minus',False),'!':('1',True),'>':('period',True),'_':('minus',True),'\\':('backslash',False)}
         for c in s:
             sym,shift=specials.get(c,(c.lower(),c.isupper()))
-            key(sym,shift)
-    def command(s):text(':'+s);key('Return');time.sleep(.7)
+            key(sym,shift,delay=delay)
+    def command(s,burst=False):text(':'+s,delay=0 if burst else .025);key('Return');time.sleep(.7)
     def close_window():
         event = XEvent()
         event.client.type = 33
@@ -300,6 +300,12 @@ try:
         value=x.XGetPixel(im,0,0)&0xffffff
         x.XDestroyImage(im)
         return value
+    def wait_pixel(xpos, ypos, expected, message):
+        deadline = time.monotonic() + 5
+        while pixel(xpos, ypos) != expected and time.monotonic() < deadline:
+            time.sleep(.05)
+        actual = pixel(xpos, ypos)
+        assert actual == expected, (message, hex(actual), hex(expected))
     if not (args.paint_styles or args.paint_benchmark or args.latency or args.mux):
         # Margins left by a window that is not a whole number of cells use the
         # theme background, the same colour as empty editor cells. Standalone
@@ -310,27 +316,33 @@ try:
         assert pixel(1083,400)==empty and pixel(600,803)==empty, ('margin differs from theme background', hex(empty), hex(pixel(1083,400)), hex(pixel(600,803)))
         x.XResizeWindow(d,win,geometry.width,geometry.height);x.XFlush(d);time.sleep(1)
     if args.document_preview and args.mux:
+        source_background = pixel(600,400)
         destination = storage/'other'
         destination.mkdir()
         subprocess.run(['git','init','-q',str(destination)],check=True,env=env)
         (destination/'other.html').write_text('<body style="margin:0"><div style="height:2000px;background:#ee00ee">Other workspace</div></body>')
         command('open selection.html');command('preview');time.sleep(1)
-        assert pixel(600,400) == 0x0099aa, 'source workspace did not preview'
+        wait_pixel(600,400,0x0099aa,'source workspace did not preview')
+        # Burst input must wait for host routing state, without consuming h/s
+        # as preview navigation or dismissing the retained capture.
+        command('hsplit plain.txt',burst=True);key('Up',ctrl=True);time.sleep(.6)
+        wait_pixel(350,200,0x0099aa,'persistent command burst dismissed preview')
+        key('Down',ctrl=True);command('quit');time.sleep(.5)
         key('q')
         command('session-attach '+str(destination));time.sleep(1)
         command('open other.html');command('preview');time.sleep(1)
-        assert pixel(600,400) == 0xee00ee, 'destination workspace did not preview'
+        wait_pixel(600,400,0xee00ee,'destination workspace did not preview')
         key('w',ctrl=True);key('a');time.sleep(1)
-        assert pixel(600,400) != 0x0099aa, 'dismissed preview revived after workspace return'
+        wait_pixel(600,400,source_background,'dismissed preview revived after workspace return')
         key('w',ctrl=True);key('a');time.sleep(1)
-        assert pixel(600,400) == 0xee00ee, 'dismissal affected another workspace capture'
+        wait_pixel(600,400,0xee00ee,'dismissal affected another workspace capture')
         key('q');key('w',ctrl=True);key('a');time.sleep(1)
         command('preview');time.sleep(1)
-        assert pixel(600,400) == 0x0099aa, 'explicit preview could not reopen after dismissal'
+        wait_pixel(600,400,0x0099aa,'explicit preview could not reopen after dismissal')
         key('Escape');key('w',ctrl=True);key('a');time.sleep(1)
-        assert pixel(600,400) != 0xee00ee, 'destination dismissal was not retained'
+        wait_pixel(600,400,source_background,'destination dismissal was not retained')
         key('w',ctrl=True);key('a');time.sleep(1)
-        assert pixel(600,400) != 0x0099aa, 'Escape dismissal revived after workspace return'
+        wait_pixel(600,400,source_background,'Escape dismissal revived after workspace return')
         print('Persistent preview dismissal survives workspace visits; other captures and explicit reopen remain intact', flush=True)
         raise SystemExit(0)
     if args.document_preview:
@@ -408,6 +420,10 @@ try:
         assert before_zoom != after_zoom, 'document zoom did not change raster'
         key('z');key('1');time.sleep(.8)
         reset_zoom, _ = screenshot('preview-zoom-reset')
+        deadline = time.monotonic() + 5
+        while before_zoom != reset_zoom and time.monotonic() < deadline:
+            time.sleep(.05)
+            reset_zoom, _ = screenshot('preview-zoom-reset')
         assert before_zoom == reset_zoom, 'z1 failed to restore document zoom'
         command('vsplit plain.txt');time.sleep(.5)
         key('Left',ctrl=True);time.sleep(.6)
@@ -431,7 +447,7 @@ try:
             assert pixel(350,35) == 0x0099aa, f'{returning} failed to restore preview navigation'
             key('k');time.sleep(.3)
         key('Right',ctrl=True);command('quit');time.sleep(.6)
-        command('hsplit plain.txt');time.sleep(.5)
+        command('hsplit plain.txt',burst=True);time.sleep(.5)
         key('Up',ctrl=True);time.sleep(.6)
         assert pixel(350,200) == 0x0099aa, 'Ctrl-Up failed to focus the preview'
         key('Down',ctrl=True);time.sleep(.4)

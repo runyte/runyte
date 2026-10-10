@@ -14,6 +14,7 @@ mod grid;
 pub mod helper;
 mod icon;
 mod input_queue;
+mod input_routing;
 mod interactions;
 mod media;
 pub mod pdf;
@@ -123,6 +124,7 @@ struct FrameData {
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
     media_input: bool,
+    routing_serial: u64,
     metadata_paths: Vec<PathBuf>,
 }
 impl FrameData {
@@ -156,11 +158,13 @@ impl MediaInputMask {
         self.blocked.iter().any(contains)
     }
 }
+#[derive(Clone)]
 pub(crate) struct NativeInput {
     attachment: u64,
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
+    routing_serial: u64,
 }
 struct PendingMediaRequest {
     attachment: u64,
@@ -204,6 +208,8 @@ struct Bridge {
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
+    dequeued_serial: AtomicU64,
+    remote_serial: AtomicU64,
     metadata_paths: Mutex<Vec<PathBuf>>,
     blocked_media: Mutex<MediaInputMask>,
     media_requests: Mutex<std::collections::VecDeque<PendingMediaRequest>>,
@@ -230,15 +236,24 @@ impl Bridge {
         let (width, height) = *self.dimensions.lock().unwrap();
         self.send(Event::Resize(width, height));
     }
-    fn send(&self, event: Event) {
-        let input = NativeInput {
+    fn capture(&self, event: Event) -> NativeInput {
+        NativeInput {
             attachment: self.painted_attachment.load(Ordering::Acquire),
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
-        };
+            routing_serial: 0,
+        }
+    }
+    fn send(&self, event: Event) {
+        self.send_captured(self.capture(event));
+    }
+    fn send_captured(&self, input: NativeInput) -> bool {
         if self.input.try_send(input).is_err() {
             let _ = self.wake.try_send(());
+            false
+        } else {
+            true
         }
     }
 }
@@ -543,6 +558,11 @@ impl Surface {
                     previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
+                    routing_serial: if snapshot_area.is_some() {
+                        bridge.remote_serial.load(Ordering::Acquire)
+                    } else {
+                        bridge.dequeued_serial.load(Ordering::Acquire)
+                    },
                     metadata_paths: bridge.metadata_paths.lock().unwrap().clone(),
                     cursor: terminal
                         .backend()
@@ -578,6 +598,7 @@ pub(crate) enum Events {
         batch: usize,
         presented: Option<runyte::workspace::FrameId>,
         presentation_only: bool,
+        routing_serial: u64,
     },
 }
 impl Events {
@@ -596,6 +617,7 @@ impl Events {
                 batch: 0,
                 presented: None,
                 presentation_only: false,
+                routing_serial: 0,
             }
         } else {
             Self::Tui(EventStream::new())
@@ -609,6 +631,7 @@ impl Events {
                 events,
                 presented,
                 presentation_only,
+                routing_serial,
                 ..
             } => {
                 *presentation_only = false;
@@ -622,6 +645,14 @@ impl Events {
                         break input;
                     }
                 };
+                if input.routing_serial != 0
+                    && let Some(bridge) = BRIDGE.get()
+                {
+                    bridge
+                        .dequeued_serial
+                        .store(input.routing_serial, Ordering::Release);
+                }
+                *routing_serial = input.routing_serial;
                 *presented = input.presented;
                 *presentation_only = input.presentation_only;
                 Some(Ok(input.event))
@@ -701,6 +732,8 @@ pub(crate) fn launch(
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
+        dequeued_serial: AtomicU64::new(0),
+        remote_serial: AtomicU64::new(0),
         metadata_paths: Mutex::new(Vec::new()),
         blocked_media: Mutex::new(MediaInputMask::default()),
         media_requests: Mutex::new(Default::default()),
@@ -794,6 +827,7 @@ struct NativeView {
     glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     previews: preview::Views,
+    routing: input_routing::Queue<input_routing::Action>,
     composition: String,
     scroll: ScrollAccumulator,
     image_clipboard: Option<arboard::Clipboard>,
@@ -864,6 +898,7 @@ impl NativeView {
             geometry_requests,
             media: media::Loader::new(bridge.clone()),
             previews: preview::Views::default(),
+            routing: input_routing::Queue::default(),
             bridge,
             focus,
             frame,
@@ -914,17 +949,15 @@ impl NativeView {
         });
     }
 
-    fn window_shortcut(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> bool {
+    fn window_shortcut(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> Option<Option<Event>> {
         let Some(runyte::input::InputEvent::Key(key)) =
             runyte::tui::input::convert_event(Event::Key(key))
                 .ok()
                 .flatten()
         else {
-            return false;
+            return None;
         };
-        let Some(binding) = runyte::keymap::native_window::lookup(key) else {
-            return false;
-        };
+        let binding = runyte::keymap::native_window::lookup(key)?;
         match binding.action {
             runyte::keymap::native_window::Action::FontSize(delta) => {
                 self.requested = CellMetrics::new(
@@ -937,11 +970,11 @@ impl NativeView {
                     && !text.is_empty()
                     && text.len() <= runyte::input::MAX_TEXT_INPUT_BYTES
                 {
-                    self.send(Event::Paste(text));
+                    return Some(Some(Event::Paste(text)));
                 }
             }
         }
-        true
+        Some(None)
     }
     fn send(&self, event: Event) {
         self.bridge.send(event);
@@ -971,6 +1004,7 @@ impl Render for NativeView {
             self.send(Event::Resize(dimensions.0, dimensions.1));
         }
         let frame = self.prepare_previews(window);
+        self.route_pending(cx);
         let glyphs = self.glyphs.clone();
         let (background, foreground) = frame
             .as_ref()
@@ -988,115 +1022,68 @@ impl Render for NativeView {
                 if view.composition.is_empty()
                     && let Some(mut key) = translate_key(&event.keystroke)
                 {
-                    if view.preview_key(key, cx) || view.window_shortcut(key, cx) {
-                        cx.stop_propagation();
-                        return;
-                    }
                     if event.is_held {
                         key.kind = crossterm::event::KeyEventKind::Repeat;
                     }
-                    view.send(Event::Key(key));
+                    view.queue_input(Event::Key(key), input_routing::Action::Direct, cx);
                     cx.stop_propagation();
                 }
             }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|view, event: &MouseDownEvent, _, cx| {
-                    if view.preview_pointer(event.position, 0, cx)
-                        || view.media_mouse_down(event, cx)
-                    {
-                        return;
-                    }
-                    view.send(mouse_event(
-                        view.metrics,
-                        event.position,
-                        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                        event.modifiers,
-                    ))
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|view, event: &MouseUpEvent, _, cx| {
-                    if view.preview_pointer(event.position, 2, cx)
-                        || view.media_mouse_up(event.position, cx)
-                    {
-                        return;
-                    }
-                    view.send(mouse_event(
-                        view.metrics,
-                        event.position,
-                        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-                        event.modifiers,
-                    ))
-                }),
-            )
             .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
-                if view.preview_pointer(event.position, 1, cx) || view.media_mouse_move(event, cx) {
-                    return;
-                }
-                if event.pressed_button == Some(MouseButton::Left) {
-                    view.send(mouse_event(
-                        view.metrics,
-                        event.position,
-                        crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
-                        event.modifiers,
-                    ));
-                }
+                let input = mouse_event(
+                    view.metrics,
+                    event.position,
+                    crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+                    event.modifiers,
+                );
+                view.queue_input(input, input_routing::Action::Move(event.clone()), cx);
             }))
             .on_scroll_wheel(cx.listener(|view, event: &ScrollWheelEvent, _, cx| {
-                if view.preview_scroll(event, cx) || view.media_scroll(event, cx) {
-                    return;
-                }
-                if matches!(event.touch_phase, TouchPhase::Started) {
-                    view.scroll = ScrollAccumulator::default();
-                }
-                let delta = ScrollAccumulator::delta(event.delta, view.metrics);
-                let Some((kind, events)) = view.scroll.push(delta, std::time::Instant::now())
-                else {
-                    return;
-                };
-                for _ in 0..events {
-                    view.send(mouse_event(
+                let input = mouse_event(
+                    view.metrics,
+                    event.position,
+                    crossterm::event::MouseEventKind::Moved,
+                    event.modifiers,
+                );
+                view.queue_input(
+                    input,
+                    input_routing::Action::Scroll(
+                        event.clone(),
                         view.metrics,
-                        event.position,
-                        kind,
-                        event.modifiers,
-                    ));
-                }
+                        std::time::Instant::now(),
+                    ),
+                    cx,
+                );
             }));
-        for button in [MouseButton::Middle, MouseButton::Right] {
+        for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+            let native_button = match button {
+                MouseButton::Left => crossterm::event::MouseButton::Left,
+                MouseButton::Middle => crossterm::event::MouseButton::Middle,
+                _ => crossterm::event::MouseButton::Right,
+            };
             root = root
                 .on_mouse_down(
                     button,
-                    cx.listener(|view, event: &MouseDownEvent, _, cx| {
-                        if !view.media_mouse_down(event, cx) && event.button == MouseButton::Right {
-                            view.send(mouse_event(
-                                view.metrics,
-                                event.position,
-                                crossterm::event::MouseEventKind::Down(
-                                    crossterm::event::MouseButton::Right,
-                                ),
-                                event.modifiers,
-                            ));
-                        }
+                    cx.listener(move |view, event: &MouseDownEvent, _, cx| {
+                        let input = mouse_event(
+                            view.metrics,
+                            event.position,
+                            crossterm::event::MouseEventKind::Down(native_button),
+                            event.modifiers,
+                        );
+                        view.queue_input(input, input_routing::Action::Down(event.clone()), cx);
                     }),
                 )
                 .on_mouse_up(
                     button,
-                    cx.listener(|view, event: &MouseUpEvent, _, cx| {
-                        if !view.media_mouse_up(event.position, cx)
-                            && event.button == MouseButton::Right
-                        {
-                            view.send(mouse_event(
-                                view.metrics,
-                                event.position,
-                                crossterm::event::MouseEventKind::Up(
-                                    crossterm::event::MouseButton::Right,
-                                ),
-                                event.modifiers,
-                            ));
-                        }
+                    cx.listener(move |view, event: &MouseUpEvent, _, cx| {
+                        let input = mouse_event(
+                            view.metrics,
+                            event.position,
+                            crossterm::event::MouseEventKind::Up(native_button),
+                            event.modifiers,
+                        );
+                        view.queue_input(input, input_routing::Action::Up(event.clone()), cx);
                     }),
                 );
         }
@@ -1314,6 +1301,7 @@ impl Render for NativeView {
                                 event: Event::FocusGained,
                                 presented: frame.id,
                                 presentation_only: true,
+                                routing_serial: 0,
                             });
                         }
                     }
@@ -1591,7 +1579,11 @@ impl EntityInputHandler for NativeView {
     ) {
         self.composition.clear();
         if text.len() <= runyte::input::MAX_TEXT_INPUT_BYTES {
-            self.send(Event::Paste(text.to_owned()));
+            self.queue_input(
+                Event::Paste(text.to_owned()),
+                input_routing::Action::Direct,
+                cx,
+            );
         }
         cx.notify();
     }

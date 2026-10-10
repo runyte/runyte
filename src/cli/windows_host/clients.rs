@@ -87,6 +87,7 @@ struct Peer {
     geometry: Option<FrameGeometry>,
     pending_ready_frames: Option<(crate::protocol::FrameId, crate::protocol::FrameId)>,
     last_frame: Option<crate::protocol::HostFrame>,
+    input_barrier: Option<u64>,
     renaming: bool,
     parent_attaching: bool,
     deferred: Option<Incoming>,
@@ -182,6 +183,7 @@ impl Clients {
                     geometry: interactive.then_some(geometry),
                     pending_ready_frames: None,
                     last_frame: None,
+                    input_barrier: None,
                     renaming: false,
                     parent_attaching: false,
                     deferred: None,
@@ -608,7 +610,12 @@ impl Clients {
         let Some(peer) = self.peers.get_mut(&id) else {
             return;
         };
-        let response = if peer.responses.visual_pending() {
+        let response = if let Some(serial) = peer.input_barrier {
+            HostResponse::InputBarrier {
+                serial,
+                frame: Box::new(frame.clone()),
+            }
+        } else if peer.responses.visual_pending() {
             HostResponse::Frame {
                 frame: Box::new(frame.clone()),
             }
@@ -635,6 +642,7 @@ impl Clients {
         };
         match peer.responses.try_send(response) {
             Ok(()) => {
+                peer.input_barrier = None;
                 peer.last_frame = Some(frame);
                 if self.active_ready != Some(id) {
                     peer.pending_ready_frames = Some(match peer.pending_ready_frames {
@@ -646,7 +654,11 @@ impl Clients {
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 self.disconnected(host, id);
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                if peer.input_barrier.is_some() {
+                    self.disconnected(host, id);
+                }
+            }
         }
     }
 
@@ -815,6 +827,7 @@ impl Clients {
                 | ClientRequest::Pointer { .. }
                 | ClientRequest::Invoke { .. }
                 | ClientRequest::Notify { .. }
+                | ClientRequest::InputBarrier { .. }
                 | ClientRequest::Resynchronize => return false,
                 _ => {}
             }
@@ -882,6 +895,13 @@ impl Clients {
             ClientRequest::Resize { geometry } if interactive => {
                 if let Some(peer) = self.peers.get_mut(&id) {
                     peer.geometry = Some(geometry.into());
+                }
+                self.publish_requested = true;
+                false
+            }
+            ClientRequest::InputBarrier { serial } if interactive => {
+                if let Some(peer) = self.peers.get_mut(&id) {
+                    peer.input_barrier = Some(serial);
                 }
                 self.publish_requested = true;
                 false

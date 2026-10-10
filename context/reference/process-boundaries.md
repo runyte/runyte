@@ -106,6 +106,16 @@ text, transactions and connection lifetimes are bounded by the private DTOs and
 transport. Source: `src/protocol/`, `src/workspace/transport.rs` and its transport
 support modules, and `src/workspace/host/`.
 
+Private protocol version 78 adds `InputBarrier`: an interactive client receives
+a correlated complete frame prepared after the preceding input. The window
+uses this acknowledgment when routing keys between document preview and editor
+commands. Adjacent compatible drags coalesce; keys, text commits and pointer
+input retain their original presentation identity. Acknowledgments wait for
+whole-frame publication, including finder refills. The queue retains at most
+256 physical inputs, 8 MiB of text and one outstanding barrier. Keys also keep
+their repeat kind. A new frame alone is not an input acknowledgment, and queued keys cannot
+approve a prompt they were not physically presented with.
+
 ## Choosing a tier
 
 - Third-party code belongs in a plugin or a context client, according to who

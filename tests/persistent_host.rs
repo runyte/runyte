@@ -2857,6 +2857,42 @@ async fn terminal_edition_host_accepts_preview_from_a_window_attachment() {
     )
     .await;
     assert!(frame.editor.panes.iter().any(|pane| pane.preview.is_some()));
+    // The correlation response must reflect earlier inputs, including an
+    // ignored key, rather than an unrelated queued visual frame.
+    for (serial, code, expected) in [
+        (1, KeyCode::Char(':'), runyte::command::Mode::Command),
+        (2, KeyCode::Escape, runyte::command::Mode::Normal),
+        (3, KeyCode::Function(24), runyte::command::Mode::Normal),
+    ] {
+        window
+            .send(&ClientRequest::Input {
+                event: InputEvent::Key(KeyStroke::plain(code)).into(),
+                repeated: false,
+                presented_frame: Some(frame.id),
+            })
+            .await
+            .unwrap();
+        window
+            .send(&ClientRequest::InputBarrier { serial })
+            .await
+            .unwrap();
+        let mut acknowledged = false;
+        for _ in 0..16 {
+            if let HostResponse::InputBarrier {
+                serial: received,
+                frame: after,
+            } = response(&mut window).await
+            {
+                assert_eq!(received, serial);
+                let mode: runyte::command::Mode = after.editor.mode.into();
+                assert_eq!(mode, expected);
+                assert!(after.id > frame.id);
+                acknowledged = true;
+                break;
+            }
+        }
+        assert!(acknowledged, "input barrier did not complete");
+    }
     detach(&mut window, "window preview captured").await;
     let (mut terminal, _) = connect_interactive_when_available(&endpoint, geometry()).await;
     let initial = next_complete_frame(&mut terminal).await;

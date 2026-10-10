@@ -56,7 +56,7 @@ fn text_bytes(input: &NativeInput) -> usize {
         _ => 0,
     }
 }
-fn same_drag(previous: &NativeInput, next: &NativeInput) -> bool {
+pub(super) fn same_drag(previous: &NativeInput, next: &NativeInput) -> bool {
     if previous.attachment != next.attachment || previous.presented != next.presented {
         return false;
     }
@@ -68,6 +68,9 @@ fn same_drag(previous: &NativeInput, next: &NativeInput) -> bool {
     }
 }
 impl Sender {
+    pub fn note_overflow(&self) {
+        self.0.overflow.store(true, Ordering::Release);
+    }
     pub fn try_send(&self, input: NativeInput) -> Result<(), SendError> {
         let mut state = self.0.state.lock().unwrap();
         if state.closed {

@@ -27,6 +27,7 @@ use crate::{
 
 /// Bundled frontend services supplied explicitly by the edition executable.
 pub trait WindowFrontend: Sync {
+    fn acknowledge_input_barrier(&self, _serial: u64) {}
     fn launch(
         &self,
         worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
@@ -64,6 +65,9 @@ pub trait WindowSurface {
 
 /// Window input carries the identity of the frame physically presented.
 pub trait WindowEvents {
+    fn input_barrier(&self) -> u64 {
+        0
+    }
     fn next(&mut self) -> Pin<Box<dyn Future<Output = Option<io::Result<Event>>> + '_>>;
     fn defer_frame(&mut self, applied_key_or_text: bool, pending: &mut bool) -> bool;
     fn presented_frame(&self, synchronous: Option<FrameId>) -> Option<FrameId>;
@@ -132,6 +136,12 @@ pub(super) enum Events {
 
 #[cfg(not(windows))]
 impl Events {
+    pub(super) fn input_barrier(&self) -> u64 {
+        match self {
+            Self::Terminal(_) => 0,
+            Self::Window(window) => window.input_barrier(),
+        }
+    }
     pub(super) fn new(window: Option<&'static dyn WindowFrontend>) -> Self {
         match window {
             Some(window) => Self::Window(window.events()),

@@ -75,6 +75,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         batch: 0,
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     };
     let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     send.send(NativeInput {
@@ -82,6 +83,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: enter.clone(),
         presented: Some(first),
         presentation_only: false,
+        routing_serial: 0,
     })
     .await
     .unwrap();
@@ -114,6 +116,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: enter,
         presented: Some(confirmation),
         presentation_only: false,
+        routing_serial: 0,
     })
     .await
     .unwrap();
@@ -133,6 +136,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: Event::Resize(80, 24),
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     })
     .await
     .unwrap();
@@ -144,6 +148,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: Event::FocusGained,
         presented: host.current_frame_id(),
         presentation_only: true,
+        routing_serial: 0,
     })
     .await
     .unwrap();
@@ -176,6 +181,7 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
         batch: 0,
         presented: Some(first),
         presentation_only: false,
+        routing_serial: 0,
     };
     host.prepare_frame(FrameGeometry::default());
     for event in [
@@ -216,6 +222,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         cursor: None,
         overlays: vec![overlay],
         media_input: false,
+        routing_serial: 0,
         metadata_paths: Vec::new(),
     };
     assert!(frame.under_media(2, 2));
@@ -254,6 +261,7 @@ async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
         batch: 0,
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     };
     for (generation, event, presentation_only) in [
         (
@@ -274,6 +282,7 @@ async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
             event,
             presented: Some(runyte::protocol::FrameId::from_raw(7).into()),
             presentation_only,
+            routing_serial: 0,
         })
         .await
         .unwrap();
@@ -309,6 +318,7 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
         cursor: None,
         overlays: Vec::new(),
         media_input: true,
+        routing_serial: 0,
         metadata_paths: Vec::new(),
     };
     let request = || ViewRequest {
@@ -546,6 +556,7 @@ async fn queued_native_keys_publish_bounded_batches_without_reordering_text() {
         batch: 0,
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     };
     // Insert mode followed by 128 distinct ordered characters: three frames,
     // with the first two published despite additional input remaining queued.
@@ -556,6 +567,7 @@ async fn queued_native_keys_publish_bounded_batches_without_reordering_text() {
             event: Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
             presented: Some(painted),
             presentation_only: false,
+            routing_serial: 0,
         })
         .unwrap();
     }
@@ -592,6 +604,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
         batch: 0,
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     };
     let mut pending = false;
     assert!(
@@ -603,6 +616,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
         event: Event::FocusGained,
         presented: None,
         presentation_only: true,
+        routing_serial: 0,
     })
     .unwrap();
     assert!(
@@ -626,6 +640,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
             event: barrier.clone(),
             presented: None,
             presentation_only: false,
+            routing_serial: 0,
         })
         .unwrap();
         send.try_send(NativeInput {
@@ -633,6 +648,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
             event: Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
             presented: None,
             presentation_only: false,
+            routing_serial: 0,
         })
         .unwrap();
         assert!(
@@ -672,12 +688,14 @@ async fn native_batch_pending_blocks_approval_even_before_frame_identity_changes
         batch: 0,
         presented: None,
         presentation_only: false,
+        routing_serial: 0,
     };
     send.try_send(NativeInput {
         attachment: 0,
         event: Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         presented: Some(painted),
         presentation_only: false,
+        routing_serial: 0,
     })
     .unwrap();
     // Model a preceding input opening a confirmation, before preparing any new

@@ -474,6 +474,7 @@ mod tests {
             cursor: None,
             overlays: vec![],
             media_input: false,
+            routing_serial: 0,
             metadata_paths: vec![],
         }
     }

@@ -8,6 +8,7 @@ fn input(event: Event, frame: u64) -> NativeInput {
         event,
         presented: Some(runyte::protocol::FrameId::from_raw(frame).into()),
         presentation_only: false,
+        routing_serial: 0,
     }
 }
 fn key(c: char, frame: u64) -> NativeInput {

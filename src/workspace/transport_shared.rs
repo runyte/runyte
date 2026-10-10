@@ -651,6 +651,7 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
         | ClientRequest::AttachWait { .. }
         | ClientRequest::Pointer { .. }
         | ClientRequest::Resize { .. }
+        | ClientRequest::InputBarrier { .. }
         | ClientRequest::Resynchronize
         | ClientRequest::NativeSwitchCommit { .. }
         | ClientRequest::NativeParentSwitchCommitObserved { .. }
@@ -857,6 +858,16 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_barrier_is_bounded_and_only_available_to_interactive_clients() {
+        let request = ClientRequest::InputBarrier { serial: u64::MAX };
+        let bytes = serde_json::to_vec(&request).unwrap();
+        let decoded: ClientRequest = serde_json::from_slice(&bytes).unwrap();
+        assert!(decoded.validate().is_ok());
+        assert!(request_allowed_for_role(&decoded, ClientRole::Interactive));
+        assert!(!request_allowed_for_role(&decoded, ClientRole::Control));
+    }
 
     #[test]
     fn preview_dismissal_is_an_interactive_client_request() {

@@ -88,9 +88,10 @@ def main():
                        check=True, timeout=180)
         if args.window:
             # Exercise the packaged executable and its same-build helpers.
-            subprocess.run([sys.executable, str(repository / "tests/native_window.py"),
-                            "--binary", str(binary), "--document-preview"],
-                           env=env, cwd=temporary, check=True, timeout=300)
+            for mode in ([], ["--mux"]):
+                subprocess.run([sys.executable, str(repository / "tests/native_window.py"),
+                                "--binary", str(binary), "--document-preview", *mode],
+                               env=env, cwd=temporary, check=True, timeout=300)
 
 
 if __name__ == "__main__":

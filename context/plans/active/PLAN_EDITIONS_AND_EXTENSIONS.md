@@ -1382,3 +1382,16 @@ stderr; read-only image checks detach on both success and invalid contents.
 All 11 packaging/signing tests and 24 installer tests pass. CI constructs only
 unsigned images; no Apple credentials, signing, notarization or publication
 has been performed. ARM64 publication and native macOS acceptance remain pending.
+
+Phase 6 acceptance found a pre-existing preview input race: a rapid `:hsplit`
+was routed using the old preview frame, consuming `h` as navigation and letting
+`s` dismiss the capture. A traced undelayed X11 burst reproduces it. Fixed
+sleeps cannot establish input completion, so the correction adds a bounded
+window routing queue and an attachment-scoped, correlated post-input frame.
+Private protocol 78 carries the acknowledgment for persistent hosts; standalone
+frames acknowledge dequeue only after the editor loop renders the processed
+state. Queued physical inputs retain their presented frame; keys also retain repeat
+kind. The bounded FIFO includes text commits and pointer input, coalesces
+adjacent compatible drags, and waits for whole-frame publication. Independent
+review is clear after fixing wheel-batch ordering and ignored-input acknowledgment.
+This changes no public plugin or context protocol.

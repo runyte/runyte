@@ -8,6 +8,11 @@ pub struct Window;
 pub static WINDOW: Window = Window;
 
 impl WindowFrontend for Window {
+    fn acknowledge_input_barrier(&self, serial: u64) {
+        if let Some(bridge) = BRIDGE.get() {
+            bridge.remote_serial.store(serial, Ordering::Release);
+        }
+    }
     fn launch(
         &self,
         worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
@@ -93,6 +98,12 @@ impl WindowSurface for Surface {
 }
 
 impl WindowEvents for Events {
+    fn input_barrier(&self) -> u64 {
+        match self {
+            Self::Native { routing_serial, .. } => *routing_serial,
+            Self::Tui(_) => 0,
+        }
+    }
     fn next(
         &mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<io::Result<Event>>> + '_>> {

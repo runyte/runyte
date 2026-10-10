@@ -2115,6 +2115,8 @@ async fn run(
                         let converted = convert_event(event)?;
                         let Some(input) = converted else {
                             key_repeat_detector.observe(key_kind, None, Instant::now());
+                            #[cfg(not(windows))]
+                            { frame_pending |= terminal_events.input_barrier() != 0; }
                             continue;
                         };
                         let repeated = key_repeat_detector.observe(
@@ -2128,6 +2130,7 @@ async fn run(
                         let input_frame = app.current_frame_id();
                         #[cfg(not(windows))]
                         if !terminal_events.accepts_input(&app, &input, frame_pending || app.finder_scan_refills() || app.plugin_presentation_pending()) {
+                            frame_pending |= terminal_events.input_barrier() != 0;
                             continue;
                         }
                         app.acknowledge_frontend_input_frame(input_frame);
@@ -2173,6 +2176,8 @@ async fn run(
                             // Passive motion from Crossterm's any-motion mode
                             // is not editor input. Preserve hints/status and
                             // avoid a full semantic/render cycle.
+                            #[cfg(not(windows))]
+                            { frame_pending |= terminal_events.input_barrier() != 0; }
                             continue;
                         }
                         let hint_result = match &input {
@@ -2672,6 +2677,7 @@ struct AttachedClient {
     responses: crate::workspace::transport::ResponseSender,
     wait_tokens: Vec<WaitToken>,
     last_frame: Option<crate::protocol::HostFrame>,
+    input_barrier: Option<u64>,
 }
 
 #[cfg(unix)]
@@ -2790,6 +2796,7 @@ async fn run_host_server(
                                 responses,
                                 wait_tokens: Vec::new(),
                                 last_frame: None,
+                                input_barrier: None,
                             };
                             if client.responses.try_send(HostResponse::Welcome {
                                 protocol: crate::workspace::transport::PROTOCOL_VERSION,
@@ -3073,6 +3080,12 @@ async fn run_host_server(
                             ClientRequest::Resize { geometry } => {
                                 if let Some(client) = active.as_mut() {
                                     client.geometry = geometry.into();
+                                }
+                                changed = true;
+                            }
+                            ClientRequest::InputBarrier { serial } => {
+                                if let Some(client) = active.as_mut() {
+                                    client.input_barrier = Some(serial);
                                 }
                                 changed = true;
                             }
@@ -3596,7 +3609,12 @@ fn publish_attached_frame(
             return None;
         }
     }
-    let response = if client.responses.visual_pending() {
+    let response = if let Some(serial) = client.input_barrier {
+        HostResponse::InputBarrier {
+            serial,
+            frame: Box::new(frame.clone()),
+        }
+    } else if client.responses.visual_pending() {
         // Replacing an unseen delta with another delta would make the latter's
         // base impossible for the client to have. A complete replacement is
         // still one bounded slot and lets the client converge without a
@@ -3642,6 +3660,7 @@ fn publish_attached_frame(
     let id = frame.id.get();
     match client.responses.try_send(response) {
         Ok(()) => {
+            client.input_barrier = None;
             client.last_frame = Some(frame);
             return Some((kind, id));
         }
@@ -3658,7 +3677,12 @@ fn publish_attached_frame(
             );
             *active = None;
         }
-        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            // A barrier is semantic: silently losing it strands physical input.
+            if client.input_barrier.is_some() {
+                *active = None;
+            }
+        }
     }
     None
 }
@@ -4985,10 +5009,11 @@ async fn run_attached(
                         .await?;
                     continue;
                 }
+                'physical: {
                 let key_kind = terminal_key_kind(&event);
                 let Some(input) = convert_event(event)? else {
                     key_repeat_detector.observe(key_kind, None, Instant::now());
-                    continue;
+                    break 'physical;
                 };
                 let repeated = key_repeat_detector.observe(key_kind, Some(&input), Instant::now());
                 if let Some(message) = rejected_text_input(&input) {
@@ -4996,13 +5021,13 @@ async fn run_attached(
                         client.send(&batch.request()).await?;
                     }
                     client.send(&ClientRequest::Notify { message }).await?;
-                    continue;
+                    break 'physical;
                 }
                 if is_passive_pointer(&input) {
-                    continue;
+                    break 'physical;
                 }
                 let presented = terminal_events.presented(current_frame.id);
-                if matches!(input, InputEvent::Pointer(_)) && presented.is_none() { continue; }
+                if matches!(input, InputEvent::Pointer(_)) && presented.is_none() { break 'physical; }
                 match input {
                     InputEvent::Pointer(event) if is_wheel_event(event.kind) => {
                         if let Some(batch) = pointer_batcher.push_wheel(event, presented.unwrap().into()) {
@@ -5034,6 +5059,16 @@ async fn run_attached(
                             .await?
                     }
                 }
+                }
+                if let AttachedEventSource::Window(events) = &terminal_events.source {
+                    let serial = events.input_barrier();
+                    if serial != 0 {
+                        if let Some(batch) = pointer_batcher.take() {
+                            client.send(&batch.request()).await?;
+                        }
+                        client.send(&ClientRequest::InputBarrier { serial }).await?;
+                    }
+                }
             }
             _ = pointer_tick.tick(), if pointer_batcher.pending.is_some() => {
                 if let Some(batch) = pointer_batcher.take() {
@@ -5042,10 +5077,18 @@ async fn run_attached(
             }
             response = client.recv() => {
                 match response? {
+                    Some(HostResponse::InputBarrier { serial, frame }) if window.is_some() => {
+                        let frame: crate::workspace::HostFrame = (*frame).try_into().map_err(|error: String| anyhow::anyhow!(error))?;
+                        if frame.id >= current_frame.id { current_frame = frame; }
+                        window.expect("window frontend").acknowledge_input_barrier(serial);
+                        terminal.draw_host(&current_frame, color_depth)?;
+                    }
                     Some(HostResponse::MediaAction { frame, pane, path, page, action }) if window.is_some() => {
                         window.expect("window frontend").receive_media_action(frame.into(), crate::media::ViewRequest { pane, path: decode_path(path)?, page, action: action.into() });
                     }
                     Some(HostResponse::Frame { frame }) => {
+                        // A correlated semantic response can overtake an older visual slot.
+                        if frame.id.get() < current_frame.id.get() { continue; }
                         current_frame = (*frame)
                             .try_into()
                             .map_err(|error: String| anyhow::anyhow!(error))?;
@@ -8384,6 +8427,7 @@ mod tests {
             responses,
             wait_tokens: Vec::new(),
             last_frame: None,
+            input_barrier: None,
         };
 
         // Visual responses have one replaceable slot, so a repaint burst

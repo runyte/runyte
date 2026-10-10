@@ -205,7 +205,8 @@ use crate::workspace::{
 // Version 75 adds zoom-aware vertical PDF media actions.
 // Version 76 adds native document preview captures.
 // Version 77 adds generation-checked dismissal of those captures.
-pub const VERSION: u32 = 77;
+// Version 78 adds a correlated post-input snapshot for bundled window routing.
+pub const VERSION: u32 = 78;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -585,6 +586,10 @@ pub enum ClientRequest {
         geometry: FrameGeometry,
     },
     Resynchronize,
+    /// Correlates a complete snapshot prepared after preceding physical input.
+    InputBarrier {
+        serial: u64,
+    },
     /// Completes a source-host-owned native switch after the frontend has
     /// authenticated and rendered the prepared destination.
     NativeSwitchCommit {
@@ -1121,6 +1126,10 @@ pub struct NativeSwitchCandidate {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HostResponse {
+    InputBarrier {
+        serial: u64,
+        frame: Box<HostFrame>,
+    },
     MediaAction {
         /// First complete frame whose media target includes this action.
         frame: FrameId,
@@ -1554,7 +1563,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 77);
+        assert_eq!(VERSION, 78);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
