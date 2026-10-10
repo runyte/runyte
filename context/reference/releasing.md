@@ -183,9 +183,19 @@ The example version below is 0.2.1. Substitute the real one.
     the pushed tag and that the validated source SHA is the release commit.
     Terminal/Linux desktop builds and the publishing job must pass. The
     independent universal macOS desktop job does not block those assets; its
-    failure blocks manual macOS distribution. Diagnose a failed build;
+    failure blocks manual macOS distribution. The expected workflow assets are
+    six archives plus `SHA256SUMS` (seven files); the macOS app zip is only a
+    workflow artifact. Diagnose a failed build;
     rerunning a failed job is safe because publishing replaces only assets
     with the expected names and preserves the release body.
+
+    After step 12, the maintainer may complete the manual signing, notarization,
+    quarantine and real-window acceptance in the editions plan's Phase 8.
+    Upload `Runyte-<version>.dmg` and its separate `.dmg.sha256` only after that
+    acceptance. These two manual assets are excluded from workflow `SHA256SUMS`,
+    which reruns regenerate. With the manual pair, the release has nine files;
+    otherwise it has the seven workflow files. No signing identity or notary
+    credential is stored in the repository.
 
 13. **Publish the `Changes` notes.** The workflow creates the GitHub Release
     with a minimal binary-download note when it does not already exist. Replace
@@ -198,7 +208,8 @@ The example version below is 0.2.1. Substitute the real one.
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    rendered `Changes` list, six archives, and `SHA256SUMS`. The GitHub Release
+    rendered `Changes` list, six archives, and `SHA256SUMS`, plus the manual
+    DMG/checksum pair if macOS acceptance is complete. The GitHub Release
     is the published changes record; the temporary draft may then be removed.
 
 14. **Carry the release commit back to `dev`**, so the branches do not diverge
@@ -324,7 +335,17 @@ both with `lipo`, and checks both slices for the deployment floor and system-onl
 library links. It runs headless engine acceptance, then retains
 `Runyte-<version>-unsigned.app.zip` made by `ditto` as a workflow artifact only.
 The publishing job neither depends on this job nor downloads its artifact.
-The macOS window still requires manual platform validation before distribution.
+The job also builds an unsigned disk image, attaches it read-only, checks its
+contents and detaches it. That image is not published. The macOS window still
+requires manual platform validation before distribution.
+
+`contrib/packaging/sign_macos.py` signs the app inside-out with hardened runtime,
+notarizes using a named existing Keychain profile, requires an Accepted status,
+and staples. Its `dmg` command signs/notarizes/staples the image without runtime
+options; `verify` checks both signatures and tickets through codesign, spctl and
+stapler. `--dry-run` prints commands without invoking Apple tools. See the
+[packaging guide](../../contrib/packaging/README.md) for command forms. This
+workflow does not provision certificates, credentials, or entitlements.
 
 ### Curl installation and updates
 

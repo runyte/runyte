@@ -102,6 +102,32 @@ CLI executable does not provide the bundle's Finder icon. Finder file-open
 events are not integrated; open documents inside the editor or pass paths
 when invoking the bundled binary from a terminal.
 
+## macOS distribution tools
+
+After manual Apple account setup and before distribution, use the reviewed
+unsigned app from the exact release tag. These commands use an existing
+Developer ID Application identity and Keychain notary profile:
+
+```sh
+python3 contrib/packaging/sign_macos.py app --dry-run \
+  --identity "Developer ID Application: Example (TEAMID)" --notary-profile runyte-notary /tmp/Runyte.app
+python3 contrib/packaging/package.py dmg --app /tmp/Runyte.app --output /tmp/Runyte-VERSION.dmg
+python3 contrib/packaging/sign_macos.py dmg --dry-run \
+  --identity "Developer ID Application: Example (TEAMID)" --notary-profile runyte-notary /tmp/Runyte-VERSION.dmg
+python3 contrib/packaging/sign_macos.py verify --dry-run /tmp/Runyte.app /tmp/Runyte-VERSION.dmg
+```
+
+Replace the example identity/version and omit `--dry-run` only during the
+manual signing session. The scripts never obtain credentials from files or
+environment variables. Rejected notarization fetches the submission log and
+fails before stapling. The disk-image tool refuses an existing output, stages
+`Runyte.app`, `Applications` → `/Applications`, and README, then creates a UDZO
+image. CI checks an unsigned image by mounting it read-only and detaching.
+Manual quarantine, Finder, window, PTY, PDF, preview and update acceptance must
+pass before uploading the DMG and its separate checksum, as specified in the
+[release runbook](../../context/reference/releasing.md). The manual files are
+outside the workflow's regenerated `SHA256SUMS`.
+
 ## Artwork and checks
 
 `logo/runyte_logo.svg` remains the source of the mark. Generated desktop icons

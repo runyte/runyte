@@ -1371,3 +1371,14 @@ relative `runed` link, and declares the macOS 11 floor. Acceptance rejects
 non-system dynamic links and wrong per-slice deployment floors. Six packaging
 tests and launcher lint pass. CI now builds universal binaries with the
 build-time deployment environment; native validation remains pending there.
+
+Phase 6 distribution tooling is implemented and independently reviewed.
+`package.py dmg` refuses existing outputs and stages the app, Applications link
+and README for UDZO creation. Signing commands are inside-out, notarization
+requires Accepted (including correct handling of nonzero rejection responses),
+and verification covers both Gatekeeper assessments and stapled tickets.
+Dry runs execute no subprocesses. Invalid notary responses preserve diagnostic
+stderr; read-only image checks detach on both success and invalid contents.
+All 11 packaging/signing tests and 24 installer tests pass. CI constructs only
+unsigned images; no Apple credentials, signing, notarization or publication
+has been performed. ARM64 publication and native macOS acceptance remain pending.

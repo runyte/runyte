@@ -137,3 +137,5 @@ jobs:
           python3 contrib/packaging/package.py macos --binary "$RUNNER_TEMP/universal/runyte-desktop" \
             --launcher "$RUNNER_TEMP/universal/runyte-app-launcher" --output "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
+          python3 contrib/packaging/package.py dmg --app "$RUNNER_TEMP/Runyte.app" --output "$RUNNER_TEMP/Runyte-unsigned.dmg"
+          python3 contrib/packaging/check_dmg.py "$RUNNER_TEMP/Runyte-unsigned.dmg"

@@ -7,6 +7,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import tempfile
 
 APP_ID = "com.runyte.Runyte"
 HERE = Path(__file__).resolve().parent
@@ -128,16 +129,43 @@ def bundle_macos(binary, destination, launcher):
     return destination
 
 
+def disk_image(app, output):
+    app = app.expanduser().resolve(strict=True)
+    output = output.expanduser().absolute()
+    if output.exists() or output.is_symlink():
+        raise ValueError(f"disk image already exists: {output}")
+    with (app / "Contents/Info.plist").open("rb") as source:
+        version = plistlib.load(source)["CFBundleShortVersionString"]
+    with tempfile.TemporaryDirectory(prefix="runyte-dmg-") as temporary:
+        stage = Path(temporary)
+        shutil.copytree(app, stage / "Runyte.app", symlinks=True)
+        (stage / "Applications").symlink_to("/Applications")
+        shutil.copyfile(HERE.parents[1] / "README.md", stage / "README.md")
+        subprocess.run(["hdiutil", "create", "-volname", f"Runyte {version}",
+                        "-srcfolder", str(stage), "-format", "UDZO", str(output)], check=True)
+    return output
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("platform", choices=("linux", "macos"))
-    parser.add_argument("--binary", type=Path, required=True,
+    parser.add_argument("platform", choices=("linux", "macos", "dmg"))
+    parser.add_argument("--app", type=Path, help="existing Runyte.app for a disk image")
+    parser.add_argument("--binary", type=Path,
                         help="existing runyte-desktop binary")
     parser.add_argument("--launcher", type=Path, help="universal macOS runyte-app-launcher")
     parser.add_argument("--data-dir", type=Path,
                         help="Linux XDG data directory (default: XDG_DATA_HOME or ~/.local/share)")
     parser.add_argument("--output", type=Path, help="new Linux package directory or macOS .app directory")
     arguments = parser.parse_args()
+    if arguments.platform == "dmg":
+        if arguments.app is None or arguments.output is None:
+            parser.error("dmg requires --app and --output")
+        if any(value is not None for value in (arguments.binary, arguments.launcher, arguments.data_dir)):
+            parser.error("dmg does not use --binary, --launcher or --data-dir")
+        print(disk_image(arguments.app, arguments.output))
+        return
+    if arguments.binary is None or arguments.app is not None:
+        parser.error("linux and macos require --binary and do not use --app")
     binary = arguments.binary.expanduser().resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("--binary must name an executable regular file")
