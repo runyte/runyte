@@ -1463,3 +1463,15 @@ the archive verification block against temporary historical/modern layouts
 produces four, five and seven checksums respectively; deleting the ARM64 archive
 fails verification. New releases have seven archives plus `SHA256SUMS`, with
 the optional manual DMG/checksum pair bringing the total to ten assets.
+
+ARM64 release support is committed in `4c029e1`. Terminal workflow `38082924169`
+on `ee80c9c` passed 21 jobs; Windows failed only the release-workflow test's
+LF-specific source assertion. Its separate restart/save, MCP and clipboard
+acceptance passed; the later language-server steps were skipped after that failure.
+The assertion now compares a trimmed logical line, preserving the exact value
+while accepting CRLF checkouts. The macOS performance suite's first palette-path
+call measured 185.25 ms against 128 ms; all other timing cases passed. Review
+confirmed its source, dependencies and workflow are byte-identical to the
+preceding passing `d340e27` run. The budget remains unchanged for final CI.
+Independent review of the CRLF correction is clear; formatting, root clippy
+and the complete local terminal test suite pass.
