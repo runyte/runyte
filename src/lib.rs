@@ -8,6 +8,7 @@
 pub mod about;
 pub mod app;
 pub mod buffer;
+pub mod cli;
 pub mod clipboard;
 pub mod command;
 pub mod config;
@@ -101,3 +102,6 @@ pub mod wrap;
 pub mod plugin;
 
 pub mod document_preview;
+
+/// The editor release shared by all bundled executables and protocols.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

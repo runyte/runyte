@@ -4,7 +4,7 @@ use super::{
     ConsoleEvent, TerminationSignals, console_closed, finish_standalone_native,
     prefer_pending_console_close, reconcile_pending_console_event, terminated,
 };
-use runyte::{
+use crate::{
     terminal::pty::{Pty, PtyEvent},
     test_support::TestRuntimeRoot,
 };
@@ -19,7 +19,7 @@ use windows_sys::Win32::System::{
     Threading::{CREATE_NEW_CONSOLE, WaitForSingleObject},
 };
 
-const NATIVE_EVENT_HELPER: &str = "windows_console_acceptance::native_console_event_helper";
+const NATIVE_EVENT_HELPER: &str = "cli::windows_console_acceptance::native_console_event_helper";
 const NATIVE_EVENT_MODE: &str = "RUNYTE_NATIVE_CONSOLE_EVENT_MODE";
 const NATIVE_EVENT_ROOT: &str = "RUNYTE_NATIVE_CONSOLE_EVENT_ROOT";
 
@@ -70,6 +70,9 @@ fn run_isolated_console_event(mode: &str) {
                 status.success(),
                 "isolated console event fixture failed: {}",
                 std::fs::read_to_string(fixture.root.as_ref().unwrap().join("event.log")).unwrap()
+            );
+            crate::cli::assert_one_test_passed(
+                &std::fs::read_to_string(fixture.root.as_ref().unwrap().join("event.log")).unwrap(),
             );
             break;
         }
@@ -188,7 +191,7 @@ fn console_guard_runs_in_conpty() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "windows_console_acceptance::console_fixture",
+            "cli::windows_console_acceptance::console_fixture",
             "--ignored",
             "--nocapture",
         ])
@@ -207,6 +210,9 @@ fn console_guard_runs_in_conpty() {
                 status.success(),
                 "{}",
                 std::fs::read_to_string(root.join("output.log")).unwrap()
+            );
+            crate::cli::assert_one_test_passed(
+                &std::fs::read_to_string(root.join("output.log")).unwrap(),
             );
             break;
         }
@@ -236,7 +242,7 @@ fn console_fixture() {
         std::env::current_exe().unwrap().as_os_str(),
         &[
             "--exact".into(),
-            "tests::windows_console_paste_and_restoration".into(),
+            "cli::tests::windows_console_paste_and_restoration".into(),
             "--ignored".into(),
             "--nocapture".into(),
         ],
@@ -270,7 +276,7 @@ fn console_control_key_transport() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "windows_console_acceptance::transport_parent",
+            "cli::windows_console_acceptance::transport_parent",
             "--ignored",
             "--nocapture",
         ])
@@ -289,6 +295,9 @@ fn console_control_key_transport() {
                 status.success(),
                 "{}",
                 std::fs::read_to_string(root.join("output.log")).unwrap()
+            );
+            crate::cli::assert_one_test_passed(
+                &std::fs::read_to_string(root.join("output.log")).unwrap(),
             );
             break;
         }
@@ -318,7 +327,7 @@ fn transport_parent() {
         std::env::current_exe().unwrap().as_os_str(),
         &[
             "--exact".into(),
-            "windows_console_acceptance::transport_capture".into(),
+            "cli::windows_console_acceptance::transport_capture".into(),
             "--ignored".into(),
             "--nocapture".into(),
         ],
@@ -364,7 +373,7 @@ fn transport_capture() {
         .unwrap();
     {
         let _guard = super::TerminalGuard::enter(true).unwrap();
-        let mut events = runyte::tui::windows_input::EventStream::new().unwrap();
+        let mut events = crate::tui::windows_input::EventStream::new().unwrap();
         println!("READY0");
         std::io::stdout().flush().unwrap();
         runtime.block_on(async {
@@ -408,7 +417,7 @@ fn transport_capture() {
                 .is_err()
             );
         }
-        let mode = runyte::tui::windows_input::ConsoleMode::capture().unwrap();
+        let mode = crate::tui::windows_input::ConsoleMode::capture().unwrap();
         crossterm::terminal::enable_raw_mode().unwrap();
         mode.enable_vt().unwrap();
         println!("READY{stage}");

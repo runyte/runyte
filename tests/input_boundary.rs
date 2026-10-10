@@ -16,7 +16,8 @@ fn rust_sources_below(directory: &Path, sources: &mut Vec<std::path::PathBuf>) {
 #[test]
 fn crossterm_is_confined_to_frontend_acquisition_and_adapters() {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let main = source_root.join("main.rs");
+    let cli = source_root.join("cli.rs");
+    let window = source_root.join("cli/window.rs");
     let adapter = source_root.join("tui/input.rs");
     // The native window reuses the acquisition loop's event envelope; editor
     // consumers still receive only Runyte-owned input values.
@@ -30,7 +31,8 @@ fn crossterm_is_confined_to_frontend_acquisition_and_adapters() {
     rust_sources_below(&source_root, &mut sources);
 
     for source in sources {
-        if source == main
+        if source == cli
+            || source == window
             || source == adapter
             || source == native_adapter
             || source.starts_with(&native_support)

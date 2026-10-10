@@ -2,7 +2,7 @@
 //! Real native host and ConPTY frontend, kept behind bin-unit test helpers.
 
 use super::{TerminationSignals, windows_frontend, windows_host};
-use runyte::{
+use crate::{
     config::Config,
     launch::LaunchArguments,
     protocol::{ClientRequest, FeatureGroup, HostResponse as ProtocolHostResponse, WaitStatus},
@@ -53,31 +53,33 @@ use windows_sys::Win32::System::{
 };
 
 const ROOT_ENV: &str = "RUNYTE_NATIVE_FRONTEND_ACCEPTANCE_ROOT";
-const PARENT: &str = "windows_frontend_acceptance::fixture_parent";
-const HOST: &str = "windows_frontend_acceptance::host_fixture";
-const FRONTEND: &str = "windows_frontend_acceptance::frontend_fixture";
-const BUSY: &str = "windows_frontend_acceptance::busy_frontend_fixture";
-const LOST: &str = "windows_frontend_acceptance::lost_host_frontend_fixture";
-const SIGNAL: &str = "windows_frontend_acceptance::console_break_frontend_fixture";
-const STALL_SERVER: &str = "windows_frontend_acceptance::stall_server_fixture";
-const STALL_FRONTEND: &str = "windows_frontend_acceptance::stall_frontend_fixture";
-const SWITCH_PARENT: &str = "windows_frontend_acceptance::switch_parent_fixture";
-const SWITCH_HOST: &str = "windows_frontend_acceptance::switch_host_fixture";
-const SWITCH_FRONTEND: &str = "windows_frontend_acceptance::switch_frontend_fixture";
-const SWITCH_BUSY_HOLDER: &str = "windows_frontend_acceptance::switch_busy_holder_fixture";
-const SWITCH_LOST_ACK: &str = "windows_frontend_acceptance::switch_lost_ack_fixture";
-const SWITCH_B_FRONTEND: &str = "windows_frontend_acceptance::switch_b_frontend_fixture";
-const SWITCH_RETURN_FRONTEND: &str = "windows_frontend_acceptance::switch_return_frontend_fixture";
-const PARENT_WAIT_PARENT: &str = "windows_frontend_acceptance::parent_wait_parent_fixture";
-const PARENT_WAIT_FRONTEND: &str = "windows_frontend_acceptance::parent_wait_frontend_fixture";
-const PARENT_WAIT_LAUNCHER: &str = "windows_frontend_acceptance::parent_wait_launcher_fixture";
-const PARENT_LOSS_LAUNCHER: &str = "windows_frontend_acceptance::parent_loss_launcher_fixture";
+const PARENT: &str = "cli::windows_frontend_acceptance::fixture_parent";
+const HOST: &str = "cli::windows_frontend_acceptance::host_fixture";
+const FRONTEND: &str = "cli::windows_frontend_acceptance::frontend_fixture";
+const BUSY: &str = "cli::windows_frontend_acceptance::busy_frontend_fixture";
+const LOST: &str = "cli::windows_frontend_acceptance::lost_host_frontend_fixture";
+const SIGNAL: &str = "cli::windows_frontend_acceptance::console_break_frontend_fixture";
+const STALL_SERVER: &str = "cli::windows_frontend_acceptance::stall_server_fixture";
+const STALL_FRONTEND: &str = "cli::windows_frontend_acceptance::stall_frontend_fixture";
+const SWITCH_PARENT: &str = "cli::windows_frontend_acceptance::switch_parent_fixture";
+const SWITCH_HOST: &str = "cli::windows_frontend_acceptance::switch_host_fixture";
+const SWITCH_FRONTEND: &str = "cli::windows_frontend_acceptance::switch_frontend_fixture";
+const SWITCH_BUSY_HOLDER: &str = "cli::windows_frontend_acceptance::switch_busy_holder_fixture";
+const SWITCH_LOST_ACK: &str = "cli::windows_frontend_acceptance::switch_lost_ack_fixture";
+const SWITCH_B_FRONTEND: &str = "cli::windows_frontend_acceptance::switch_b_frontend_fixture";
+const SWITCH_RETURN_FRONTEND: &str =
+    "cli::windows_frontend_acceptance::switch_return_frontend_fixture";
+const PARENT_WAIT_PARENT: &str = "cli::windows_frontend_acceptance::parent_wait_parent_fixture";
+const PARENT_WAIT_FRONTEND: &str = "cli::windows_frontend_acceptance::parent_wait_frontend_fixture";
+const PARENT_WAIT_LAUNCHER: &str = "cli::windows_frontend_acceptance::parent_wait_launcher_fixture";
+const PARENT_LOSS_LAUNCHER: &str = "cli::windows_frontend_acceptance::parent_loss_launcher_fixture";
 const PARENT_LOSS_INTERMEDIATE: &str =
-    "windows_frontend_acceptance::parent_loss_intermediate_fixture";
-const PARENT_WAIT_CLIENT: &str = "windows_frontend_acceptance::parent_wait_client_fixture";
-const PARENT_ATTACH_LAUNCHER: &str = "windows_frontend_acceptance::parent_attach_launcher_fixture";
-const PARENT_ATTACH_CLIENT: &str = "windows_frontend_acceptance::parent_attach_client_fixture";
-const PARENT_ATTACH_HOST: &str = "windows_frontend_acceptance::parent_attach_host_fixture";
+    "cli::windows_frontend_acceptance::parent_loss_intermediate_fixture";
+const PARENT_WAIT_CLIENT: &str = "cli::windows_frontend_acceptance::parent_wait_client_fixture";
+const PARENT_ATTACH_LAUNCHER: &str =
+    "cli::windows_frontend_acceptance::parent_attach_launcher_fixture";
+const PARENT_ATTACH_CLIENT: &str = "cli::windows_frontend_acceptance::parent_attach_client_fixture";
+const PARENT_ATTACH_HOST: &str = "cli::windows_frontend_acceptance::parent_attach_host_fixture";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn root() -> PathBuf {
@@ -134,7 +136,7 @@ fn runtime_ready_record(root: &Path, project: &Path) -> PathBuf {
     // endpoint directory forever.
     let project = project.canonicalize().unwrap();
     root.join("runtime/runyte")
-        .join(runyte::workspace::workspace_id(&project))
+        .join(crate::workspace::workspace_id(&project))
         .join("endpoint.json")
 }
 
@@ -214,6 +216,7 @@ fn native_frontend_edits_resizes_reattaches_and_reports_host_loss() {
         "{}",
         fs::read_to_string(root.join("fixture.log")).unwrap()
     );
+    crate::cli::assert_one_test_passed(&fs::read_to_string(root.join("fixture.log")).unwrap());
 }
 
 #[test]
@@ -261,6 +264,9 @@ fn native_frontend_switches_between_exact_running_hosts() {
         status.success(),
         "{}",
         fs::read_to_string(root.join("switch-fixture.log")).unwrap()
+    );
+    crate::cli::assert_one_test_passed(
+        &fs::read_to_string(root.join("switch-fixture.log")).unwrap(),
     );
 }
 
@@ -312,6 +318,9 @@ fn native_parent_wait_requires_live_terminal_authority_and_survives_parent_loss(
         status.success(),
         "{}",
         fs::read_to_string(root.join("parent-wait-fixture.log")).unwrap()
+    );
+    crate::cli::assert_one_test_passed(
+        &fs::read_to_string(root.join("parent-wait-fixture.log")).unwrap(),
     );
 }
 
@@ -429,6 +438,7 @@ fn parent_wait_parent_fixture() {
         "{}",
         fs::read_to_string(root.join("outside-peer.log")).unwrap()
     );
+    crate::cli::assert_one_test_passed(&fs::read_to_string(root.join("outside-peer.log")).unwrap());
     wait_for(
         &root.join("outside-job-rejected"),
         "copied-marker outside-job refusal",
@@ -450,7 +460,7 @@ fn parent_wait_parent_fixture() {
         let mut client = connect_control(&read_metadata(&root)).await.unwrap();
         client
             .send(&ClientRequest::CreateWait {
-                paths: vec![runyte::protocol::encode_path(&unrelated_path)],
+                paths: vec![crate::protocol::encode_path(&unrelated_path)],
             })
             .await
             .unwrap();
@@ -662,7 +672,7 @@ fn parent_wait_client_fixture() {
     let root = root();
     let case = std::env::var("RUNYTE_PARENT_WAIT_CASE").unwrap();
     let path = PathBuf::from(std::env::var_os("RUNYTE_PARENT_WAIT_PATH").unwrap());
-    let mut context = runyte::workspace::parent::ParentContext::from_environment()
+    let mut context = crate::workspace::parent::ParentContext::from_environment()
         .unwrap()
         .expect("integrated terminal supplied a parent context");
     if case == "wrong-capability" {
@@ -680,7 +690,7 @@ fn parent_wait_client_fixture() {
         .unwrap();
     let result = runtime.block_on(async {
         let parent = ForegroundParentSupervisor::capture().unwrap();
-        runyte::workspace::parent::run_wait(context, vec![path], &parent).await
+        crate::workspace::parent::run_wait(context, vec![path], &parent).await
     });
     match case.as_str() {
         "valid" => {
@@ -752,7 +762,7 @@ fn parent_attach_launcher_fixture() {
 #[ignore = "native ParentAttach client spawned inside an integrated terminal job"]
 fn parent_attach_client_fixture() {
     let root = root();
-    let context = runyte::workspace::parent::ParentContext::from_environment()
+    let context = crate::workspace::parent::ParentContext::from_environment()
         .unwrap()
         .expect("integrated terminal supplied a parent context");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -767,8 +777,7 @@ fn parent_attach_client_fixture() {
     };
     let result = runtime.block_on(async {
         let parent = ForegroundParentSupervisor::capture().unwrap();
-        runyte::workspace::parent::run_attach(context, selector, root.join("project"), &parent)
-            .await
+        crate::workspace::parent::run_attach(context, selector, root.join("project"), &parent).await
     });
     if failed {
         let error = format!("{:#}", result.unwrap_err());
@@ -800,7 +809,7 @@ fn parent_attach_host_fixture() {
     }
     if project.ends_with("project-cancel") {
         let identity =
-            runyte::workspace::windows_process_identity::ProcessIdentity::current().unwrap();
+            crate::workspace::windows_process_identity::ProcessIdentity::current().unwrap();
         // The parent treats the final name as readiness, so publish only after
         // the complete identity has been written and the writer has closed.
         let pending = root.join("directory-cancel-process.pending");
@@ -843,6 +852,7 @@ fn parent_attach_host_fixture() {
             &mut startup,
             &mut termination,
             None,
+            super::Environment::default(),
         )
         .await
         .unwrap();
@@ -912,7 +922,7 @@ fn switch_parent_fixture() {
     };
     let canonical = [&a, &b, &busy]
         .map(|project| project.canonicalize().unwrap())
-        .map(|project| runyte::workspace::workspace_id(&project));
+        .map(|project| crate::workspace::workspace_id(&project));
     assert!(
         canonical[0] != canonical[1]
             && canonical[0] != canonical[2]
@@ -951,30 +961,30 @@ fn switch_parent_fixture() {
             .build()
             .unwrap();
         runtime.block_on(async {
-            let mut control = runyte::workspace::windows_lifecycle::connect_control(&metadata)
+            let mut control = crate::workspace::windows_lifecycle::connect_control(&metadata)
                 .await
                 .unwrap();
             control
-                .send(&runyte::protocol::ClientRequest::OpenBuffers {
-                    paths: vec![runyte::protocol::encode_path(&b.join("other.txt"))],
+                .send(&crate::protocol::ClientRequest::OpenBuffers {
+                    paths: vec![crate::protocol::encode_path(&b.join("other.txt"))],
                     activate: false,
                 })
                 .await
                 .unwrap();
             match control.recv().await.unwrap() {
-                Some(runyte::protocol::HostResponse::Opened { .. }) => {}
+                Some(crate::protocol::HostResponse::Opened { .. }) => {}
                 other => panic!("hidden destination did not open: {other:?}"),
             }
             control
-                .send(&runyte::protocol::ClientRequest::DestinationInventory)
+                .send(&crate::protocol::ClientRequest::DestinationInventory)
                 .await
                 .unwrap();
             match control.recv().await.unwrap() {
-                Some(runyte::protocol::HostResponse::DestinationInventory {
+                Some(crate::protocol::HostResponse::DestinationInventory {
                     incarnation,
                     entries,
                     ..
-                }) => runyte::protocol::DestinationVisit {
+                }) => crate::protocol::DestinationVisit {
                     incarnation,
                     destination: entries
                         .into_iter()
@@ -1003,13 +1013,12 @@ fn switch_parent_fixture() {
         .unwrap();
         fs::rename(pending, inbox.join("switch-target.json")).unwrap();
     };
-    let inject_visit =
-        |inbox: &Path, project: &Path, visit: &runyte::protocol::DestinationVisit| {
-            let pending = inbox.join("switch-visit.pending");
-            fs::write(&pending, serde_json::to_vec(visit).unwrap()).unwrap();
-            fs::rename(pending, inbox.join("switch-visit.json")).unwrap();
-            inject(inbox, project);
-        };
+    let inject_visit = |inbox: &Path, project: &Path, visit: &crate::protocol::DestinationVisit| {
+        let pending = inbox.join("switch-visit.pending");
+        fs::write(&pending, serde_json::to_vec(visit).unwrap()).unwrap();
+        fs::rename(pending, inbox.join("switch-visit.json")).unwrap();
+        inject(inbox, project);
+    };
     let inject_directory = |inbox: &Path, project: &Path| {
         match fs::remove_file(inbox.join("switch-stage")) {
             Ok(()) => {}
@@ -1145,17 +1154,17 @@ fn switch_parent_fixture() {
         );
         thread::sleep(Duration::from_millis(15));
     }
-    let canceled_identity: runyte::workspace::windows_process_identity::ProcessIdentity =
+    let canceled_identity: crate::workspace::windows_process_identity::ProcessIdentity =
         serde_json::from_slice(&fs::read(&cancel_identity_path).unwrap()).unwrap();
     drop(cancel_frontend);
     let cleanup_deadline = Instant::now() + TIMEOUT;
     loop {
-        match runyte::workspace::windows_process_identity::PinnedProcess::open(canceled_identity) {
+        match crate::workspace::windows_process_identity::PinnedProcess::open(canceled_identity) {
             Ok(
-                runyte::workspace::windows_process_identity::PinResult::Gone
-                | runyte::workspace::windows_process_identity::PinResult::Reused,
+                crate::workspace::windows_process_identity::PinResult::Gone
+                | crate::workspace::windows_process_identity::PinResult::Reused,
             ) => break,
-            Ok(runyte::workspace::windows_process_identity::PinResult::Pinned(_)) => {}
+            Ok(crate::workspace::windows_process_identity::PinResult::Pinned(_)) => {}
             Err(error) => panic!("cannot inspect canceled directory host: {error}"),
         }
         assert!(
@@ -1265,6 +1274,7 @@ fn switch_host_fixture() {
             &mut startup,
             &mut termination,
             None,
+            super::Environment::default(),
         )
         .await
         .unwrap();
@@ -1509,6 +1519,7 @@ fn fixture_parent() {
         "{}",
         fs::read_to_string(root.join("stall.log")).unwrap()
     );
+    crate::cli::assert_one_test_passed(&fs::read_to_string(root.join("stall.log")).unwrap());
 }
 
 #[test]
@@ -1538,6 +1549,7 @@ fn host_fixture() {
             &mut startup,
             &mut termination,
             None,
+            super::Environment::default(),
         ))
         .unwrap();
 }
@@ -1576,7 +1588,7 @@ fn stall_server_fixture() {
         assert!(interactive);
         responses
             .send(HostResponse::Welcome {
-                protocol: runyte::protocol::VERSION,
+                protocol: crate::protocol::VERSION,
                 pid: std::process::id(),
                 features: vec![
                     FeatureGroup::Snapshots,

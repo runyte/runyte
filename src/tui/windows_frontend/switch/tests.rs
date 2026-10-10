@@ -40,7 +40,7 @@ async fn run(peer: &mut Peer, committed: bool) -> Result<()> {
 fn wait_state() -> HostResponse {
     HostResponse::WaitState {
         token: serde_json::from_str("1").unwrap(),
-        status: runyte::protocol::WaitStatus::Pending {
+        status: crate::protocol::WaitStatus::Pending {
             buffers: Vec::new(),
             remaining: Vec::new(),
         },

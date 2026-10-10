@@ -6,15 +6,18 @@ use anyhow::Result;
 #[cfg(all(feature = "native", not(windows)))]
 mod native;
 
-pub(crate) fn live_clipboard() -> Box<dyn SystemClipboard> {
-    #[cfg(all(feature = "native", not(windows)))]
-    {
-        Box::new(native::NativeClipboard::default())
-    }
-    #[cfg(not(all(feature = "native", not(windows))))]
-    {
-        Box::new(CommandClipboard)
-    }
+pub(crate) fn live_clipboard(
+    window: Option<&'static dyn crate::cli::window::WindowFrontend>,
+) -> Box<dyn SystemClipboard> {
+    window
+        .and_then(|window| window.system_clipboard())
+        .unwrap_or_else(|| Box::new(CommandClipboard))
+}
+
+/// Temporary native-feature factory until the desktop crate owns this backend.
+#[cfg(all(feature = "native", not(windows)))]
+pub fn native_clipboard() -> Box<dyn SystemClipboard> {
+    Box::new(native::NativeClipboard::default())
 }
 #[cfg(not(windows))]
 mod helpers;

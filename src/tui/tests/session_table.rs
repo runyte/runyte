@@ -7,7 +7,7 @@ fn session_table_escapes_control_characters_without_changing_workspace_identity(
         publication_key: None,
         unread_terminals: None,
         terminal_bell: None,
-        id: runyte::workspace::workspace_id(&project_root),
+        id: crate::workspace::workspace_id(&project_root),
         name: Some("日本\tproject".to_owned()),
         number: None,
         last_active_unix_seconds: None,
@@ -33,5 +33,5 @@ fn session_table_escapes_control_characters_without_changing_workspace_identity(
     assert!(table.contains("日本\\tproject"));
     assert!(table.contains("/work/notes\\nnext\\tcolumn\\r\\u{1b}[2J"));
     assert_eq!(row.project_root, project_root);
-    assert_eq!(row.id, runyte::workspace::workspace_id(&project_root));
+    assert_eq!(row.id, crate::workspace::workspace_id(&project_root));
 }

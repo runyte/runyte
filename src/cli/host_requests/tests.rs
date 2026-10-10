@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use runyte::{
+use crate::{
     app::App,
     config::Config,
     external_open::ProgramCache,
@@ -38,7 +38,7 @@ fn destination_inventory_is_identity_only_and_visits_require_current_host_and_in
     let current = host.active().buffer;
     let response = super::handle_workspace_request(
         &mut host,
-        runyte::protocol::ClientRequest::DestinationInventory,
+        crate::protocol::ClientRequest::DestinationInventory,
         false,
         false,
     )
@@ -57,7 +57,7 @@ fn destination_inventory_is_identity_only_and_visits_require_current_host_and_in
     let destination = entries[0].destination;
     let response = super::handle_workspace_request(
         &mut host,
-        runyte::protocol::ClientRequest::VisitDestination {
+        crate::protocol::ClientRequest::VisitDestination {
             incarnation: incarnation.clone(),
             destination,
         },
@@ -69,7 +69,7 @@ fn destination_inventory_is_identity_only_and_visits_require_current_host_and_in
     assert!(matches!(response, HostResponse::Error { .. }));
     let response = super::handle_workspace_request(
         &mut host,
-        runyte::protocol::ClientRequest::VisitDestination {
+        crate::protocol::ClientRequest::VisitDestination {
             incarnation: "0".repeat(64),
             destination,
         },
@@ -85,9 +85,9 @@ fn destination_inventory_is_identity_only_and_visits_require_current_host_and_in
     assert_eq!(host.active().buffer, current);
     let response = super::handle_workspace_request(
         &mut host,
-        runyte::protocol::ClientRequest::VisitDestination {
+        crate::protocol::ClientRequest::VisitDestination {
             incarnation: incarnation.clone(),
-            destination: runyte::protocol::OpenDestination::Buffer(u64::MAX),
+            destination: crate::protocol::OpenDestination::Buffer(u64::MAX),
         },
         true,
         true,
@@ -100,7 +100,7 @@ fn destination_inventory_is_identity_only_and_visits_require_current_host_and_in
     ));
     let response = super::handle_workspace_request(
         &mut host,
-        runyte::protocol::ClientRequest::VisitDestination {
+        crate::protocol::ClientRequest::VisitDestination {
             incarnation,
             destination,
         },
@@ -128,7 +128,7 @@ fn health_is_read_only_and_lifecycle_requests_stay_with_the_host_loop() {
     let reply = control(&mut host, ClientRequest::Health);
     assert!(!reply.publish_frame);
     assert!(matches!(reply.response, HostResponse::Health {
-        protocol: runyte::protocol::VERSION,
+        protocol: crate::protocol::VERSION,
         pid,
         interactive_attached: false,
         pending_wait_requests: 0,
@@ -147,7 +147,7 @@ fn health_is_read_only_and_lifecycle_requests_stay_with_the_host_loop() {
 
 #[test]
 fn destination_labels_respect_the_byte_budget_without_splitting_utf8() {
-    let limit = runyte::protocol::MAX_DESTINATION_LABEL_BYTES;
+    let limit = crate::protocol::MAX_DESTINATION_LABEL_BYTES;
     let prefix = "a".repeat(limit - 1);
     assert_eq!(bounded_destination_label(&format!("{prefix}😀")), prefix);
     let value = "é".repeat(limit);
@@ -160,9 +160,9 @@ fn destination_labels_respect_the_byte_budget_without_splitting_utf8() {
 #[test]
 fn destination_inventory_bounds_large_working_sets_and_marks_truncation() {
     let (_root, mut host) = fixture("host-inventory-bound");
-    for _ in 0..=runyte::protocol::MAX_DESTINATIONS {
-        let mut buffer = runyte::buffer::Buffer::scratch();
-        buffer.apply(&runyte::text::Transaction::insert(0, "visible"));
+    for _ in 0..=crate::protocol::MAX_DESTINATIONS {
+        let mut buffer = crate::buffer::Buffer::scratch();
+        buffer.apply(&crate::text::Transaction::insert(0, "visible"));
         host.app_mut().buffers.push(buffer);
     }
     let reply = control(&mut host, ClientRequest::DestinationInventory);
@@ -174,11 +174,11 @@ fn destination_inventory_bounds_large_working_sets_and_marks_truncation() {
         panic!("expected destination inventory");
     };
     assert!(truncated);
-    assert_eq!(entries.len(), runyte::protocol::MAX_DESTINATIONS);
+    assert_eq!(entries.len(), crate::protocol::MAX_DESTINATIONS);
     assert!(
         entries
             .iter()
-            .all(|entry| entry.label.len() <= runyte::protocol::MAX_DESTINATION_LABEL_BYTES)
+            .all(|entry| entry.label.len() <= crate::protocol::MAX_DESTINATION_LABEL_BYTES)
     );
 }
 
@@ -190,7 +190,7 @@ fn revision_checked_mutations_publish_frames_but_stale_or_unauthorized_requests_
     let opened = control(
         &mut host,
         ClientRequest::OpenBuffers {
-            paths: vec![runyte::protocol::encode_path(&path)],
+            paths: vec![crate::protocol::encode_path(&path)],
             activate: true,
         },
     );
@@ -226,7 +226,7 @@ fn revision_checked_mutations_publish_frames_but_stale_or_unauthorized_requests_
     let refused = control(
         &mut host,
         ClientRequest::Invoke {
-            command: runyte::protocol::CommandRequest::at(
+            command: crate::protocol::CommandRequest::at(
                 "select-all",
                 serde_json::from_str("1").unwrap(),
                 buffer,
@@ -250,7 +250,7 @@ fn wait_creation_and_completion_preserve_frame_and_attachment_contracts() {
     let created = control(
         &mut host,
         ClientRequest::CreateWait {
-            paths: vec![runyte::protocol::encode_path(&path)],
+            paths: vec![crate::protocol::encode_path(&path)],
         },
     );
     assert!(created.publish_frame);
@@ -297,7 +297,7 @@ fn malformed_native_paths_return_request_errors_without_partial_buffer_or_wait_c
     let (root, mut host) = fixture("host-bad-path");
     let path = root.join("valid.txt");
     std::fs::write(&path, "valid").unwrap();
-    let paths = vec![runyte::protocol::encode_path(&path), vec![0x41]];
+    let paths = vec![crate::protocol::encode_path(&path), vec![0x41]];
     let before = host.open_buffer_count();
     for request in [
         ClientRequest::OpenBuffers {
@@ -337,7 +337,7 @@ fn assert_native_path_opens(name: &std::ffi::OsStr) {
     let reply = control(
         &mut host,
         ClientRequest::OpenBuffers {
-            paths: vec![runyte::protocol::encode_path(&path)],
+            paths: vec![crate::protocol::encode_path(&path)],
             activate: true,
         },
     );

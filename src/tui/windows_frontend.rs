@@ -6,10 +6,7 @@ use super::{
     KeyRepeatDetector, TerminalGuard, TerminationSignals, is_passive_pointer, is_wheel_event,
     rejected_text_input, terminal_color_depth, terminal_key_kind, terminated,
 };
-use anyhow::{Context, Result, anyhow, bail};
-use crossterm::event::Event as CrosstermEvent;
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
-use runyte::{
+use crate::{
     cwd_handoff::Prepared as PreparedCwdHandoff,
     input::{InputEvent, PointerEvent},
     protocol::{
@@ -28,6 +25,9 @@ use runyte::{
         windows_transport::{BufferedLocalClient, ClientRequest, HostResponse},
     },
 };
+use anyhow::{Context, Result, anyhow, bail};
+use crossterm::event::Event as CrosstermEvent;
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::{
     collections::VecDeque,
     io::stdout,
@@ -136,7 +136,7 @@ impl WheelBatcher {
 }
 
 struct FrontendLoop {
-    geometry: runyte::app::FrameGeometry,
+    geometry: crate::app::FrameGeometry,
     input: EventStream,
     repeats: KeyRepeatDetector,
     wheels: WheelBatcher,
@@ -144,7 +144,7 @@ struct FrontendLoop {
 }
 
 impl FrontendLoop {
-    fn new(geometry: runyte::app::FrameGeometry) -> Result<Self> {
+    fn new(geometry: crate::app::FrameGeometry) -> Result<Self> {
         let mut wheel_tick = tokio::time::interval(Duration::from_millis(8));
         wheel_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         Ok(Self {
@@ -246,7 +246,7 @@ async fn run_switching_session(
     metadata: &EndpointMetadata,
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     depth: TerminalColorDepth,
-    geometry: runyte::app::FrameGeometry,
+    geometry: crate::app::FrameGeometry,
     wait_token: Option<WaitToken>,
     return_catalog: Option<(&DiscoveryScope, &Path)>,
     directory_handoff: bool,
@@ -680,7 +680,7 @@ async fn return_from_quit(
         }
     }
     for metadata in candidates.into_iter().take(RETURN_HISTORY_LIMIT) {
-        if metadata.protocol != runyte::protocol::VERSION {
+        if metadata.protocol != crate::protocol::VERSION {
             continue;
         }
         let candidate = tokio::time::timeout_at(
@@ -715,7 +715,7 @@ async fn return_from_quit(
 
 async fn connect_attachment(
     metadata: &EndpointMetadata,
-    geometry: runyte::app::FrameGeometry,
+    geometry: crate::app::FrameGeometry,
     directory_handoff: bool,
 ) -> Result<Attachment> {
     // The same deadline bounds connection, Welcome and the first complete
@@ -1091,9 +1091,9 @@ fn draw(
 
 fn apply_damage(
     current: &mut HostFrame,
-    damage: &runyte::protocol::TerminalDamageFrame,
+    damage: &crate::protocol::TerminalDamageFrame,
 ) -> Result<bool> {
-    let mut wire: runyte::protocol::HostFrame = current.clone().into();
+    let mut wire: crate::protocol::HostFrame = current.clone().into();
     if !damage.apply(&mut wire) {
         return Ok(false);
     }
@@ -1103,9 +1103,9 @@ fn apply_damage(
 
 fn apply_editor_damage(
     current: &mut HostFrame,
-    damage: &runyte::protocol::EditorDamageFrame,
+    damage: &crate::protocol::EditorDamageFrame,
 ) -> Result<bool> {
-    let mut wire: runyte::protocol::HostFrame = current.clone().into();
+    let mut wire: crate::protocol::HostFrame = current.clone().into();
     if !damage.apply(&mut wire) {
         return Ok(false);
     }
@@ -1175,7 +1175,7 @@ fn observe_exit_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runyte::{
+    use crate::{
         test_support::TestRuntimeRoot,
         workspace::windows_endpoint::{EndpointLocation, RegistrySet},
     };

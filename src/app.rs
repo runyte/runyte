@@ -2540,6 +2540,7 @@ pub(crate) struct HostPorts {
     directory_opener: DirectoryOpener,
     program_opener: ProgramOpener,
     clipboard: Box<dyn SystemClipboard>,
+    edition: crate::cli::Edition,
     trash: std::sync::Arc<dyn TrashBackend>,
     lsp: Option<LspHandle>,
     /// The Git boundary, absent when no `git` executable was found. Every Git
@@ -2552,8 +2553,9 @@ pub(crate) struct HostPorts {
 }
 
 impl HostPorts {
-    fn live() -> Self {
-        let mut ports = Self::isolated(crate::clipboard::live_clipboard());
+    fn live(environment: crate::cli::Environment) -> Self {
+        let mut ports = Self::isolated(crate::clipboard::live_clipboard(environment.window));
+        ports.edition = environment.edition;
         ports.browser = Box::new(external_open::dispatch_browser);
         ports.directory_opener = Box::new(|path| external_open::dispatch("", path));
         ports.program_opener = Box::new(external_open::dispatch);
@@ -2563,6 +2565,7 @@ impl HostPorts {
     pub(crate) fn isolated(clipboard: Box<dyn SystemClipboard>) -> Self {
         Self {
             clipboard,
+            edition: crate::cli::Edition::Terminal,
             browser: Box::new(|_| bail!("browser opening is unavailable in an isolated editor")),
             directory_opener: Box::new(|_| {
                 bail!("system file manager opening is unavailable in an isolated editor")
@@ -3312,6 +3315,11 @@ impl App {
         }
     }
 
+    /// The executable edition that owns this editor state.
+    pub fn edition(&self) -> crate::cli::Edition {
+        self.ports.edition
+    }
+
     pub fn new(config: Config, file: Option<PathBuf>) -> Result<Self> {
         Self::new_with_targets(config, file.into_iter().map(LaunchTarget::new).collect())
     }
@@ -3381,7 +3389,7 @@ impl App {
             startup,
             std::env::current_dir()?,
             ProgramCache::load(external_open::cache_root()),
-            HostPorts::live(),
+            HostPorts::live(crate::cli::Environment::default()),
             false,
             false,
         )
@@ -3396,6 +3404,22 @@ impl App {
         launch_directory: impl AsRef<Path>,
         startup: &mut StartupTrace,
     ) -> Result<Self> {
+        Self::new_editor_with_frontend(
+            config,
+            targets,
+            launch_directory,
+            startup,
+            crate::cli::Environment::default(),
+        )
+    }
+
+    pub(crate) fn new_editor_with_frontend(
+        config: Config,
+        targets: Vec<LaunchTarget>,
+        launch_directory: impl AsRef<Path>,
+        startup: &mut StartupTrace,
+        environment: crate::cli::Environment,
+    ) -> Result<Self> {
         Self::new_with_boundaries(
             config,
             targets,
@@ -3403,7 +3427,7 @@ impl App {
             startup,
             std::env::current_dir()?,
             ProgramCache::load(external_open::cache_root()),
-            HostPorts::live(),
+            HostPorts::live(environment),
             true,
             true,
         )
@@ -3416,6 +3440,22 @@ impl App {
         project_root: impl AsRef<Path>,
         startup: &mut StartupTrace,
     ) -> Result<Self> {
+        Self::new_in_project_with_frontend(
+            config,
+            targets,
+            project_root,
+            startup,
+            crate::cli::Environment::default(),
+        )
+    }
+
+    pub(crate) fn new_in_project_with_frontend(
+        config: Config,
+        targets: Vec<LaunchTarget>,
+        project_root: impl AsRef<Path>,
+        startup: &mut StartupTrace,
+        environment: crate::cli::Environment,
+    ) -> Result<Self> {
         Self::new_with_boundaries(
             config,
             targets,
@@ -3423,7 +3463,7 @@ impl App {
             startup,
             std::env::current_dir()?,
             ProgramCache::load(external_open::cache_root()),
-            HostPorts::live(),
+            HostPorts::live(environment),
             true,
             false,
         )

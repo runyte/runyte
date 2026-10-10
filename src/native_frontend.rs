@@ -3,6 +3,9 @@
 //! GPUI owns the main thread; the existing host loop owns all editor state.
 //! The bridge retains only the latest owned frame, never a queue of frames.
 
+mod window;
+pub use window::WINDOW;
+
 mod animation;
 mod cells;
 mod grid;
@@ -677,7 +680,10 @@ impl Events {
     }
 }
 
-pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::Result<()> {
+pub fn launch(
+    worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
+    font_size: usize,
+) -> anyhow::Result<()> {
     let (input, receiver) = input_queue::channel(4096);
     let (wake, wakes) = async_channel::bounded(1);
     let bridge = Arc::new(Bridge {
@@ -714,7 +720,9 @@ pub fn launch(worker: fn() -> anyhow::Result<()>, font_size: usize) -> anyhow::R
     let editor = std::thread::Builder::new()
         .name("runyte-editor".into())
         .spawn(move || {
-            let result = std::panic::catch_unwind(worker)
+            // The worker is consumed once. A panic reports failure and ends
+            // the window; no captured editor state is reused after unwinding.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(worker))
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("editor worker panicked")));
             completion.done.store(true, Ordering::Release);
             let _ = completion.wake.try_send(());

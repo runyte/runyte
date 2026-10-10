@@ -3,10 +3,8 @@
 //! Per-peer semantic ordering and wait ownership. Native peer proof outlives
 //! every accepted request; no metadata PID or control request is frontend input.
 
-use crate::host_requests::{handle_workspace_request, is_workspace_request};
-use anyhow::Context;
-use futures_util::stream::FuturesUnordered;
-use runyte::{
+use crate::cli::host_requests::{handle_workspace_request, is_workspace_request};
+use crate::{
     app::FrameGeometry,
     key_hints::KeyHintState,
     protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken, decode_path, encode_path},
@@ -16,6 +14,8 @@ use runyte::{
         windows_process_identity::PinnedProcess, windows_transport::ResponseSender,
     },
 };
+use anyhow::Context;
+use futures_util::stream::FuturesUnordered;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -43,7 +43,7 @@ pub(super) enum NativeSwitchAction {
 
 pub(super) struct ParentAttachIntent {
     pub(super) child: u64,
-    pub(super) terminal: runyte::terminal::TerminalId,
+    pub(super) terminal: crate::terminal::TerminalId,
     pub(super) generation: u64,
     pub(super) child_proof: Arc<PinnedProcess>,
     pub(super) frontend_proof: Arc<PinnedProcess>,
@@ -85,8 +85,8 @@ struct Peer {
     previous: Option<WorkspaceSelection>,
     directory_handoff: bool,
     geometry: Option<FrameGeometry>,
-    pending_ready_frames: Option<(runyte::protocol::FrameId, runyte::protocol::FrameId)>,
-    last_frame: Option<runyte::protocol::HostFrame>,
+    pending_ready_frames: Option<(crate::protocol::FrameId, crate::protocol::FrameId)>,
+    last_frame: Option<crate::protocol::HostFrame>,
     renaming: bool,
     parent_attaching: bool,
     deferred: Option<Incoming>,
@@ -148,7 +148,7 @@ impl Clients {
         }
         if responses
             .try_send(HostResponse::Welcome {
-                protocol: runyte::protocol::VERSION,
+                protocol: crate::protocol::VERSION,
                 pid: std::process::id(),
                 features: if interactive {
                     vec![
@@ -540,12 +540,12 @@ impl Clients {
     pub(super) fn finish_exit(
         &mut self,
         host: &mut WorkspaceHost,
-        request: runyte::app::PersistentExitRequest,
+        request: crate::app::PersistentExitRequest,
     ) -> bool {
         let Some(id) = self.active else { return false };
         self.hints.clear();
         match request {
-            runyte::app::PersistentExitRequest::Detach => {
+            crate::app::PersistentExitRequest::Detach => {
                 self.finish_active_waits(host, id);
                 self.send(
                     host,
@@ -557,7 +557,7 @@ impl Clients {
                 self.disconnected(host, id);
                 false
             }
-            runyte::app::PersistentExitRequest::Quit { force } => {
+            crate::app::PersistentExitRequest::Quit { force } => {
                 self.finish_active_waits(host, id);
                 let mut protected = host.protected_state();
                 if force {
@@ -601,7 +601,7 @@ impl Clients {
         };
         let geometry = peer.geometry.expect("interactive geometry retained");
         host.mark_visible_terminals_viewed();
-        let frame: runyte::protocol::HostFrame = host
+        let frame: crate::protocol::HostFrame = host
             .prepare_frame_with_hints(geometry, Some(&self.hints))
             .into();
         let frame_id = frame.id;
@@ -615,7 +615,7 @@ impl Clients {
         } else if let Some(damage) = peer
             .last_frame
             .as_ref()
-            .and_then(|base| runyte::protocol::EditorDamageFrame::between(base, &frame))
+            .and_then(|base| crate::protocol::EditorDamageFrame::between(base, &frame))
         {
             HostResponse::EditorDamage {
                 damage: Box::new(damage),
@@ -623,7 +623,7 @@ impl Clients {
         } else if let Some(damage) = peer
             .last_frame
             .as_ref()
-            .and_then(|base| runyte::protocol::TerminalDamageFrame::between(base, &frame))
+            .and_then(|base| crate::protocol::TerminalDamageFrame::between(base, &frame))
         {
             HostResponse::TerminalDamage {
                 damage: Box::new(damage),
@@ -912,7 +912,7 @@ impl Clients {
             ClientRequest::AttachWait { token } if interactive => {
                 let response = match host.wait_status(token.into()) {
                     Some(status) => {
-                        if matches!(status, runyte::workspace::WaitStatus::Pending { .. }) {
+                        if matches!(status, crate::workspace::WaitStatus::Pending { .. }) {
                             self.peers
                                 .get_mut(&id)
                                 .expect("active peer")
@@ -1009,7 +1009,7 @@ impl Clients {
                 capability,
                 paths,
             } if !interactive => {
-                let terminal = runyte::terminal::TerminalId::from_raw(terminal);
+                let terminal = crate::terminal::TerminalId::from_raw(terminal);
                 let authority = self.peers.get(&id).and_then(|peer| {
                     peer.attachment_generation
                         .filter(|generation| {
@@ -1088,7 +1088,7 @@ impl Clients {
                 selector,
                 directory,
             } if !interactive => {
-                let terminal = runyte::terminal::TerminalId::from_raw(terminal);
+                let terminal = crate::terminal::TerminalId::from_raw(terminal);
                 let authority = self.parent_authority(host, id, terminal, &capability);
                 let result = authority.and_then(|(generation, child_proof, frontend_proof)| {
                     anyhow::ensure!(
@@ -1218,12 +1218,12 @@ impl Clients {
             peer.parent_waits.retain(|token| {
                 matches!(
                     host.wait_status((*token).into()),
-                    Some(runyte::workspace::WaitStatus::Pending { .. })
+                    Some(crate::workspace::WaitStatus::Pending { .. })
                 )
             });
             peer.subscribed_waits
                 .retain(|token| match host.wait_status((*token).into()) {
-                    Some(runyte::workspace::WaitStatus::Pending { .. }) => true,
+                    Some(crate::workspace::WaitStatus::Pending { .. }) => true,
                     Some(status) => {
                         completions.push((id, *token, status));
                         false
@@ -1317,7 +1317,7 @@ impl Clients {
         &self,
         host: &WorkspaceHost,
         id: u64,
-        terminal: runyte::terminal::TerminalId,
+        terminal: crate::terminal::TerminalId,
         capability: &str,
     ) -> anyhow::Result<(u64, Arc<PinnedProcess>, Arc<PinnedProcess>)> {
         let peer = self

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use futures_util::{FutureExt, StreamExt};
-use runyte::{
+use crate::{
     app::App,
     config::Config,
     external_open::ProgramCache,
@@ -14,6 +13,7 @@ use runyte::{
         windows_transport::{ResponseReceiver, response_channel},
     },
 };
+use futures_util::{FutureExt, StreamExt};
 
 struct Fixture {
     host: WorkspaceHost,
@@ -82,7 +82,7 @@ impl Fixture {
                 responses: tx,
                 interactive,
                 directory_handoff: false,
-                geometry: runyte::app::FrameGeometry::default(),
+                geometry: crate::app::FrameGeometry::default(),
             },
         );
         assert!(clients.peers.contains_key(&id));
@@ -98,7 +98,7 @@ impl Fixture {
             &mut self.host,
             id,
             ClientRequest::CreateWait {
-                paths: vec![runyte::protocol::encode_path(&path)],
+                paths: vec![crate::protocol::encode_path(&path)],
             },
         );
         let created: Vec<_> = clients.peers[&id]
@@ -114,16 +114,16 @@ impl Fixture {
         created[0]
     }
 
-    fn show_terminal(&mut self, terminal: runyte::terminal::TerminalId) {
+    fn show_terminal(&mut self, terminal: crate::terminal::TerminalId) {
         let number = self
             .host
             .app()
             .terminals
             .get(terminal)
-            .and_then(runyte::terminal::TerminalSession::number)
+            .and_then(crate::terminal::TerminalSession::number)
             .expect("a running terminal to show");
         let command =
-            runyte::command::parse_colon_command(&format!("terminal-show {number}")).unwrap();
+            crate::command::parse_colon_command(&format!("terminal-show {number}")).unwrap();
         self.host.app_mut().execute(command).unwrap();
         assert_eq!(self.host.app().active_terminal(), Some(terminal));
     }
@@ -156,7 +156,7 @@ fn native_switch_abort_preserves_waits_and_commit_cancels_only_source_owned_wait
     for token in [source_wait, control_wait] {
         assert!(matches!(
             fixture.host.wait_status(token.into()),
-            Some(runyte::workspace::WaitStatus::Pending { .. })
+            Some(crate::workspace::WaitStatus::Pending { .. })
         ));
     }
 
@@ -177,11 +177,11 @@ fn native_switch_abort_preserves_waits_and_commit_cancels_only_source_owned_wait
     assert!(clients.commit_switch(&mut fixture.host, 1, 11));
     assert!(matches!(
         fixture.host.wait_status(source_wait.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
     assert!(matches!(
         fixture.host.wait_status(control_wait.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     assert_eq!(clients.active_id(), None);
 }
@@ -198,13 +198,13 @@ fn detached_interactive_peer_leaves_external_wait_for_its_owner() {
     clients.disconnected(&mut fixture.host, 1);
     assert!(matches!(
         fixture.host.wait_status(token.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     fixture.host.complete_wait_request(token.into()).unwrap();
     clients.reconcile(&mut fixture.host);
     assert!(matches!(
         fixture.host.wait_status(token.into()),
-        Some(runyte::workspace::WaitStatus::Completed)
+        Some(crate::workspace::WaitStatus::Completed)
     ));
 }
 
@@ -285,7 +285,7 @@ fn prepared_response_send_failure_releases_reservation_and_owner() {
     drop(receiver);
     assert!(clients.reserve_switch(&mut fixture.host, 7, 31));
     let metadata = &fixture.metadata;
-    let candidate = runyte::protocol::NativeSwitchCandidate {
+    let candidate = crate::protocol::NativeSwitchCandidate {
         protocol: metadata.protocol,
         id: metadata.id.clone(),
         name: metadata.name.clone(),
@@ -294,7 +294,7 @@ fn prepared_response_send_failure_releases_reservation_and_owner() {
         process_creation_time: metadata.process.creation_time,
         incarnation: metadata.incarnation.clone(),
         address: metadata.address.as_str().to_owned(),
-        publication_key: runyte::workspace::PublicationKey::from_authenticated_metadata(metadata)
+        publication_key: crate::workspace::PublicationKey::from_authenticated_metadata(metadata)
             .to_bytes(),
     };
     assert!(!clients.begin_switch(
@@ -354,7 +354,7 @@ fn held_rename_defers_one_request_while_another_peer_progresses() {
     let other_wait = fixture.wait(&mut clients, 2, "other.txt");
     assert!(matches!(
         fixture.host.wait_status(other_wait.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     assert!(clients.renames.next().now_or_never().is_none());
     let mut metadata = fixture.metadata.clone();
@@ -441,11 +441,11 @@ fn rename_overflow_drops_only_its_wait_owner_and_ignores_late_completion() {
     assert!(!clients.peers.contains_key(&1));
     assert!(matches!(
         fixture.host.wait_status(first.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
     assert!(matches!(
         fixture.host.wait_status(second.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     assert!(!clients.renamed(
         &mut fixture.host,
@@ -463,7 +463,7 @@ fn rename_overflow_drops_only_its_wait_owner_and_ignores_late_completion() {
     clients.disconnected(&mut fixture.host, 2);
     assert!(matches!(
         fixture.host.wait_status(second.into()),
-        Some(runyte::workspace::WaitStatus::Completed)
+        Some(crate::workspace::WaitStatus::Completed)
     ));
 }
 
@@ -488,11 +488,11 @@ fn response_backpressure_cancels_pending_wait_without_changing_completed_wait() 
     assert!(!clients.peers.contains_key(&1));
     assert!(matches!(
         fixture.host.wait_status(completed.into()),
-        Some(runyte::workspace::WaitStatus::Completed)
+        Some(crate::workspace::WaitStatus::Completed)
     ));
     assert!(matches!(
         fixture.host.wait_status(pending.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
 }
 
@@ -509,7 +509,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
             responses: tx,
             interactive: true,
             directory_handoff: false,
-            geometry: runyte::app::FrameGeometry::default(),
+            geometry: crate::app::FrameGeometry::default(),
         },
     );
     assert_eq!(clients.active, Some(1));
@@ -522,7 +522,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
             responses: refused,
             interactive: true,
             directory_handoff: false,
-            geometry: runyte::app::FrameGeometry::default(),
+            geometry: crate::app::FrameGeometry::default(),
         },
     );
     assert_eq!(clients.active, Some(1));
@@ -556,14 +556,14 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
             responses: first,
             interactive: true,
             directory_handoff: false,
-            geometry: runyte::app::FrameGeometry::default(),
+            geometry: crate::app::FrameGeometry::default(),
         },
     );
     let first_wait = fixture.wait(&mut clients, 1, "old-id-wait.txt");
     clients.disconnected(&mut fixture.host, 1);
     assert!(matches!(
         fixture.host.wait_status(first_wait.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
     let (replacement, _replacement_receiver) = response_channel();
     clients.connected(
@@ -574,7 +574,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
             responses: replacement,
             interactive: true,
             directory_handoff: false,
-            geometry: runyte::app::FrameGeometry::default(),
+            geometry: crate::app::FrameGeometry::default(),
         },
     );
     let second_wait = fixture.wait(&mut clients, 2, "new-id-wait.txt");
@@ -586,7 +586,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
         &mut fixture.host,
         1,
         ClientRequest::Input {
-            event: runyte::input::InputEvent::Key(runyte::input::KeyStroke::char(':')).into(),
+            event: crate::input::InputEvent::Key(crate::input::KeyStroke::char(':')).into(),
             repeated: false,
             presented_frame: None,
         }
@@ -607,7 +607,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
     assert!(clients.peers.contains_key(&2));
     assert!(matches!(
         fixture.host.wait_status(second_wait.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
 }
 
@@ -628,7 +628,7 @@ fn wait_mutation_requires_the_creating_native_connection() {
     );
     assert!(matches!(
         fixture.host.wait_status(token.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     request(
         &mut clients,
@@ -638,7 +638,7 @@ fn wait_mutation_requires_the_creating_native_connection() {
     );
     assert!(matches!(
         fixture.host.wait_status(token.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
 }
 
@@ -662,11 +662,11 @@ fn attachment_generation_loss_cancels_only_its_parent_waits() {
 
     assert!(matches!(
         fixture.host.wait_status(parent.into()),
-        Some(runyte::workspace::WaitStatus::Cancelled { .. })
+        Some(crate::workspace::WaitStatus::Cancelled { .. })
     ));
     assert!(matches!(
         fixture.host.wait_status(unrelated.into()),
-        Some(runyte::workspace::WaitStatus::Pending { .. })
+        Some(crate::workspace::WaitStatus::Pending { .. })
     ));
     assert!(clients.peers[&2].waits.contains(&parent));
 }
@@ -684,7 +684,7 @@ fn attachment_becomes_ready_only_after_acknowledging_its_latest_issued_frame() {
         &mut fixture.host,
         1,
         ClientRequest::FrameDrawn {
-            frame: runyte::protocol::FrameId::from_raw(issued.get() + 1),
+            frame: crate::protocol::FrameId::from_raw(issued.get() + 1),
         },
     );
     assert_eq!(clients.active_ready, None);
@@ -801,7 +801,7 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
             responses,
             interactive: false,
             directory_handoff: false,
-            geometry: runyte::app::FrameGeometry::default(),
+            geometry: crate::app::FrameGeometry::default(),
         },
     );
     let original = fixture.root.join("original-generation.txt");
@@ -813,7 +813,7 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
         ClientRequest::ParentWait {
             terminal: terminal.get(),
             capability: context.capability.clone(),
-            paths: vec![runyte::protocol::encode_path(&original)],
+            paths: vec![crate::protocol::encode_path(&original)],
         },
     );
     let accepted = *clients.peers[&2]
@@ -837,8 +837,8 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
         ClientRequest::ParentAttach {
             terminal: terminal.get(),
             capability: context.capability.clone(),
-            selector: runyte::protocol::encode_path(&fixture.root.join("destination")),
-            directory: runyte::protocol::encode_path(fixture.root.path()),
+            selector: crate::protocol::encode_path(&fixture.root.join("destination")),
+            directory: crate::protocol::encode_path(fixture.root.path()),
         },
     );
     let parent_attach = clients
@@ -906,7 +906,7 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
         Incoming::Request(ClientRequest::ParentWait {
             terminal: terminal.get(),
             capability: context.capability.clone(),
-            paths: vec![runyte::protocol::encode_path(&deferred)],
+            paths: vec![crate::protocol::encode_path(&deferred)],
         }),
         no_rename,
     );

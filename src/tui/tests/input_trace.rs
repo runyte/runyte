@@ -3,6 +3,7 @@
 use std::{
     ffi::CString,
     fs,
+    io::Read,
     os::unix::{ffi::OsStrExt, fs::FileTypeExt},
     path::PathBuf,
     process::{Command, Stdio},
@@ -11,7 +12,7 @@ use std::{
 
 #[test]
 fn input_trace_refuses_special_files_without_blocking() {
-    let root = runyte::test_support::TestRuntimeRoot::new("input-trace-file").unwrap();
+    let root = crate::test_support::TestRuntimeRoot::new("input-trace-file").unwrap();
     let pipe = root.path().join("trace");
     let cpath = CString::new(pipe.as_os_str().as_bytes()).unwrap();
     // SAFETY: cpath is NUL-terminated and the fixture owns the directory.
@@ -20,18 +21,27 @@ fn input_trace_refuses_special_files_without_blocking() {
         .args([
             "--ignored",
             "--exact",
-            "input_trace_tests::input_trace_fixture",
+            "cli::input_trace_tests::input_trace_fixture",
             "--nocapture",
         ])
         .env("RUNYTE_INPUT_TRACE", &pipe)
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .spawn()
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "trace fixture failed: {status}");
+            let mut output = String::new();
+            child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_string(&mut output)
+                .unwrap();
+            crate::cli::assert_one_test_passed(&output);
             break;
         }
         if Instant::now() >= deadline {

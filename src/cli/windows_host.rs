@@ -15,9 +15,7 @@ use super::{
     initialize_logging, note_ended_service, pace_file_picker_event, report_logging_failure,
     resolve_requested_project_root, start_host_services, starts_on_about,
 };
-use anyhow::{Context, Result, ensure};
-use futures_util::StreamExt;
-use runyte::{
+use crate::{
     app::App,
     config::{self, Config},
     launch::{LaunchArguments, LaunchMode},
@@ -39,6 +37,8 @@ use runyte::{
         windows_transport::{LocalServer, ServerEvent},
     },
 };
+use anyhow::{Context, Result, ensure};
+use futures_util::StreamExt;
 use std::{
     collections::HashSet,
     future::Future,
@@ -48,11 +48,11 @@ use std::{
 };
 
 type NativeSwitchPreparation = Pin<
-    Box<dyn Future<Output = Result<runyte::workspace::windows_service::PreparedLiveTarget>> + Send>,
+    Box<dyn Future<Output = Result<crate::workspace::windows_service::PreparedLiveTarget>> + Send>,
 >;
 type ParentSwitchPreparation = Pin<
     Box<
-        dyn Future<Output = Result<runyte::workspace::windows_service::PreparedAcceptanceDecision>>
+        dyn Future<Output = Result<crate::workspace::windows_service::PreparedAcceptanceDecision>>
             + Send,
     >,
 >;
@@ -61,7 +61,7 @@ const PARENT_ATTACH_ADMISSION_BUDGET: Duration = Duration::from_secs(15);
 const PARENT_ATTACH_CLEANUP_ALLOWANCE: Duration = Duration::from_secs(5);
 
 enum NativeSwitchPurpose {
-    Ordinary(runyte::workspace::WorkspaceSelection),
+    Ordinary(crate::workspace::WorkspaceSelection),
     Directory { source: Arc<PinnedProcess> },
     SelectedStopped { source: Arc<PinnedProcess> },
     Parent(ParentAttachIntent),
@@ -79,7 +79,7 @@ struct PreparingNativeSwitch {
 struct PendingNativeSwitch {
     owner: u64,
     receipt: u64,
-    target: runyte::workspace::windows_service::PreparedLiveTarget,
+    target: crate::workspace::windows_service::PreparedLiveTarget,
     purpose: NativeSwitchPurpose,
     expires: Instant,
 }
@@ -164,8 +164,8 @@ fn report_preparation_failure(
 }
 
 fn native_switch_candidate(
-    target: &runyte::workspace::windows_service::PreparedLiveTarget,
-    selection: &runyte::workspace::WorkspaceSelection,
+    target: &crate::workspace::windows_service::PreparedLiveTarget,
+    selection: &crate::workspace::WorkspaceSelection,
 ) -> NativeSwitchCandidate {
     let metadata = target.metadata();
     NativeSwitchCandidate {
@@ -184,14 +184,14 @@ fn native_switch_candidate(
     }
 }
 
-fn wire_destination_visit(visit: runyte::app::DestinationVisit) -> Result<DestinationVisit> {
+fn wire_destination_visit(visit: crate::app::DestinationVisit) -> Result<DestinationVisit> {
     let destination = match visit.destination {
-        runyte::app::OpenDestination::Buffer(index) => OpenDestination::Buffer(
+        crate::app::OpenDestination::Buffer(index) => OpenDestination::Buffer(
             u64::try_from(index)?
                 .checked_add(1)
                 .context("buffer identity overflow")?,
         ),
-        runyte::app::OpenDestination::Terminal(id) => OpenDestination::Terminal(id.get()),
+        crate::app::OpenDestination::Terminal(id) => OpenDestination::Terminal(id.get()),
     };
     Ok(DestinationVisit {
         incarnation: visit.incarnation,
@@ -221,12 +221,12 @@ fn visit_current_destination(
 }
 
 fn prepared_selection(
-    target: &runyte::workspace::windows_service::PreparedLiveTarget,
-) -> Result<runyte::workspace::WorkspaceSelection> {
+    target: &crate::workspace::windows_service::PreparedLiveTarget,
+) -> Result<crate::workspace::WorkspaceSelection> {
     let metadata = target.metadata();
-    Ok(runyte::workspace::WorkspaceSelection::selected(
+    Ok(crate::workspace::WorkspaceSelection::selected(
         metadata.project_root()?,
-        runyte::workspace::PublicationKey::from_authenticated_metadata(metadata),
+        crate::workspace::PublicationKey::from_authenticated_metadata(metadata),
     ))
 }
 
@@ -256,7 +256,7 @@ fn random_switch_receipt() -> Result<u64> {
 #[cfg(test)]
 fn injected_switch_request(
     owned_inbox: bool,
-) -> Result<Option<runyte::app::WorkspaceSwitchRequest>> {
+) -> Result<Option<crate::app::WorkspaceSwitchRequest>> {
     if !owned_inbox {
         return Ok(None);
     }
@@ -273,10 +273,10 @@ fn injected_switch_request(
     if let Some(directory) = directory {
         std::fs::remove_file(&directory_request)?;
         note_switch_fixture("consumed");
-        return Ok(Some(runyte::app::WorkspaceSwitchRequest {
+        return Ok(Some(crate::app::WorkspaceSwitchRequest {
             visit: None,
             running_only: false,
-            target: runyte::app::WorkspaceSwitchTarget::UserSelector(directory),
+            target: crate::app::WorkspaceSwitchTarget::UserSelector(directory),
             working_directory: std::env::current_dir()?,
         }));
     }
@@ -287,24 +287,24 @@ fn injected_switch_request(
         Err(error) => return Err(error.into()),
     };
     std::fs::remove_file(&request)?;
-    let metadata = runyte::workspace::windows_endpoint::EndpointMetadata::from_json(&bytes)?;
-    let selection = runyte::workspace::WorkspaceSelection::selected(
+    let metadata = crate::workspace::windows_endpoint::EndpointMetadata::from_json(&bytes)?;
+    let selection = crate::workspace::WorkspaceSelection::selected(
         metadata.project_root()?,
-        runyte::workspace::PublicationKey::from_authenticated_metadata(&metadata),
+        crate::workspace::PublicationKey::from_authenticated_metadata(&metadata),
     );
     let visit = match std::fs::read(inbox.join("switch-visit.json")) {
         Ok(bytes) => {
             std::fs::remove_file(inbox.join("switch-visit.json"))?;
             let wire: DestinationVisit = serde_json::from_slice(&bytes)?;
             let destination = match wire.destination {
-                OpenDestination::Buffer(id) => runyte::app::OpenDestination::Buffer(
+                OpenDestination::Buffer(id) => crate::app::OpenDestination::Buffer(
                     usize::try_from(id.checked_sub(1).context("invalid buffer visit id")?)?,
                 ),
-                OpenDestination::Terminal(id) => runyte::app::OpenDestination::Terminal(
-                    runyte::terminal::TerminalId::from_raw(id),
-                ),
+                OpenDestination::Terminal(id) => {
+                    crate::app::OpenDestination::Terminal(crate::terminal::TerminalId::from_raw(id))
+                }
             };
-            Some(runyte::app::DestinationVisit {
+            Some(crate::app::DestinationVisit {
                 incarnation: wire.incarnation,
                 destination,
             })
@@ -313,10 +313,10 @@ fn injected_switch_request(
         Err(error) => return Err(error.into()),
     };
     note_switch_fixture("consumed");
-    Ok(Some(runyte::app::WorkspaceSwitchRequest {
+    Ok(Some(crate::app::WorkspaceSwitchRequest {
         visit,
         running_only: true,
-        target: runyte::app::WorkspaceSwitchTarget::Selected(selection),
+        target: crate::app::WorkspaceSwitchTarget::Selected(selection),
         working_directory: std::env::current_dir()?,
     }))
 }
@@ -382,9 +382,10 @@ pub(super) async fn run(
     startup: &mut StartupTrace,
     termination: &mut super::TerminationSignals,
     supervisor: Option<ForegroundParentSupervisor>,
+    environment: super::Environment,
 ) -> Result<()> {
     let publication_deadline =
-        tokio::time::Instant::now() + runyte::workspace::windows_startup::READINESS_BUDGET;
+        tokio::time::Instant::now() + crate::workspace::windows_startup::READINESS_BUDGET;
     ensure!(
         arguments.mode == LaunchMode::Serve && arguments.detached_host == supervisor.is_none(),
         "native host launch role and parent supervision disagree"
@@ -454,8 +455,13 @@ pub(super) async fn run(
         layout.state_root(),
         Some(project.as_path()),
     )?;
-    let mut app =
-        App::new_in_project_with_deferred_syntax(config, arguments.targets, project, startup)?;
+    let mut app = App::new_in_project_with_frontend(
+        config,
+        arguments.targets,
+        project,
+        startup,
+        environment,
+    )?;
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
     app.set_quit_directory_handoff(false);
@@ -482,7 +488,7 @@ pub(super) async fn run(
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         if show_about { host.app_mut().execute(about_invocation()?)?; }
         let parent_attach_startup =
-            runyte::workspace::windows_service::ParentAttachStartup::capture(
+            crate::workspace::windows_service::ParentAttachStartup::capture(
                 &std::env::current_exe()?,
                 config_path.as_deref(),
                 arguments.verbosity,
@@ -528,7 +534,7 @@ pub(super) async fn run(
         let server = server.as_mut().expect("native server constructed");
         host.app_mut().note_native_publication(&server.metadata_snapshot())?;
         host.app_mut().terminals.set_parent_launch(
-            runyte::workspace::parent::ParentLaunch::new(server.metadata_snapshot())?,
+            crate::workspace::parent::ParentLaunch::new(server.metadata_snapshot())?,
         );
         if let Some(parent) = supervisor.as_ref() { parent.ensure_alive()?; }
         log_info!("host", "internal native persistent session published"; "workspace" => server.metadata_snapshot().id);
@@ -746,9 +752,9 @@ async fn run_loop(
                             };
                             if !matches!(&purpose, NativeSwitchPurpose::Ordinary(_)) {
                                 let metadata = server.metadata_snapshot();
-                                let source = runyte::workspace::WorkspaceSelection::selected(
+                                let source = crate::workspace::WorkspaceSelection::selected(
                                     metadata.project_root()?,
-                                    runyte::workspace::PublicationKey::from_authenticated_metadata(
+                                    crate::workspace::PublicationKey::from_authenticated_metadata(
                                         &metadata,
                                     ),
                                 );
@@ -999,7 +1005,7 @@ async fn run_loop(
                 if let Some(event) = event { host.handle_pipe_completion(event); changed = true; }
                 else { note_ended_service(&mut ended, "shell filters"); }
             }
-            event = runyte::plugin::receive(&mut services.plugin_events) => {
+            event = crate::plugin::receive(&mut services.plugin_events) => {
                 if let Some(event) = event { changed = host.handle_plugin_event(event); }
                 else { services.plugin_events = None; }
             }
@@ -1316,7 +1322,7 @@ async fn run_loop(
             }
         };
         #[cfg(not(test))]
-        let injected: Option<runyte::app::WorkspaceSwitchRequest> = None;
+        let injected: Option<crate::app::WorkspaceSwitchRequest> = None;
         if let Some(request) = injected.or_else(|| host.take_workspace_switch()) {
             let visit = request
                 .visit
@@ -1329,15 +1335,12 @@ async fn run_loop(
                 || committing_provisional_switch.is_some()
             {
                 clients.refuse_switch_with(host, "a native session switch is already in progress");
-            } else if matches!(
-                &request.target,
-                runyte::app::WorkspaceSwitchTarget::Previous
-            ) {
+            } else if matches!(&request.target, crate::app::WorkspaceSwitchTarget::Previous) {
                 if let Some(selection) = clients.active_previous() {
                     let metadata = server.metadata_snapshot();
-                    let source = runyte::workspace::WorkspaceSelection::selected(
+                    let source = crate::workspace::WorkspaceSelection::selected(
                         metadata.project_root()?,
-                        runyte::workspace::PublicationKey::from_authenticated_metadata(&metadata),
+                        crate::workspace::PublicationKey::from_authenticated_metadata(&metadata),
                     );
                     if selection == source {
                         if let Some(visit) = visit {
@@ -1371,13 +1374,12 @@ async fn run_loop(
                         "no previous native publication is recorded for this attachment",
                     );
                 }
-            } else if let runyte::app::WorkspaceSwitchTarget::Selected(selection) = &request.target
-            {
+            } else if let crate::app::WorkspaceSwitchTarget::Selected(selection) = &request.target {
                 let selection = selection.clone();
                 let metadata = server.metadata_snapshot();
-                let source = runyte::workspace::WorkspaceSelection::selected(
+                let source = crate::workspace::WorkspaceSelection::selected(
                     metadata.project_root()?,
-                    runyte::workspace::PublicationKey::from_authenticated_metadata(&metadata),
+                    crate::workspace::PublicationKey::from_authenticated_metadata(&metadata),
                 );
                 if selection == source {
                     if let Some(visit) = visit {
@@ -1442,8 +1444,7 @@ async fn run_loop(
                     note_switch_fixture("refused");
                     clients.refuse_switch_with(host, "native session service is unavailable");
                 }
-            } else if let runyte::app::WorkspaceSwitchTarget::UserSelector(selector) =
-                request.target
+            } else if let crate::app::WorkspaceSwitchTarget::UserSelector(selector) = request.target
             {
                 if let (Some(owner), Some(source), Some(service)) = (
                     clients.active_id(),

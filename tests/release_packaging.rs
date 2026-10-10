@@ -317,7 +317,7 @@ fn cwd_file_option_still_works_though_undocumented() {
     // Hiding --cwd-file from --help must not stop it from working: the
     // documented runyte() shell function still passes it on every invocation.
     // --session-list accepts and ignores the option (see the comment above
-    // its handling in src/main.rs), so it exercises the flag end to end
+    // its handling in src/cli.rs), so it exercises the flag end to end
     // without needing a running host.
     //
     // Isolate the process from the real XDG runtime/cache directories, as

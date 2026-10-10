@@ -4,7 +4,7 @@
 //! Connection roles, physical input, lifecycle and frame delivery stay with
 //! the platform host loop. Merely compiling this module enables no CLI mode.
 
-use runyte::{
+use crate::{
     protocol::{ClientRequest, HostResponse, TransportChange, decode_path},
     workspace::WorkspaceHost,
 };
@@ -52,7 +52,7 @@ fn workspace_response_publishes_frame(response: &HostResponse) -> bool {
 pub(super) fn bounded_destination_label(value: &str) -> String {
     let mut end = value
         .len()
-        .min(runyte::protocol::MAX_DESTINATION_LABEL_BYTES);
+        .min(crate::protocol::MAX_DESTINATION_LABEL_BYTES);
     while !value.is_char_boundary(end) {
         end -= 1;
     }
@@ -65,7 +65,7 @@ pub(super) fn handle_workspace_request(
     interactive_attached: bool,
     allow_invoke: bool,
 ) -> Option<WorkspaceReply> {
-    use runyte::{
+    use crate::{
         command::parse_named_command,
         text::{Change, Transaction},
         workspace::BufferRequestError,
@@ -81,7 +81,7 @@ pub(super) fn handle_workspace_request(
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            protocol: runyte::protocol::VERSION,
+            protocol: crate::protocol::VERSION,
             pid: std::process::id(),
             interactive_attached,
             unsaved_buffers: host.protected_state().unsaved_buffers,
@@ -100,23 +100,23 @@ pub(super) fn handle_workspace_request(
         }),
         ClientRequest::DestinationInventory => {
             let entries = host.app().open_destination_inventory();
-            let truncated = entries.len() > runyte::protocol::MAX_DESTINATIONS;
+            let truncated = entries.len() > crate::protocol::MAX_DESTINATIONS;
             Ok(HostResponse::DestinationInventory {
                 incarnation: host.incarnation().to_owned(),
                 truncated,
                 entries: entries
                     .into_iter()
-                    .take(runyte::protocol::MAX_DESTINATIONS)
+                    .take(crate::protocol::MAX_DESTINATIONS)
                     .map(|entry| {
                         let destination = match entry.destination {
-                            runyte::app::OpenDestination::Buffer(index) => {
-                                runyte::protocol::OpenDestination::Buffer(index as u64 + 1)
+                            crate::app::OpenDestination::Buffer(index) => {
+                                crate::protocol::OpenDestination::Buffer(index as u64 + 1)
                             }
-                            runyte::app::OpenDestination::Terminal(id) => {
-                                runyte::protocol::OpenDestination::Terminal(id.get())
+                            crate::app::OpenDestination::Terminal(id) => {
+                                crate::protocol::OpenDestination::Terminal(id.get())
                             }
                         };
-                        runyte::protocol::OpenDestinationEntry {
+                        crate::protocol::OpenDestinationEntry {
                             destination,
                             label: bounded_destination_label(&entry.label),
                             detail: bounded_destination_label(&entry.detail),
@@ -135,13 +135,13 @@ pub(super) fn handle_workspace_request(
                 ))
             } else {
                 let destination = match destination {
-                    runyte::protocol::OpenDestination::Buffer(id) => usize::try_from(id)
+                    crate::protocol::OpenDestination::Buffer(id) => usize::try_from(id)
                         .ok()
                         .and_then(|id| id.checked_sub(1))
-                        .map(runyte::app::OpenDestination::Buffer),
-                    runyte::protocol::OpenDestination::Terminal(id) => {
-                        Some(runyte::app::OpenDestination::Terminal(
-                            runyte::terminal::TerminalId::from_raw(id),
+                        .map(crate::app::OpenDestination::Buffer),
+                    crate::protocol::OpenDestination::Terminal(id) => {
+                        Some(crate::app::OpenDestination::Terminal(
+                            crate::terminal::TerminalId::from_raw(id),
                         ))
                     }
                 };

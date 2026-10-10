@@ -2,7 +2,7 @@
 
 //! Exercise the real host startup with an isolated executable search path.
 use super::*;
-use runyte::test_support::TestRuntimeRoot;
+use crate::test_support::TestRuntimeRoot;
 
 #[test]
 fn missing_git_disables_integration_at_host_startup() {
@@ -13,7 +13,7 @@ fn missing_git_disables_integration_at_host_startup() {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "windows_git_acceptance::missing_git_fixture",
+            "cli::windows_git_acceptance::missing_git_fixture",
             "--ignored",
             "--nocapture",
         ])
@@ -34,8 +34,9 @@ fn missing_git_disables_integration_at_host_startup() {
             assert!(
                 status.success(),
                 "{}",
-                fs::read_to_string(log_path).unwrap()
+                fs::read_to_string(&log_path).unwrap()
             );
+            crate::cli::assert_one_test_passed(&fs::read_to_string(&log_path).unwrap());
             break;
         }
         if Instant::now() >= deadline {
@@ -73,7 +74,7 @@ fn missing_git_fixture() {
             start_host_services(&mut host, &mut StartupTrace::new(), None, false, None).unwrap();
         assert!(services.git_events.is_none());
         for command in ["git-status", "git-refresh", "git-branches", "git-worktrees"] {
-            let spec = runyte::command::resolve_command(command).unwrap();
+            let spec = crate::command::resolve_command(command).unwrap();
             assert_eq!(
                 host.command_capabilities()
                     .command_availability(spec)
@@ -82,10 +83,10 @@ fn missing_git_fixture() {
             );
             let outcome = host
                 .app_mut()
-                .execute(runyte::command::parse_colon_command(command).unwrap())
+                .execute(crate::command::parse_colon_command(command).unwrap())
                 .unwrap();
             assert!(
-                matches!(outcome, runyte::app::CommandOutcome::UserError(ref reason)
+                matches!(outcome, crate::app::CommandOutcome::UserError(ref reason)
                 if reason == "no `git` executable was found")
             );
             assert!(host.status.contains("no `git` executable was found"));
