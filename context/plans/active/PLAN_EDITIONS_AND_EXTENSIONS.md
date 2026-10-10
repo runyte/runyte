@@ -1060,3 +1060,12 @@ Record each phase here: commit hashes, gate results, measurements, and
 anything deferred with its reason. When every phase is done, or the
 maintainer explicitly defers the remaining ones, move this file to
 `completed/` and update `context/plans/README.md`.
+
+### Phase 1 — 2026-10-10
+
+Implemented in `d403915` (`Record process boundaries and extension tiers`).
+The process-boundary register distinguishes the approved helper convention
+from the pre-migration implementation. Independent subagent review found no
+substantive issues; its pixel-limit precision correction was applied.
+`git diff --check` passed. Documentation only; no runtime measurements or Rust
+gates apply to this phase.
