@@ -81,10 +81,18 @@ def bundle_linux(binary, destination):
     return destination
 
 
-def bundle_macos(binary, destination):
+def check_universal(binary):
+    architectures = subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
+    if set(architectures) != {"arm64", "x86_64"}:
+        raise ValueError(f"{binary} must contain arm64 and x86_64, found {architectures}")
+
+
+def bundle_macos(binary, destination, launcher):
     destination = destination.expanduser().absolute()
     if destination.exists():
         raise ValueError(f"bundle already exists: {destination}; choose a new output directory")
+    check_universal(binary)
+    check_universal(launcher)
     resources = destination / "Contents/Resources"
     executables = destination / "Contents/MacOS"
     executables.mkdir(parents=True)
@@ -98,9 +106,8 @@ def bundle_macos(binary, destination):
     font_notices = resources / "assets/fonts/jetbrains-mono"
     font_notices.mkdir(parents=True)
     shutil.copyfile(repository / "assets/fonts/jetbrains-mono/README.md", font_notices / "README.md")
-    launcher = executables / "runyte-window"
-    launcher.write_text('#!/bin/sh\nPATH="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}:/opt/homebrew/bin:/usr/local/bin"\nexport PATH\nexec "$(dirname "$0")/runyte" --window --editor "$@"\n', encoding="utf-8")
-    launcher.chmod(0o755)
+    shutil.copy2(launcher, executables / "Runyte")
+    (executables / "runed").symlink_to("runyte")
     manifest = (repository / "Cargo.toml").read_text(encoding="utf-8")
     version = re.search(r'^version\s*=\s*"([^"]+)"', manifest, re.MULTILINE).group(1)
     with (destination / "Contents/Info.plist").open("wb") as output:
@@ -108,7 +115,10 @@ def bundle_macos(binary, destination):
             "CFBundleIdentifier": APP_ID,
             "CFBundleName": "Runyte",
             "CFBundleDisplayName": "Runyte",
-            "CFBundleExecutable": "runyte-window",
+            "CFBundleExecutable": "Runyte",
+            "LSMinimumSystemVersion": "11.0",
+            "NSHumanReadableCopyright": "Copyright Runyte contributors. Licensed under MPL-2.0.",
+            "LSApplicationCategoryType": "public.app-category.developer-tools",
             "CFBundleIconFile": "Runyte.icns",
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": version,
@@ -123,6 +133,7 @@ def main():
     parser.add_argument("platform", choices=("linux", "macos"))
     parser.add_argument("--binary", type=Path, required=True,
                         help="existing runyte-desktop binary")
+    parser.add_argument("--launcher", type=Path, help="universal macOS runyte-app-launcher")
     parser.add_argument("--data-dir", type=Path,
                         help="Linux XDG data directory (default: XDG_DATA_HOME or ~/.local/share)")
     parser.add_argument("--output", type=Path, help="new Linux package directory or macOS .app directory")
@@ -131,6 +142,8 @@ def main():
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("--binary must name an executable regular file")
     if arguments.platform == "linux":
+        if arguments.launcher is not None:
+            parser.error("--launcher is only used for macos")
         if arguments.output is not None:
             if arguments.data_dir is not None:
                 parser.error("--output cannot be combined with --data-dir")
@@ -141,7 +154,12 @@ def main():
     else:
         if arguments.data_dir is not None or arguments.output is None:
             parser.error("macos requires --output and does not use --data-dir")
-        print(bundle_macos(binary, arguments.output))
+        if arguments.launcher is None:
+            parser.error("macos requires --launcher")
+        launcher = arguments.launcher.expanduser().resolve(strict=True)
+        if not launcher.is_file() or not os.access(launcher, os.X_OK):
+            parser.error("--launcher must name an executable regular file")
+        print(bundle_macos(binary, arguments.output, launcher))
 
 
 if __name__ == "__main__":

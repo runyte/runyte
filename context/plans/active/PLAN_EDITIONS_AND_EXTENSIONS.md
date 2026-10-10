@@ -1356,3 +1356,18 @@ stand-in on the repository filesystem; written archive payloads are never run.
 All 24 offline installer cases and eight release packaging tests pass.
 Independent review is clear. The PowerShell wrapper and demo-video skill have
 no archive names to update.
+
+Phase 5 clean canonical terminal coverage is 150,091/163,080 lines (92.04%,
+floor 89%). A first local measurement included stale instrumented desktop
+objects with earlier CLI/UI source mappings; `llvm-cov clean --workspace`
+removed those objects before the recorded canonical run.
+
+Phase 6 macOS launcher and bundle construction are implemented and reviewed.
+The explicit `app-launcher` Cargo feature builds the std-only native launcher;
+ordinary terminal/desktop builds do not add this packaging binary. Argument
+and PATH tests pass, including Finder's leading `-psn_*` handling. Bundle
+construction requires both architectures, installs `Runyte`, `runyte` and the
+relative `runed` link, and declares the macOS 11 floor. Acceptance rejects
+non-system dynamic links and wrong per-slice deployment floors. Six packaging
+tests and launcher lint pass. CI now builds universal binaries with the
+build-time deployment environment; native validation remains pending there.

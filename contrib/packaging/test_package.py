@@ -7,6 +7,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import package
 import check_package
@@ -53,13 +54,14 @@ class NativePackageTests(unittest.TestCase):
             if validator := shutil.which("desktop-file-validate"):
                 subprocess.run([validator, str(desktop)], check=True)
 
-    def test_macos_bundle_contains_icon_launch_flags_and_notices(self):
+    @patch("package.subprocess.check_output", return_value="arm64 x86_64\n")
+    def test_macos_bundle_contains_icon_launch_flags_and_notices(self, _output):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             # The fixture is copied as data and never executed.
             binary = package.HERE.parents[1] / "src/fixtures/stand-in"
-            destination = package.bundle_macos(binary, root / "Runyte.app")
-            self.assertEqual({p.name for p in (destination / "Contents/MacOS").iterdir()}, {"runyte", "runyte-window"})
+            destination = package.bundle_macos(binary, root / "Runyte.app", binary)
+            self.assertEqual({p.name for p in (destination / "Contents/MacOS").iterdir()}, {"runyte", "Runyte", "runed"})
             resources = destination / "Contents/Resources"
             with (destination / "Contents/Info.plist").open("rb") as source:
                 info = plistlib.load(source)
@@ -67,8 +69,10 @@ class NativePackageTests(unittest.TestCase):
             self.assertEqual(info["CFBundleIconFile"], "Runyte.icns")
             launcher = destination / "Contents/MacOS" / info["CFBundleExecutable"]
             self.assertTrue(os.access(launcher, os.X_OK))
-            self.assertIn('--window --editor "$@"', launcher.read_text())
-            self.assertIn("/opt/homebrew/bin:/usr/local/bin", launcher.read_text())
+            self.assertEqual(launcher.read_bytes(), binary.read_bytes())
+            self.assertEqual(info["CFBundleExecutable"], "Runyte")
+            self.assertEqual(info["LSMinimumSystemVersion"], "11.0")
+            self.assertEqual(info["LSApplicationCategoryType"], "public.app-category.developer-tools")
             for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "licenses/jetbrains-mono/OFL.txt",
                            "licenses/jetbrains-mono/NERD-FONTS-LICENSE.txt", "assets/fonts/jetbrains-mono/README.md"):
                 self.assertTrue((resources / notice).is_file(), notice)
@@ -77,15 +81,16 @@ class NativePackageTests(unittest.TestCase):
             self.assertEqual(struct.unpack(">I", icon[4:8])[0], len(icon))
             self.assertIn(b"ic10", icon)
             with self.assertRaises(ValueError):
-                package.bundle_macos(binary, destination)
+                package.bundle_macos(binary, destination, binary)
             self.assertEqual((resources / "Runyte.icns").read_bytes(), icon)
 
-    def test_package_layout_rejects_extra_files_and_wrong_links(self):
+    @patch("package.subprocess.check_output", return_value="arm64 x86_64\n")
+    def test_package_layout_rejects_extra_files_and_wrong_links(self, _output):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = package.HERE.parents[1]
             binary = repository / 'src/fixtures/stand-in'
-            for platform, bundle in [('linux', package.bundle_linux), ('macos', package.bundle_macos)]:
+            for platform, bundle in [('linux', package.bundle_linux), ('macos', lambda binary, destination: package.bundle_macos(binary, destination, binary))]:
                 destination = bundle(binary, root / platform)
                 check_package.check_layout(destination, repository)
                 extra = destination / 'unexpected-helper'
@@ -98,6 +103,33 @@ class NativePackageTests(unittest.TestCase):
             link.symlink_to('missing')
             with self.assertRaisesRegex(ValueError, 'runed'):
                 check_package.check_layout(root / 'linux', repository)
+
+    def test_macos_binary_checks_reject_wrong_floor_and_homebrew_libraries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = package.HERE.parents[1] / "src/fixtures/stand-in"
+            with patch("package.subprocess.check_output", return_value="arm64 x86_64\n"):
+                bundle = package.bundle_macos(binary, root / "Runyte.app", binary)
+            for minimum, library, accepted in [
+                ("11.0", "/usr/lib/libSystem.B.dylib", True),
+                ("11.0", "/System/Library/Frameworks/AppKit.framework/AppKit", True),
+                ("14.0", "/usr/lib/libSystem.B.dylib", False),
+                ("11.0", "/opt/homebrew/lib/libfontconfig.dylib", False),
+                ("11.0", "@rpath/libcustom.dylib", False),
+            ]:
+                def output(command, **kwargs):
+                    return {"lipo": "arm64 x86_64\n", "vtool": f" minos {minimum}\n",
+                            "otool": f"editor:\n\t{library} (compatibility version 1.0.0)\n"}[command[0]]
+                with patch("package.subprocess.check_output", side_effect=output):
+                    if accepted:
+                        check_package.check_macos_binaries(bundle)
+                    else:
+                        with self.assertRaises(ValueError):
+                            check_package.check_macos_binaries(bundle)
+            with patch("package.subprocess.check_output", return_value="arm64\n"):
+                with self.assertRaisesRegex(ValueError, "arm64 and x86_64"):
+                    package.bundle_macos(binary, root / "incomplete.app", binary)
+                self.assertFalse((root / "incomplete.app").exists())
 
     def test_desktop_path_cannot_inject_additional_keys(self):
         for value in ("/tmp/editor\nTerminal=true", "/tmp/editor\r", "/tmp/editor\0"):

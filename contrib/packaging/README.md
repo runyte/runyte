@@ -63,20 +63,37 @@ application's icon. Failure leaves the editor usable.
 
 ## macOS
 
-On a Mac, build the native binary and create a new app bundle:
+On a Mac, build both slices with the macOS 11 deployment floor, then combine
+both the editor and its native launcher:
 
 ```sh
-python3 contrib/packaging/package.py macos --binary target/release/runyte-desktop \
-  --output "$HOME/Applications/Runyte.app"
-open "$HOME/Applications/Runyte.app"
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  MACOSX_DEPLOYMENT_TARGET=11.0 cargo build --release --locked \
+    -p runyte-desktop --features app-launcher --bins --target "$target"
+done
+mkdir -p target/universal
+for binary in runyte-desktop runyte-app-launcher; do
+  lipo -create "target/aarch64-apple-darwin/release/$binary" \
+    "target/x86_64-apple-darwin/release/$binary" -output "target/universal/$binary"
+done
+python3 contrib/packaging/package.py macos --binary target/universal/runyte-desktop \
+  --launcher target/universal/runyte-app-launcher --output /tmp/Runyte.app
+python3 contrib/packaging/check_package.py /tmp/Runyte.app
 ```
 
+Both inputs must contain ARM64 and x86-64 slices. Acceptance checks both
+executables' deployment floor with `vtool` and rejects non-system dynamic
+libraries with `otool`, including accidental Homebrew links.
+
 The helper refuses to replace an existing bundle. It copies the editor into `Contents/MacOS`, alongside the
-launcher, ICNS icon and project/dependency/font notices. The launcher selects
+native `Runyte` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher selects
 `--window --editor` and preserves `PATH`, adding `/opt/homebrew/bin` and
 `/usr/local/bin` so the usual Poppler installations remain discoverable from
 Finder. Fonts are embedded in the binary. The bundle has identifier
-`com.runyte.Runyte` and declares its icon through `CFBundleIconFile`.
+`com.runyte.Runyte`, `CFBundleExecutable = Runyte`, a macOS 11 minimum, and
+declares its icon through `CFBundleIconFile`. A leading Finder `-psn_*` argument
+is discarded; other arguments remain intact.
 
 This is an unsigned local-development bundle, not a notarized distribution.
 Bundle structure and resources are tested on Linux; Finder/Dock icon behavior

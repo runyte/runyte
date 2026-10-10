@@ -10,6 +10,15 @@ publish = false
 name = "runyte-desktop"
 path = "src/main.rs"
 
+[[bin]]
+name = "runyte-app-launcher"
+path = "src/app_launcher.rs"
+required-features = ["app-launcher"]
+
+[features]
+# Built explicitly for macOS bundles; omitted from ordinary desktop builds.
+app-launcher = []
+
 [dependencies]
 anyhow = "1.0"
 runyte = { path = "../.." }

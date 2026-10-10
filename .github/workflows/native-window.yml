@@ -61,10 +61,12 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
+          cargo clippy --locked -p runyte-desktop --features app-launcher --all-targets -- -D warnings
       - name: Core and adapter tests
         run: |
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
           cargo test --locked -p runyte-native -p runyte-desktop -p runyte-preview
+          cargo test --locked -p runyte-desktop --features app-launcher --bin runyte-app-launcher
           cargo test --locked -p runyte-native --lib media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
           grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
           cargo test --locked -p runyte-native --lib media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
@@ -118,9 +120,20 @@ jobs:
         run: |
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --window-controls
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --window-controls --mux
-      - name: Construct macOS app bundle
+      - name: Construct universal macOS app bundle
         if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
-          python3 contrib/packaging/package.py macos --binary target/debug/runyte-desktop \
-            --output "$RUNNER_TEMP/Runyte.app"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --locked -p runyte-desktop --features app-launcher --bins --target "$target"
+          done
+          mkdir "$RUNNER_TEMP/universal"
+          for binary in runyte-desktop runyte-app-launcher; do
+            lipo -create "target/aarch64-apple-darwin/debug/$binary" \
+              "target/x86_64-apple-darwin/debug/$binary" -output "$RUNNER_TEMP/universal/$binary"
+          done
+          python3 contrib/packaging/package.py macos --binary "$RUNNER_TEMP/universal/runyte-desktop" \
+            --launcher "$RUNNER_TEMP/universal/runyte-app-launcher" --output "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
