@@ -16,6 +16,14 @@ belongs in `README.md`, `docs/user-guide.md`, the source, and the relevant file
 under `context/reference/`. When those disagree with a historical plan, the
 current sources take precedence.
 
+Active work:
+
+- [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
+  two editions built from one Cargo workspace, PDF and document-preview helpers
+  inside the desktop executable, one register of process boundaries and
+  extension tiers, release packaging for both editions, and a manually signed
+  and notarized macOS disk image.
+
 Proposed work:
 
 - [Browser panes](proposed/PLAN_BROWSER_PANES.md): a design stub for interactive
