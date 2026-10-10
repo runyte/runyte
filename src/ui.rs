@@ -2501,7 +2501,8 @@ fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSna
 
     if pane.media.as_ref().is_some_and(|media| !media.page_buffer) {
         frame.render_widget(
-            Paragraph::new("MEDIA UNSUPPORTED IN THE TERMINAL MODE")
+            Paragraph::new(crate::cli::edition::MEDIA_WINDOW)
+                .wrap(Wrap { trim: true })
                 .style(Style::default().fg(theme.muted).bg(background)),
             body,
         );

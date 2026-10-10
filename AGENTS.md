@@ -294,7 +294,7 @@ and the order of the push. Do not infer any of those from the commit history.
   dependencies stay in `crates/runyte-preview`, linked into the desktop executable.
   `crates/runyte-native/src/helper.rs` owns same-build helper launch, executable
   identity checks, bounded stderr and process-group cleanup.
-  Ownership and limits live in `context/reference/native-window-experiment.md`
+  Ownership and limits live in `context/reference/desktop-edition.md`
   and `context/reference/native-document-preview.md`.
 - `src/ui.rs`: Ratatui rendering.
 - `src/workspace/`: workspace identity and state plus the optional persistent

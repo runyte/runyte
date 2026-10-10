@@ -1,12 +1,12 @@
-# Native document preview
+# Desktop document preview
 
 Current behavior includes the prototype (`04ba89f`), adjacent cache (`9fd18d0`),
 pane-focus correction (`6cf4223`) and persistent dismissal fix (`d4fcd70`),
 merged into `exp` through `de5c743` on 2026-10-09. The dated evidence below
 originated in the investigation from `6c478af` on `exp-html`.
-This is a static document experiment, not implementation of the
+This is a static document view, separate from the
 [broader browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
-The [prototype guide](../../crates/runyte-preview/README.md) contains exact
+The [preview guide](../../crates/runyte-preview/README.md) contains exact
 build/run instructions, fixtures, controls, resource policy and supported subset.
 
 ## Implementation and ownership
@@ -239,7 +239,7 @@ focus. Modified directional shortcuts now reach the editor keymap without
 changing the preview's visibility, cache, selection or scroll. Single-key focus
 commands from the built-in registry follow the same route. Ordinary arrow keys
 still navigate the document. Regression coverage includes all four directions
-in `src/native_frontend/tests/preview.rs` and configured horizontal/vertical pane
+in `crates/runyte-native/src/tests/preview.rs` and configured horizontal/vertical pane
 switches with return-to-preview navigation in `tests/native_window.py`.
 
 ## Persistent dismissal correction
@@ -288,7 +288,7 @@ navigation prefix. This does not extend preview navigation to arbitrary configur
 bindings.
 
 `native_fast_pane_strokes_and_repeats_reach_the_editor` in
-`src/native_frontend/tests/preview.rs` covers native key conversion, repeated keys,
+`crates/runyte-native/src/tests/preview.rs` covers native key conversion, repeated keys,
 and enabled/disabled registry resolution. `tests/native_window.py --document-preview`
 enables fast pane keys and checks both horizontal and vertical motion, alongside
 the configured Ctrl-arrow checks; horizontal motion checks editing in the target

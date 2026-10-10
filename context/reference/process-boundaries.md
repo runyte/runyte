@@ -31,7 +31,7 @@ The desktop edition owns two helper roles:
 | `preview` | Runyte starts Blitz for captured document text | JSON requests on stdin; bounded metadata and RGBA replies on stdout; stderr capture is bounded. Captures and assets, raster dimensions and output bytes have separate limits. Requests have a five-second wall deadline and Linux has a 2 GiB address-space limit. | `crates/runyte-native/src/preview.rs`, `src/document_preview.rs`, `crates/runyte-preview/src/` |
 
 The detailed rendering and asset limits live in
-[native window](native-window-experiment.md) and
+[native window](desktop-edition.md) and
 [document preview](native-document-preview.md). Poppler is an external fallback
 program, not a bundled internal helper.
 

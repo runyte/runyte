@@ -1,4 +1,4 @@
-# Native document preview prototype
+# Desktop document preview
 
 Desktop packages include preview in the editor executable. See
 [desktop packaging](../../contrib/packaging/README.md).

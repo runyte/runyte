@@ -832,9 +832,9 @@ try:
         os.close(slave)
         try:
             output = bytearray();deadline=time.monotonic()+15
-            while b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' not in output and time.monotonic()<deadline:
+            while b'--window' not in output and time.monotonic()<deadline:
                 if select.select([master],[],[],.1)[0]:output.extend(os.read(master,65536))
-            assert b'MEDIA UNSUPPORTED IN THE TERMINAL MODE' in output, output[-2000:]
+            assert b'Media viewing needs' in output and b'--window' in output, output[-2000:]
             os.write(master,b':detach\r');terminal.wait(timeout=15);assert terminal.returncode==0
         finally:
             if terminal.poll() is None:terminal.terminate();terminal.wait(timeout=15)

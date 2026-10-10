@@ -5913,8 +5913,38 @@ async fn native_media_capability_and_projection_survive_frontend_handoff() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(contents.contains("MEDIA UNSUPPORTED IN THE TERMINAL MODE"));
+    assert!(
+        contents.contains(
+            "Media viewing needs the Runyte window: use the desktop edition with --window"
+        )
+    );
     assert!(contents.contains("[pdf]"));
+    let mut geometry = tui_geometry();
+    geometry.screen.width = 45;
+    geometry.editor.width = 45;
+    geometry.status.width = 45;
+    geometry.message.width = 45;
+    terminal
+        .send(&ClientRequest::Resize {
+            geometry: geometry.into(),
+        })
+        .await
+        .unwrap();
+    let frame = next_idle_frame(&mut terminal).await;
+    let core: runyte::workspace::HostFrame = frame.try_into().unwrap();
+    let mut narrow = Terminal::new(TestBackend::new(45, 30)).unwrap();
+    narrow
+        .draw(|frame| runyte::ui::render_host_frame_exact_colors_for_test(frame, &core))
+        .unwrap();
+    let contents = narrow
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(contents.contains("Media viewing needs"));
+    assert!(contents.contains("--window"));
     terminal
         .send(&ClientRequest::MediaNavigate {
             pane: pane_id,

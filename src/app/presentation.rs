@@ -1134,7 +1134,7 @@ impl App {
     /// Capture selected text, or the complete buffer, for the native preview.
     pub(super) fn preview_document(&mut self) {
         if !self.native_media {
-            self.action_failed(":preview requires the native window (--window)");
+            self.action_failed(crate::cli::edition::PREVIEW_WINDOW);
             return;
         }
         let source = self.active().buffer;

@@ -38,7 +38,24 @@ several at once and keeping up with their output:
 Having all of these features in a single binary enables strong code optimization,
 consistent keybindings, consistent themes, and minimum configuration.
 
-Runyte runs on Linux, macOS, and Windows 11.
+## Editions
+
+Both editions use the same editor, keymap, configuration, plugins and persistent
+sessions. The desktop edition also runs in a terminal; `--window` opens its
+window. Every client and host in a persistent session must use the same Runyte
+version, regardless of edition.
+
+| Terminal edition | Desktop edition |
+| --- | --- |
+| **Includes:** text editor, terminal UI, Git, language services, PTYs, plugins and MCP | **Includes:** everything in the terminal edition plus a GPUI window, native clipboard, image/PDF viewing and document preview |
+| **Executable:** about 56.1 MB | **Executable:** about 106.8 MB |
+| **Platforms:** Linux, macOS and Windows 11 | **Platforms:** Linux and macOS; no Windows window yet |
+| **Requirements:** a terminal; source builds need Rust 1.88 and a C compiler | **Requirements:** Vulkan on Linux; prebuilt Linux archives need glibc 2.39 or newer; macOS 11 or later. Poppler is an optional PDF fallback |
+| **Install:** [curl, release archive or crates.io](#installation) | **Install:** Linux desktop release archive, or [build the desktop edition](#desktop-edition); macOS app packaging is described in the [packaging guide](contrib/packaging/README.md) |
+
+Sizes are stripped Linux x86-64 release measurements; see the
+[measurement record](context/reference/desktop-edition.md#editions-phase-4-one-desktop-executable-2026-10-10).
+The platform table below describes the terminal edition.
 
 | CPU    | System     | Automated tests | Prebuilt release | Hands-on use |
 |--------|------------|:---------------:|:----------------:|:------------:|
@@ -245,12 +262,12 @@ cargo build --release
 ./target/release/runyte README.md
 ```
 
-### Experimental native window (this branch)
+### Desktop edition
 
 The native window is built from this checkout with GPUI, Zed's Rust UI
 framework. Install [Rust through rustup](https://rustup.rs/) and the platform
 dependencies below before building. Use a current stable Rust toolchain for
-the optional GPUI dependency graph.
+the desktop dependency graph (Rust 1.92 or later).
 
 Native builds embed JetBrainsMono Nerd Font (Medium, Medium Italic, Bold, and
 Bold Italic); no system font installation is needed. The font is redistributed
@@ -340,31 +357,34 @@ command -v pdfinfo pdftoppm pdftotext
 Then build and open a window:
 
 ```sh
-cargo run --features native -- --window
-cargo run --features native -- --window --mux
-cargo run --features native -- --window --editor /path/to/file
+cargo run -p runyte-desktop -- --window
+cargo run -p runyte-desktop -- --window --mux
+cargo run -p runyte-desktop -- --window --editor /path/to/file
 ```
 
 For a desktop launcher and the Runyte icon on Linux (required by Wayland):
 
 ```sh
-python3 contrib/packaging/package.py linux --binary target/debug/runyte
+python3 contrib/packaging/package.py linux --binary target/debug/runyte-desktop
 ```
 
-Register again if you move the binary or switch to `target/release/runyte`.
+Register again if you move the binary or switch to `target/release/runyte-desktop`.
 On macOS, use the [native desktop packaging guide](contrib/packaging/README.md)
 to create a local `Runyte.app` with the same icon and bundled font notices.
 
-Use the [desktop packaging guide](contrib/packaging/README.md) to package
-the editor with its separate preview helper. The release workflow adds a
-Linux x86-64 desktop archive (Ubuntu 24.04 / glibc 2.39 minimum), with preview
-acceptance required before publication. Terminal archives and the curl installer
-continue to provide the terminal edition. macOS app bundles include the helper
-for local testing; macOS desktop release publication awaits window validation.
+The [desktop packaging guide](contrib/packaging/README.md) packages one editor
+executable with its internal PDF and preview helpers. Linux x86-64 desktop
+archives require Ubuntu 24.04 / glibc 2.39 or newer. macOS signed distribution
+is prepared separately. The curl installer and crates.io install the terminal
+edition.
 
-This branch also includes an isolated [native document preview prototype](crates/runyte-preview/README.md).
-Desktop packages include its Blitz helper; checkout builds require the separate
-helper build described there. `:preview` renders the selected text,
+Workspace source builds can fetch the pinned Blitz/Taffy Git dependencies while
+Cargo resolves the shared lock, even when only the terminal package is selected.
+The terminal package does not compile or link them; the published crates.io
+package has no desktop dependencies.
+
+[Document preview](crates/runyte-preview/README.md) is included in the desktop
+edition. `:preview` renders selected text,
 or the whole buffer with no selection, including unsaved edits. It supports
 Markdown, static HTML, SVG, JSON, YAML, highlighted source and plain text.
 Escape returns to source. Existing `?`, `:render`, and `:markdown` are unchanged.
@@ -393,15 +413,14 @@ frame; copying uses that frame, and clearing the selection resumes playback.
 Use `--window --mux` to create or attach to a persistent session. The window and
 terminal frontend share the same sessions and take turns attaching. `:detach`
 and the window close button leave the session running; session switching and
-quit fallback work as in the terminal frontend. Keep the native-feature build
-as `runyte` on `PATH` so both frontends and integrated `runyte --wait` use the
-same private protocol version.
+quit fallback work as in the terminal frontend. Keep clients and hosts on the same Runyte version. Either edition can host
+a persistent session; a desktop client is needed for its window.
 
-The experiment targets Linux and macOS; Windows is not implemented. macOS
+The desktop window supports Linux and macOS; Windows is not implemented. macOS
 installation prerequisites are documented above, but the native frontend still
 needs hands-on macOS validation.
 
-See [native-window details and limits](docs/user-guide.md#experimental-native-window).
+See [native-window details and limits](docs/user-guide.md#desktop-edition).
 The normal terminal executable remains available without `--window`.
 
 ### Post-install setup

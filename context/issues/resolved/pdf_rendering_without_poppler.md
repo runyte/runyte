@@ -166,7 +166,7 @@ Constraints:
   default changes; see `context/reference/startup-performance.md`.
 - The Poppler fallback, its limits, and its install documentation stay intact.
   `README.md`, `docs/user-guide.md` (the PDF support and text-selection
-  paragraphs), `context/reference/native-window-experiment.md` and
+  paragraphs), `context/reference/desktop-edition.md` and
   `THIRD_PARTY_NOTICES.md` must describe which backend is used and when Poppler
   is still needed.
 

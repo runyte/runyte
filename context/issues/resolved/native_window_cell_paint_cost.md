@@ -33,7 +33,7 @@ benchmarks reduced median scene construction from 881 to 402 µs at 120×40,
 accepts `--paint-font-size` and `--paint-window`. Raw samples, hashes, environment
 and timing variability are recorded in
 `benchmarks/results/2026-10-08-native-cell-paint.json` and
-`context/reference/native-window-experiment.md`.
+`context/reference/desktop-edition.md`.
 
 `unchanged_rows_reuse_prepared_styles_and_changed_rows_do_not`,
 `prepared_rows_refresh_theme_and_media_coverage_without_changed_cells`, and
@@ -103,7 +103,7 @@ per cell, and a direct-indexed fast path for single-byte ASCII glyph layouts.
   layer rules in `cells.rs` keep their current ordering.
 - Before/after timings use `RUNYTE_NATIVE_PAINT_TIMING=1` and
   `tests/native_window.py --paint-benchmark`, as recorded in
-  `context/reference/native-window-experiment.md`.
+  `context/reference/desktop-edition.md`.
 
 ## Reproduction
 

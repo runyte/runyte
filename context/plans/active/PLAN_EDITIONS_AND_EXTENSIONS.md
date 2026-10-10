@@ -236,7 +236,7 @@ numbers drift.
   - "Experimental native frontend dependencies";
   - "Bundled native font";
   - "Experimental native document preview helper".
-- `context/reference/native-window-experiment.md` says the experiment stays on
+- `context/reference/desktop-edition.md` says the experiment stays on
   `exp` and must not be merged into `dev` or `main`. Decision 1 supersedes
   this. It is linked from `AGENTS.md`, five resolved issues and
   `context/plans/proposed/PLAN_BROWSER_PANES.md`.
@@ -690,7 +690,7 @@ Goal: one executable, one helper launcher and one helper argument convention.
    published with the crate, so say plainly at the top of each desktop
    section that it applies only to the desktop edition.
 9. **Measure** and record in the commit body and in
-   `context/reference/native-window-experiment.md` (Phase 5 renames it):
+   `context/reference/desktop-edition.md` (Phase 5 renames it):
    - stripped release `runyte-desktop` size, before and after;
    - cold `runyte-desktop --version` time;
    - window startup, with the existing `benchmarks/` or
@@ -743,6 +743,7 @@ what the other offers.
      rather than refusing.
    - Check what opening a PDF or image does in the terminal frontend. If it
      shows a window-only message, add a matching row.
+   - Retained media pane after a terminal attachment: `Media viewing needs the Runyte window: use the desktop edition with --window`. Opening a new binary still uses the external-program prompt.
    - Each row needs a test at its behavior boundary: the CLI tests for flags,
      the app tests for commands. Messages go through the existing
      action-failure path; do not add new UI.
@@ -1314,3 +1315,32 @@ shows equal or faster first-content medians for all eight fixtures. Full
 measurement caveats and both initial and paired timings are retained in the
 native-window reference. The dependency-matching blocker is resolved; CI on the
 implementation commit remains the cross-platform confirmation.
+
+### Phase 5 — edition identity, 2026-10-10
+
+Both executables identify their edition in `--version` and help. Terminal
+help omits `--window`; its refusal and the Windows desktop refusal share the
+library wording with `:preview` and retained media-pane guidance. The media
+notice wraps in narrow panes. New binary opens in the terminal still use the
+external-program prompt. A real terminal-edition persistent host test captures
+preview for a window attachment, then refuses capture after terminal attachment.
+
+The parser audit covered tests, examples, skills, benchmarks, MCP and docs.
+Only the release smoke test and frozen plugin parser required changes; both
+accept historical versions where appropriate. The next release changes list
+must mention the edition suffix in `--version`. README and the guide describe
+both editions; the desktop reference was renamed and its current ownership
+updated while retaining dated measurements and historical decisions.
+
+Independent review is clear after correcting obsolete commands, the historical
+rename command, and wrapping the longer media notice. Full terminal tests,
+workspace formatting, terminal/desktop clippy, 90 native tests, 9 preview tests,
+4 desktop integration tests and 18 frozen-tool tests pass. The final narrow
+attachment regression passes separately. Coverage is being measured.
+
+Phase 4 platform CI confirms macOS desktop compilation and engine acceptance.
+Linux packaged preview reproduced a pre-existing fixed-delay resize assertion
+failure also seen before Phase 4; diagnosis continues. The macOS terminal
+performance job exceeded two unchanged 16 ms maxima (17.64/18.97 ms). Review
+found no changes in their source paths or measured-path dependencies; budgets
+remain unchanged and these failures are not counted as accepted gates.

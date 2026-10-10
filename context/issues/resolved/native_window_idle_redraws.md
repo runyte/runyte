@@ -55,7 +55,7 @@ from the same sources. A tokio blocking thread present only in the window adds
 Coverage: `tests/native_window.py --latency --max-idle-wakeups 30`, run by the
 native CI workflow, fails the registry build at 69–73 per second and passes
 with this change at 9. The standalone and `--mux` acceptance modes pass. The
-per-thread figures are recorded in `context/reference/native-window-experiment.md`.
+per-thread figures are recorded in `context/reference/desktop-edition.md`.
 
 Known limitation: the Wayland changes have not run on a desktop (see
 `native_window_frame_latency.md`). If a Vulkan swapchain becomes out of date

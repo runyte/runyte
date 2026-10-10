@@ -204,6 +204,8 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
         ])
     );
     assert!(source.contains("if test -f src/terminal/pty_windows.rs; then"));
+    assert!(source.contains("if test -f crates/runyte-desktop/Cargo.toml; then"));
+    assert!(source.contains("expected=\"$expected (terminal edition)\""));
     assert!(source.contains(r#"{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"}"#));
 
     assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
@@ -266,6 +268,10 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     assert!(!help.contains("--project-root"));
     assert!(!help.contains("--detached-host"));
     assert!(!help.contains("--attach"));
+    assert!(!help.contains("--window"));
+    assert!(help.ends_with(
+        "Terminal edition. For the desktop edition, see https://github.com/runyte/runyte#editions\n"
+    ));
     for spelling in [
         "--list-workspaces",
         "--shutdown-workspace",
@@ -353,4 +359,25 @@ fn documented_shell_wrapper_avoids_zsh_read_only_parameters() {
     assert!(guide.contains("local runyte_tmp runyte_cwd runyte_exit"));
     assert!(!guide.contains("local tmp cwd status"));
     assert!(!guide.contains("status=$?"));
+}
+
+#[test]
+fn terminal_version_and_window_refusal_identify_the_edition() {
+    let root = runyte::test_support::TestRuntimeRoot::new("edition-cli").unwrap();
+    let run = |arg| {
+        Command::new(env!("CARGO_BIN_EXE_runyte"))
+            .arg(arg)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .output()
+            .unwrap()
+    };
+    let version = run("--version");
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap(),
+        format!("runyte {} (terminal edition)\n", runyte::VERSION)
+    );
+    let window = run("--window");
+    assert!(!window.status.success());
+    assert!(String::from_utf8(window.stderr).unwrap().contains("--window is part of the Runyte desktop edition; this is the terminal edition. See https://github.com/runyte/runyte#editions"));
 }

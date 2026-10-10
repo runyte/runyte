@@ -40,7 +40,7 @@ An opt-in `RUNYTE_NATIVE_PAINT_TIMING=1` trace measures CPU cell painting withou
 adding timers or wakeups. Three alternating release comparisons on Linux/X11
 reduced the median of run medians from 13.560 ms to 0.933 ms at 120×40 cells.
 The measured method, samples, binary hashes, and validation are retained in
-`context/reference/native-window-experiment.md` and
+`context/reference/desktop-edition.md` and
 `benchmarks/results/native-paint-2026-10-08.json`; the baseline timing patch is
 `benchmarks/native-paint-before.patch`. This is scene-construction time, not a
 measurement of display latency or a comparison with a terminal emulator.
@@ -200,7 +200,7 @@ prescribe the fix.
 ### Validation
 
 Besides the ordinary repository checks and the native adapter checks listed in
-`context/reference/native-window-experiment.md`, run the isolated X11
+`context/reference/desktop-edition.md`, run the isolated X11
 acceptance in `tests/native_window.py`. It confirms that first paint, modal
 editing, hints, splits, media panes and integrated PTY input still render and
 respond. Record before-and-after paint timings for the same window size in the

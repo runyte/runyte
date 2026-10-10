@@ -84,7 +84,7 @@ not include the Windows native-frontend port.
 
 ## References
 
-- [Native window architecture](../../reference/native-window-experiment.md)
+- [Native window architecture](../../reference/desktop-edition.md)
 - [UI vocabulary](../../reference/ui-vocabulary.md)
 - [Startup performance](../../reference/startup-performance.md)
 - [CEF integration guide](https://github.com/chromiumembedded/cef/blob/master/docs/general_usage.md)

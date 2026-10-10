@@ -51,7 +51,7 @@ maximum from 33 ms to 7 ms. A probe that reads back only the start of the
 edited row measured 3.9–4.5 ms, against 3.8 ms for the terminal frontend in
 Alacritty. Idle context switches fell from 71 to 9 per second, which is part of
 `native_window_idle_redraws.md`. The full figures are in
-`context/reference/native-window-experiment.md`.
+`context/reference/desktop-edition.md`.
 
 Coverage: `tests/native_window.py --latency` requires every one of 60 isolated
 keystrokes to reach the screen within one second, which catches lost wakes and

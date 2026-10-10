@@ -110,7 +110,7 @@ def check_profiles(inventory, root):
 def host_version(binary):
     result = subprocess.run([str(binary), '--version'], check=True, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, timeout=10)
-    match = re.fullmatch(r'runyte ([^\s]+)\s*', result.stdout)
+    match = re.fullmatch(r'runyte ([^\s]+)(?: \((?:terminal|desktop) edition\))?\s*', result.stdout)
     if match is None or len(result.stdout) > 256:
         raise ValueError('Candidate executable did not identify its Runyte version')
     return match[1]

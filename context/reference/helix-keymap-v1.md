@@ -768,12 +768,12 @@ bindings; they identify the same key and never translate ordinary Control keys.
 Native paste help lists Cmd-v first on macOS, followed by Ctrl-Shift-v.
 
 
-## Native document preview prototype
+## Desktop document preview
 
 `:preview` is a Runyte-only colon command (`preview-document`), with no new
 editor key binding or alias. It captures explicit selections, or the whole
 buffer for bare carets. Existing `?`, `:render` and `:markdown` keep their
-rendered-text behavior. The prototype's frontend-local Escape returns to the
+rendered-text behavior. The preview’s frontend-local Escape returns to the
 source; editor overlays retain precedence. Built-in PDF/media navigation is
 looked up through the existing Media registry: movement, pages, half-pages,
 `gg`/`ge`, zoom/reset, copy and back. Supported `g`/`z` prefix hints are derived
@@ -783,4 +783,4 @@ also apply while the document is visible. Ctrl-arrow shortcuts pass through to
 the editor’s configured keymap without dismissing the preview. Ctrl-h/j/k/l
 also pass through, with pane focus controlled by `editor.fast_pane_keys`; no new default
 binding is introduced. See
-[prototype controls and limits](../../crates/runyte-preview/README.md).
+[preview controls and limits](../../crates/runyte-preview/README.md).

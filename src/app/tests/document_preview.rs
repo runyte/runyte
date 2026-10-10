@@ -37,6 +37,10 @@ fn preview_dispatches_known_and_unknown_text_and_rejects_terminal_frontend() {
     app.execute(parse_colon_command("preview").unwrap())
         .unwrap();
     assert!(app.document_previews.is_empty());
+    assert_eq!(
+        app.status,
+        ":preview needs the Runyte window: use the desktop edition with --window"
+    );
     app.native_media = true;
     for (name, expected) in [
         ("a.html", "html"),

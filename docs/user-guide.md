@@ -127,6 +127,19 @@ Helix and which do not.
 
 ## Install and run
 
+Runyte has terminal and desktop editions with the same editor, keymap,
+configuration, plugins and persistent-session protocol. The terminal edition is
+installed by the curl script and crates.io. The desktop edition adds a GPUI
+window, native clipboard, image/PDF viewing and document preview; it also runs
+in a terminal. Open its window with `--window`. Desktop Linux needs Vulkan
+(and glibc 2.39 or newer for prebuilt archives); macOS needs version 11 or later.
+Poppler is an optional PDF fallback. There is no Windows desktop window yet.
+Every persistent-session client and host must use the same Runyte version,
+regardless of edition. See the [edition comparison](../README.md#editions) and
+[desktop build instructions](../README.md#desktop-edition).
+
+The installation methods below install the terminal edition.
+
 Runyte runs on Linux, macOS, and Windows 11. [Windows support](#windows-support)
 lists what is missing or different there.
 
@@ -1718,10 +1731,10 @@ under [Directory tree sidebar](#directory-tree-sidebar).
 **Opening by command:** `:open <path>` (aliases `:e`, `:edit`) opens a file or
 directory in the active pane; see [Commands](#commands) for path completion.
 
-### Experimental native window
+### Desktop edition
 
-This branch can build a native GPUI frontend with `cargo build --features native`.
-Launch `target/debug/runyte --window` in a workspace, or add `--editor` to work
+Build the desktop edition with `cargo build -p runyte-desktop`.
+Launch `target/debug/runyte-desktop --window` in a workspace, or add `--editor` to work
 outside one. All existing editor keys and configured keymaps are dispatched by
 the same registry. The interface remains the editor's cell grid, without menus
 or toolbars. Window resizing changes the pane geometry and PTY dimensions.
@@ -1735,7 +1748,7 @@ Consecutive queued drags coalesce to their latest position; keys, clicks and
 paste keep their order.
 
 For the Runyte application icon on Wayland, register the desktop entry with
-`python3 contrib/packaging/package.py linux --binary target/debug/runyte` before
+`python3 contrib/packaging/package.py linux --binary target/debug/runyte-desktop` before
 opening a new window. X11 also receives an icon directly. A macOS `.app`
 packaging helper and the platform limitations are described in the
 [native desktop integration guide](../contrib/packaging/README.md).
@@ -1812,7 +1825,7 @@ There is no separate PDF page picker or `g p` binding. The paragraph commands
 `goto-next-paragraph` and `goto-previous-paragraph` remain available for configured
 keys without default bindings; `g p` and `g P` do not move between text paragraphs.
 
-Scanned PDFs without embedded text use rectangular selection; this experiment
+Scanned PDFs without embedded text use rectangular selection; the desktop edition
 does not perform OCR. Copying a region exports the base page/image raster,
 including alpha, without modifying the source file; PDF zoom refinement does
 not increase the resolution of copied regions. PDF text selection uses Hayro glyph geometry and content-stream order.
@@ -1865,20 +1878,20 @@ uses the same `Space Space`, `Space 1`–`Space 9`, `Shift-Left` / `Shift-Right`
 and `Ctrl-w a` bindings in either frontend.
 
 Media panes survive frontend handoff. A terminal client retains their `[pdf]`
-or `[image]` title and displays `MEDIA UNSUPPORTED IN THE TERMINAL MODE` in the
+or `[image]` title and displays `Media viewing needs the Runyte window: use the desktop edition with --window` in the
 body; Escape and `Space e` still reach the source directory. Opening a binary
 while the terminal client is attached uses the external-program prompt. A
 window attachment opens supported media in panes, with decoding and PDF
 rasterization performed by the window process.
 
-Use the native-feature build as the `runyte` executable on `PATH` when using
-both frontends. The window, terminal client, host, and integrated
-`runyte --wait` must use the same private protocol version; a mismatch is refused
-at the handshake. Integrated Claude Code and Codex `Ctrl-g` edits work through
+The window client needs the desktop edition; either edition can serve the
+persistent host or attach as a terminal client. Every client, host, and
+integrated `runyte --wait` must use the same Runyte version; a private protocol
+mismatch is refused at the handshake. Integrated Claude Code and Codex `Ctrl-g` edits work through
 this persistent host and survive detach and frontend handoff.
 
 The native window supports `ide`, `editor`, and `mux` modes; host and lifecycle
-modes are CLI operations. Windows remains outside the native-window experiment.
+modes are CLI operations. The desktop window is not available on Windows.
 The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
 Bold, and Bold Italic. Set `editor.font_size` in `Space o o` (8–48 logical
 pixels, default 15); the saved size is read when each window opens, including
@@ -4144,19 +4157,19 @@ brackets, text objects, and structural selection cannot use stale offsets.
 - Language detection, comments, editing, search, saving, and language servers
   do not need a syntax tree.
 
-### Native document preview prototype
+### Document preview
 
-In the experimental native window, `:preview` captures selected text, or the
+In the desktop window, `:preview` captures selected text, or the
 whole current buffer when the selection is a bare caret. It includes unsaved
 edits and leaves the source text and selection intact. Multiple nonempty ranges
 are joined in document order with a newline. A selected SVG diagram is rendered
 graphically even inside a Markdown or source document.
 
-Desktop packages include the separate helper beside the editor, including inside
+Desktop packages include preview in the editor executable, including inside
 local macOS app bundles. The Linux x86-64 desktop release archive requires glibc
 2.39 or newer and the native runtime dependencies; the terminal archives and
 curl installer remain separate. See the [desktop packaging guide](../contrib/packaging/README.md).
-For a checkout build, use the [prototype instructions](../crates/runyte-preview/README.md).
+For a checkout build, use the [preview instructions](../crates/runyte-preview/README.md).
 Markdown uses proportional GitHub-like typography; static HTML and SVG render
 graphically. JSON is pretty-printed when valid and retains its original text
 with a diagnostic otherwise. YAML retains its comments, structure and ordering.
@@ -4172,7 +4185,7 @@ Invoke `:preview` again to refresh. Links expose their destination without
 navigating. Scripts and network fetching are disabled. Local raster images must
 be beneath the source document's directory. Captures are limited to 128 KiB;
 selecting a smaller section of a larger file is supported. The terminal frontend
-reports that this command needs `--window`. See the prototype instructions for
+reports that this command needs `--window`. See the preview instructions for
 resource limits, lifecycle and tested static CSS/SVG support.
 
 ### Rendered Markdown
@@ -7904,11 +7917,14 @@ src/
   media.rs        native media classification and presentation operations
   document_preview.rs
                   bounded, engine-independent document captures
-  native_frontend.rs, native_frontend/
-                  optional GPUI window, media/PDF workers and preview rendering
   ui.rs           Ratatui widgets and editor frame composition
   wrap.rs         Unicode cell-aware visual-line and soft-wrap geometry
-  main.rs         CLI, event loop, and Crossterm terminal lifecycle
+  cli.rs, cli/    shared CLI, event loop, and terminal lifecycle
+  main.rs         terminal edition entry point
+crates/
+  runyte-native/  GPUI window, clipboard, media/PDF workers and helper lifecycle
+  runyte-preview/ isolated document rendering engine
+  runyte-desktop/ desktop executable and early helper dispatch
 ```
 
 The compatibility status for implemented, deviating, and removed Helix

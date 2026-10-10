@@ -132,7 +132,11 @@ jobs:
         run: |
           set -euo pipefail
           output="$("target/${TARGET}/release/runyte${EXE_SUFFIX}" --version)"
-          test "$output" = "runyte $VERSION"
+          expected="runyte $VERSION"
+          if test -f crates/runyte-desktop/Cargo.toml; then
+            expected="$expected (terminal edition)"
+          fi
+          test "$output" = "$expected"
 
       - name: Package archive
         if: runner.os != 'Windows'

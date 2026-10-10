@@ -19,6 +19,18 @@ MANIFEST = '[package]\nname = "runyte"\nversion = "0.2.4"\n\n[dependencies]\noth
 LOCK = 'version = 4\n\n[[package]]\nname = "other"\nversion = "0.2.4"\n\n[[package]]\nname = "runyte"\nversion = "0.2.4"\ndependencies = ["other"]\n'
 
 
+class HostVersionTests(unittest.TestCase):
+    def test_legacy_and_edition_version_output(self):
+        for suffix in ('', ' (terminal edition)', ' (desktop edition)'):
+            result = types.SimpleNamespace(stdout='runyte 0.4.0' + suffix + '\n')
+            with self.subTest(suffix=suffix), patch.object(check_frozen.subprocess, 'run', return_value=result):
+                self.assertEqual(check_frozen.host_version(Path('/unused/editor')), '0.4.0')
+        for text in ('another 0.4.0', 'runyte 0.4.0 (unknown edition)', 'runyte 0.4.0 extra'):
+            with self.subTest(text=text), patch.object(check_frozen.subprocess, 'run', return_value=types.SimpleNamespace(stdout=text)):
+                with self.assertRaises(ValueError):
+                    check_frozen.host_version(Path('/unused/editor'))
+
+
 class CandidateTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='runyte-candidate-test-')

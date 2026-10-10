@@ -85,3 +85,18 @@ fn invalid_helper_roles_and_arguments_fail_without_opening_the_editor() {
     }
     assert!(!String::from_utf8_lossy(&invoke(&["--help"], b"").stdout).contains("--helper"));
 }
+
+#[test]
+fn desktop_help_and_version_identify_the_edition() {
+    let version = invoke(&["--version"], b"");
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap(),
+        format!("runyte {} (desktop edition)\n", runyte::VERSION)
+    );
+    let help = invoke(&["--help"], b"");
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("--window"));
+    assert!(help.ends_with("Desktop edition.\n"));
+}

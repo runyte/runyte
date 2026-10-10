@@ -94,7 +94,7 @@ preserve contrast on dark panels. Regenerate with Python and `rsvg-convert`:
 ```sh
 python3 contrib/packaging/render_icons.py
 python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
-cargo test --features native --bin runyte native_frontend::icon
+cargo test -p runyte-native --lib icon
 ```
 
 `check_package.py` runs the real document engine from the packaged helper:

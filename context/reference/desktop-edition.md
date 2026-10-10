@@ -1,11 +1,12 @@
-# Native window experiment
+# Desktop edition
 
-This branch adds an opt-in GPUI 0.2.2 frontend, built with `--features native`
-and selected with `--window`. It supports editor, IDE and persistent mux modes.
-The experiment stays on `exp`; do not merge this branch into `dev` or `main`.
-The terminal frontend remains the default. The public plugin contract is
-unchanged; native and terminal attachments share the versioned private
-bundled-client protocol and require matching client/host binaries.
+The desktop edition is a supported Runyte product built with
+`cargo build -p runyte-desktop`; `--window` selects its GPUI 0.2.2 frontend.
+It supports editor, IDE and persistent mux modes and also runs in a terminal.
+Decision 1 of the editions plan supersedes the former rule keeping the native
+window experiment only on `exp`. The public plugin contract is unchanged;
+window and terminal attachments share the private bundled-client protocol and
+require the same Runyte client/host version, regardless of edition.
 
 ## Ownership
 
@@ -122,7 +123,7 @@ stops rearming for hidden windows. It never uses GPUI's refresh-rate image
 animation loop. Unused image textures are explicitly removed from the atlas.
 
 Hayro 0.8 is the default PDF backend, pinned with its interpreter and syntax
-crates behind `native` (Rust 1.92; default-feature MSRV remains 1.88).
+crates in `runyte-native` (Rust 1.92; terminal edition MSRV remains 1.88).
 `--helper pdf` runs before frontend initialization. Each request owns a
 fresh parser/cache in a killable process: 128 MiB input, 1–10,000 pages,
 15-second wall/CPU limits, 1 GiB address space (plus initial mappings on macOS),
@@ -160,11 +161,11 @@ applications. Both are Rust integrations; Poppler is installed separately.
 ## Native document previews
 
 `:preview` displays a bounded capture of selected text or the complete source
-buffer through a separately built Blitz helper. Host state owns captures and
+buffer through the desktop executable’s internal Blitz helper. Host state owns captures and
 dismissals; the frontend owns scroll, selection and cached rasters. Source
 editing state is preserved. The [document-preview reference](native-document-preview.md)
 records ownership, rendering boundaries, lifecycle and dated verification; the
-[prototype guide](../../crates/runyte-preview/README.md) covers build steps,
+[preview guide](../../crates/runyte-preview/README.md) covers build steps,
 controls and resource limits. This static preview does not implement the
 [browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
 
@@ -176,12 +177,12 @@ Run the ordinary repository checks, then the optional adapter checks:
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-cargo clippy --features native --all-targets -- -D warnings
-cargo test --features native --bin runyte native_frontend
-cargo test --features native --bin runyte \
-  native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count \
+cargo clippy -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
+cargo test -p runyte-native -p runyte-desktop -p runyte-preview
+cargo test -p runyte-native --lib \
+  media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count \
   -- --ignored --exact
-cargo llvm-cov --locked --workspace
+cargo llvm-cov --locked --package runyte
 ```
 
 `src/app/tests/native_media.rs` covers normal file/explorer opening, read-only
@@ -202,7 +203,7 @@ actual system clipboard text/PNG bytes, hints, resize/splits, integrated PTY
 input, unsaved-close refusal and successful close after saving.
 
 ```sh
-cargo build --features native
+cargo build -p runyte-desktop
 # Run only against a dedicated display: clipboard tests take clipboard ownership.
 DISPLAY=:94 python3 tests/native_window.py --output /tmp/runyte-window-captures
 ```
@@ -252,7 +253,7 @@ font binaries, icon assets, source SVG and license notices. The exp-only
 checks plus Linux GUI acceptance; it has not run remotely for this change.
 macOS Finder/Dock and native interactions still need a Mac validation run.
 
-Canonical `cargo llvm-cov --locked --workspace` verification reported 92.01%
+Canonical `cargo llvm-cov --locked --package runyte` verification reported 92.01%
 line coverage (148,340 of 161,215), above the unchanged 89% floor. The optimized
 release build also passed the full isolated X11 acceptance with system font
 directories disabled and the real icon property checked.
@@ -351,7 +352,7 @@ input-to-display latency guarantee or a comparison with a terminal emulator.
 
 Formatting, default/native all-target Clippy, the full default test suite,
 31 native adapter tests and the explicitly invoked Poppler test passed. Canonical
-`cargo llvm-cov --locked --workspace` reported 92.05% line coverage
+`cargo llvm-cov --locked --package runyte` reported 92.05% line coverage
 (148,738 of 161,582), above the unchanged 89% floor. The final release build
 passed full isolated X11 acceptance with system fonts disabled and exact
 styled-cell pixel comparison against the baseline with system fallback fonts.
@@ -391,7 +392,7 @@ visibility correction needed by Rust's future-incompatibility check. GPUI
 Formatting, default/native all-target Clippy, the full default test suite and
 32 native adapter tests passed on Linux. The native release build with
 `--future-incompat-report` reported zero dependencies with future-incompatible
-warnings. Canonical `cargo llvm-cov --locked --workspace` measured 92.04% line
+warnings. Canonical `cargo llvm-cov --locked --package runyte` measured 92.04% line
 coverage (148,843 of 161,713), above the unchanged 89% floor; process-heavy
 fixtures ran with four test threads outside the execution sandbox.
 

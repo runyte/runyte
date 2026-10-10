@@ -190,13 +190,8 @@ pub mod window;
 use window::Events;
 use window::{Surface, WindowFrontend};
 
-/// The product supplied by the executable that starts the shared CLI.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Edition {
-    #[default]
-    Terminal,
-    Desktop,
-}
+pub(crate) mod edition;
+pub use edition::Edition;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Environment {
@@ -221,10 +216,9 @@ pub fn main(edition: Edition, window: Option<&'static dyn WindowFrontend>) -> Re
     {
         let arguments = LaunchArguments::parse()?;
         if arguments.window && !arguments.help && !arguments.version {
-            anyhow::ensure!(
-                !cfg!(windows),
-                "the native-window experiment currently supports Linux and macOS"
-            );
+            if let Some(message) = edition.window_refusal(cfg!(windows)) {
+                anyhow::bail!(message);
+            }
             anyhow::ensure!(
                 matches!(
                     arguments.mode,
@@ -1264,21 +1258,30 @@ async fn run(
     environment: Environment,
 ) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
-    anyhow::ensure!(
-        !arguments.window || environment.window.is_some(),
-        "--window requires the desktop edition"
-    );
+    if arguments.window {
+        if let Some(message) = environment.edition.window_refusal(cfg!(windows)) {
+            anyhow::bail!(message);
+        }
+        anyhow::ensure!(
+            environment.window.is_some(),
+            "desktop window frontend unavailable"
+        );
+    }
     #[cfg(unix)]
     let supervising_parent = HostSupervisor::for_launch(&arguments)?;
     let window = environment.window.filter(|_| arguments.window);
     let show_startup_about = starts_on_about(&arguments);
     startup.mark(StartupPhase::CliParsed);
     if arguments.help {
-        print_help();
+        print_help(environment.edition);
         return Ok(());
     }
     if arguments.version {
-        println!("runyte {}", crate::VERSION);
+        println!(
+            "runyte {} ({} edition)",
+            crate::VERSION,
+            environment.edition.name()
+        );
         return Ok(());
     }
 
@@ -7595,7 +7598,13 @@ fn initialize_logging(
 /// carries the complete ID.
 const ABBREVIATED_LOG_WORKSPACE_ID: usize = 8;
 
-fn print_help() {
+fn print_help(edition: Edition) {
+    let window = if edition == Edition::Desktop {
+        "        --window         Open the Runyte window\n"
+    } else {
+        ""
+    };
+    let footer = edition.help_footer();
     println!(
         "\
 runyte — a fast modal terminal editor
@@ -7615,8 +7624,7 @@ MODES:
     Runyte runs in one of three modes, chosen by a flag or by the mode
     setting, ide by default. The launch directory never changes the mode.
 
-        --window         Open the GPUI window (desktop edition)
-        --editor         Edit files and directories with no workspace: no Git,
+{window}        --editor         Edit files and directories with no workspace: no Git,
                          language servers, MCP, plugins or terminals. Running
                          the binary as runed is the same as runyte --editor
         --ide            Work in the workspace found from the launch directory,
@@ -7719,7 +7727,9 @@ TARGETS:
 :quit-here moves the shell to the editor's directory on exit; it requires the
 runyte() shell function documented in README.md.
 
-Inside the editor press Space+? for the complete key reference."
+Inside the editor press Space+? for the complete key reference.
+
+{footer}"
     );
 }
 

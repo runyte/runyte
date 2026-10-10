@@ -24,6 +24,11 @@ Active work:
   extension tiers, release packaging for both editions, and a manually signed
   and notarized macOS disk image.
 
+Current desktop ownership, supported behavior and measurements are recorded in
+[the desktop edition reference](../reference/desktop-edition.md), with the
+[document preview reference](../reference/native-document-preview.md) retaining
+its rendering and asset limits.
+
 Proposed work:
 
 - [Browser panes](proposed/PLAN_BROWSER_PANES.md): a design stub for interactive
