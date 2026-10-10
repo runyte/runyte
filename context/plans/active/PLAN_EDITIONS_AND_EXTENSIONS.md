@@ -9,6 +9,10 @@ requires the maintainer's explicit go-ahead. Phase 8 builds the signed and
 notarized macOS disk image; it is manual and needs the maintainer's Apple
 Developer credentials.
 
+Phases 1–7 are implemented and accepted as of 2026-10-10, with the approved
+fast-forward into `dev`. Phase 8 remains active for the joint manual Apple
+signing, notarization, real-window acceptance and disk-image publication.
+
 ## How to execute this plan
 
 The plan is written for an agent that executes it phase by phase.
@@ -1475,3 +1479,62 @@ confirmed its source, dependencies and workflow are byte-identical to the
 preceding passing `d340e27` run. The budget remains unchanged for final CI.
 Independent review of the CRLF correction is clear; formatting, root clippy
 and the complete local terminal test suite pass.
+
+### Phase 7 — merge report, 2026-10-10
+
+The integration candidate is `c6b4f4b`, with `origin/dev` and `origin/main`
+both at `18ed42d`. It contains 110 commits beyond `dev`; the merge-base diff
+changes 470 files with 147,642 insertions and 11,546 deletions. These totals
+describe the implementation candidate before this evidence-only follow-up.
+The dev-only input-feedback change is already included via `48dd230`.
+
+Trial integration used a temporary detached worktree at `origin/dev` and
+fast-forwarded cleanly, with no conflicts, through `4c029e1`. The only later
+candidate change is the reviewed CRLF-safe test assertion and its progress
+record. The trial worktree was removed. Final remote ancestry is checked again
+before advancing `dev`; the maintainer authorized this integration by directing
+completion of the whole plan except the joint Apple distribution phase.
+
+CI for the exact implementation candidate:
+
+| Workflow | Run | State |
+| --- | --- | --- |
+| CI | [38084938920](https://github.com/runyte/runyte/actions/runs/38084938920) | Passed all 23 jobs |
+| Desktop edition | [38084938935](https://github.com/runyte/runyte/actions/runs/38084938935) | Passed all three native platforms |
+| Binary release | Not triggered | No tag, version bump or release requested |
+
+Final candidate coverage is 92.02% on Linux and 91.96% on macOS for the
+terminal edition (floor 89%), and 48.65% on both Linux desktop architectures
+(floor 40%). Both serialized terminal performance jobs pass their unchanged
+budgets, including the previously failed macOS palette-path case. Formatting,
+root/desktop clippy, full local terminal tests, native/preview tests and
+packaging checks pass. Every phase has independent review; the merge report
+and the final Windows CRLF correction also have clear reviews.
+
+At the next release, users of `main` will receive:
+
+- Separate terminal and desktop editions, with the edition identified in help
+  and `--version`. The terminal edition retains Rust 1.88, crates.io and curl
+  installation; the shared dependency lock contains the reviewed ICU updates.
+- The desktop window, image/animation/PDF viewing, and Markdown/HTML/SVG
+  preview in one executable with isolated bounded helper processes. Native
+  windows can attach to persistent sessions, with bundled fonts, platform
+  clipboard shortcuts, link navigation and the recorded input/rendering fixes.
+- Whole-grapheme editing and layout, including emoji sequences, across editor
+  selections, wrapping, tables and terminal review.
+- Edition-named terminal archives and accepted Linux x86-64/ARM64 desktop
+  archives. The curl installer understands old archive layouts and refuses to
+  overwrite a desktop installation. Public plugin/context contracts remain
+  unchanged; internal process boundaries and extension tiers are documented.
+- Universal macOS app construction and prepared signing tools. Signed DMG
+  publication, quarantine/Finder checks and real macOS window acceptance remain
+  the joint manual Phase 8 work, so this integration does not publish a Mac DMG.
+
+The plan remains active for Phase 8. This integration changes neither `main`
+nor the version and performs no release.
+
+The accepted candidate and this evidence-only follow-up are fast-forwarded
+together into `dev`. Windows confirms the CRLF correction and passes its full
+suite plus restart/save, MCP, clipboard and real language-server acceptance.
+The two workflows above validate the exact implementation candidate; subsequent
+automatic runs on the documentation follow-up are separate from that evidence.
