@@ -2970,8 +2970,156 @@ mod tests {
         app.handle_key(KeyStroke::char('f')).unwrap();
 
         let snapshot = prepared_snapshot(&mut app, 80, 8);
-        assert_eq!(snapshot.status.interaction_line, "Find next character …");
+        assert_eq!(
+            snapshot.status.interaction_line,
+            "f (Find next character · type a character; Esc cancels) …"
+        );
         assert!(!snapshot.status.interaction_line_error);
+    }
+
+    #[test]
+    fn every_character_binding_keeps_its_typed_keys_and_next_step_visible() {
+        use crate::keymap::{BindingScope, BindingTarget};
+        let keymap = crate::keymap::default_keymap();
+        for binding in keymap.bindings() {
+            let BindingTarget::Editor(command) = binding.target else {
+                continue;
+            };
+            if !command.takes_character() || binding.scope != BindingScope::Global {
+                continue;
+            }
+            for mode in binding
+                .modes
+                .iter()
+                .copied()
+                .filter(|mode| matches!(mode, Mode::Normal | Mode::Select))
+            {
+                let mut app = App::new(Config::default(), None).unwrap();
+                app.mode = mode;
+                for key in binding.sequence.as_slice() {
+                    app.handle_key(*key).unwrap();
+                }
+                let snapshot = prepared_snapshot(&mut app, 160, 8);
+                let line = &snapshot.status.interaction_line;
+                assert!(
+                    line.starts_with(&format!("{} (", binding.sequence)),
+                    "{command:?}: {line}"
+                );
+                assert!(
+                    line.contains("type ") && line.contains("Esc cancels"),
+                    "{line}"
+                );
+                assert!(!snapshot.status.interaction_line_error);
+                app.handle_key(KeyStroke::plain(KeyCode::Escape)).unwrap();
+                assert_eq!(
+                    prepared_snapshot(&mut app, 160, 8).status.interaction_line,
+                    "character input cancelled"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn surround_replace_feedback_follows_both_operands_and_completion() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "(alpha)"));
+        for (key, expected) in [
+            ('m', "m …"),
+            (
+                'r',
+                "m r (Replace the surrounding pair · type the existing pair (or m for closest); Esc cancels) …",
+            ),
+            (
+                '(',
+                "m r ( (Replace the surrounding pair · type the replacement pair; Esc cancels) …",
+            ),
+            ('[', "m r ( [ (Replace the surrounding pair)"),
+        ] {
+            app.handle_key(KeyStroke::char(key)).unwrap();
+            assert_eq!(
+                prepared_snapshot(&mut app, 160, 8).status.interaction_line,
+                expected
+            );
+        }
+        assert_eq!(app.buffers[0].text().to_string(), "[alpha]");
+    }
+
+    #[test]
+    fn configured_character_binding_keeps_count_and_operand_progress() {
+        let config: Config =
+            serde_yaml::from_str("keys:\n  bind:\n    normal:\n      'F12': surround-replace\n")
+                .unwrap();
+        let compiled = crate::keymap::configured::compile(
+            config.keys.as_ref().unwrap(),
+            crate::keymap::default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let mut app = App::new(config, None).unwrap();
+        for key in crate::keymap::KeySequence::parse("2 F12 (")
+            .unwrap()
+            .as_slice()
+        {
+            app.handle_key(*key).unwrap();
+        }
+        let line = prepared_snapshot(&mut app, 160, 8).status.interaction_line;
+        assert!(line.starts_with("2 F12 ( ("), "{line}");
+        assert!(line.contains("type the replacement pair"), "{line}");
+        app.handle_key(KeyStroke::plain(KeyCode::Escape)).unwrap();
+        assert_eq!(
+            prepared_snapshot(&mut app, 160, 8).status.interaction_line,
+            "character input cancelled"
+        );
+        app.handle_key(KeyStroke::char('f')).unwrap();
+        app.handle_key(KeyStroke::plain(KeyCode::Left)).unwrap();
+        let snapshot = prepared_snapshot(&mut app, 160, 8);
+        assert_eq!(snapshot.status.interaction_line, "expected a character");
+        assert!(snapshot.status.interaction_line_error);
+    }
+
+    #[test]
+    fn jump_feedback_advances_through_the_second_label_key() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&Transaction::insert(0, "word ".repeat(30)));
+        app.jump = crate::jump_labels::JumpLabels::new((0..27).map(|index| index * 5));
+        app.handle_key(KeyStroke::char('m')).unwrap();
+        let line = prepared_snapshot(&mut app, 160, 8).status.interaction_line;
+        assert_eq!(
+            line,
+            "jump to word: m … (type the second label key; Esc cancels)"
+        );
+        app.handle_key(KeyStroke::char('a')).unwrap();
+        assert_eq!(
+            prepared_snapshot(&mut app, 160, 8).status.interaction_line,
+            "jump complete"
+        );
+        assert!(app.jump.is_none());
+        assert_eq!(app.active().selection.primary().head, 125);
+    }
+
+    #[test]
+    fn jump_paste_cancellation_and_unbound_sequences_keep_feedback() {
+        for input in [
+            crate::input::InputEvent::Text("paste".into()),
+            crate::input::InputEvent::ClipboardPaste,
+        ] {
+            let mut app = App::new(Config::default(), None).unwrap();
+            app.jump = crate::jump_labels::JumpLabels::new([0]);
+            app.handle_input(input).unwrap();
+            assert!(app.jump.is_none());
+            assert_eq!(
+                prepared_snapshot(&mut app, 80, 8).status.interaction_line,
+                "jump cancelled"
+            );
+        }
+        let mut app = App::new(Config::default(), None).unwrap();
+        let unread = app.unread_notification_counts();
+        for key in ['g', 'z'] {
+            app.handle_key(KeyStroke::char(key)).unwrap();
+        }
+        let snapshot = prepared_snapshot(&mut app, 80, 8);
+        assert_eq!(snapshot.status.interaction_line, "No binding: g z");
+        assert!(snapshot.status.interaction_line_error);
+        assert_eq!(app.unread_notification_counts(), unread);
     }
 
     #[test]

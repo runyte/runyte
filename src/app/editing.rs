@@ -937,6 +937,7 @@ impl App {
             _ => {
                 self.jump = None;
                 self.status("jump cancelled");
+                self.report_input_feedback();
                 return Ok(());
             }
         };
@@ -945,11 +946,14 @@ impl App {
         match labels.press(typed) {
             Press::Narrowed => {
                 self.jump = Some(labels);
-                self.status(if self.directory_tree.focused {
-                    "jump to tree entry: second label key"
+                let target = if self.directory_tree.focused {
+                    "tree entry"
                 } else {
-                    "jump to word: second label key"
-                });
+                    "word"
+                };
+                self.status(format!(
+                    "jump to {target}: {typed} … (type the second label key; Esc cancels)"
+                ));
             }
             Press::Jumped(offset) => {
                 if self.directory_tree.focused {
@@ -974,10 +978,11 @@ impl App {
                 } else {
                     self.jump_to_word(offset);
                 }
-                self.status("");
+                self.status("jump complete");
             }
             Press::Missed => self.action_failed(format!("no jump label matches '{typed}'")),
         }
+        self.report_input_feedback();
         Ok(())
     }
 

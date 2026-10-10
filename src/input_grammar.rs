@@ -725,6 +725,20 @@ impl ActiveGrammar {
         }
     }
 
+    /// Actual binding keys and any operand already entered. Presentation must
+    /// not reconstruct these from defaults: configured bindings and counts
+    /// are part of the gesture too.
+    pub(crate) fn character_input_progress(&self) -> Option<(&KeySequence, bool)> {
+        match self {
+            Self::Runyte(grammar) => grammar
+                .awaiting_binding
+                .as_ref()
+                .map(|(sequence, _)| (sequence, grammar.first_operand.is_some())),
+            #[cfg(test)]
+            Self::Vim(_) => None,
+        }
+    }
+
     pub const fn kind(&self) -> GrammarKind {
         match self {
             Self::Runyte(_) => GrammarKind::Runyte,

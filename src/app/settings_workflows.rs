@@ -12,7 +12,8 @@ use super::{
     outcome_clause, persist_setting, registry_failure_summary, startup_status,
 };
 use crate::{
-    buffer::GeneratedViewIdentity, config::ExplorerSort, content_alignment::ContentAlignment,
+    buffer::GeneratedViewIdentity, command::EditorCommand, config::ExplorerSort,
+    content_alignment::ContentAlignment,
 };
 use std::io::Read;
 
@@ -1139,6 +1140,22 @@ impl App {
         }
     }
 
+    /// Feedback from keyboard interactions that finish outside command dispatch
+    /// (grammar notices and jump labels). Background status never uses this.
+    pub(super) fn report_input_feedback(&mut self) {
+        let id = self.active_action_id.unwrap_or_else(|| {
+            let id = self.next_action_id;
+            self.next_action_id = self.next_action_id.wrapping_add(1).max(1);
+            id
+        });
+        self.action_feedback = Some(ActionFeedback {
+            id,
+            spelling: String::new(),
+            text: self.status.clone(),
+            is_error: self.status_error,
+        });
+    }
+
     pub(super) fn mark_action_feedback_failed(&mut self, action: Option<u64>, message: &str) {
         let Some(action) = action else {
             return;
@@ -1185,7 +1202,25 @@ impl App {
     /// through instead.
     pub(crate) fn live_pending_display(&self) -> Option<String> {
         if let Some(command) = self.grammar.awaiting_character() {
-            return Some(format!("{} …", command.metadata().description));
+            let Some((sequence, second)) = self.grammar.character_input_progress() else {
+                return Some(format!("{} …", command.metadata().description));
+            };
+            let prompt = match command {
+                EditorCommand::SurroundAdd => "type the pair to add",
+                EditorCommand::SurroundReplace if second => "type the replacement pair",
+                EditorCommand::SurroundReplace | EditorCommand::SurroundDelete => {
+                    "type the existing pair (or m for closest)"
+                }
+                EditorCommand::SelectRegister => "type a register (a-z, A-Z, quote, or underscore)",
+                EditorCommand::RecordMacro | EditorCommand::ReplayMacro => {
+                    "type a macro register (a-z)"
+                }
+                _ => "type a character",
+            };
+            return Some(format!(
+                "{sequence} ({} · {prompt}; Esc cancels) …",
+                command.metadata().description
+            ));
         }
         let count = self.grammar.pending_count();
         let sequence = self.grammar.pending_sequence();

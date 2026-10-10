@@ -537,6 +537,13 @@ The interaction line teaches each command as you use it:
 | Unavailable | `binding (action · unavailable: message)` |
 | Unbound keys | `No binding: g z` |
 
+- Commands that wait for a character keep showing the actual keys typed,
+  including configured bindings and counts, and say what to type next.
+  `m r` asks for the existing pair; `m r (` asks for its replacement.
+  Find, replace, surround, register, and named-macro commands show this guidance
+  until their last operand arrives. `Esc` cancels the pending input.
+  Two-key jump labels also show the first label key while waiting for the
+  second; completion, cancellation, and invalid input leave visible feedback.
 - An active prompt uses the line temporarily. Errors, warnings, service output,
   and other notifications never replace the prompt or the echo.
 - A failure carries the outcome's own message, not only the fact that it
