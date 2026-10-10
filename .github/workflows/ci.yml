@@ -379,7 +379,7 @@ jobs:
       # Run the ordinary test suite under instrumentation first so the same
       # collected profile can produce both the compact summary and HTML report.
       - name: Measure coverage
-        run: cargo llvm-cov --locked --workspace --no-report
+        run: cargo llvm-cov --locked --package runyte --no-report
 
       - name: Generate coverage reports
         run: |
@@ -544,4 +544,4 @@ jobs:
 
       # Keeps `rust-version = "1.88"` in Cargo.toml honest.
       - name: Check
-        run: cargo +1.88 check --all-targets --locked
+        run: cargo +1.88 check -p runyte --all-targets --locked

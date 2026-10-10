@@ -1070,7 +1070,7 @@ substantive issues; its pixel-limit precision correction was applied.
 `git diff --check` passed. Documentation only; no runtime measurements or Rust
 gates apply to this phase.
 
-### Phase 2 — local acceptance, 2026-10-10
+### Phase 2 — 2026-10-10
 
 Implemented in `e977f35` (`Move the command-line program into the library`).
 The CLI and its inline tests now live in the library; terminal paths retain
@@ -1111,9 +1111,7 @@ cargo-llvm-cov 0.9.1:
 | Line coverage | 92.06% | 92.02% |
 
 The decrease is 0.04 percentage points, within the 0.10 limit; the enforced
-89% floor is unchanged. Windows CI for the phase head is pending authorization
-to push `exp` to `origin`. Phase 3 has not started: the plan requires that CI
-gate before proceeding.
+89% floor is unchanged.
 
 Phase 2 CI follow-up: the maintainer authorized pushes of `exp` for CI and
 continuation through the implementation before the manual Apple DMG work.
@@ -1121,4 +1119,36 @@ Pushed `f7146ab`; its Windows lint step failed. Independent review found
 `ratatui::Terminal` remained imported on Windows after all uses became
 Unix-only. Limited that import to Unix; formatting, denied-warning all-target
 Clippy and the complete local test suite pass again. The corrective diff was
-independently reviewed. Windows acceptance remains required before Phase 3.
+independently reviewed and committed as `bdabad3` (`Limit the relocated
+terminal import to Unix`). Its [Windows CI job](https://github.com/runyte/runyte/actions/runs/38055937917/job/114224473471)
+passed before Phase 3 began, including the full suite and required clipboard,
+MCP, restart and language-server acceptance.
+
+The same CI run exposed a scheduler race in a macOS clipboard regression:
+its delayed marker could be written before cleanup resumed. `c50fe4f`
+(`Observe clipboard descendants only after helper cleanup`) replaces the
+delay with a post-cleanup release barrier, preserving the 100 ms helper
+timeout and 500 ms observation window. Independent review and the focused
+regression passed. The full Rust gates run again with Phase 3 preparation.
+
+The macOS performance job initially measured one edit at 16.224125 ms against
+the existing 16 ms budget; all other cases passed. Rerunning that job without
+changes passed. No budget changed. Native preview acceptance exposed incorrect
+selection coordinates at raster scale 2; `2ef8b04` fixes CSS-pixel conversion
+and verifies exact selection and link hit testing across five scale/zoom pairs.
+Independent review and the full real-engine acceptance script passed.
+
+### Phase 3 — workspace preparation, 2026-10-10
+
+Added the empty workspace and made terminal CI, coverage documentation and
+MSRV checks select `runyte` explicitly. Independent review passed. Formatting,
+denied-warning all-target Clippy, the complete test suite and Rust 1.88
+all-target locked checks passed.
+
+Both canonical instrumented test runs passed on Linux x86-64, Rust 1.97.1,
+cargo-llvm-cov 0.9.1. `--workspace` covered 150,015 of 163,044 lines (92.01%);
+`--package runyte` covered 150,025 of 163,044 (92.02%). The ten-line variation
+is in asynchronous/process execution. To verify the measured set exactly,
+both selectors were reported with `--no-run` against the same retained
+profiles, without rebuilding: all 261 per-file and total rows were identical,
+including 150,025 covered of 163,044 lines. The 89% floor is unchanged.

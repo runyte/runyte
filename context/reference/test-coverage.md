@@ -8,13 +8,13 @@ or uninstrumented external programs.
 The canonical command is:
 
 ```sh
-cargo llvm-cov --locked --workspace
+cargo llvm-cov --locked --package runyte
 ```
 
 ## Target measure
 
 Native Windows Phase 1 adds a required MSVC build/lint/test job. Its coverage is
-provisional: no native Windows `cargo llvm-cov --locked --workspace` baseline has
+provisional: no native Windows `cargo llvm-cov --locked --package runyte` baseline has
 been measured. The coverage badge and 89% enforced floor continue to describe
 Linux and macOS. Windows tests do not replace either existing coverage gate.
 
@@ -1575,3 +1575,15 @@ handoff, retained projections, and parent-context waits across detach. Optional
 native adapter tests and isolated X11 window acceptance separately cover media
 presentation, attachment generations, session switching, and close behavior.
 This measurement does not claim native GUI or macOS coverage.
+
+## 2026-10-10 — explicit terminal package
+
+The workspace preparation changes the canonical selector from `--workspace`
+to `--package runyte`. On Linux x86-64 with Rust 1.97.1 and cargo-llvm-cov
+0.9.1, both complete instrumented suites passed. Independent runs measured
+150,015/163,044 lines (92.01%) and 150,025/163,044 (92.02%), respectively.
+The ten-line execution variation was in asynchronous/process paths. Reporting
+both selectors with `--no-run` against the same retained profiles, without
+rebuilding, produced exactly identical reports: all 261 file/total rows,
+including 150,025/163,044 lines. Package selection changes no measured source.
+The enforced terminal floor remains 89%.
