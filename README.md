@@ -362,7 +362,7 @@ acceptance required before publication. Terminal archives and the curl installer
 continue to provide the terminal edition. macOS app bundles include the helper
 for local testing; macOS desktop release publication awaits window validation.
 
-This branch also includes an isolated [native document preview prototype](contrib/document-preview/README.md).
+This branch also includes an isolated [native document preview prototype](crates/runyte-preview/README.md).
 Desktop packages include its Blitz helper; checkout builds require the separate
 helper build described there. `:preview` renders the selected text,
 or the whole buffer with no selection, including unsaved edits. It supports

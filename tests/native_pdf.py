@@ -96,7 +96,7 @@ def fixtures():
 def helper(binary, path, root, *geometry):
     env = dict(os.environ, PATH=str(root / "empty-path"), XDG_CONFIG_HOME=str(root / "config"))
     start = time.perf_counter()
-    result = subprocess.run([str(binary), "--native-pdf-helper", str(path), "1", *map(str, geometry)],
+    result = subprocess.run([str(binary), "--helper", "pdf", str(path), "1", *map(str, geometry)],
                             env=env, capture_output=True, timeout=20, check=True)
     elapsed = time.perf_counter() - start
     assert result.stdout[:8] == b"RYTPDF01", result.stderr

@@ -60,11 +60,11 @@ jobs:
       - name: Format and lint
         run: |
           cargo fmt --all --check
-          cargo clippy --locked -p runyte-native -p runyte-desktop --all-targets -- -D warnings
+          cargo clippy --locked -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
       - name: Core and adapter tests
         run: |
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
-          cargo test --locked -p runyte-native -p runyte-desktop
+          cargo test --locked -p runyte-native -p runyte-desktop -p runyte-preview
           cargo test --locked -p runyte-native --lib media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
           grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
           cargo test --locked -p runyte-native --lib media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
@@ -78,7 +78,7 @@ jobs:
       - name: Measure desktop coverage
         if: runner.os == 'Linux'
         run: |
-          cargo llvm-cov --locked --package runyte-native --package runyte-desktop \
+          cargo llvm-cov --locked --package runyte-native --package runyte-desktop --package runyte-preview \
             --ignore-filename-regex "$GITHUB_WORKSPACE/src/" --summary-only --fail-under-lines 40
       - name: Build native binary
         shell: bash
@@ -90,13 +90,10 @@ jobs:
           if "0 dependencies had future-incompatible warnings" not in report:
               sys.exit("Native dependencies must have no future-incompatibility warnings")
           PY
-      - name: Build preview helper
-        run: cargo build --release --locked --manifest-path contrib/document-preview/Cargo.toml
       - name: Package Linux desktop and accept bundled preview
         if: runner.os == 'Linux'
         run: |
           python3 contrib/packaging/package.py linux --binary target/debug/runyte-desktop \
-            --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
             --output "$RUNNER_TEMP/runyte-desktop"
           xvfb-run -a -s '-screen 0 3200x1800x24' python3 contrib/packaging/check_package.py \
             "$RUNNER_TEMP/runyte-desktop" --window
@@ -125,6 +122,5 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           python3 contrib/packaging/package.py macos --binary target/debug/runyte-desktop \
-            --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
             --output "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"

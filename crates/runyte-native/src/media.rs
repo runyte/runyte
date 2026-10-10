@@ -632,6 +632,7 @@ fn load(key: &Key, cancel: &AtomicBool) -> Result<(Arc<Page>, usize)> {
                 header.pages,
             ))
         }
+        Err(hayro) if hayro.is::<super::helper::Updated>() => Err(hayro),
         Err(hayro) => {
             ensure!(!cancel.load(Ordering::Acquire), "PDF rendering cancelled");
             load_poppler_or_image(key, cancel).map_err(|poppler| {

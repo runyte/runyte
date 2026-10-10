@@ -1619,3 +1619,22 @@ The [Linux desktop CI run](https://github.com/runyte/runyte/actions/runs/3805974
 on `73dad43` uses cargo-llvm-cov 0.9.0, supported by the pinned installer
 action. It measures 2,295/5,255 lines (43.67%), with the same source denominator
 and the 40% floor passing. Both Linux and macOS desktop acceptance jobs pass.
+
+## 2026-10-10 — desktop preview integration
+
+The editions Phase 4 shared executable adds `runyte-preview` and real child-process
+helper integration tests to the desktop selection:
+
+```sh
+cargo llvm-cov --locked --package runyte-native --package runyte-desktop --package runyte-preview \
+  --ignore-filename-regex "$PWD/src/" --summary-only --fail-under-lines 40
+```
+
+Linux x86-64 with Rust 1.97.1 and cargo-llvm-cov 0.9.1 covers 2,880 of 5,889
+lines (**48.90%**). The desktop floor stays **40%**; the terminal package selection
+and its **89%** floor remain separate and unchanged. The preview library's
+rendering paths are exercised through the actual desktop executable in the
+integration suite, including retained frames and one-shot rendering.
+
+The same dependency set's canonical terminal measurement covers 150,018 of
+163,044 lines (**92.01%**), above its unchanged 89% floor.

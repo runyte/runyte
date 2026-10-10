@@ -1,6 +1,9 @@
+# SPDX-License-Identifier: MPL-2.0
+
 [package]
-name = "runyte-preview-helper"
-version = "0.1.0"
+name = "runyte-preview"
+publish = false
+rust-version = "1.92"
 edition = "2024"
 [dependencies]
 blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false, features = ["system-fonts", "svg"] }
@@ -16,9 +19,13 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 roxmltree = "0.20"
 markup5ever = "0.40"
 taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "2d936b7701f64b0fe95e50f1bfdcfc65a9f88f6f", default-features = false }
-[workspace]
 
 [dependencies.image]
 version = "0.25"
 default-features = false
 features = ["png", "jpeg", "webp"]
+
+# GPUI selects dlopen on the shared fontconfig binding. Fontique must use the
+# corresponding API too; keep this revision identical to pinned Blitz's Parley.
+[target.'cfg(target_os = "linux")'.dependencies]
+fontique = { git = "https://github.com/linebender/parley", rev = "62790943af982ad3388a3ff96cef6f90ac80a8bb", default-features = false, features = ["fontconfig-dlopen"] }

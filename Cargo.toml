@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 [workspace]
-members = ["crates/runyte-native", "crates/runyte-desktop"]
+members = ["crates/runyte-native", "crates/runyte-desktop", "crates/runyte-preview"]
 
 [package]
 name = "runyte"
@@ -155,8 +155,9 @@ name = "plugin_windows_worker"
 path = "tests/plugin_windows_worker.rs"
 harness = false
 
-# Compatibility corrections for GPUI 0.2.2 dependencies; provenance is in vendor/.
+# Desktop dependency compatibility corrections; provenance is in vendor/.
 [patch.crates-io]
 block = { path = "vendor/block" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 gpui = { path = "vendor/gpui" }
+stylo_derive = { path = "vendor/stylo_derive" }

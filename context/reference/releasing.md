@@ -302,22 +302,22 @@ permissions; archive checksums and exact-tag validation add no such authority.
 ### Desktop release archive
 
 The separate desktop job builds the native editor and the locked
-`contrib/document-preview` crate from the same validated tag. It runs on Ubuntu
+`runyte-preview` workspace library from the same validated tag. It runs on Ubuntu
 24.04 x86-64, so the desktop archive has a glibc 2.39 floor; terminal artifacts
 retain their existing floor. Other desktop targets are not published until
 native window and preview acceptance has been established on them.
 
 `runyte-desktop-MAJOR.MINOR.PATCH-x86_64-unknown-linux-gnu/` contains `runyte`
-and `runyte-preview-helper` as siblings, `runed`, notices, icons, documentation
-and the Linux desktop registration script. Both executables must stay together.
+with its internal helpers, `runed`, notices, icons, documentation
+and the Linux desktop registration script.
 The job extracts the completed archive and runs headless engine acceptance plus
 real `:preview` window acceptance on isolated Xvfb/lavapipe, without a helper
 environment override, before uploading. Publishing requires this job to succeed
 and includes the desktop archive in `SHA256SUMS`.
 
 Historical tags without `contrib/packaging/check_package.py` retain their original
-artifact set and skip the desktop job. Native-window CI also builds the helper
-and packages it into local macOS apps, but these are not published desktop
+artifact set and skip the desktop job. Desktop CI also packages the executable
+into local macOS apps, but these are not published desktop
 artifacts. The macOS window still requires platform validation.
 
 ### Curl installation and updates

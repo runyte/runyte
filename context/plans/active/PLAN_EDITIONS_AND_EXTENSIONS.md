@@ -679,7 +679,8 @@ Goal: one executable, one helper launcher and one helper argument convention.
    - Add `runyte-preview` to the desktop coverage measurement, and record the
      new baseline and floor (Phase 3, step 8).
 7. **Graph gates again,** because this merges the largest graph
-   (Blitz/Stylo): the terminal `cargo tree` diff must still be identical, and
+   (Blitz/Stylo): the terminal `cargo tree` diff must be identical except for
+   the reviewed dependency updates authorized in Progress below, and
    `cargo +1.88 check -p runyte` and `cargo audit --deny unsound` must pass.
    Same stop conditions as Phase 3.
 8. **Notices.** Rewrite the preview section of `THIRD_PARTY_NOTICES.md`: the
@@ -1214,7 +1215,7 @@ Rust 1.88, security, lifecycle/plugin acceptance and the full Windows suite.
 The [Windows job](https://github.com/runyte/runyte/actions/runs/38059742108/job/114235467754)
 completed successfully before proceeding beyond this phase. Together with the
 green desktop workflow and repeated independent reviews, every Phase 3 gate
-is satisfied. Phase 4 implementation remains pending the graph decision below.
+is satisfied. Phase 4 continues under the dependency-matching authorization below.
 
 ### Phase 4 — isolated dependency preflight, 2026-10-10
 
@@ -1244,10 +1245,11 @@ does not satisfy Blitz's `^2.3` requirement. These are the terminal changes:
 The actual editor library builds on Rust 1.88 with the candidate. Audit passes
 with the union of the nine existing terminal and two existing preview allowed
 warnings; no advisory/version tuple is new. Independent review confirms that
-this evidence does not satisfy the exact-tree gate. A narrow maintainer
-decision is pending before accepting the candidate: permit these documented
-updates while retaining Rust 1.88, root dependency declarations, coverage
-floors, advisory checks and terminal performance gates.
+this evidence does not satisfy the exact-tree gate. The maintainer subsequently authorized updating dependencies and finding
+matching versions. This permits the documented ICU subtree changes needed
+for the shared lock. Rust 1.88, existing root dependency declarations, coverage
+floors, advisory checks and terminal performance gates remain required.
+The exact-tree gate now excludes these documented, reviewed version updates.
 
 Pre-integration release measurements use `e5a0993` on Linux x86-64:
 92,197,552-byte stripped desktop executable; first `--version` launch
@@ -1272,3 +1274,43 @@ with non-reaping observation before process-group cleanup. Newly piped PDF
 stderr must be drained with bounded retention, and its unused stdin closed.
 Establish the cleanup guard immediately after spawn, before taking pipes or
 starting reader threads.
+
+
+Phase 4 integration dependency findings: the actual combined desktop build
+exposed two feature-unification failures absent from the core-only preflight.
+Fontique now enables `fontconfig-dlopen` at the exact existing Parley revision
+on Linux, matching GPUI's shared Fontconfig binding. Stylo 0.22.0's generated
+untyped successful formatting results became ambiguous when GPUI's logging
+features introduced `serde_fmt`'s conversion into `std::fmt::Error`. The local
+`stylo_derive` patch annotates those four results; no engine behavior or pinned
+Blitz/Taffy revision changes. Independent review confirmed both fixes.
+
+The all-target normal/build terminal tree retains exactly the same package-name
+set, with the 13 approved versions above updated. Within that subtree,
+`icu_collections` adds an edge to existing `utf8_iter`, `icu_properties` adds
+an edge to existing `displaydoc`, and `zerovec-derive` uses the already-present
+`syn` 3 rather than 2. The moved preview reference records all 82 package version
+sets differing from its deleted lock. The actual terminal all-target Rust 1.88
+check passes; the final audit still reports the same 11 allowed warnings.
+
+Phase 4 local validation so far: workspace formatting, terminal and desktop
+clippy, full terminal tests, 90 native tests, 9 preview tests, 3 real desktop
+helper integration tests, and both exact ignored PDF tests pass. Real preview
+acceptance and PDF acceptance with Poppler absent from PATH pass. Desktop
+coverage is 2,880/5,889 lines (48.90%, floor 40%); terminal coverage is
+150,018/163,044 (92.01%, floor 89%). Packaging tests pass, and the terminal
+publication package remains 777 files with no desktop dependencies in its
+normalized manifest. The phase review found no source correctness issue;
+its obsolete preview-guide verification commands were corrected.
+
+Phase 4 local acceptance is complete and independently reviewed. The combined
+stripped desktop executable is 106,833,936 bytes (previously 92,197,552),
+first/warm `--version` is 18.148/3.591 ms (15.633/2.913 before), window mapping
+is 200.826 ms (201.430 before), and PDF VmPeak is 127,721,472 bytes, leaving
+88.11% headroom under 1 GiB. Packaged X11 preview acceptance passes. The terminal
+executable is 56,103,616 bytes; idle remains 0.10% with zero screen writes. A
+paired ten-run comparison of the preserved old and new terminal executables
+shows equal or faster first-content medians for all eight fixtures. Full
+measurement caveats and both initial and paired timings are retained in the
+native-window reference. The dependency-matching blocker is resolved; CI on the
+implementation commit remains the cross-platform confirmation.

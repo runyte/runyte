@@ -1,17 +1,14 @@
 # Native desktop integration
 
-Desktop packages contain two executables: the native editor and its document
-preview helper. Build both from the same checkout:
+Desktop packages contain one editor executable with PDF and document preview
+helpers linked into it. Build it from the checkout:
 
 ```sh
-cargo build --release --locked --features native
-cargo build --release --locked --manifest-path contrib/document-preview/Cargo.toml
+cargo build --release --locked -p runyte-desktop
 ```
 
-The packaging tool uses these existing binaries. `--preview-helper` selects the
-helper to bundle; when omitted, it must already be beside the editor executable.
-A missing helper fails packaging. The crates retain separate dependency graphs
-and lockfiles. Ordinary terminal builds do not compile the preview engine.
+The packaging tool uses this existing binary. The desktop crates share the
+workspace lockfile. Ordinary terminal builds do not compile the preview engine.
 
 ## Linux
 
@@ -22,9 +19,7 @@ archives and the curl installer. It requires the native runtime libraries and
 a working Vulkan driver described in the repository README. Publication is
 limited to Linux x86-64 until other platforms have window/preview acceptance.
 
-Extract the archive to its final location, keep `runyte-preview-helper` beside
-`runyte`, and run `./runyte --window --editor`. Preview works without an
-environment override. From that extracted directory, register a desktop launcher:
+Extract the archive to its final location and run `./runyte --window --editor`. Preview runs through the packaged executable. From that extracted directory, register a desktop launcher:
 
 ```sh
 python3 contrib/packaging/package.py linux --binary ./runyte
@@ -33,18 +28,17 @@ python3 contrib/packaging/package.py linux --binary ./runyte
 To construct the same directory layout from a checkout:
 
 ```sh
-python3 contrib/packaging/package.py linux --binary target/release/runyte \
-  --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
+python3 contrib/packaging/package.py linux --binary target/release/runyte-desktop \
   --output /tmp/runyte-desktop
 ```
 
-`--output` must name a new directory. The package includes both binaries,
+`--output` must name a new directory. The package includes the editor,
 `runed`, notices, the user guide, icons and the desktop registration script.
 
 Register the launcher and icon for the current desktop account:
 
 ```sh
-python3 contrib/packaging/package.py linux --binary target/release/runyte
+python3 contrib/packaging/package.py linux --binary target/release/runyte-desktop
 ```
 
 The helper writes `com.runyte.Runyte.desktop` under
@@ -72,13 +66,12 @@ application's icon. Failure leaves the editor usable.
 On a Mac, build the native binary and create a new app bundle:
 
 ```sh
-python3 contrib/packaging/package.py macos --binary target/release/runyte \
-  --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
+python3 contrib/packaging/package.py macos --binary target/release/runyte-desktop \
   --output "$HOME/Applications/Runyte.app"
 open "$HOME/Applications/Runyte.app"
 ```
 
-The helper refuses to replace an existing bundle. It copies both executables into `Contents/MacOS`, alongside the
+The helper refuses to replace an existing bundle. It copies the editor into `Contents/MacOS`, alongside the
 launcher, ICNS icon and project/dependency/font notices. The launcher selects
 `--window --editor` and preserves `PATH`, adding `/opt/homebrew/bin` and
 `/usr/local/bin` so the usual Poppler installations remain discoverable from
@@ -114,8 +107,8 @@ xvfb-run -a -s '-screen 0 3200x1800x24' \
 ```
 
 The release job runs this against the extracted archive before upload. The window
-check invokes `:preview` with no `RUNYTE_PREVIEW_HELPER` override, exercising
-sibling discovery, rendering, scrolling, selection/copy and return to source.
+check invokes `:preview` through the packaged editor, exercising internal helper
+launch, rendering, scrolling, selection/copy and return to source.
 Native CI also constructs a macOS bundle and runs its headless engine checks;
 this does not establish macOS window acceptance.
 

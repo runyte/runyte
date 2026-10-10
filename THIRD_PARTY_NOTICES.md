@@ -6,6 +6,8 @@ supplements, but does not replace, the root `LICENSE`.
 
 ## Desktop edition compatibility patches
 
+This section applies only to the desktop edition.
+
 `vendor/proc-macro-error2` contains version 2.0.1 under MIT OR Apache-2.0,
 with both upstream license texts. `vendor/block` contains version 0.1.6 by
 Steven Sheldon, declared MIT in its upstream package manifest; that release
@@ -18,6 +20,12 @@ with its upstream `LICENSE-APACHE`. Its `RUNYTE-PATCH.md` lists the removed
 example programs and the modified files, which carry a modification notice.
 The changes schedule Linux frames on demand. The vendored files keep their
 Apache-2.0 license and are not relicensed under Runyte's MPL-2.0.
+
+`vendor/stylo_derive` retains Stylo's MPL-2.0 source headers and metadata from
+crates.io version 0.22.0 (<https://github.com/servo/stylo>). Four generated
+successful formatting results explicitly name `std::fmt::Error` so Stylo can
+compile alongside GPUI's structured logging dependencies. Provenance and removal
+conditions are in `vendor/stylo_derive/RUNYTE-PATCH.md`.
 
 ## Built-in color themes
 
@@ -349,9 +357,9 @@ artwork and have not been given textual SPDX headers.
 
 This entry supersedes the AI-generated `logo/R.png` that these files replaced.
 
-## Experimental native frontend dependencies
+## Desktop edition frontend dependencies
 
-The optional `native` feature links GPUI 0.2.2, Zed Industries' Rust UI
+This section applies only to the desktop edition. It links GPUI 0.2.2, Zed Industries' Rust UI
 framework, under Apache-2.0. Source: <https://github.com/zed-industries/zed>;
 published crate: <https://crates.io/crates/gpui/0.2.2>. A locally patched copy
 is built from `vendor/gpui` (see above). The adapter is Runyte-authored and does
@@ -378,7 +386,7 @@ CMaps; and CC0 terms for the CGATS color profile. These are unmodified upstream
 assets included through the pinned crate distributions.
 
 Fallback rasterization invokes separately installed Poppler utilities through
-argument vectors. Poppler is neither linked nor bundled by this experiment.
+argument vectors. Poppler is neither linked nor bundled by Runyte.
 The two-page PDF test fixture in `crates/runyte-native/src/tests/fixtures/` is
 Runyte-authored, containing solid-color rectangles and short Helvetica text samples.
 
@@ -402,14 +410,15 @@ The native build carries a compatibility-patched copy of proc-macro-error2 2.0.1
 LICENSE-APACHE and RUNYTE-PATCH.md for provenance and the single source change.
 
 
-## Experimental native document preview helper
+## Desktop edition document preview helper
 
-The separately built helper in `contrib/document-preview` uses
+This section applies only to the desktop edition. The `crates/runyte-preview`
+library, linked into the desktop executable and run in an isolated helper, uses
 [Blitz](https://github.com/DioxusLabs/blitz) at
 `74fe1abf090732524c86d96e6cdb6f95d8f8d6dc` (MIT OR Apache-2.0),
 AnyRender/Vello CPU, Pulldown-cmark (MIT), Syntect (MIT), and their locked
 transitive dependencies. Blitz integrates Stylo (MPL-2.0), Taffy, Parley and
 usvg. Their upstream license terms remain applicable when distributing the
-helper. The helper has a separate Cargo.lock and is not linked into the normal
-terminal build. Its `preview.css` is original Runyte MPL-2.0 code; no GitHub CSS
+desktop edition. The engine shares the workspace `Cargo.lock` and is not linked
+into the terminal edition. Its `preview.css` is original Runyte MPL-2.0 code; no GitHub CSS
 has been copied.

@@ -1,16 +1,14 @@
 # Native document preview prototype
 
-Desktop packages already include the helper beside Runyte, so no helper build
-or environment override is needed. See [desktop packaging](../packaging/README.md).
+Desktop packages include preview in the editor executable. See
+[desktop packaging](../../contrib/packaging/README.md).
 
-Build both executables from this checkout (a current stable Rust toolchain and
+Build the desktop executable from this checkout (a current stable Rust toolchain and
 Runyte's native platform prerequisites are required):
 
 ```sh
-cargo build --locked --features native
-cargo build --locked --release --manifest-path contrib/document-preview/Cargo.toml
-export RUNYTE_PREVIEW_HELPER="$PWD/contrib/document-preview/target/release/runyte-preview-helper"
-./target/debug/runyte --window --editor contrib/document-preview/fixtures/markdown.md
+cargo build --locked --release -p runyte-desktop
+./target/release/runyte-desktop --window --editor crates/runyte-preview/fixtures/markdown.md
 ```
 
 The dismissal fix uses private client/host protocol 77. Before upgrading an
@@ -18,11 +16,10 @@ existing persistent session, save work and stop it using its compatible client,
 then relaunch with the rebuilt binary. Restarting only the window is insufficient
 when its host still runs the old binary.
 
-The helper can alternatively be installed beside the Runyte executable as
-`runyte-preview-helper`. It has its own locked dependency graph; default and
-native Runyte builds do not link Blitz. No browser installation is needed.
-The optimized helper is recommended for interactive scrolling. A debug helper
-works too, but CPU rasterization is considerably slower. The native worker retains
+The desktop executable links the engine and runs it in a bounded child using
+`--helper preview --serve`. There is one workspace lockfile; the terminal
+edition does not link Blitz. No browser installation is needed. A release build
+is recommended for interactive scrolling. The native worker retains
 the current document, fonts and renderer across scroll/selection requests. It
 releases the helper when all previews close or after 30 seconds without a request;
 changing the pane/capture replaces its cache. Resizing and zooming relayout the
@@ -155,18 +152,16 @@ inertia or keyboard-scroll animation is added; precise trackpad deltas survive.
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-cargo clippy --features native --all-targets -- -D warnings
-cargo test --features native --bin runyte native_frontend
-cargo llvm-cov --locked --workspace
-cargo fmt --manifest-path contrib/document-preview/Cargo.toml --check
-cargo clippy --manifest-path contrib/document-preview/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path contrib/document-preview/Cargo.toml
-python3 contrib/document-preview/check.py
+cargo llvm-cov --locked --package runyte
+cargo fmt --all --check
+cargo clippy -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
+cargo test -p runyte-native -p runyte-desktop -p runyte-preview
+python3 crates/runyte-preview/check.py --binary target/release/runyte-desktop
 # Dedicated X11 display only: the test owns its clipboard.
-DISPLAY=:95 python3 tests/native_window.py --document-preview --preview-helper "$RUNYTE_PREVIEW_HELPER" --output /tmp/runyte-preview-captures
+DISPLAY=:95 python3 tests/native_window.py --document-preview --binary target/release/runyte-desktop --output /tmp/runyte-preview-captures
 ```
 
-`check.py` uses `RUNYTE_PREVIEW_HELPER`, falling back to the debug helper and tests actual Blitz selection, links,
+`check.py` accepts `--binary` (default `target/debug/runyte-desktop`) and tests actual Blitz selection, links,
 scrolling, 2× rendering, all formats, local asset denial and selected SVG dispatch.
 The GUI harness uses temporary workspace/configuration/runtime directories.
 The [document-preview reference](../../context/reference/native-document-preview.md)

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc,
@@ -56,12 +56,8 @@ pub(super) fn load(
     detail: Option<Detail>,
     cancel: &AtomicBool,
 ) -> Result<Raster> {
-    let executable = std::env::current_exe().context("locate bundled PDF helper")?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--native-pdf-helper")
-        .arg(path)
-        .arg(page.to_string());
+    let mut command = super::helper::command(super::helper::Role::Pdf)?;
+    command.arg(path).arg(page.to_string());
     if let Some(detail) = detail {
         validate_detail(detail)?;
         for value in detail
@@ -77,22 +73,6 @@ pub(super) fn load(
     decode(&output, detail)
 }
 
-struct Process {
-    child: Child,
-    #[cfg(unix)]
-    group: runyte::process_group::OwnedGroup,
-}
-impl Drop for Process {
-    fn drop(&mut self) {
-        // The helper never needs descendants. Kill its group as well so an
-        // inherited pipe cannot keep the bounded reader alive past cancellation.
-        #[cfg(unix)]
-        self.group.signal(libc::SIGKILL);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn run(
     command: &mut Command,
     cancel: &AtomicBool,
@@ -100,34 +80,9 @@ fn run(
     limit: usize,
 ) -> Result<Vec<u8>> {
     ensure!(!cancel.load(Ordering::Acquire), "PDF rendering cancelled");
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("start bundled Hayro PDF helper")?;
-    // Keep the leader unreaped until group cleanup, so its numeric identity
-    // cannot be recycled while descendants still hold the output pipe.
-    #[cfg(unix)]
-    let group = {
-        use runyte::process_group::{self, GroupAnchor, Site};
-        process_group::record_spawn("pdf", "bundled PDF helper", child.id());
-        process_group::claim_anchored_group(
-            Site::new("pdf", "helper cleanup"),
-            child.id() as libc::pid_t,
-            GroupAnchor::RunningLeader,
-        )
-    };
-    let mut child = Process {
-        child,
-        #[cfg(unix)]
-        group,
-    };
+    let mut child = super::helper::Process::spawn(command, super::helper::Role::Pdf)?;
+    // PDF has no input; close the pipe before waiting for its output.
+    child.child.stdin.take();
     let mut stdout = child.child.stdout.take().unwrap();
     let (send, receive) = mpsc::sync_channel(1);
     let reader = std::thread::Builder::new()
@@ -167,10 +122,7 @@ fn run(
                 }
                 Err(_) => std::thread::sleep(Duration::from_millis(10)),
             }
-            #[cfg(unix)]
-            let status = runyte::process_group::completed_without_reaping(&child.child)?;
-            #[cfg(not(unix))]
-            let status = child.child.try_wait()?;
+            let status = child.status()?;
             if let Some(status) = status {
                 ensure!(status.success(), "Hayro PDF helper failed ({status})");
                 if let Some(output) = output.take() {

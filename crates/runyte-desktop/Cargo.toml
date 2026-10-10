@@ -14,3 +14,8 @@ path = "src/main.rs"
 anyhow = "1.0"
 runyte = { path = "../.." }
 runyte-native = { path = "../runyte-native" }
+runyte-preview = { path = "../runyte-preview" }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"

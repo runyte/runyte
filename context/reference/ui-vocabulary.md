@@ -828,4 +828,4 @@ source buffer, not a rendered-page buffer or a browser pane. A bounded capture
 contains selected text or the entire current buffer. Engine types, raster,
 scroll and document-text selection belong to the native frontend and its helper.
 The source buffer keeps its editing state. See the
-[prototype lifecycle](../../contrib/document-preview/README.md).
+[prototype lifecycle](../../crates/runyte-preview/README.md).

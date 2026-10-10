@@ -11,6 +11,7 @@ mod cells;
 #[cfg(not(windows))]
 mod clipboard;
 mod grid;
+pub mod helper;
 mod icon;
 mod input_queue;
 mod interactions;

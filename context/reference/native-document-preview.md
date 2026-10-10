@@ -6,7 +6,7 @@ merged into `exp` through `de5c743` on 2026-10-09. The dated evidence below
 originated in the investigation from `6c478af` on `exp-html`.
 This is a static document experiment, not implementation of the
 [broader browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
-The [prototype guide](../../contrib/document-preview/README.md) contains exact
+The [prototype guide](../../crates/runyte-preview/README.md) contains exact
 build/run instructions, fixtures, controls, resource policy and supported subset.
 
 ## Implementation and ownership
@@ -22,8 +22,9 @@ and `:markdown` behavior remains separate.
 Shared state holds bounded, presentation-neutral text captures keyed by pane.
 Private bundled-client protocol version 77 carries captures and dismissals.
 Native views own scroll, hit coordinates, selection and images. Blitz types exist only in the
-separate, locked `contrib/document-preview` helper crate. The root dependency graph
-is unchanged. A split initially shows source; each pane opts in independently.
+workspace library `crates/runyte-preview`, linked only into the desktop edition.
+The desktop executable dispatches `--helper preview` before editor startup; the
+workspace shares one lockfile. The terminal edition does not link the engine. A split initially shows source; each pane opts in independently.
 Switching source or closing drops the frontend view and cancels work. Returning
 to the same source/pane or reattaching can reopen an undismissed host capture
 with fresh presentation state. Escape, `q` and editing-key exits remove the
@@ -112,7 +113,7 @@ Checks completed:
   `cargo test`.
 - Native frontend unit tests, including overlay masks and helper cancellation.
 - Helper formatting, Clippy, seven formatting behavior tests and actual engine
-  acceptance via `contrib/document-preview/check.py`.
+  acceptance via `crates/runyte-preview/check.py`.
 - Canonical `cargo llvm-cov --locked --workspace`: **92.04% line coverage**, or
   149,218 of 162,118 lines. The enforced 89% floor was not changed. This measurement
   covers the default workspace; it does not claim helper/native raster coverage.
@@ -307,7 +308,7 @@ Desktop packaging now requires the helper and copies it beside the native
 editor, including into `Contents/MacOS` for local app bundles. The crates remain
 independent. The tag workflow builds both and publishes a separate Linux x86-64
 desktop archive only after engine and window acceptance from an extracted copy.
-The window check omits the helper override to exercise sibling discovery.
+The window check exercises internal helper launch from the packaged editor.
 Terminal artifacts and their curl installer remain unchanged. Native CI builds
 and checks the macOS bundle's engine, but macOS desktop publication remains
 withheld pending window acceptance. Packaging commands and platform requirements
@@ -320,3 +321,102 @@ archive passed the real engine suite and X11/lavapipe window acceptance with
 sibling helper discovery, selection/copy, scrolling, pane focus, resize and
 return to source. macOS bundle layout is covered by the packaging tests; no
 macOS runtime validation was performed locally.
+
+## Shared desktop lock (editions Phase 4)
+
+The separate preview lock was folded into the workspace lock. Blitz remains at
+`74fe1abf090732524c86d96e6cdb6f95d8f8d6dc` and Taffy at
+`2d936b7701f64b0fe95e50f1bfdcfc65a9f88f6f`. (Full source revisions are in the
+manifest.) GPUI and Fontique now both select dynamic Fontconfig loading on
+Linux. The local Stylo derive patch supplies explicit formatting error types;
+see `vendor/stylo_derive/RUNYTE-PATCH.md`.
+
+The table lists every preview package whose version set differs in the shared
+lock. Multiple versions can represent independent GPUI/core and preview branches;
+a newly present parallel version does not necessarily change preview's resolved
+edge. Packages present only in the root graph are omitted.
+
+| Package | Previous preview lock | Shared workspace lock |
+| --- | --- | --- |
+| `aho-corasick` | 1.1.5 | 1.1.4 |
+| `base64` | 0.23.1 | 0.22.1, 0.23.1 |
+| `bitflags` | 2.13.2 | 1.3.2, 2.13.1 |
+| `cfg-if` | 1.0.5 | 1.0.4 |
+| `darling` | 0.20.11 | 0.20.11, 0.23.0 |
+| `darling_core` | 0.20.11 | 0.20.11, 0.23.0 |
+| `darling_macro` | 0.20.11 | 0.20.11, 0.23.0 |
+| `derive_more` | 2.1.1 | 0.99.20, 2.1.1 |
+| `displaydoc` | 0.2.7 | 0.2.5 |
+| `either` | 1.19.0 | 1.17.0 |
+| `fastrand` | 2.5.0 | 1.9.0, 2.5.0 |
+| `fearless_simd` | 0.7.0 | 0.7.0, 1.1.0 |
+| `foldhash` | 0.2.0 | 0.1.5, 0.2.0 |
+| `fontdb` | 0.24.0 | 0.16.2, 0.23.0, 0.24.0 |
+| `futures-core` | 0.3.34 | 0.3.33 |
+| `futures-task` | 0.3.34 | 0.3.33 |
+| `futures-util` | 0.3.34 | 0.3.33 |
+| `hashbrown` | 0.17.1 | 0.14.5, 0.15.5, 0.16.1, 0.17.1 |
+| `heck` | 0.5.0 | 0.4.1, 0.5.0 |
+| `idna_adapter` | 1.2.2 | 1.2.1 |
+| `imagesize` | 0.15.0 | 0.13.0, 0.15.0 |
+| `indexmap` | 2.14.2 | 2.14.0 |
+| `itertools` | 0.14.0 | 0.13.0, 0.14.0 |
+| `js-sys` | 0.3.106 | 0.3.103 |
+| `kurbo` | 0.13.1 | 0.11.3, 0.13.1 |
+| `libc` | 0.2.190 | 0.2.189 |
+| `litemap` | 0.8.3 | 0.8.2 |
+| `log` | 0.4.34 | 0.4.33 |
+| `objc2` | 0.6.5 | 0.6.4 |
+| `phf` | 0.14.0 | 0.13.1, 0.14.0 |
+| `phf_generator` | 0.14.0 | 0.13.1, 0.14.0 |
+| `phf_macros` | 0.14.0 | 0.13.1, 0.14.0 |
+| `phf_shared` | 0.14.0 | 0.13.1, 0.14.0 |
+| `png` | 0.18.1 | 0.17.16, 0.18.1 |
+| `potential_utf` | 0.1.6 | 0.1.5 |
+| `powerfmt` | 0.2.1 | 0.2.0 |
+| `quick-xml` | 0.42.0 | 0.41.0, 0.42.0 |
+| `read-fonts` | 0.41.0 | 0.41.0, 0.43.3 |
+| `redox_syscall` | 0.5.18 | 0.2.16, 0.5.18 |
+| `regex-automata` | 0.4.18 | 0.4.16 |
+| `rustc-hash` | 2.1.3 | 1.1.0, 2.1.3 |
+| `serde_spanned` | 1.1.2 | 0.6.9, 1.1.1 |
+| `skrifa` | 0.44.0 | 0.44.0, 0.46.2 |
+| `smallvec` | 1.16.2 | 1.15.2 |
+| `smol_str` | 0.3.6 | 0.2.2, 0.3.2 |
+| `strum` | 0.28.0 | 0.26.3, 0.27.2, 0.28.0 |
+| `strum_macros` | 0.28.0 | 0.26.4, 0.27.2, 0.28.0 |
+| `svgtypes` | 0.16.1 | 0.15.3, 0.16.1 |
+| `syn` | 2.0.119, 3.0.6 | 1.0.109, 2.0.119, 3.0.3 |
+| `synstructure` | 0.13.2, 0.14.0 | 0.13.2 |
+| `taffy` | 0.14.0 | 0.14.0, 0.9.0 |
+| `tendril` | 0.5.1 | 0.4.3, 0.5.1 |
+| `thiserror` | 2.0.21 | 1.0.69, 2.0.19 |
+| `thiserror-impl` | 2.0.21 | 1.0.69, 2.0.19 |
+| `time` | 0.3.55 | 0.3.54 |
+| `tiny-skia-path` | 0.12.0 | 0.11.4, 0.12.0 |
+| `toml` | 1.1.8+spec-1.1.0 | 0.8.23, 1.1.6+spec-1.1.0 |
+| `toml_datetime` | 1.1.2+spec-1.1.0 | 0.6.11, 1.1.1+spec-1.1.0 |
+| `toml_parser` | 1.1.5+spec-1.1.0 | 1.1.3+spec-1.1.0 |
+| `toml_writer` | 1.1.3+spec-1.1.0 | 1.1.2+spec-1.1.0 |
+| `unicode-ident` | 1.0.26 | 1.0.24 |
+| `usvg` | 0.48.1 | 0.45.1, 0.48.1 |
+| `wasm-bindgen` | 0.2.129 | 0.2.126 |
+| `wasm-bindgen-macro` | 0.2.129 | 0.2.126 |
+| `wasm-bindgen-macro-support` | 0.2.129 | 0.2.126 |
+| `wasm-bindgen-shared` | 0.2.129 | 0.2.126 |
+| `windows` | 0.62.2 | 0.56.0, 0.61.3, 0.62.2 |
+| `windows-collections` | 0.3.2 | 0.2.0, 0.3.2 |
+| `windows-core` | 0.62.2 | 0.56.0, 0.61.2, 0.62.2 |
+| `windows-future` | 0.3.2 | 0.2.1, 0.3.2 |
+| `windows-implement` | 0.60.2 | 0.56.0, 0.60.2 |
+| `windows-interface` | 0.59.3 | 0.56.0, 0.59.3 |
+| `windows-link` | 0.2.1 | 0.1.3, 0.2.1 |
+| `windows-numerics` | 0.3.1 | 0.2.0, 0.3.1 |
+| `windows-result` | 0.4.1 | 0.1.2, 0.3.4, 0.4.1 |
+| `windows-strings` | 0.5.1 | 0.3.1, 0.4.2, 0.5.1 |
+| `windows-sys` | 0.61.2 | 0.48.0, 0.52.0, 0.59.0, 0.60.2, 0.61.2 |
+| `windows-threading` | 0.2.1 | 0.1.0, 0.2.1 |
+| `winnow` | 1.0.4 | 0.7.15, 1.0.4 |
+| `yoke-derive` | 0.8.4 | 0.8.2 |
+| `zerofrom` | 0.1.8 | 0.1.7 |
+| `zerofrom-derive` | 0.1.8 | 0.1.7 |

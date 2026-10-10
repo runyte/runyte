@@ -4156,7 +4156,7 @@ Desktop packages include the separate helper beside the editor, including inside
 local macOS app bundles. The Linux x86-64 desktop release archive requires glibc
 2.39 or newer and the native runtime dependencies; the terminal archives and
 curl installer remain separate. See the [desktop packaging guide](../contrib/packaging/README.md).
-For a checkout build, use the [prototype instructions](../contrib/document-preview/README.md).
+For a checkout build, use the [prototype instructions](../crates/runyte-preview/README.md).
 Markdown uses proportional GitHub-like typography; static HTML and SVG render
 graphically. JSON is pretty-printed when valid and retains its original text
 with a diagnostic otherwise. YAML retains its comments, structure and ordering.

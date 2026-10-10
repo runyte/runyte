@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Exercise the real Blitz helper without a window; no external Python packages."""
+import argparse
+import tempfile
 import json
 import os
 import pathlib
@@ -7,14 +9,19 @@ import subprocess
 import time
 
 root = pathlib.Path(__file__).resolve().parent
-helper = pathlib.Path(os.environ.get('RUNYTE_PREVIEW_HELPER', root / 'target/debug/runyte-preview-helper'))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--binary', type=pathlib.Path, default=root.parents[1] / 'target/debug/runyte-desktop')
+args = parser.parse_args()
+helper = [str(args.binary.resolve()), '--helper', 'preview']
+config = tempfile.TemporaryDirectory(prefix='runyte-preview-config-')
+env = {**os.environ, 'XDG_CONFIG_HOME': config.name}
 
 def render(text, language='html', **kwargs):
     request = dict(text=text, language=language, path=None, width=640, height=360,
                    scale=1, scroll=[0, 0], selection=None)
     request.update(kwargs)
     start = time.monotonic()
-    result = subprocess.run([str(helper)], input=json.dumps(request).encode(), capture_output=True, timeout=6)
+    result = subprocess.run(helper, input=json.dumps(request).encode(), env=env, capture_output=True, timeout=6)
     assert result.returncode == 0, result.stderr.decode(errors='replace')
     header, pixels = result.stdout.split(b'\n', 1)
     header = json.loads(header)
@@ -78,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='runyte-preview-assets-') as temp:
         assert rejected == denied, reference
 render('<html><style>body { background: white }</style><h1>Malformed <b>document')
 request = dict(text='x'*131073, language='text',path=None,width=640,height=360,scale=1,scroll=[0,0],selection=None)
-result = subprocess.run([str(helper)],input=json.dumps(request).encode(),capture_output=True,timeout=6)
+result = subprocess.run(helper,input=json.dumps(request).encode(),env=env, capture_output=True,timeout=6)
 assert result.returncode != 0 and b'budget' in result.stderr
 print('Traversal/symlink denial, malformed HTML and oversized-input rejection passed')
 
@@ -94,7 +101,7 @@ print('Large viewport with reduced raster resolution preserves selection')
 # Retained process: preserve fractional offsets, clear selection, resize, zoom,
 # and replace the captured document without retaining stale text or pixels.
 import statistics
-server = subprocess.Popen([str(helper), '--serve'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+server = subprocess.Popen([*helper, '--serve'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 def update(request):
     start = time.monotonic()
     server.stdin.write(json.dumps(request).encode() + b'\n')

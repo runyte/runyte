@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Write},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{ChildStdin, ChildStdout},
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -278,66 +278,20 @@ fn raster_viewport(width: f32, height: f32, display_scale: f32) -> (u32, u32, f3
 }
 
 struct Helper {
-    child: Child,
+    child: super::helper::Process,
     pipes: Option<(ChildStdin, BufReader<ChildStdout>)>,
     errors: Arc<Mutex<Vec<u8>>>,
 }
-impl Drop for Helper {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 impl Helper {
     fn start() -> Result<Self, String> {
-        let path = std::env::var_os("RUNYTE_PREVIEW_HELPER")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .map(|p| p.with_file_name("runyte-preview-helper"))
-            })
-            .ok_or("Cannot locate preview helper")?;
-        let mut command = Command::new(path);
-        command
-            .arg("--serve")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt;
-            // Wall time is bounded per request; CPU rlimits accumulate across requests.
-            unsafe {
-                command.pre_exec(|| {
-                    let memory = libc::rlimit {
-                        rlim_cur: 2 * 1024 * 1024 * 1024,
-                        rlim_max: 2 * 1024 * 1024 * 1024,
-                    };
-                    if libc::setrlimit(libc::RLIMIT_AS, &memory) != 0 {
-                        return Err(io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-        }
-        let mut child = command.spawn().map_err(|e| format!("Preview helper unavailable: {e}. Build contrib/document-preview and set RUNYTE_PREVIEW_HELPER."))?;
-        let input = child.stdin.take().unwrap();
-        let output = BufReader::new(child.stdout.take().unwrap());
-        let mut stderr = child.stderr.take().unwrap();
-        let errors = Arc::new(Mutex::new(Vec::new()));
-        let retained = errors.clone();
-        std::thread::spawn(move || {
-            let mut block = [0; 4096];
-            while let Ok(count) = stderr.read(&mut block) {
-                if count == 0 {
-                    break;
-                }
-                let mut bytes = retained.lock().unwrap();
-                let remaining = 4096usize.saturating_sub(bytes.len());
-                bytes.extend_from_slice(&block[..count.min(remaining)]);
-            }
-        });
+        let mut command =
+            super::helper::command(super::helper::Role::Preview).map_err(|e| e.to_string())?;
+        command.arg("--serve");
+        let mut child = super::helper::Process::spawn(&mut command, super::helper::Role::Preview)
+            .map_err(|e| format!("Document preview could not start: {e:#}"))?;
+        let input = child.child.stdin.take().unwrap();
+        let output = BufReader::new(child.child.stdout.take().unwrap());
+        let errors = child.errors.clone();
         Ok(Self {
             child,
             pipes: Some((input, output)),
@@ -421,7 +375,7 @@ fn render_request(
     let (reply, mut pixels) = match result {
         Ok(value) => value,
         Err(error) => {
-            let status = process.child.try_wait().ok().flatten();
+            let status = process.child.status().ok().flatten();
             let diagnostic: String = String::from_utf8_lossy(&process.errors.lock().unwrap())
                 .chars()
                 .map(|c| if c.is_control() { ' ' } else { c })

@@ -291,7 +291,9 @@ and the order of the push. Do not infer any of those from the commit history.
   clipboard, media workers, PDF helpers and document-preview presentation.
   `crates/runyte-desktop/` supplies the executable and passes the window adapter to the
   shared `src/cli.rs` and `src/cli/` startup and event loops. Preview engine
-  dependencies remain in `contrib/document-preview` until helper integration.
+  dependencies stay in `crates/runyte-preview`, linked into the desktop executable.
+  `crates/runyte-native/src/helper.rs` owns same-build helper launch, executable
+  identity checks, bounded stderr and process-group cleanup.
   Ownership and limits live in `context/reference/native-window-experiment.md`
   and `context/reference/native-document-preview.md`.
 - `src/ui.rs`: Ratatui rendering.
@@ -360,6 +362,6 @@ cargo test
 When a change can affect the desktop edition, also run:
 
 ```sh
-cargo clippy -p runyte-native -p runyte-desktop --all-targets -- -D warnings
-cargo test -p runyte-native -p runyte-desktop
+cargo clippy -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
+cargo test -p runyte-native -p runyte-desktop -p runyte-preview
 ```

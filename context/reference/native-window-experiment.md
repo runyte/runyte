@@ -123,7 +123,7 @@ animation loop. Unused image textures are explicitly removed from the atlas.
 
 Hayro 0.8 is the default PDF backend, pinned with its interpreter and syntax
 crates behind `native` (Rust 1.92; default-feature MSRV remains 1.88).
-`--native-pdf-helper` runs before frontend initialization. Each request owns a
+`--helper pdf` runs before frontend initialization. Each request owns a
 fresh parser/cache in a killable process: 128 MiB input, 1–10,000 pages,
 15-second wall/CPU limits, 1 GiB address space (plus initial mappings on macOS),
 and bounded metadata/RGBA output. The pipe reader rejects overflow while reading;
@@ -164,7 +164,7 @@ buffer through a separately built Blitz helper. Host state owns captures and
 dismissals; the frontend owns scroll, selection and cached rasters. Source
 editing state is preserved. The [document-preview reference](native-document-preview.md)
 records ownership, rendering boundaries, lifecycle and dated verification; the
-[prototype guide](../../contrib/document-preview/README.md) covers build steps,
+[prototype guide](../../crates/runyte-preview/README.md) covers build steps,
 controls and resource limits. This static preview does not implement the
 [browser-pane proposal](../plans/proposed/PLAN_BROWSER_PANES.md).
 
@@ -567,3 +567,65 @@ With 60 isolated keys at 120×40, the same debug/software-rendered setup measure
 the CI idle limit of 30. These are debug/software-display results, not comparable
 to the earlier release/Radeon latency measurements. Real Wayland desktop and
 macOS runtime validation remain outstanding.
+
+## Editions Phase 4: one desktop executable (2026-10-10)
+
+Document preview now links into `runyte-desktop` and runs as a bounded child
+through `--helper preview`; PDF uses `--helper pdf`. Both launch through the
+shared process-group and executable-identity owner. The terminal edition retains
+its own dependency graph; the shared lock updates its ICU subtree to the versions
+required by the pinned preview engine, without raising Rust 1.88.
+
+Linux x86-64 release measurements compare the Phase 3 implementation (`e5a0993`)
+with the integrated executable, using Rust 1.97.1 and the same fixtures/harnesses:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Stripped desktop executable, bytes | 92,197,552 | 106,833,936 |
+| First `--version` after advisory file-cache eviction, ms | 15.633 | 18.148 |
+| Ten warm fresh `--version` processes, median ms | 2.913 | 3.591 |
+| Xvfb/lavapipe window mapping, ms | 201.430 | 200.826 |
+| 120×40 window, 60-key latency median / p90 / max, ms | 6.20 / 6.84 / 7.35 | 6.87 / 8.07 / 9.12 |
+| Idle context switches / second | 9.2 | 9.0 |
+| PDF helper peak address space, bytes | 113,078,272 | 127,721,472 |
+| PDF headroom under the 1 GiB Linux limit | 89.47% | 88.11% |
+| Stripped terminal executable, bytes | 56,096,832 | 56,103,616 |
+
+File-cache eviction uses `posix_fadvise(DONTNEED)`, which is a hint rather than
+proof of a cold disk. Window mapping is polled at 100 ms and does not measure
+complete first paint. The same largest checked-in PDF fixture (937 bytes) is
+used for both memory measurements; this is a regression check, not a bound for
+all PDFs. Headroom remains well above the 25% stop threshold. These are single
+machine observations, not a platform-wide latency guarantee.
+
+Real preview acceptance passes through the release executable, including
+selection at fractional and doubled scales, retained scroll, zoom, resize,
+asset denial and malformed/oversized input. Packaged X11 acceptance passes,
+including scrolling while the preview child is paused, overlay composition,
+clipboard, Escape and selected-section captures. PDF acceptance also passes
+with Poppler absent from PATH. The release build reports zero dependency
+future-incompatibility warnings.
+
+Terminal startup medians (five runs, first document content emitted, isolated
+120×40 PTY) were 16/16/24/96 ms for short/medium/long/huge text and
+13/12/21/86 ms for the Lua fixtures, compared with 12/13/23/97 ms and
+15/12/20/106 ms before integration. Idle CPU remains 0.10% across three
+independent ten-second windows, with zero screen writes.
+
+Because short text initially moved by a few milliseconds, a direct comparison
+then measured the preserved Phase 3 terminal binary and the new terminal binary
+in the same harness run, ten samples per fixture. First-content medians were:
+
+| Fixture | Before, ms | After, ms |
+| --- | ---: | ---: |
+| short text | 12 | 12 |
+| medium text | 16 | 15 |
+| long text | 23 | 21 |
+| huge text | 114 | 100 |
+| short Lua | 15 | 13 |
+| medium Lua | 15 | 14 |
+| long Lua | 23 | 21 |
+| huge Lua | 72 | 71 |
+
+This paired run shows no terminal startup regression. The variation between
+separate runs is why the isolated initial medians are retained above too.

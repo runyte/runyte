@@ -44,35 +44,43 @@ fn default_zoom() -> f32 {
     1.0
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// Render bounded newline-delimited requests, retaining document layout between frames.
+pub fn serve(
+    mut input: impl BufRead,
+    mut output: impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = None;
-    if std::env::args().any(|a| a == "--serve") {
-        let mut input = std::io::stdin().lock();
-        loop {
-            let mut line = Vec::new();
-            input
-                .by_ref()
-                .take(1024 * 1024 + 1)
-                .read_until(b'\n', &mut line)?;
-            if line.is_empty() {
-                break;
-            }
-            if line.len() > 1024 * 1024 || line.last() != Some(&b'\n') {
-                return Err("request exceeds 1 MiB or lacks framing".into());
-            }
-            render(serde_json::from_slice(&line)?, &mut cache)?;
-        }
-    } else {
-        let mut input = Vec::new();
-        std::io::stdin()
+    loop {
+        let mut line = Vec::new();
+        input
+            .by_ref()
             .take(1024 * 1024 + 1)
-            .read_to_end(&mut input)?;
-        if input.len() > 1024 * 1024 {
-            return Err("request exceeds 1 MiB".into());
+            .read_until(b'\n', &mut line)?;
+        if line.is_empty() {
+            return Ok(());
         }
-        render(serde_json::from_slice(&input)?, &mut cache)?;
+        if line.len() > 1024 * 1024 || line.last() != Some(&b'\n') {
+            return Err("request exceeds 1 MiB or lacks framing".into());
+        }
+        render(serde_json::from_slice(&line)?, &mut cache, &mut output)?;
     }
-    Ok(())
+}
+
+/// Render one bounded JSON request, using the same wire as the retained helper.
+pub fn run_once(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+    input: impl Read,
+    mut output: impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.next().is_some() {
+        return Err("unknown preview helper argument".into());
+    }
+    let mut bytes = Vec::new();
+    input.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("request exceeds 1 MiB".into());
+    }
+    render(serde_json::from_slice(&bytes)?, &mut None, &mut output)
 }
 
 fn build_document(request: &Request) -> HtmlDocument {
@@ -184,7 +192,11 @@ fn viewport_independent(doc: &HtmlDocument) -> bool {
         })
 }
 
-fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std::error::Error>> {
+fn render(
+    request: Request,
+    cache: &mut Option<Cache>,
+    mut out: impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
     if request.text.len() > 128 * 1024
         || request.width == 0
         || request.height == 0
@@ -320,7 +332,6 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
         x: scroll[0],
         y: scroll[1],
     });
-    let mut out = std::io::stdout().lock();
     serde_json::to_writer(&mut out, &reply)?;
     out.write_all(b"\n")?;
     out.write_all(pixels)?;
