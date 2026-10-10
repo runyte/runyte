@@ -216,10 +216,18 @@ jobs:
           compression-level: 0
 
   desktop:
-    name: Build and accept Linux x86-64 desktop
+    name: Build and accept Linux desktop (${{ matrix.target }})
     needs: validate
     if: needs.validate.outputs.desktop == 'true'
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -251,10 +259,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
-          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
+          TARGET: ${{ matrix.target }}
         run: |
-          package_name="runyte-desktop-${VERSION}-x86_64-unknown-linux-gnu"
-          archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
+          package_name="runyte-desktop-${VERSION}-${TARGET}"
+          archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-${TARGET}.tar.xz"
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
           python3 contrib/packaging/package.py linux --binary target/release/runyte-desktop \
             --output "$RUNNER_TEMP/$package_name"
@@ -266,8 +274,8 @@ jobs:
       - name: Upload accepted desktop archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-desktop-x86_64-unknown-linux-gnu
-          path: ${{ runner.temp }}/runyte-desktop-${{ needs.validate.outputs.tag }}-x86_64-unknown-linux-gnu.tar.xz
+          name: release-desktop-${{ matrix.target }}
+          path: ${{ runner.temp }}/runyte-desktop-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.tar.xz
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -379,8 +387,10 @@ jobs:
           fi
 
           if [[ "$DESKTOP" == true ]]; then
-            test -f "dist/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
-            expected=$((expected + 1))
+            for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+              test -f "dist/runyte-desktop-${RELEASE_TAG}-${target}.tar.xz"
+            done
+            expected=$((expected + 2))
           fi
 
           (

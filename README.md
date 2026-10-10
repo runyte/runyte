@@ -373,7 +373,7 @@ On macOS, use the [native desktop packaging guide](contrib/packaging/README.md)
 to create a local `Runyte.app` with the same icon and bundled font notices.
 
 The [desktop packaging guide](contrib/packaging/README.md) packages one editor
-executable with its internal PDF and preview helpers. Linux x86-64 desktop
+executable with its internal PDF and preview helpers. Linux x86-64 and ARM64 desktop
 archives require Ubuntu 24.04 / glibc 2.39 or newer. macOS signed distribution
 is prepared separately. The curl installer and crates.io install the terminal
 edition.

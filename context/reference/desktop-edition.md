@@ -630,3 +630,28 @@ in the same harness run, ten samples per fixture. First-content medians were:
 
 This paired run shows no terminal startup regression. The variation between
 separate runs is why the isolated initial medians are retained above too.
+
+## Edition packaging acceptance — 2026-10-10
+
+The [desktop CI run for `ee80c9c`](https://github.com/runyte/runyte/actions/runs/38082924155)
+passes on native Ubuntu 24.04 x86-64 and ARM64 runners and macOS 15. Both Linux
+architectures pass extracted-package preview, PDF without Poppler, bundled-font
+window rendering, persistent-session handoff, animation, clipboard and font
+controls. Linux desktop archives can therefore be published for both targets.
+
+| Linux runner | Desktop line coverage | 60-key median / p90 / max, ms | Idle context switches / second |
+| --- | ---: | ---: | ---: |
+| x86-64 | 48.65% | 20.90 / 22.00 / 22.60 | 8.4 |
+| ARM64 | 48.64% | 27.14 / 28.79 / 30.62 | 9.2 |
+
+These are hosted-runner debug builds with Xvfb/lavapipe at 120×40, not release
+latency guarantees or a controlled cross-architecture comparison. Both exceed
+the 40% coverage floor and remain below the 30-per-second idle limit.
+
+macOS acceptance builds both architectures of the editor and native launcher,
+checks universal slices, the macOS 11 deployment floor and system-only dynamic
+libraries, then runs headless preview acceptance from the bundle. Unsigned DMG
+construction, read-only mounting, contents and detachment also pass. The bundle
+uses `RunyteLauncher` beside `runyte` to keep filenames distinct on default
+case-insensitive filesystems. Signing, notarization, quarantine/Finder launch
+and real macOS window acceptance remain the joint manual Phase 8 work.

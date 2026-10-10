@@ -18,7 +18,7 @@ not a dump of commit subjects. Release notes are drafted outside the working
 tree, so they do not become a third file in the release commit.
 
 The `Binary release` GitHub Actions workflow attaches five terminal archives,
-one Linux x86-64 desktop archive, and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
+two Linux desktop archives, and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
 native x86-64 and ARM64 Linux/macOS runners and an x86-64 Windows MSVC runner. Cargo publishing remains a
 manual local operation; the workflow never publishes to crates.io.
 
@@ -184,7 +184,7 @@ The example version below is 0.2.1. Substitute the real one.
     Terminal/Linux desktop builds and the publishing job must pass. The
     independent universal macOS desktop job does not block those assets; its
     failure blocks manual macOS distribution. The expected workflow assets are
-    six archives plus `SHA256SUMS` (seven files); the macOS app zip is only a
+    seven archives plus `SHA256SUMS` (eight files); the macOS app zip is only a
     workflow artifact. Diagnose a failed build;
     rerunning a failed job is safe because publishing replaces only assets
     with the expected names and preserves the release body.
@@ -193,8 +193,8 @@ The example version below is 0.2.1. Substitute the real one.
     quarantine and real-window acceptance in the editions plan's Phase 8.
     Upload `Runyte-<version>.dmg` and its separate `.dmg.sha256` only after that
     acceptance. These two manual assets are excluded from workflow `SHA256SUMS`,
-    which reruns regenerate. With the manual pair, the release has nine files;
-    otherwise it has the seven workflow files. No signing identity or notary
+    which reruns regenerate. With the manual pair, the release has ten files;
+    otherwise it has the eight workflow files. No signing identity or notary
     credential is stored in the repository.
 
 13. **Publish the `Changes` notes.** The workflow creates the GitHub Release
@@ -208,7 +208,7 @@ The example version below is 0.2.1. Substitute the real one.
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    rendered `Changes` list, six archives, and `SHA256SUMS`, plus the manual
+    rendered `Changes` list, seven archives, and `SHA256SUMS`, plus the manual
     DMG/checksum pair if macOS acceptance is complete. The GitHub Release
     is the published changes record; the temporary draft may then be removed.
 
@@ -289,8 +289,9 @@ The tag workflow publishes these files, where `<version>` includes its leading
 - `runyte-terminal-<version>-x86_64-apple-darwin.tar.xz`;
 - `runyte-terminal-<version>-aarch64-apple-darwin.tar.xz`;
 - `runyte-terminal-<version>-x86_64-pc-windows-msvc.zip`;
-- `runyte-desktop-<version>-x86_64-unknown-linux-gnu.tar.xz`; and
-- `SHA256SUMS`, covering all six archives.
+- `runyte-desktop-<version>-x86_64-unknown-linux-gnu.tar.xz`;
+- `runyte-desktop-<version>-aarch64-unknown-linux-gnu.tar.xz`; and
+- `SHA256SUMS`, covering all seven archives.
 
 Each terminal archive has one top-level directory named
 `runyte-terminal-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
@@ -301,32 +302,32 @@ notarized. Windows executables are also unsigned. The packaged README links to t
 
 To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
 `shasum -a 256 <archive>` on macOS and compare the complete digest with the
-archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all six archives permits the
+archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all seven archives permits the
 direct `sha256sum -c SHA256SUMS` or `shasum -a 256 -c SHA256SUMS` form.
 
 Build jobs keep only read access to repository contents. The final publishing
 job alone receives `contents: write`, through the workflow-provided
 `GITHUB_TOKEN`. Actions are pinned to complete commit hashes. A rerun checks
 out the immutable commit resolved from the requested tag, replaces only the
-seven expected assets, and neither recreates nor moves the tag. Build-provenance
+eight expected assets, and neither recreates nor moves the tag. Build-provenance
 attestations are deliberately omitted for now because they require additional
 permissions; archive checksums and exact-tag validation add no such authority.
 
-### Desktop release archive
+### Desktop release archives
 
 The separate desktop job builds the native editor and the locked
 `runyte-preview` workspace library from the same validated tag. It runs on Ubuntu
-24.04 x86-64, so the desktop archive has a glibc 2.39 floor; terminal artifacts
+24.04 x86-64 and ARM64, so the desktop archives have a glibc 2.39 floor; terminal artifacts
 retain their existing floor. Other desktop targets are not published until
 native window and preview acceptance has been established on them.
 
-`runyte-desktop-MAJOR.MINOR.PATCH-x86_64-unknown-linux-gnu/` contains `runyte`
+`runyte-desktop-MAJOR.MINOR.PATCH-<target>/` contains `runyte`
 with its internal helpers, `runed`, notices, icons, documentation
 and the Linux desktop registration script.
 The job extracts the completed archive and runs headless engine acceptance plus
 real `:preview` window acceptance on isolated Xvfb/lavapipe, without a helper
 environment override, before uploading. Publishing requires this job to succeed
-and includes the desktop archive in `SHA256SUMS`.
+and includes both desktop archives in `SHA256SUMS`.
 
 Historical tags without `crates/runyte-desktop/Cargo.toml` retain their original
 artifact set and `runyte-<tag>-<target>` names, and skip the desktop job. The independent `macos-desktop` job builds the desktop executable and native

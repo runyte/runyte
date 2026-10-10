@@ -12,12 +12,13 @@ workspace lockfile. Ordinary terminal builds do not compile the preview engine.
 
 ## Linux
 
-The release workflow builds an additional
-`runyte-desktop-v<version>-x86_64-unknown-linux-gnu.tar.xz` archive on Ubuntu
-24.04 (glibc 2.39 or newer). This desktop artifact is separate from the terminal
-archives and the curl installer. It requires the native runtime libraries and
-a working Vulkan driver described in the repository README. Publication is
-limited to Linux x86-64 until other platforms have window/preview acceptance.
+The release workflow builds desktop archives for Linux x86-64 and ARM64:
+`runyte-desktop-v<version>-<target>.tar.xz`, where `<target>` is
+`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`. Both use Ubuntu 24.04
+(glibc 2.39 or newer), separately from the terminal archives and curl installer.
+They require the native runtime libraries and a working Vulkan driver described
+in the repository README. Both architectures run the same window/preview
+acceptance before publication.
 
 Extract the archive to its final location and run `./runyte --window --editor`. Preview runs through the packaged executable. From that extracted directory, register a desktop launcher:
 

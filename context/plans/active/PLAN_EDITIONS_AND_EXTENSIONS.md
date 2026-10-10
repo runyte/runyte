@@ -1304,7 +1304,8 @@ publication package remains 777 files with no desktop dependencies in its
 normalized manifest. The phase review found no source correctness issue;
 its obsolete preview-guide verification commands were corrected.
 
-Phase 4 local acceptance is complete and independently reviewed. The combined
+Phase 4 is implemented in `0c0fb3c`; local acceptance is complete and
+independently reviewed. The combined
 stripped desktop executable is 106,833,936 bytes (previously 92,197,552),
 first/warm `--version` is 18.148/3.591 ms (15.633/2.913 before), window mapping
 is 200.826 ms (201.430 before), and PDF VmPeak is 127,721,472 bytes, leaving
@@ -1317,6 +1318,8 @@ native-window reference. The dependency-matching blocker is resolved; CI on the
 implementation commit remains the cross-platform confirmation.
 
 ### Phase 5 — edition identity, 2026-10-10
+
+Implemented in `148bc06`.
 
 Both executables identify their edition in `--version` and help. Terminal
 help omits `--window`; its refusal and the Windows desktop refusal share the
@@ -1346,6 +1349,12 @@ found no changes in their source paths or measured-path dependencies; budgets
 remain unchanged and these failures are not counted as accepted gates.
 
 ### Phase 6 — terminal archives, 2026-10-10
+
+Implementation commits are `0ed0835` (terminal archive names), `5352847`
+(native ARM64 validation), `66cb68d` (launcher), `922c11a` (universal app),
+and `702b83f` (disk image and signing tools). Native acceptance corrections
+are `941abd3` and `ee80c9c` (preview input), and `2cb4f19` (case-insensitive
+bundle filenames).
 
 The validated tag's desktop manifest now selects `runyte-terminal-` names and
 matching archive directories; historical tags retain their original names.
@@ -1439,3 +1448,18 @@ actual saved text and undo completion instead of assuming a 700 ms write budget.
 The deliberately slowed single-CPU acceptance now passes, as does persistent
 preview acceptance. Formatting, desktop clippy and desktop/native/preview tests
 pass; clean desktop coverage is 2,946/6,055 lines (48.65%, floor 40%).
+
+Native platform acceptance on `ee80c9c` is complete: desktop workflow
+`38082924155` passes on Linux x86-64, Linux ARM64 and macOS 15. Coverage is
+48.65% / 48.64% for the two Linux architectures. Both pass real package/window,
+preview, PDF, animation, clipboard and persistent-session acceptance. macOS
+passes universal bundle construction, deployment and dynamic-library checks,
+headless engines and unsigned disk-image layout checks. Manual Apple signing
+and real-window acceptance remain untouched.
+
+The accepted ARM64 target is now included in the Linux release matrix. Final
+independent review is clear. Eight release-packaging tests pass, and executing
+the archive verification block against temporary historical/modern layouts
+produces four, five and seven checksums respectively; deleting the ARM64 archive
+fails verification. New releases have seven archives plus `SHA256SUMS`, with
+the optional manual DMG/checksum pair bringing the total to ten assets.

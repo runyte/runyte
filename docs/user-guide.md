@@ -4173,7 +4173,7 @@ are joined in document order with a newline. A selected SVG diagram is rendered
 graphically even inside a Markdown or source document.
 
 Desktop packages include preview in the editor executable, including inside
-local macOS app bundles. The Linux x86-64 desktop release archive requires glibc
+local macOS app bundles. The Linux x86-64 and ARM64 desktop release archives require glibc
 2.39 or newer and the native runtime dependencies; the terminal archives and
 curl installer remain separate. See the [desktop packaging guide](../contrib/packaging/README.md).
 For a checkout build, use the [preview instructions](../crates/runyte-preview/README.md).
