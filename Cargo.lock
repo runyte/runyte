@@ -5277,31 +5277,21 @@ name = "runyte"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "arboard",
- "async-channel 2.5.0",
  "base64",
  "chrono",
  "crossterm",
  "futures-util",
- "gpui",
- "hayro",
- "hayro-interpret",
- "hayro-syntax",
- "image",
  "libc",
- "log",
  "lsp-types",
  "notify",
  "png 0.18.1",
  "ratatui",
  "regex",
  "ropey",
- "roxmltree",
  "serde",
  "serde_json",
  "serde_yaml",
  "shlex 2.0.1",
- "tempfile",
  "tokio",
  "trash",
  "tree-house",
@@ -5342,6 +5332,40 @@ dependencies = [
  "unicode-width",
  "url",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "runyte-desktop"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "runyte",
+ "runyte-native",
+]
+
+[[package]]
+name = "runyte-native"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "async-channel 2.5.0",
+ "crossterm",
+ "futures-util",
+ "gpui",
+ "hayro",
+ "hayro-interpret",
+ "hayro-syntax",
+ "image",
+ "libc",
+ "log",
+ "ratatui",
+ "roxmltree",
+ "runyte",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "x11rb",
 ]
 

@@ -19,11 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub(in crate::native_frontend) fn page(
-    path: &Path,
-    number: usize,
-    detail: Option<Detail>,
-) -> Result<Raster> {
+pub(crate) fn page(path: &Path, number: usize, detail: Option<Detail>) -> Result<Raster> {
     let diagnostics = super::diagnostics::Scope::new()?;
     let file = std::fs::File::open(path)?;
     ensure!(

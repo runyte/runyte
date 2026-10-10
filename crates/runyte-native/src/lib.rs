@@ -8,12 +8,14 @@ pub use window::WINDOW;
 
 mod animation;
 mod cells;
+#[cfg(not(windows))]
+mod clipboard;
 mod grid;
 mod icon;
 mod input_queue;
 mod interactions;
 mod media;
-pub(crate) mod pdf;
+pub mod pdf;
 mod preview;
 mod viewport;
 
@@ -153,7 +155,7 @@ impl MediaInputMask {
         self.blocked.iter().any(contains)
     }
 }
-pub struct NativeInput {
+pub(crate) struct NativeInput {
     attachment: u64,
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
@@ -241,13 +243,13 @@ impl Bridge {
 }
 static BRIDGE: OnceLock<Arc<Bridge>> = OnceLock::new();
 
-pub fn take_close_request() -> bool {
+pub(crate) fn take_close_request() -> bool {
     BRIDGE
         .get()
         .is_some_and(|bridge| bridge.close_requested.swap(false, Ordering::AcqRel))
 }
 
-pub fn update_media(app: &mut runyte::app::App) {
+pub(crate) fn update_media(app: &mut runyte::app::App) {
     let Some(bridge) = BRIDGE.get() else { return };
     for (attachment, pane, generation) in bridge.preview_dismissals.lock().unwrap().drain(..) {
         if attachment == bridge.attachment.load(Ordering::Acquire) {
@@ -277,7 +279,7 @@ pub fn update_media(app: &mut runyte::app::App) {
     }
 }
 
-pub fn capture_media(
+pub(crate) fn capture_media(
     snapshot: &runyte::workspace::HostFrame,
     app: &mut runyte::app::App,
     hints: &runyte::key_hints::KeyHintState,
@@ -365,7 +367,7 @@ fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[med
 }
 
 /// Send navigation and fresh cached page counts for the displayed projections.
-pub fn attached_media_requests(
+pub(crate) fn attached_media_requests(
     snapshot: &runyte::workspace::HostFrame,
 ) -> Vec<runyte::protocol::ClientRequest> {
     use runyte::protocol::{ClientRequest, encode_path};
@@ -421,7 +423,7 @@ pub fn attached_media_requests(
     requests
 }
 
-pub fn begin_attachment() {
+pub(crate) fn begin_attachment() {
     let Some(bridge) = BRIDGE.get() else { return };
     bridge.attachment.fetch_add(1, Ordering::AcqRel);
     bridge.media_requests.lock().unwrap().clear();
@@ -433,7 +435,7 @@ pub fn begin_attachment() {
     *bridge.presented.lock().unwrap() = None;
 }
 
-pub fn receive_media_action(
+pub(crate) fn receive_media_action(
     frame: runyte::workspace::FrameId,
     request: runyte::media::ViewRequest,
 ) {
@@ -449,11 +451,11 @@ pub fn receive_media_action(
     let _ = bridge.wake.try_send(());
 }
 
-pub fn dimensions() -> (u16, u16) {
+pub(crate) fn dimensions() -> (u16, u16) {
     *BRIDGE.get().unwrap().dimensions.lock().unwrap()
 }
 
-pub fn capture_attached(snapshot: &runyte::workspace::HostFrame) {
+pub(crate) fn capture_attached(snapshot: &runyte::workspace::HostFrame) {
     let Some(bridge) = BRIDGE.get() else { return };
     bridge.media_input.store(
         snapshot.editor.mode != runyte::app::Mode::Command && snapshot.overlays.is_empty(),
@@ -463,7 +465,7 @@ pub fn capture_attached(snapshot: &runyte::workspace::HostFrame) {
     capture_snapshot_media(snapshot, &counts);
 }
 
-pub fn render_frame(
+pub(crate) fn render_frame(
     frame: &mut ratatui::Frame<'_>,
     app: &runyte::app::App,
     snapshot: &runyte::workspace::HostFrame,
@@ -477,7 +479,7 @@ pub fn render_frame(
     runyte::ui::render_native_frame(frame, snapshot, session, color_depth);
 }
 
-pub enum Surface {
+pub(crate) enum Surface {
     Tui(Terminal<CrosstermBackend<io::Stdout>>),
     Native(Terminal<grid::GridBackend>),
 }
@@ -567,7 +569,7 @@ fn draw_native_grid(
     Ok(())
 }
 
-pub enum Events {
+pub(crate) enum Events {
     Tui(EventStream),
     Native {
         attachment: Arc<AtomicU64>,
@@ -680,7 +682,7 @@ impl Events {
     }
 }
 
-pub fn launch(
+pub(crate) fn launch(
     worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
     font_size: usize,
 ) -> anyhow::Result<()> {
@@ -732,16 +734,16 @@ pub fn launch(
         cx.text_system()
             .add_fonts(vec![
                 std::borrow::Cow::Borrowed(include_bytes!(
-                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"
+                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"
                 )),
                 std::borrow::Cow::Borrowed(include_bytes!(
-                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"
+                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"
                 )),
                 std::borrow::Cow::Borrowed(include_bytes!(
-                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"
+                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"
                 )),
                 std::borrow::Cow::Borrowed(include_bytes!(
-                    "../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"
+                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"
                 )),
             ])
             .expect("load bundled JetBrains Mono Nerd Font faces");
@@ -1634,5 +1636,5 @@ impl EntityInputHandler for NativeView {
 }
 
 #[cfg(test)]
-#[path = "native_frontend/tests/input.rs"]
+#[path = "tests/input.rs"]
 mod tests;

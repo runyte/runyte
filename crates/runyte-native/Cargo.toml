@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "runyte-native"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+runyte = { path = "../.." }
+hayro = { version = "=0.8.0" }
+hayro-interpret = { version = "=0.8.0", features = ["logging"] }
+log = { version = "0.4" }
+hayro-syntax = { version = "=0.8.0" }
+arboard = { version = "3.6", features = ["wayland-data-control"] }
+roxmltree = { version = "0.20" }
+async-channel = { version = "2" }
+gpui = { version = "=0.2.2" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+tempfile = { version = "3" }
+anyhow = "1.0"
+crossterm = { version = "0.29", features = ["event-stream"] }
+futures-util = "0.3"
+libc = "0.2"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+tokio = { version = "1.47", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", default-features = false }

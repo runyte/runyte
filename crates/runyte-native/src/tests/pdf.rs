@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
-pub(in crate::native_frontend) fn document(
-    content: &str,
-    page_options: &str,
-    font: &str,
-) -> Vec<u8> {
+pub(crate) fn document(content: &str, page_options: &str, font: &str) -> Vec<u8> {
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),

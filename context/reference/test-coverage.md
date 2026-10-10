@@ -1587,3 +1587,30 @@ both selectors with `--no-run` against the same retained profiles, without
 rebuilding, produced exactly identical reports: all 261 file/total rows,
 including 150,025/163,044 lines. Package selection changes no measured source.
 The enforced terminal floor remains 89%.
+
+## 2026-10-10 — desktop edition baseline
+
+Linux x86-64, Rust 1.97.1, cargo-llvm-cov 0.9.1:
+
+```sh
+cargo llvm-cov --locked --package runyte-native --package runyte-desktop \
+  --ignore-filename-regex "$PWD/src/" --summary-only
+```
+
+The absolute root-source exclusion keeps the shared terminal/editor library
+out of the desktop report. The measured files belong only to the two desktop
+crates. The ordinary suite passes with 87 adapter tests and three existing
+ignored tests; real-window and PDF acceptance run separately.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 2,297 | 5,255 | 43.71% |
+| Functions | 251 | 503 | 49.90% |
+| Regions | 3,480 | 8,022 | 43.38% |
+
+The initial desktop line floor is 40%: three percentage points below the
+baseline, rounded down. It measures unit-tested desktop code; GPU interaction
+and subprocess engine acceptance are not instrumented by this command. The
+terminal package separately measures 150,030/163,044 lines (92.02%), and its
+89% floor is unchanged. Adding preview to the desktop measurement may raise
+the desktop floor, but must not lower it.

@@ -4,14 +4,14 @@ This document records external material incorporated into Runyte, along with
 any asset whose provenance or distribution status should remain visible. It
 supplements, but does not replace, the root `LICENSE`.
 
-## Native dependency compatibility patches
+## Desktop edition compatibility patches
 
 `vendor/proc-macro-error2` contains version 2.0.1 under MIT OR Apache-2.0,
 with both upstream license texts. `vendor/block` contains version 0.1.6 by
 Steven Sheldon, declared MIT in its upstream package manifest; that release
 does not ship a separate license file. Each directory's `RUNYTE-PATCH.md`
 records its source and the local Rust compatibility corrections. These
-dependencies are used by the optional GPUI native frontend.
+dependencies are used only by the desktop edition’s GPUI frontend.
 
 `vendor/gpui` contains GPUI 0.2.2 by Zed Industries, Inc. under Apache-2.0,
 with its upstream `LICENSE-APACHE`. Its `RUNYTE-PATCH.md` lists the removed
@@ -379,7 +379,7 @@ assets included through the pinned crate distributions.
 
 Fallback rasterization invokes separately installed Poppler utilities through
 argument vectors. Poppler is neither linked nor bundled by this experiment.
-The two-page PDF test fixture in `src/native_frontend/tests/fixtures/` is
+The two-page PDF test fixture in `crates/runyte-native/src/tests/fixtures/` is
 Runyte-authored, containing solid-color rectangles and short Helvetica text samples.
 
 The optional native frontend also uses `roxmltree` (MIT OR Apache-2.0) to read

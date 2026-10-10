@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Native-window acceptance on an isolated X11 display (e.g. Xvfb + lavapipe).
 
-Build with --features native first. Requires libX11, libXtst, git and Poppler.
+Build with cargo build -p runyte-desktop first. Requires libX11, libXtst, git and Poppler.
 Use --output to retain window-only PNG captures; all editor state is temporary.
 """
 import argparse
@@ -18,7 +18,7 @@ import time
 import zlib
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
+parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte-desktop"))
 parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--document-preview", action="store_true", help="exercise the bounded Blitz document preview")
 helper_options = parser.add_mutually_exclusive_group()
@@ -86,7 +86,7 @@ def chunk(kind, data):
 width, height = 320, 200
 rows = b"".join(b"\0" + b"".join(bytes([x * 255 // width, y * 255 // height, 140, 255]) for x in range(width)) for y in range(height))
 (root / "gradient.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!2I5B", width, height, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
-pdf = pathlib.Path(__file__).resolve().parents[1] / "src/native_frontend/tests/fixtures/two_pages.pdf"
+pdf = pathlib.Path(__file__).resolve().parents[1] / "crates/runyte-native/src/tests/fixtures/two_pages.pdf"
 (root / "pages.pdf").write_bytes(pdf.read_bytes())
 if args.output:
     args.output.mkdir(parents=True, exist_ok=True)

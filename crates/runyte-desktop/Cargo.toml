@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "runyte-desktop"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[[bin]]
+name = "runyte-desktop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+runyte = { path = "../.." }
+runyte-native = { path = "../runyte-native" }

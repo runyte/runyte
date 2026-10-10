@@ -287,11 +287,12 @@ and the order of the push. Do not infer any of those from the commit history.
 - `src/document_preview.rs`: bounded, engine-independent text captures.
   `src/app/presentation.rs` owns capture and dismissal state; the host retains
   captures across frontend attachment changes.
-- `src/native_frontend.rs` and `src/native_frontend/`: optional GPUI window,
-  cell composition, native input, clipboard, media workers and PDF helpers.
-  `preview.rs` owns document-preview presentation and the separate Blitz helper
-  lifecycle; engine dependencies stay in `contrib/document-preview`. Current
-  ownership and limits live in `context/reference/native-window-experiment.md`
+- `crates/runyte-native/`: desktop GPUI window, cell composition, native input,
+  clipboard, media workers, PDF helpers and document-preview presentation.
+  `crates/runyte-desktop/` supplies the executable and passes the window adapter to the
+  shared `src/cli.rs` and `src/cli/` startup and event loops. Preview engine
+  dependencies remain in `contrib/document-preview` until helper integration.
+  Ownership and limits live in `context/reference/native-window-experiment.md`
   and `context/reference/native-document-preview.md`.
 - `src/ui.rs`: Ratatui rendering.
 - `src/workspace/`: workspace identity and state plus the optional persistent
@@ -307,7 +308,7 @@ and the order of the push. Do not infer any of those from the commit history.
   remain part of the host context protocol, outside the MCP tool catalog.
   MCP acceptance tests and editor/PTY fixtures live in `tests/mcp/`. Terminal
   insertion never submits Enter.
-- `src/main.rs`: CLI, Crossterm lifecycle, and event loop.
+- `src/main.rs`: thin terminal-edition entry point into the shared CLI.
 
 Key dispatch, help, and hints must continue to read from the same keymap
 registry.
@@ -354,4 +355,11 @@ Before handing off a Rust change, run:
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+```
+
+When a change can affect the desktop edition, also run:
+
+```sh
+cargo clippy -p runyte-native -p runyte-desktop --all-targets -- -D warnings
+cargo test -p runyte-native -p runyte-desktop
 ```

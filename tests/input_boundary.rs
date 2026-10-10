@@ -19,10 +19,6 @@ fn crossterm_is_confined_to_frontend_acquisition_and_adapters() {
     let cli = source_root.join("cli.rs");
     let window = source_root.join("cli/window.rs");
     let adapter = source_root.join("tui/input.rs");
-    // The native window reuses the acquisition loop's event envelope; editor
-    // consumers still receive only Runyte-owned input values.
-    let native_adapter = source_root.join("native_frontend.rs");
-    let native_support = source_root.join("native_frontend");
     let windows_adapter = source_root.join("tui/windows_input.rs");
     let windows_tests = source_root.join("tui/windows_input");
     let windows_console_tests = source_root.join("tui/windows_console_acceptance.rs");
@@ -34,8 +30,6 @@ fn crossterm_is_confined_to_frontend_acquisition_and_adapters() {
         if source == cli
             || source == window
             || source == adapter
-            || source == native_adapter
-            || source.starts_with(&native_support)
             || source == windows_adapter
             || source == windows_console_tests
             || source == windows_frontend

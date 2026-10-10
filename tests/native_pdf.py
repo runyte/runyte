@@ -113,7 +113,7 @@ def helper(binary, path, root, *geometry):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path("target/debug/runyte"))
+    parser.add_argument("--binary", type=Path, default=Path("target/debug/runyte-desktop"))
     parser.add_argument("--compare", action="store_true")
     args = parser.parse_args()
     binary = args.binary.resolve()

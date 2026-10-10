@@ -130,7 +130,7 @@ The example version below is 0.2.1. Substitute the real one.
 7. **Dry-run the publish:**
 
    ```sh
-   cargo publish --locked --dry-run
+   cargo publish -p runyte --locked --dry-run
    ```
 
 8. **Push `main` before publishing:**
@@ -159,7 +159,7 @@ The example version below is 0.2.1. Substitute the real one.
 10. **Publish:**
 
    ```sh
-   cargo publish --locked
+   cargo publish -p runyte --locked
    ```
 
    This needs a crates.io token from `cargo login`, held in the local Cargo

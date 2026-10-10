@@ -18,7 +18,7 @@ impl WindowFrontend for Window {
     fn system_clipboard(&self) -> Option<Box<dyn runyte::clipboard::SystemClipboard>> {
         #[cfg(not(windows))]
         {
-            Some(runyte::clipboard::native_clipboard())
+            Some(Box::new(crate::clipboard::NativeClipboard::default()))
         }
         #[cfg(windows)]
         {

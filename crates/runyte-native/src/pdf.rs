@@ -244,7 +244,7 @@ fn decode(bytes: &[u8], detail: Option<Detail>) -> Result<Raster> {
     })
 }
 
-pub(crate) fn helper_main(mut args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
+pub fn helper_main(mut args: impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
     restrict_helper()?;
     let result = (|| -> Result<Raster> {
         let path = PathBuf::from(args.next().context("missing PDF path")?);

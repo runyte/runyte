@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 
-name: Experimental native window
+name: Desktop edition
 
 on:
   push:
@@ -59,19 +59,31 @@ jobs:
           key: native-window
       - name: Format and lint
         run: |
-          cargo fmt --check
-          cargo clippy --locked --features native --all-targets -- -D warnings
+          cargo fmt --all --check
+          cargo clippy --locked -p runyte-native -p runyte-desktop --all-targets -- -D warnings
       - name: Core and adapter tests
         run: |
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
-          cargo test --locked --workspace -- --test-threads=4
-          cargo test --locked --features native --bin runyte native_frontend
-          cargo test --locked --features native --bin runyte native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact
-          cargo test --locked --features native --bin runyte native_frontend::media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact
+          cargo test --locked -p runyte-native -p runyte-desktop
+          cargo test --locked -p runyte-native --lib media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
+          grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
+          cargo test --locked -p runyte-native --lib media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
+          grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
+      - name: Install desktop coverage tool
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        with:
+          tool: cargo-llvm-cov@0.9.1
+          fallback: none
+      - name: Measure desktop coverage
+        if: runner.os == 'Linux'
+        run: |
+          cargo llvm-cov --locked --package runyte-native --package runyte-desktop \
+            --ignore-filename-regex "$GITHUB_WORKSPACE/src/" --summary-only --fail-under-lines 40
       - name: Build native binary
         shell: bash
         run: |
-          cargo build --locked --features native --future-incompat-report 2>&1 | tee "$RUNNER_TEMP/native-build.log"
+          cargo build --locked -p runyte-desktop --future-incompat-report 2>&1 | tee "$RUNNER_TEMP/native-build.log"
           python3 - "$RUNNER_TEMP/native-build.log" <<'PY'
           import pathlib, sys
           report = pathlib.Path(sys.argv[1]).read_text()
@@ -83,13 +95,13 @@ jobs:
       - name: Package Linux desktop and accept bundled preview
         if: runner.os == 'Linux'
         run: |
-          python3 contrib/packaging/package.py linux --binary target/debug/runyte \
+          python3 contrib/packaging/package.py linux --binary target/debug/runyte-desktop \
             --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
             --output "$RUNNER_TEMP/runyte-desktop"
           xvfb-run -a -s '-screen 0 3200x1800x24' python3 contrib/packaging/check_package.py \
             "$RUNNER_TEMP/runyte-desktop" --window
       - name: Bundled PDF helper without Poppler
-        run: python3 tests/native_pdf.py
+        run: python3 tests/native_pdf.py --binary target/debug/runyte-desktop
       - name: macOS block ABI compatibility
         if: runner.os == 'macOS'
         run: |
@@ -100,19 +112,19 @@ jobs:
       - name: Linux window acceptance with bundled fonts
         if: runner.os == 'Linux'
         run: |
-          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts
-          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --no-system-fonts --mux
-          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --latency --max-idle-wakeups 30
-          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --animations
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --no-system-fonts
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --no-system-fonts --mux
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --latency --max-idle-wakeups 30
+          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --animations
       - name: Linux font and clipboard acceptance
         if: runner.os == 'Linux'
         run: |
-          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls
-          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls --mux
+          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --window-controls
+          xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --window-controls --mux
       - name: Construct macOS app bundle
         if: runner.os == 'macOS'
         run: |
-          python3 contrib/packaging/package.py macos --binary target/debug/runyte \
+          python3 contrib/packaging/package.py macos --binary target/debug/runyte-desktop \
             --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
             --output "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 [workspace]
-members = []
+members = ["crates/runyte-native", "crates/runyte-desktop"]
 
 [package]
 name = "runyte"
@@ -29,10 +29,7 @@ include = [
     "/docs/**",
     "/contrib/**",
     "/licenses/**",
-    "/vendor/**",
-    "/assets/fonts/**",
     "/logo/ascii/logo.txt",
-    "/logo/runyte_logo.svg",
     "/README.md",
     "/LICENSE",
     "/NOTICE",
@@ -45,7 +42,6 @@ default-run = "runyte"
 [features]
 default = []
 startup-timing = []
-native = ["dep:gpui", "dep:image", "dep:tempfile", "dep:async-channel", "dep:roxmltree", "dep:arboard", "dep:x11rb", "dep:hayro", "dep:hayro-interpret", "dep:hayro-syntax", "dep:log"]
 
 [[bin]]
 name = "runyte"
@@ -62,17 +58,6 @@ path = "benches/diagnostic_rows.rs"
 harness = false
 
 [dependencies]
-# Hayro's native-only graph needs Rust 1.92; default builds retain Rust 1.88.
-hayro = { version = "=0.8.0", optional = true }
-hayro-interpret = { version = "=0.8.0", optional = true, features = ["logging"] }
-log = { version = "0.4", optional = true }
-hayro-syntax = { version = "=0.8.0", optional = true }
-arboard = { version = "3.6", optional = true, features = ["wayland-data-control"] }
-roxmltree = { version = "0.20", optional = true }
-async-channel = { version = "2", optional = true }
-gpui = { version = "=0.2.2", optional = true }
-image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
-tempfile = { version = "3", optional = true }
 anyhow = "1.0"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -127,9 +112,6 @@ tree-sitter-xml = "=0.7.0"
 tree-sitter-zig = "=1.1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", optional = true, default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 png = "0.18"

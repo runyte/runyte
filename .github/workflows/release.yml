@@ -235,7 +235,7 @@ jobs:
           SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          cargo build --release --locked --features native
+          cargo build --release --locked -p runyte-desktop
           cargo build --release --locked --manifest-path contrib/document-preview/Cargo.toml
       - name: Package and accept the extracted desktop archive
         env:
@@ -245,7 +245,7 @@ jobs:
           package_name="runyte-desktop-${VERSION}-x86_64-unknown-linux-gnu"
           archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
-          python3 contrib/packaging/package.py linux --binary target/release/runyte \
+          python3 contrib/packaging/package.py linux --binary target/release/runyte-desktop \
             --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
             --output "$RUNNER_TEMP/$package_name"
           tar -C "$RUNNER_TEMP" -cJf "$archive" "$package_name"

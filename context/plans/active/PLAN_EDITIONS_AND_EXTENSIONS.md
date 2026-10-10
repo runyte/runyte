@@ -1140,6 +1140,7 @@ Independent review and the full real-engine acceptance script passed.
 
 ### Phase 3 — workspace preparation, 2026-10-10
 
+Implemented preparation in `8cec197` (`Prepare the repository for a Cargo workspace`).
 Added the empty workspace and made terminal CI, coverage documentation and
 MSRV checks select `runyte` explicitly. Independent review passed. Formatting,
 denied-warning all-target Clippy, the complete test suite and Rust 1.88
@@ -1152,3 +1153,43 @@ is in asynchronous/process execution. To verify the measured set exactly,
 both selectors were reported with `--no-run` against the same retained
 profiles, without rebuilding: all 261 per-file and total rows were identical,
 including 150,025 covered of 163,044 lines. The 89% floor is unchanged.
+
+### Phase 3 — desktop crate split, 2026-10-10
+
+Moved the native adapter, clipboard and PDF implementation into unpublished
+`runyte-native`, with unpublished `runyte-desktop` supplying the executable.
+Both members omit version and declare Rust 1.92. The root retains Rust 1.88,
+has no native feature or desktop dependencies, and keeps plain Cargo commands
+scoped to the terminal package. Internal native implementation items remain
+crate-private; only the window seam and PDF helper entry cross crates.
+
+Repeated independent review found no remaining issues after narrowing two
+crate-root enums and the remaining implementation exports. Formatting, root
+and desktop denied-warning Clippy, the full root suite, desktop tests (87
+passed, three existing ignored), and Rust 1.88 all-target checks passed. The
+first root run timed out in the existing worktree attachment test; its exact
+isolated rerun passed in 0.89 seconds, and the complete rerun passed unchanged.
+Both exact ignored PDF tests each report one passed test. Real PDF helper
+acceptance passes with Poppler absent from PATH. Dedicated Xvfb/lavapipe window
+acceptance passes for standalone and persistent clipboard/font controls,
+including parent-editor wait.
+
+The terminal normal/build dependency tree is byte-for-byte identical to the
+pre-split graph. Audit passes with the same nine existing allowed warnings;
+no new advisory or dependency version was introduced. The publish dry run
+passes, including verification of the extracted terminal crate. Its generated
+manifest has no `gpui`, `hayro`, `arboard`, `x11rb` or native feature. The
+archive is 3,100,772 bytes (777 files, 13.9 MiB unpacked). Native fonts, patches
+and the SVG logo are removed from the published include list; the terminal
+ASCII logo remains.
+
+Linux terminal coverage is 150,030/163,044 lines (92.02%), with the 89% floor
+unchanged. Desktop coverage excludes absolute root `src/` paths and measures
+2,297/5,255 lines (43.71%); its new floor is 40%, following the specified
+three-percentage-point headroom rounded down. The desktop workflow enforces
+that floor and uses the two explicit member packages for lint/tests/build.
+Packaging unit tests and `git diff --check` pass.
+
+Real document-preview window acceptance also passes: composition, overlays,
+Escape, clipboard, scrolling with a paused renderer, resize, scaling, SVG and
+selected-section capture. Platform CI is the remaining phase gate.

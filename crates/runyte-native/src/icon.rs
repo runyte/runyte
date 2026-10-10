@@ -47,7 +47,7 @@ mod x11 {
 
     fn pixels() -> anyhow::Result<Vec<u32>> {
         let image = image::load_from_memory_with_format(
-            include_bytes!("../../contrib/packaging/icons/runyte-128.png"),
+            include_bytes!("../../../contrib/packaging/icons/runyte-128.png"),
             image::ImageFormat::Png,
         )?
         .into_rgba8();

@@ -3,8 +3,8 @@
 //! Retain the native clipboard owner for the host's lifetime. In particular,
 //! X11 selections disappear if the connection used to write them is dropped.
 
-use super::{MAX_CLIPBOARD_TEXT_BYTES, SystemClipboard};
 use anyhow::{Context, Result, ensure};
+use runyte::clipboard::{MAX_CLIPBOARD_TEXT_BYTES, SystemClipboard};
 
 #[derive(Default)]
 pub struct NativeClipboard {

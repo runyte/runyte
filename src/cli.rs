@@ -1266,7 +1266,7 @@ async fn run(
     let mut arguments = LaunchArguments::parse()?;
     anyhow::ensure!(
         !arguments.window || environment.window.is_some(),
-        "--window requires cargo build --features native"
+        "--window requires the desktop edition"
     );
     #[cfg(unix)]
     let supervising_parent = HostSupervisor::for_launch(&arguments)?;
@@ -7615,7 +7615,7 @@ MODES:
     Runyte runs in one of three modes, chosen by a flag or by the mode
     setting, ide by default. The launch directory never changes the mode.
 
-        --window         Open the experimental GPUI window (native feature)
+        --window         Open the GPUI window (desktop edition)
         --editor         Edit files and directories with no workspace: no Git,
                          language servers, MCP, plugins or terminals. Running
                          the binary as runed is the same as runyte --editor
