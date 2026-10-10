@@ -22,16 +22,18 @@ def render(text, language='html', **kwargs):
     return header, pixels, (time.monotonic()-start)*1000
 
 # Known CSS geometry permits exact text hit tests independent of editor geometry.
-html = '<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>'
-header, pixels, ms = render(html, selection=[[1, 12], [170, 12]])
-assert 'Selectable' in header['selected'], header
-header, _, _ = render(html, selection=[[5, 35], [5, 35]])
-assert header['link'] == 'https://example.com', header
+html = '<html><body style="margin:0;background:white;font:20px/20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>'
+for scale, zoom in [(1, 1), (2, 1), (0.7, 1), (1, 2), (2, 2)]:
+    geometry = dict(width=int(640 * scale), height=int(360 * scale), scale=scale, zoom=zoom)
+    header, pixels, ms = render(html, **geometry,
+                               selection=[[zoom, 12 * zoom], [250 * zoom, 12 * zoom]])
+    assert header['selected'] == 'Selectable text', (scale, zoom, header)
+    point = [5 * zoom, 30 * zoom]
+    header, _, _ = render(html, **geometry, selection=[point, point])
+    assert header['link'] == 'https://example.com', (scale, zoom, header)
 header, _, _ = render(html, scroll=[180, 500])
 assert header['scroll'][0] >= 180 and header['scroll'][1] >= 500, header
-header, _, _ = render(html, width=1280, height=720, scale=2, selection=[[1, 12], [170, 12]])
-assert 'Selectable' in header['selected'], header
-print('Selection, link hit testing, two-axis scrolling, 2x rendering:', round(ms, 1), 'ms initial request')
+print('Selection and links at 1x, 2x, reduced raster scale and zoom; two-axis scrolling:', round(ms, 1), 'ms initial request')
 for name, language in [('markdown.md','markdown'), ('document.html','html'), ('data.json','json'), ('broken.json','json'), ('config.yaml','yaml'), ('source.rs','rust'), ('plain.txt','text'), ('drawing.svg','svg')]:
     path = root/'fixtures'/name
     _, pixels, ms = render(path.read_text(), language, path=str(path))

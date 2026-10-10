@@ -253,8 +253,10 @@ fn render(request: Request, cache: &mut Option<Cache>) -> Result<(), Box<dyn std
     );
     let mut link = None;
     if let Some([a, b]) = request.selection {
-        let a = a.map(|v| v * request.scale);
-        let b = b.map(|v| v * request.scale);
+        // Input positions are logical window pixels; Blitz hit testing takes
+        // CSS pixels. Raster/display scale does not change the hit position.
+        let a = a.map(|v| v / request.zoom);
+        let b = b.map(|v| v / request.zoom);
         if let (Some((an, ao)), Some((bn, bo))) = (
             doc.find_text_position(a[0], a[1]),
             doc.find_text_position(b[0], b[1]),
