@@ -306,6 +306,14 @@ try:
             time.sleep(.05)
         actual = pixel(xpos, ypos)
         assert actual == expected, (message, hex(actual), hex(expected))
+    def wait_text(path, expected, contains=False):
+        deadline = time.monotonic() + 5
+        def matches():
+            text = path.read_text()
+            return expected in text if contains else text == expected
+        while not matches() and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert matches(), ('saved text did not reach expected state', path.name, path.read_text())
     if not (args.paint_styles or args.paint_benchmark or args.latency or args.mux):
         # Margins left by a window that is not a whole number of cells use the
         # theme background, the same colour as empty editor cells. Standalone
@@ -439,12 +447,14 @@ try:
             key('g')  # Pane focus must clear an unfinished preview navigation prefix.
             key(destination,ctrl=True);time.sleep(.3)
             assert pixel(350,400) == 0x0099aa, f'{destination} dismissed preview'
+            original = (root/'plain.txt').read_text()
             key('i');text('pane focus');key('Escape');command('write')
-            assert 'pane focus' in (root/'plain.txt').read_text(), 'pane shortcut did not focus source'
+            wait_text(root/'plain.txt', 'pane focus', contains=True)
             key('u');command('write')
+            wait_text(root/'plain.txt', original)
             key(returning,ctrl=True);time.sleep(.3)
             key('j');time.sleep(.3)
-            assert pixel(350,35) == 0x0099aa, f'{returning} failed to restore preview navigation'
+            wait_pixel(350,35,0x0099aa,f'{returning} failed to restore preview navigation')
             key('k');time.sleep(.3)
         key('Right',ctrl=True);command('quit');time.sleep(.6)
         command('hsplit plain.txt',burst=True);time.sleep(.5)
@@ -458,7 +468,7 @@ try:
         key('j',ctrl=True);time.sleep(.3)
         assert pixel(350,200) == 0x0099aa, 'fast vertical pane motion dismissed preview'
         key('i');text('vertical focus');key('Escape');command('write')
-        assert 'vertical focus' in (root/'plain.txt').read_text(), 'Ctrl-j did not focus source'
+        wait_text(root/'plain.txt', 'vertical focus', contains=True)
         command('quit');time.sleep(.6)
         key('q')
         command('open markdown.md');command('preview');time.sleep(1)

@@ -1426,3 +1426,16 @@ by `CFBundleExecutable`; the editor, app display name and relative `runed` link
 are unchanged. Signing and layout acceptance use the distinct name. The bundle
 regression now gives editor and launcher different fixture bytes and checks
 case-folded filename uniqueness, so Linux also detects this regression.
+
+
+Linux CI on `d340e27` passed core/native tests, PDF engine checks and coverage,
+then found delayed completion in the pane-edit fixture on both architectures.
+A controlled slowdown reproduced an unchanged file at the fixed assertion,
+followed by the correct saved text 2.20 seconds later. The queue had required
+an unnecessary GPUI render after each acknowledged input even when the editor
+owned routing. Such input now drains on frame arrival; active preview input
+still requires initialized local state. Review is clear. Acceptance waits for
+actual saved text and undo completion instead of assuming a 700 ms write budget.
+The deliberately slowed single-CPU acceptance now passes, as does persistent
+preview acceptance. Formatting, desktop clippy and desktop/native/preview tests
+pass; clean desktop coverage is 2,946/6,055 lines (48.65%, floor 40%).

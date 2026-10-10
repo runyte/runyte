@@ -113,7 +113,9 @@ commands. Adjacent compatible drags coalesce; keys, text commits and pointer
 input retain their original presentation identity. Acknowledgments wait for
 whole-frame publication, including finder refills. The queue retains at most
 256 physical inputs, 8 MiB of text and one outstanding barrier. Keys also keep
-their repeat kind. A new frame alone is not an input acknowledgment, and queued keys cannot
+their repeat kind. Host-owned input can drain on frame arrival without waiting
+for GPU painting; active preview navigation also requires prepared local state.
+A new frame alone is not an input acknowledgment, and queued keys cannot
 approve a prompt they were not physically presented with.
 
 ## Choosing a tier

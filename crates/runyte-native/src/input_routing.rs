@@ -47,7 +47,15 @@ impl<T> Queue<T> {
         self.inputs.push_back((input, action));
         true
     }
-    pub fn next(&mut self, attachment: u64, acknowledged: u64) -> Option<(NativeInput, T)> {
+    pub fn next(
+        &mut self,
+        attachment: u64,
+        acknowledged: u64,
+        routing_ready: bool,
+    ) -> Option<(NativeInput, T)> {
+        if !routing_ready {
+            return None;
+        }
         if let Some((owner, serial)) = self.pending {
             if owner == attachment && acknowledged < serial {
                 return None;
@@ -118,7 +126,11 @@ impl super::NativeView {
             .as_ref()
             .filter(|frame| frame.attachment == attachment)
             .map_or(0, |frame| frame.routing_serial);
-        while let Some((mut input, action)) = self.routing.next(attachment, serial) {
+        let routing_ready = self.preview_routing_ready
+            || self.frame.as_ref().is_none_or(|frame| {
+                !frame.media_input || !frame.previews.iter().any(|pane| pane.active)
+            });
+        while let Some((mut input, action)) = self.routing.next(attachment, serial, routing_ready) {
             let mut copies = 1;
             // Local pointer geometry is valid only for the frame that was seen.
             // Otherwise forward its original identity for the host's stale-frame check.

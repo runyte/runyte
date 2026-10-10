@@ -828,6 +828,7 @@ struct NativeView {
     media: media::Loader,
     previews: preview::Views,
     routing: input_routing::Queue<input_routing::Action>,
+    preview_routing_ready: bool,
     composition: String,
     scroll: ScrollAccumulator,
     image_clipboard: Option<arboard::Clipboard>,
@@ -877,9 +878,13 @@ impl NativeView {
                                 });
                             }
                             view.frame = Some(std::rc::Rc::new(frame));
+                            view.preview_routing_ready = false;
                         }
                         let loaded = view.media.poll(&view.bridge) | view.previews.poll();
                         view.apply_media_requests(cx);
+                        // Host-owned input needs the processed frame, not a GPU paint.
+                        // Active preview navigation waits for local layout in Render.
+                        view.route_pending(cx);
                         if changed || loaded || view.bridge.input.overflowed() {
                             cx.notify();
                         }
@@ -899,6 +904,7 @@ impl NativeView {
             media: media::Loader::new(bridge.clone()),
             previews: preview::Views::default(),
             routing: input_routing::Queue::default(),
+            preview_routing_ready: false,
             bridge,
             focus,
             frame,
@@ -1004,6 +1010,7 @@ impl Render for NativeView {
             self.send(Event::Resize(dimensions.0, dimensions.1));
         }
         let frame = self.prepare_previews(window);
+        self.preview_routing_ready = true;
         self.route_pending(cx);
         let glyphs = self.glyphs.clone();
         let (background, foreground) = frame

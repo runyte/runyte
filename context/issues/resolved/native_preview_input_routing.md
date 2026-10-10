@@ -26,10 +26,20 @@ cannot grant delayed input authority to approve a prompt it never saw.
 Pointer actions with stale geometry use the host's existing stale-frame
 validation. Window-local font and clipboard shortcuts remain native actions.
 
-Coverage includes all six tests in
+Later Linux CI exposed a throughput problem in the first correction: even
+source-pane and command input waited for a GPUI render after each host frame.
+A controlled slowdown left the save pending at the fixture's fixed check; the
+correct complete text appeared 2.20 seconds later. Acknowledged host-owned
+input now drains on frame arrival, without waiting for GPU rendering. Every
+new frame invalidates preview readiness, so newly active preview input still
+waits for `prepare_previews`. Saved-text and undo assertions wait for their
+actual completed file state, and retain exact content checks.
+
+Coverage includes all seven tests in
 `crates/runyte-native/src/tests/input_routing.rs`: command burst correlation,
 attachment changes, queue bounds, mixed text/pointer ordering, text memory
-accounting and drag coalescing across input boundaries.
+accounting, drag coalescing across input boundaries, and acknowledged input
+waiting for preview preparation.
 `terminal_edition_host_accepts_preview_from_a_window_attachment` in
 `tests/persistent_host.rs` checks correlated command-mode, normal-mode and
 ignored-key responses. `tests/native_window.py --document-preview`, both with
