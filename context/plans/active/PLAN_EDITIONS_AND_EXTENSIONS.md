@@ -1193,3 +1193,9 @@ Packaging unit tests and `git diff --check` pass.
 Real document-preview window acceptance also passes: composition, overlays,
 Escape, clipboard, scrolling with a paused renderer, resize, scaling, SVG and
 selected-section capture. Platform CI is the remaining phase gate.
+
+The split was committed as `e5a0993` and pushed for CI. Linux desktop lint and
+tests passed, then the pinned installer action refused cargo-llvm-cov 0.9.1
+because that action revision does not include its binaries. Desktop CI now
+uses 0.9.0, matching the existing terminal coverage jobs; the recorded local
+measurement remains explicitly identified as 0.9.1. No floor changes.

@@ -73,7 +73,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
         with:
-          tool: cargo-llvm-cov@0.9.1
+          tool: cargo-llvm-cov@0.9.0
           fallback: none
       - name: Measure desktop coverage
         if: runner.os == 'Linux'
