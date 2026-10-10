@@ -1614,3 +1614,8 @@ and subprocess engine acceptance are not instrumented by this command. The
 terminal package separately measures 150,030/163,044 lines (92.02%), and its
 89% floor is unchanged. Adding preview to the desktop measurement may raise
 the desktop floor, but must not lower it.
+
+The [Linux desktop CI run](https://github.com/runyte/runyte/actions/runs/38059742091/job/114235446250)
+on `73dad43` uses cargo-llvm-cov 0.9.0, supported by the pinned installer
+action. It measures 2,295/5,255 lines (43.67%), with the same source denominator
+and the 40% floor passing. Both Linux and macOS desktop acceptance jobs pass.

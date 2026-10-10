@@ -1199,3 +1199,76 @@ tests passed, then the pinned installer action refused cargo-llvm-cov 0.9.1
 because that action revision does not include its binaries. Desktop CI now
 uses 0.9.0, matching the existing terminal coverage jobs; the recorded local
 measurement remains explicitly identified as 0.9.1. No floor changes.
+
+The installer correction was committed as `73dad43` after independent review.
+Its [desktop CI workflow](https://github.com/runyte/runyte/actions/runs/38059742091)
+is green on Linux and macOS. Linux CI coverage with cargo-llvm-cov 0.9.0 is
+2,295/5,255 lines (43.67%), above the 40% floor; the same denominator as the
+local run. Packaged preview, real PDF, bundled-font, latency, animation,
+clipboard, standalone and persistent window acceptance all pass. The native
+build reports zero dependency future-incompatibility warnings.
+
+Phase 3 is accepted. The complete [terminal CI workflow](https://github.com/runyte/runyte/actions/runs/38059742108)
+on `73dad43` is green, including Linux and macOS gates/coverage/performance,
+Rust 1.88, security, lifecycle/plugin acceptance and the full Windows suite.
+The [Windows job](https://github.com/runyte/runyte/actions/runs/38059742108/job/114235467754)
+completed successfully before proceeding beyond this phase. Together with the
+green desktop workflow and repeated independent reviews, every Phase 3 gate
+is satisfied. Phase 4 implementation remains pending the graph decision below.
+
+### Phase 4 — isolated dependency preflight, 2026-10-10
+
+While Phase 3 platform CI runs, a temporary manifest-only workspace resolves
+the proposed shared lock without changing the repository implementation.
+Pinned Blitz `74fe1ab` directly requires ICU 2.3. The resolver therefore
+changes the terminal URL/IDNA subtree, despite retaining the existing root
+dependency declarations. Pinning `icu_properties` to 2.1.2 fails because it
+does not satisfy Blitz's `^2.3` requirement. These are the terminal changes:
+
+| Crate | Existing | Shared-lock candidate |
+| --- | --- | --- |
+| icu_collections | 2.1.1 | 2.3.0 |
+| icu_locale_core | 2.1.1 | 2.3.0 |
+| icu_normalizer | 2.1.1 | 2.3.0 |
+| icu_normalizer_data | 2.1.1 | 2.3.0 |
+| icu_properties | 2.1.2 | 2.3.0 |
+| icu_properties_data | 2.1.2 | 2.3.0 |
+| icu_provider | 2.1.1 | 2.3.1 |
+| tinystr | 0.8.3 | 0.8.4 |
+| writeable | 0.6.3 | 0.6.4 |
+| yoke | 0.8.2 | 0.8.3 |
+| zerotrie | 0.2.4 | 0.2.5 |
+| zerovec | 0.11.6 | 0.11.8 |
+| zerovec-derive | 0.11.3 | 0.11.6 |
+
+The actual editor library builds on Rust 1.88 with the candidate. Audit passes
+with the union of the nine existing terminal and two existing preview allowed
+warnings; no advisory/version tuple is new. Independent review confirms that
+this evidence does not satisfy the exact-tree gate. A narrow maintainer
+decision is pending before accepting the candidate: permit these documented
+updates while retaining Rust 1.88, root dependency declarations, coverage
+floors, advisory checks and terminal performance gates.
+
+Pre-integration release measurements use `e5a0993` on Linux x86-64:
+92,197,552-byte stripped desktop executable; first `--version` launch
+15.633 ms after advisory file-cache eviction, then 2.913 ms median across ten
+warm fresh processes. Cache eviction is an OS hint, not proof of a cold disk.
+Xvfb/lavapipe window mapping took 201.430 ms with 100 ms polling; this measures
+mapping, not complete first paint. At 120x40, 60 keys had median 6.20 ms,
+p90 6.84 ms and maximum 7.35 ms input latency; idle context switches were
+9.2/second. The largest checked-in PDF fixture is 937 bytes; the PDF helper's
+peak address space was 113,078,272 bytes, leaving 89.47% of its 1 GiB limit.
+
+The exact terminal release is 56,096,832 bytes. Five-run startup medians
+(first document content) are 12/13/23/97 ms for short/medium/long/huge text
+and 15/12/20/106 ms for the Lua counterparts. Three independent ten-second
+idle windows measured 0.10% CPU with zero screen writes. These measurements
+are the before values for Phase 4, not claims about the unimplemented result.
+
+Pre-implementation review identified two caller details for Phase 4: propagate
+a typed executable-replacement error through the PDF loader instead of
+letting Poppler hide the restart message, and replace preview's `try_wait`
+with non-reaping observation before process-group cleanup. Newly piped PDF
+stderr must be drained with bounded retention, and its unused stdin closed.
+Establish the cleanup guard immediately after spawn, before taking pipes or
+starting reader threads.
