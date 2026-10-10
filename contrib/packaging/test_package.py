@@ -60,8 +60,14 @@ class NativePackageTests(unittest.TestCase):
             root = Path(temporary)
             # The fixture is copied as data and never executed.
             binary = package.HERE.parents[1] / "src/fixtures/stand-in"
-            destination = package.bundle_macos(binary, root / "Runyte.app", binary)
-            self.assertEqual({p.name for p in (destination / "Contents/MacOS").iterdir()}, {"runyte", "Runyte", "runed"})
+            launcher_fixture = root / "launcher-fixture"
+            launcher_fixture.write_bytes(b"native launcher fixture, never executed")
+            launcher_fixture.chmod(0o755)
+            destination = package.bundle_macos(binary, root / "Runyte.app", launcher_fixture)
+            self.assertEqual((destination / "Contents/MacOS/runyte").read_bytes(), binary.read_bytes())
+            names = [p.name.casefold() for p in (destination / "Contents/MacOS").iterdir()]
+            self.assertEqual(len(names), len(set(names)), "bundle executables must survive case-insensitive filesystems")
+            self.assertEqual({p.name for p in (destination / "Contents/MacOS").iterdir()}, {"runyte", "RunyteLauncher", "runed"})
             resources = destination / "Contents/Resources"
             with (destination / "Contents/Info.plist").open("rb") as source:
                 info = plistlib.load(source)
@@ -69,8 +75,8 @@ class NativePackageTests(unittest.TestCase):
             self.assertEqual(info["CFBundleIconFile"], "Runyte.icns")
             launcher = destination / "Contents/MacOS" / info["CFBundleExecutable"]
             self.assertTrue(os.access(launcher, os.X_OK))
-            self.assertEqual(launcher.read_bytes(), binary.read_bytes())
-            self.assertEqual(info["CFBundleExecutable"], "Runyte")
+            self.assertEqual(launcher.read_bytes(), launcher_fixture.read_bytes())
+            self.assertEqual(info["CFBundleExecutable"], "RunyteLauncher")
             self.assertEqual(info["LSMinimumSystemVersion"], "11.0")
             self.assertEqual(info["LSApplicationCategoryType"], "public.app-category.developer-tools")
             for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "licenses/jetbrains-mono/OFL.txt",

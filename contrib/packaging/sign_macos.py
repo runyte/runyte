@@ -44,7 +44,7 @@ def notarize(commands, artifact, profile):
 
 
 def sign_app(commands, app, identity, profile):
-    for artifact in (app / "Contents/MacOS/runyte", app / "Contents/MacOS/Runyte", app):
+    for artifact in (app / "Contents/MacOS/runyte", app / "Contents/MacOS/RunyteLauncher", app):
         commands.run("codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity, artifact)
     def submit(archive):
         commands.run("ditto", "-c", "-k", "--keepParent", app, archive)

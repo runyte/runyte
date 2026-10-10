@@ -87,11 +87,11 @@ executables' deployment floor with `vtool` and rejects non-system dynamic
 libraries with `otool`, including accidental Homebrew links.
 
 The helper refuses to replace an existing bundle. It copies the editor into `Contents/MacOS`, alongside the
-native `Runyte` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher selects
+native `RunyteLauncher` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher selects
 `--window --editor` and preserves `PATH`, adding `/opt/homebrew/bin` and
 `/usr/local/bin` so the usual Poppler installations remain discoverable from
 Finder. Fonts are embedded in the binary. The bundle has identifier
-`com.runyte.Runyte`, `CFBundleExecutable = Runyte`, a macOS 11 minimum, and
+`com.runyte.Runyte`, `CFBundleExecutable = RunyteLauncher`, a macOS 11 minimum, and
 declares its icon through `CFBundleIconFile`. A leading Finder `-psn_*` argument
 is discarded; other arguments remain intact.
 

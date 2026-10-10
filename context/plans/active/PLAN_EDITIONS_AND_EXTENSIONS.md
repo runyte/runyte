@@ -286,7 +286,7 @@ contrib/packaging/            Linux directory and desktop entry, macOS app, DMG,
   - On macOS it also builds the app launcher binary, named
     `runyte-app-launcher`. It must not be named `Runyte`, which would collide
     with `target/<profile>/runyte` on a case-insensitive APFS volume.
-    Packaging copies it to `Contents/MacOS/Runyte`.
+    Packaging copies it to `Contents/MacOS/RunyteLauncher`.
 
 **Consequence to accept and document.** Every Cargo command in the workspace
 resolves the whole workspace. Building the terminal edition from a checkout
@@ -842,11 +842,11 @@ from `main` after Phase 7, so any tag containing it also contains Phases 4–6.
      and notarization hazard, because its signature is kept in extended
      attributes that copies can lose.
    - **Bundle layout.** `package.py macos` copies the launcher to
-     `Contents/MacOS/Runyte` and the editor to `Contents/MacOS/runyte`, and
+     `Contents/MacOS/RunyteLauncher` and the editor to `Contents/MacOS/runyte`, and
      adds a relative `runed` → `runyte` symbolic link in `Contents/MacOS/`
      for command-line use.
    - **`Info.plist`.** Keep the identifier `com.runyte.Runyte` and
-     `CFBundleExecutable = Runyte`. Add:
+     `CFBundleExecutable = RunyteLauncher`. Add:
      - `LSMinimumSystemVersion = 11.0`;
      - `NSHumanReadableCopyright`;
      - `LSApplicationCategoryType = public.app-category.developer-tools`.
@@ -893,7 +893,7 @@ from `main` after Phase 7, so any tag containing it also contains Phases 4–6.
      from files, environment variables or the repository.
      - **`app`:**
        1. Sign inside-out: `Contents/MacOS/runyte`, then
-          `Contents/MacOS/Runyte`, then the bundle. Each uses
+          `Contents/MacOS/RunyteLauncher`, then the bundle. Each uses
           `codesign --force --options runtime --timestamp --sign <identity>`.
           The `runed` link needs no signature. Never use `--deep` when
           signing.
@@ -1366,7 +1366,7 @@ Phase 6 macOS launcher and bundle construction are implemented and reviewed.
 The explicit `app-launcher` Cargo feature builds the std-only native launcher;
 ordinary terminal/desktop builds do not add this packaging binary. Argument
 and PATH tests pass, including Finder's leading `-psn_*` handling. Bundle
-construction requires both architectures, installs `Runyte`, `runyte` and the
+construction requires both architectures, installs `RunyteLauncher`, `runyte` and the
 relative `runed` link, and declares the macOS 11 floor. Acceptance rejects
 non-system dynamic links and wrong per-slice deployment floors. Six packaging
 tests and launcher lint pass. CI now builds universal binaries with the
@@ -1416,3 +1416,13 @@ merged into `exp` so final validation covers the combined tree before updating
 `dev`. Desktop CI also follows `dev` and `main`, retaining `exp` coverage.
 No version or release is changed. Final platform CI, coverage and the merge
 report remain in progress; signed/notarized Apple distribution remains manual.
+
+
+Native macOS CI `38081107848` exposed a plan-level filename collision: the
+specified bundle names `Runyte` and `runyte` alias on the default case-insensitive
+filesystem, just as the earlier binary-target naming rule anticipated for build
+outputs. The launcher is therefore packaged as `RunyteLauncher` and selected
+by `CFBundleExecutable`; the editor, app display name and relative `runed` link
+are unchanged. Signing and layout acceptance use the distinct name. The bundle
+regression now gives editor and launcher different fixture bytes and checks
+case-folded filename uniqueness, so Linux also detects this regression.

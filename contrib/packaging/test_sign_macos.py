@@ -77,7 +77,7 @@ class DistributionToolsTests(unittest.TestCase):
         signing = [line for line in lines if line.startswith("codesign --force")]
         self.assertEqual(len(signing), 4)
         self.assertTrue(signing[0].endswith("Runyte.app/Contents/MacOS/runyte"))
-        self.assertTrue(signing[1].endswith("Runyte.app/Contents/MacOS/Runyte"))
+        self.assertTrue(signing[1].endswith("Runyte.app/Contents/MacOS/RunyteLauncher"))
         self.assertTrue(signing[2].endswith("Runyte.app"))
         self.assertTrue(all("--options runtime" in line for line in signing[:3]))
         self.assertNotIn("--options runtime", signing[3])

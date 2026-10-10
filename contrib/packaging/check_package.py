@@ -17,7 +17,7 @@ def check_layout(directory, repository):
         return {str(p.relative_to(root)) for p in root.rglob('*') if p.is_file() or p.is_symlink()}
     licenses = {'licenses/' + name for name in files(repository / 'licenses')}
     if (directory / 'Contents/MacOS').is_dir():
-        expected = {'Contents/Info.plist', 'Contents/MacOS/runyte', 'Contents/MacOS/Runyte', 'Contents/MacOS/runed'}
+        expected = {'Contents/Info.plist', 'Contents/MacOS/runyte', 'Contents/MacOS/RunyteLauncher', 'Contents/MacOS/runed'}
         link = directory / 'Contents/MacOS/runed'
         if not link.is_symlink() or os.readlink(link) != 'runyte':
             raise ValueError('bundle requires runed -> runyte')
@@ -39,9 +39,9 @@ def check_layout(directory, repository):
 def check_macos_binaries(directory):
     with (directory / "Contents/Info.plist").open("rb") as source:
         info = plistlib.load(source)
-    if info.get("CFBundleExecutable") != "Runyte" or info.get("LSMinimumSystemVersion") != "11.0":
-        raise ValueError("bundle requires Runyte launcher and macOS 11.0 floor")
-    for name in ("runyte", "Runyte"):
+    if info.get("CFBundleExecutable") != "RunyteLauncher" or info.get("LSMinimumSystemVersion") != "11.0":
+        raise ValueError("bundle requires RunyteLauncher launcher and macOS 11.0 floor")
+    for name in ("runyte", "RunyteLauncher"):
         binary = directory / "Contents/MacOS" / name
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ValueError(f"missing bundle executable: {binary}")

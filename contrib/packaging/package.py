@@ -107,7 +107,7 @@ def bundle_macos(binary, destination, launcher):
     font_notices = resources / "assets/fonts/jetbrains-mono"
     font_notices.mkdir(parents=True)
     shutil.copyfile(repository / "assets/fonts/jetbrains-mono/README.md", font_notices / "README.md")
-    shutil.copy2(launcher, executables / "Runyte")
+    shutil.copy2(launcher, executables / "RunyteLauncher")
     (executables / "runed").symlink_to("runyte")
     manifest = (repository / "Cargo.toml").read_text(encoding="utf-8")
     version = re.search(r'^version\s*=\s*"([^"]+)"', manifest, re.MULTILINE).group(1)
@@ -116,7 +116,7 @@ def bundle_macos(binary, destination, launcher):
             "CFBundleIdentifier": APP_ID,
             "CFBundleName": "Runyte",
             "CFBundleDisplayName": "Runyte",
-            "CFBundleExecutable": "Runyte",
+            "CFBundleExecutable": "RunyteLauncher",
             "LSMinimumSystemVersion": "11.0",
             "NSHumanReadableCopyright": "Copyright Runyte contributors. Licensed under MPL-2.0.",
             "LSApplicationCategoryType": "public.app-category.developer-tools",
