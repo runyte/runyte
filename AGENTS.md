@@ -17,6 +17,8 @@ records relevant to the task:
 
 - `context/plans/README.md` explains the plan lifecycle and routes to the
   retained architecture records.
+- `context/reference/process-boundaries.md` is required when adding a helper,
+  a plugin capability, a context operation, or any other process boundary.
 - `context/reference/helix-keymap-v1.md` is required when changing editor
   commands, bindings, help, or key hints.
 - `context/reference/ui-vocabulary.md` is required when changing buffers,
